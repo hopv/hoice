@@ -4,16 +4,6 @@ It infers predicates verifying a set of horn clauses.
 
 [![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice)
 
-<!-- # Input language
-
-`hoice`'s input language is very close to [the SMT-LIB 2 standard's language](http://smtlib.cs.uiowa.edu/language.shtml) in that it relies heavily on S-expressions.
-
-```ebnf
-script = 
-```
-
-Single line comments -->
-
 
 # Install
 
@@ -39,6 +29,11 @@ cargo build --release --features "bench"
 ```
 
 Note that this disables some features such as verbosity.
+
+
+# Language
+
+[Consult the wiki](https://github.com/hopv/hoice/wiki/Language) for a description of `hoice`'s language.
 
 
 # Contributing
