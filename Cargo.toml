@@ -1,0 +1,24 @@
+[package]
+name = "hoice"
+version = "0.1.0"
+authors = ["Adrien Champion <adrien.champion@email.com>"]
+
+[features]
+bench = []
+
+[dependencies]
+lazy_static = "*"
+clap = "*"
+regex = "*"
+hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
+error-chain = "*"
+log = "*"
+env_logger = "*"
+ansi_term = "*"
+rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
+num = "*"
+mylib = { git = "https://github.com/AdrienChampion/mylib" }
+
+[dependencies.nom]
+version = "^3.0"
+features = [ "regex", "regexp" ]
