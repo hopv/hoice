@@ -38,7 +38,7 @@ Note that this disables some features such as verbosity.
 
 # Contributing
 
-We welcome any help, please the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) to get started.
+We welcome any help, please read the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) to get started.
 
 
 # License
