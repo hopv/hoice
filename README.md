@@ -41,6 +41,11 @@ cargo build --release --features "bench"
 Note that this disables some features such as verbosity.
 
 
+# Contributing
+
+We welcome any help, please the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) to get started.
+
+
 # License
 
 `hoice` is released under the [Apache 2 license](./LICENSE.md). Please note in particular that the [`NOTICE.md`](./NOTICE.md) file from this repository must be available if you redistribute `hoice` in a source or binary format.
