@@ -132,16 +132,6 @@ impl<T: fmt::Display> fmt::Display for VarMap<T> {
   }
 }
 
-
-wrap_usize!{
-  #[doc = "Arity."]
-  Arity
-  #[doc = "Range over arity."]
-  range: ArityRange
-  #[doc = "Total map from Arity to something."]
-  map: ArityMap with iter: ArityMapIter
-}
-
 impl ::rsmt2::Sym2Smt<()> for VarIdx {
   fn sym_to_smt2<Writer>(
     & self, w: & mut Writer, _: & ()
@@ -151,6 +141,25 @@ impl ::rsmt2::Sym2Smt<()> for VarIdx {
       write!(w, "v_{}", self)
     }
   }
+}
+
+impl ::rsmt2::Expr2Smt<()> for VarIdx {
+  fn expr_to_smt2<Writer>(
+    & self, w: & mut Writer, _: & ()
+  ) -> SmtRes<()> where Writer: Write {
+    use ::rsmt2::Sym2Smt ;
+    self.sym_to_smt2(w, & ())
+  }
+}
+
+
+wrap_usize!{
+  #[doc = "Arity."]
+  Arity
+  #[doc = "Range over arity."]
+  range: ArityRange
+  #[doc = "Total map from Arity to something."]
+  map: ArityMap with iter: ArityMapIter
 }
 
 

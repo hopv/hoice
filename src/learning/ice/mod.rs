@@ -118,6 +118,64 @@ pub mod smt {
       )
     }
   }
+
+
+  /// Wrapper around some values and some coefficients, used by
+  /// [synthesize](../struct.IceLearner.html#method.synthezise) to assert the
+  /// constraints on its points.
+  ///
+  /// The expression it encodes is
+  ///
+  /// ```bash
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
+  /// ```
+  ///
+  /// where `[ v_1, ..., v_n ] = self.vals` and
+  /// `[ c_1, ..., c_n ] = self.coefs`.
+  pub struct ValCoefWrap<'a> {
+    /// Values.
+    pub vals: & 'a Vec<Int>,
+    /// Coefficients.
+    pub coefs: & 'a Vec<VarIdx>,
+    /// Constant.
+    pub cst: & 'static str,
+    /// Positivity of the values.
+    pub pos: bool,
+  }
+  impl<'a> ValCoefWrap<'a> {
+    /// Constructor.
+    pub fn mk(
+      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
+      cst: & 'static str, pos: bool
+    ) -> Self {
+      debug_assert!( vals.len() == coefs.len() ) ;
+      ValCoefWrap { vals, coefs, cst, pos }
+    }
+  }
+  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
+    fn expr_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      use ::rsmt2::Expr2Smt ;
+      let blah = "while writing `ValCoefWrap` as expression" ;
+      smtry_io!(
+        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
+      ) ;
+      for (val, coef) in self.vals.iter().zip( self.coefs ) {
+        use ::rsmt2::Sym2Smt ;
+        smtry_io!(blah =>
+          write!(w, " (* {} ", val) ;
+          coef.sym_to_smt2(w, & ()) ;
+          write!(w, ")")
+        )
+      }
+      smtry_io!(
+        blah => write!(w, " {}) 0)", self.cst)
+      ) ;
+      Ok(())
+    }
+  }
 }
 
 
@@ -136,13 +194,28 @@ impl Launcher {
     let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
-    let solver = solver(& mut kid, Parser).chain_err(
+    let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
+    let mut synth_kid = Kid::mk( conf.solver_conf() ).chain_err(
+      || "while spawning the teacher's synthesis solver"
+    ) ? ;
+    let synth_solver = solver(& mut synth_kid, Parser).chain_err(
+      || "while constructing the teacher's synthesis solver"
+    ) ? ;
     if let Some(log) = conf.smt_log_file("ice_learner") ? {
-      IceLearner::mk(& core, instance, data, solver.tee(log)).run()
+      let synth_log = conf.smt_log_file("ice_learner_synthesizer")?.expect(
+        "[unreachable] log mod is active"
+      ) ;
+      IceLearner::mk(
+        & core, instance, data,
+        conflict_solver.tee(log), synth_solver.tee(synth_log)
+      ).run()
     } else {
-      IceLearner::mk(& core, instance, data, solver).run()
+      IceLearner::mk(
+        & core, instance, data,
+        conflict_solver, synth_solver
+      ).run()
     }
   }
 }
@@ -169,6 +242,8 @@ pub struct IceLearner<'core, Slver> {
   pub data: Arc<Data>,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
+  /// Solver used to synthesize an hyperplane separating two points.
+  synth_solver: Slver,
   /// Learner core.
   core: & 'core LearnerCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -193,7 +268,7 @@ impl<
   /// Ice learner constructor.
   pub fn mk(
     core: & 'core LearnerCore, instance: Arc<Instance>,
-    data: Arc<Data>, solver: Slver
+    data: Arc<Data>, solver: Slver, synth_solver: Slver
   ) -> Self {
     let qualifiers = Qualifiers::mk(& * instance) ;
     let dec_mem = vec![
@@ -201,7 +276,7 @@ impl<
     ].into() ;
     let candidate = vec![ None ; instance.preds().len() ].into() ;
     IceLearner {
-      instance, qualifiers, data, solver, core,
+      instance, qualifiers, data, solver, synth_solver, core,
       finished: Vec::with_capacity(103),
       unfinished: Vec::with_capacity(103),
       classifier: HashMap::with_capacity(1003),
@@ -675,6 +750,100 @@ impl<
 
     Ok(())
   }
+
+
+  /// Synthesizes a term representing a demi-space separating two points in an
+  /// integer multidimensional space.
+  ///
+  /// Parameter `pos` indicates whether the demi-space should include `s_1`
+  /// (`pos`) or not (`! pos`).
+  ///
+  /// The two points are given as
+  /// [`HSample`s](../../common/data/type.HSample.html). These two points must
+  /// come from the same signature, *i.e.* they are samples for the same
+  /// predicate.
+  ///
+  /// # How it works
+  ///
+  /// If the two points have `n` integers in them, then the demi-space
+  /// synthesized is of the form `c_1 * x_1 + ... + c_n * x_n + c >= 0`.
+  ///
+  /// It is constructed with `self.synth_solver` in one `check-sat`.
+  ///
+  /// # Assumptions
+  ///
+  /// The two samples should be such that the vectors obtained by keeping only
+  /// their integers composants are different.
+  pub fn synthesize(
+    & mut self, s_1: & HSample, pos: bool, s_2: & HSample
+  ) -> Res<Term> {
+    use instance::Val ;
+    debug_assert!( s_1.len() == s_2.len() ) ;
+    let mut p_1 = Vec::with_capacity( s_1.len() ) ;
+    let mut p_2 = p_1.clone() ;
+    let mut coefs = Vec::with_capacity( s_1.len() ) ;
+    let mut coef: VarIdx = 0.into() ;
+
+    for val in s_1.get() {
+      if let Val::I(ref i) = * val {
+        coefs.push(coef) ;
+        p_1.push( i.clone() )
+      }
+      coef.inc()
+    }
+    for val in s_2.get() {
+      if let Val::I(ref i) = * val {
+        p_2.push( i.clone() )
+      }
+    }
+    debug_assert!( p_1.len() == p_2.len() ) ;
+    debug_assert!({
+      let mut same = true ;
+      for (v_1, v_2) in p_1.iter().zip(& p_2) {
+        same = same && (v_1 != v_2)
+      }
+      ! same
+    }) ;
+
+    let cst = "v" ;
+
+    let constraint_1 = ValCoefWrap::mk(& p_1, & coefs, cst, pos) ;
+    let constraint_2 = ValCoefWrap::mk(& p_2, & coefs, cst, ! pos) ;
+
+    self.solver.reset() ? ;
+    // Declare coefs and constant.
+    self.solver.declare_const(& cst, & Typ::Int, & ()) ? ;
+    for coef in & coefs {
+      self.solver.declare_const(coef, & Typ::Int, & ()) ?
+    }
+    self.solver.assert( & constraint_1, & () ) ? ;
+    self.solver.assert( & constraint_2, & () ) ? ;
+
+    let model = if self.solver.check_sat() ? {
+      self.solver.get_model() ?
+    } else {
+      bail!("[unreachable] could not separate points {:?} and {:?}", p_1, p_2)
+    } ;
+
+    let mut sum = Vec::with_capacity( coefs.len() ) ;
+    for (var_opt, val) in model {
+      let val = self.instance.int(val) ;
+      if let Some(var) = var_opt {
+        let var = self.instance.var(var) ;
+        sum.push(
+          self.instance.op( Op::Mul, vec![val, var] )
+        )
+      } else {
+        sum.push(val)
+      }
+    }
+    let lhs = self.instance.op( Op::Add, sum ) ;
+    let rhs = self.instance.zero() ;
+
+    Ok(
+      self.instance.ge(lhs, rhs)
+    )
+  }
 }
 
 impl<
@@ -682,6 +851,7 @@ impl<
 > HasLearnerCore for IceLearner<'core, Slver> {
   fn core(& self) -> & LearnerCore { self.core }
 }
+
 
 
 
@@ -1000,25 +1170,57 @@ impl EntropyBuilder {
 
 
 
-/// Dummy parser. Parses nothing.
+/// Can parse values (int) and idents (`VarIdx`).
+///
+/// In the ice learner, parsing is only used for synthesizing, not for
+/// conflict detection.
 pub struct Parser ;
 impl ::rsmt2::ParseSmt2 for Parser {
-  type Ident = VarIdx ;
+  type Ident = Option<VarIdx> ;
   type Value = Int ;
   type Expr = () ;
   type Proof = () ;
   type I = () ;
 
   fn parse_ident<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], VarIdx> {
-    panic!("[bug] `parse_ident` of the ICE parser should never be called")
+    & self, bytes: & 'a [u8]
+  ) -> ::nom::IResult<& 'a [u8], Option<VarIdx>> {
+    use std::str::FromStr ;
+    preceded!(
+      bytes,
+      char!('v'),
+      opt!(
+        preceded!(
+          char!('_'),
+          map!(
+            map_res!(
+              map_res!(
+                re_bytes_find!("^[0-9][0-9]*"),
+                ::std::str::from_utf8
+              ),
+              usize::from_str
+            ),
+            |n| n.into()
+          )
+        )
+      )
+    )
   }
 
   fn parse_value<'a>(
-    & self, _: & 'a [u8]
+    & self, bytes: & 'a [u8]
   ) -> ::nom::IResult<& 'a [u8], Int> {
-    panic!("[bug] `parse_value` of the ICE parser should never be called")
+    use instance::build::{ int, spc_cmt } ;
+    dbg_dmp!(bytes, alt_complete!(
+      // bytes,
+      int | do_parse!(
+        char!('(') >>
+        spc_cmt >> char!('-') >>
+        spc_cmt >> value: int >>
+        spc_cmt >> char!(')') >>
+        (- value)
+      )
+    ))
   }
 
   fn parse_expr<'a>(
