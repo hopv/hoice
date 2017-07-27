@@ -63,6 +63,16 @@ macro_rules! msg {
 }
 #[cfg( not(feature = "bench") )]
 macro_rules! msg {
+  ( debug $slf:expr => $($tt:tt)* ) => (
+    if conf.verb == Verb::Debug {
+      msg!( $slf => $($tt)* )
+    } else { true }
+  ) ;
+  ( $slf:expr => $e:expr ) => (
+    ::common::msg::HasLearnerCore::msg(
+      $slf, $e
+    )
+  ) ;
   ( $slf:expr => $($tt:tt)* ) => (
     ::common::msg::HasLearnerCore::msg(
       $slf, format!( $($tt)* )

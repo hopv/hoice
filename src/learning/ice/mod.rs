@@ -132,8 +132,8 @@ impl Launcher {
   pub fn launch(
     core: & LearnerCore, instance: Arc<Instance>, data: Arc<Data>
   ) -> Res<()> {
-    use rsmt2::{ solver, SolverConf, Kid } ;
-    let mut kid = Kid::mk( SolverConf::z3() ).chain_err(
+    use rsmt2::{ solver, Kid } ;
+    let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let solver = solver(& mut kid, Parser).chain_err(
@@ -168,7 +168,7 @@ pub struct IceLearner<'core, Slver> {
   /// Learning data.
   pub data: Arc<Data>,
   /// Solver used to check if the constraints are respected.
-  pub solver: Slver,
+  solver: Slver,
   /// Learner core.
   core: & 'core LearnerCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -180,6 +180,8 @@ pub struct IceLearner<'core, Slver> {
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,
+  /// Current candidate, cleared at the beginning of each learning phase.
+  candidate: PrdMap< Option<Term> >,
   /// Activation literal counter.
   actlit: usize,
 }
@@ -197,27 +199,34 @@ impl<
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
+    let candidate = vec![ None ; instance.preds().len() ].into() ;
     IceLearner {
       instance, qualifiers, data, solver, core,
       finished: Vec::with_capacity(103),
       unfinished: Vec::with_capacity(103),
       classifier: HashMap::with_capacity(1003),
-      dec_mem, actlit: 0,
+      dec_mem, candidate, actlit: 0,
     }
   }
 
   /// Runs the learner.
   pub fn run(mut self) -> Res<()> {
     let mut teacher_alive = true ;
+    // if_verb!{
+    //   teacher_alive = msg!{ & self => "Qualifiers:" } ;
+    //   for quals in self.qualifiers.qualifiers() {
+    //     for & (ref qual, _) in quals {
+    //       teacher_alive = msg!{ & self => "  {}", qual }
+    //     }
+    //   }
+    // }
     'learn: loop {
       if ! teacher_alive {
         bail!("teacher is dead T__T")
       }
       match self.recv() {
         Some(data) => if let Some(candidates) = self.learn(data) ? {
-          teacher_alive = self.send_candidates(
-            candidates
-          )
+          teacher_alive = self.send_cands(candidates) ?
         } else {
           bail!("can't synthesize candidates for this, sorry")
         },
@@ -226,25 +235,42 @@ impl<
     }
   }
 
-  /// Applies the information in the classifier to some data.
-  pub fn classify(& self, data: & mut CData) {
-    let mut count = 0 ;
-    for (classified, val) in & self.classifier {
-      let val = * val ;
-      let classified = data.unc.take(classified) ;
-      if let Some(sample) = classified {
-        count += 1 ;
-        if val {
-          let _ = data.pos.insert( sample ) ;
-        } else if ! val {
-          let _ = data.neg.insert( sample ) ;
-        }
-      }
-    }
-    if count != 0 {
-      println!("classified {} samples", count)
-    }
+  /// Sends some candidates.
+  ///
+  /// Also resets the solver and clears declaration memory.
+  pub fn send_cands(& mut self, candidates: Candidates) -> Res<bool> {
+    let res = self.send_candidates(
+      candidates
+    ) ;
+    // Reset and clear declaration memory.
+    self.solver.reset() ? ;
+    for set in self.dec_mem.iter_mut() {
+      set.clear()
+    } ;
+    Ok(res)
   }
+
+  // /// Applies the information in the classifier to some data.
+  // pub fn classify(& self, data: & mut CData) {
+  //   let mut count = 0 ;
+  //   for (classified, val) in & self.classifier {
+  //     let val = * val ;
+  //     let classified = data.unc.take(classified) ;
+  //     if let Some(sample) = classified {
+  //       count += 1 ;
+  //       if val {
+  //         let _ = data.pos.insert( sample ) ;
+  //       } else if ! val {
+  //         let _ = data.neg.insert( sample ) ;
+  //       }
+  //     }
+  //   }
+  //   if count != 0 {
+  //     println!("classified {} samples", count)
+  //   } else {
+  //     msg!{ self => "no new classification detected" } ;
+  //   }
+  // }
 
   /// Looks for a classifier.
   ///
@@ -260,7 +286,13 @@ impl<
     ) ? ;
 
     let prd_count = self.instance.preds().len() ;
-    let mut opt_candidates: PrdMap<_> = vec![ None ; prd_count ].into() ;
+    debug_assert!{{
+      let mut okay = true ;
+      for term_opt in self.candidate.iter_mut() {
+        okay = okay && term_opt.is_none() ;
+      }
+      okay
+    }}
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     let mut predicates = Vec::with_capacity(prd_count) ;
 
@@ -276,37 +308,52 @@ impl<
     predicates.sort_by(
       |
         & (
-          unclassed_1, classed_1, _
+          unclassed_1, classed_1, pred_1
         ), & (
-          unclassed_2, classed_2, _
+          unclassed_2, classed_2, pred_2
         )
       | {
         use std::cmp::Ordering::* ;
-        match (unclassed_1, unclassed_2) {
-          (0, 0) => classed_1.cmp(& classed_2).reverse(),
-          (0, _) => Less,
-          (_, 0) => Greater,
-          (_, _) => match classed_1.cmp(& classed_2).reverse() {
-            Equal => unclassed_1.cmp(& unclassed_2),
-            res => res,
-          },
+        if self.instance.term_of(pred_1).is_some() {
+          Less
+        } else if self.instance.term_of(pred_2).is_some() {
+          Greater
+        } else {
+          match (unclassed_1, unclassed_2) {
+            (0, 0) => classed_1.cmp(& classed_2).reverse(),
+            (0, _) => Less,
+            (_, 0) => Greater,
+            (_, _) => match classed_1.cmp(& classed_2).reverse() {
+              Equal => unclassed_1.cmp(& unclassed_2),
+              res => res,
+            },
+          }
         }
       }
     ) ;
 
-    for (unc, cla, pred) in predicates {
-      msg!(self => "\np_{}: {} unclassified, {} classified", pred, unc, cla) ;
+    'pred_iter: for (unc, cla, pred) in predicates {
+      msg!(
+        self => "{}: {} unclassified, {} classified",
+                self.instance[pred], unc, cla
+      ) ;
       let data = self.data.data_of(pred) ? ;
+      if let Some(term) = self.instance.term_of(pred) {
+        self.candidate[pred] = Some( term.clone() ) ;
+        continue 'pred_iter
+      }
       if let Some(term) = self.pred_learn(pred, data) ? {
-        opt_candidates[pred] = Some(term)
+        self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
       }
     }
     let mut candidates = PrdMap::with_capacity(prd_count) ;
-    for cand in opt_candidates {
-      if let Some(cand) = cand {
-        candidates.push(cand)
+    for none_soon in self.candidate.iter_mut() {
+      let mut term_opt = None ;
+      ::std::mem::swap(none_soon, & mut term_opt) ;
+      if let Some(term) = term_opt {
+        candidates.push(term)
       } else {
         bail!(
           "[bug] done generating candidates but some of them are still `None`"
@@ -321,15 +368,17 @@ impl<
   /// qualifiers. Returns `None` iff `unfinished` was empty meaning the
   /// learning process is over.
   pub fn backtrack(& mut self) -> Option<(Branch, CData)> {
+    msg!{ self => "backtracking..." } ;
     // Backtracking or exit loop.
-    if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
+    if let Some( (nu_branch, nu_data) ) = self.unfinished.pop() {
       // Update blacklisted qualifiers.
       self.qualifiers.clear_blacklist() ;
       for & (ref t, _) in & nu_branch {
         self.qualifiers.blacklist(t)
       }
       // Update data, some previously unclassified data may be classified now.
-      self.classify(& mut nu_data) ;
+      // (cannot happen currently)
+      // self.classify(& mut nu_data) ;
       Some( (nu_branch, nu_data) )
     } else {
       None
@@ -345,7 +394,8 @@ impl<
     self.classifier.clear() ;
 
     msg!(
-      self => "working on predicate {}", self.instance[pred]
+      self => "  working on predicate {} (pos: {}, neg: {}, unc: {}",
+      self.instance[pred], data.pos.len(), data.neg.len(), data.unc.len()
     ) ;
 
     let mut branch = Vec::with_capacity(17) ;
@@ -360,7 +410,7 @@ impl<
       ).chain_err(|| "while checking possibility of assuming positive") ? {
         msg!(
           self =>
-            "no more negative data, is_legal check ok\n\
+            "  no more negative data, is_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc.len()
         ) ;
         for unc in data.unc {
@@ -391,7 +441,7 @@ impl<
       ).chain_err(|| "while checking possibility of assuming negative") ? {
         msg!(
           self =>
-            "no more positive data, is_legal check ok\n\
+            "  no more positive data, is_legal check ok\n  \
             forcing {} unclassifieds negative...", data.unc.len()
         ) ;
         for unc in data.unc {
@@ -422,7 +472,15 @@ impl<
         let mut maybe_qual = None ;
 
         'search_qual: for (qual, values) in self.qualifiers.of(pred) {
-          if let Some(gain) = data.gain(pred, & self.data, & values) ? {
+          msg!{ debug self => "    {}:", qual } ;
+          if let Some(
+            (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc))
+          ) = data.gain(pred, & self.data, & values) ? {
+            msg!{
+              debug self =>
+                "    gain is {} ({}, {}, {} / {}, {}, {})",
+                gain, q_pos, q_neg, q_unc, nq_pos, nq_neg, nq_unc
+            } ;
             let better = if let Some( (old_gain, _, _) ) = maybe_qual {
               old_gain < gain
             } else { true } ;
@@ -430,6 +488,12 @@ impl<
               maybe_qual = Some( (gain, qual, values) )
             }
             if gain == 1. { break 'search_qual }
+          } else {
+            msg!{
+              debug self =>
+                "    does not split anything..."
+            } ;
+            ()
           }
         }
 
@@ -437,13 +501,30 @@ impl<
           let (q_data, nq_data) = data.split(values) ;
           (qual.clone(), q_data, nq_data, gain)
         } else {
+          if_verb!{
+            let mut msg = "\ncould not split remaining data:\n".to_string() ;
+            msg.push_str("pos (") ;
+            for pos in & data.pos {
+              msg.push_str( & format!("\n    {}", pos) )
+            }
+            msg.push_str("\n) neg (") ;
+            for neg in & data.neg {
+              msg.push_str( & format!("\n    {}", neg) )
+            }
+            msg.push_str("\n) unc (") ;
+            for unc in & data.unc {
+              msg.push_str( & format!("\n    {}", unc) )
+            }
+            msg.push_str(")") ;
+            msg!{ self => msg } ;
+          }
           return Ok(None)
         }
       } ;
       
       msg!(
         self =>
-          "using qualifier {} | gain: {}, pos: ({},{},{}), neg: ({},{},{})",
+          "  using qualifier {} | gain: {}, pos: ({},{},{}), neg: ({},{},{})",
           qual.string_do(
             & self.instance[pred].sig.index_iter().map(
               |(idx, typ)| ::instance::info::VarInfo {
@@ -527,16 +608,12 @@ impl<
 
   /// Sets the solver to check that constraints are respected.
   ///
-  /// - resets the solver
+  /// - **does not** reset the solver or clean declaration memory (must be
+  ///   done before sending previous candidates)
   /// - **defines** pos (neg) data as `true` (`false`)
   /// - **declares** samples that neither pos nor neg
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<()> {
-    // Reset and clear declaration memory.
-    self.solver.reset() ? ;
-    for set in self.dec_mem.iter_mut() {
-      set.clear()
-    }
     self.actlit = 0 ;
     
     // Dummy arguments used in the `define_fun` for pos (neg) data.
@@ -558,7 +635,14 @@ impl<
     for (pred, set) in self.data.neg.index_iter() {
       for sample in set.read().map_err(corrupted_err)?.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
-        debug_assert!(is_new) ;
+        if ! is_new {
+          bail!(
+            "{} found:\n\
+            predicate {} must be {} for inputs {}",
+            conf.bad("contradiction"), self.instance[pred],
+            conf.emph("true and false"), sample
+          )
+        }
         self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "false", & ()
         ) ?
@@ -609,6 +693,10 @@ impl<
 pub type Branch = Vec<(Term, bool)> ;
 
 /// Projected data to classify.
+///
+/// # TO DO
+///
+/// - use vectors instead of hashsets here
 pub struct CData {
   /// Positive samples.
   pub pos: HConSet< Args >,
@@ -687,7 +775,7 @@ impl CData {
   /// Modified gain, uses `entropy`.
   pub fn gain(
     & self, pred: PrdIdx, data: & Data, qual: & QualValues
-  ) -> Res< Option<f64> > {
+  ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
       self.pos.len() + self.neg.len() + self.unc.len()
@@ -754,7 +842,7 @@ impl CData {
     // println!("gain: {}", gain) ;
     // println!("") ;
 
-    Ok( Some(gain) )
+    Ok( Some( (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc)) ) )
   }
 
   /// Splits the data given some qualifier. First is the data for which the

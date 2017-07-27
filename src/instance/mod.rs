@@ -35,7 +35,6 @@ impl Typ {
   }
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
-    use num::Zero ;
     match * self {
       Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
@@ -250,6 +249,25 @@ impl RTerm {
   pub fn int_val(& self) -> Option<Int> {
     if let RTerm::Int(ref i) = * self { Some( i.clone() ) } else { None }
   }
+
+  /// The highest variable index appearing in the term.
+  pub fn highest_var(& self) -> Option<VarIdx> {
+    let mut to_do = vec![ self ] ;
+    let mut max = None ;
+    while let Some(term) = to_do.pop() {
+      match * term {
+        RTerm::Var(i) => max = Some(
+          ::std::cmp::max( i, max.unwrap_or(0.into()) )
+        ),
+        RTerm::Int(_) => (),
+        RTerm::Bool(_) => (),
+        RTerm::App{ ref args, .. } => for arg in args {
+          to_do.push(arg)
+        },
+      }
+    }
+    max
+  }
 }
 impl_fmt!{
   RTerm(self, fmt) {
@@ -263,6 +281,19 @@ impl_fmt!{
     write!(fmt, "{}", s)
   }
 }
+
+// impl<'a, WriteVar> ::rsmt2::Expr2Smt<WriteVar> for SWrap<'a>
+// where WriteVar: Fn(VarIdx) -> & Val {
+//   fn expr_to_smt2<Writer: Write>(
+//     & self, w: & mut Writer, _: & ()
+//   ) -> SmtRes<()> {
+//     smt_cast_io!(
+//       "writing sample as expression" => write!(
+//         w, "|p_{} {}|", self.0, self.1.uid()
+//       )
+//     )
+//   }
+// }
 
 
 
@@ -480,6 +511,8 @@ pub struct Instance {
   consts: HConSet<RTerm>,
   /// Predicates.
   preds: PrdMap<PrdInfo>,
+  /// Predicates for which a suitable term has been found.
+  preds_term: PrdMap< Option<Term> >,
   /// Max arity of the predicates.
   pub max_pred_arity: Arity,
   /// Clauses.
@@ -490,12 +523,13 @@ impl Instance {
   pub fn mk(
     term_capa: usize, clauses_capa: usize, pred_capa: usize
   ) -> Instance {
+    let preds_term = vec![ None ; pred_capa ].into() ;
     let mut instance = Instance {
       factory: RwLock::new(
         HashConsign::with_capacity(term_capa)
       ),
       consts: HConSet::with_capacity(103),
-      preds: PrdMap::with_capacity(pred_capa),
+      preds: PrdMap::with_capacity(pred_capa), preds_term,
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
     } ;
@@ -504,6 +538,12 @@ impl Instance {
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
+  }
+
+
+  /// Returns the term we already know works for a predicate, if any.
+  pub fn term_of(& self, pred: PrdIdx) -> Option<& Term> {
+    self.preds_term[pred].as_ref()
   }
 
   /// Set of int constants **appearing in the predicates**. If more constants
@@ -549,12 +589,10 @@ impl Instance {
   }
   /// Creates the constant `0`.
   pub fn zero(& self) -> Term {
-    use num::Zero ;
     self.int( Int::zero() )
   }
   /// Creates the constant `1`.
   pub fn one(& self) -> Term {
-    use num::One ;
     self.int( Int::one() )
   }
   /// Creates a boolean.
@@ -603,7 +641,7 @@ impl Instance {
       let mut antecedents = Vec::with_capacity( clause.lhs().len() ) ;
       for tterm in clause.lhs() {
         match * tterm {
-          TTerm::P { pred, ref args } => {
+          TTerm::P { pred, ref args } => if self.preds_term[pred].is_none() {
             let mut values = VarMap::with_capacity( args.len() ) ;
             for arg in args {
               values.push(
@@ -738,7 +776,6 @@ impl Op {
   pub fn normalize(
     self, instance: & Instance, mut args: Vec<Term>
   ) -> Term {
-    use num::{ Zero, One } ;
     let (op, args) = match self {
       Op::And => if args.is_empty() {
         return instance.bool(false)

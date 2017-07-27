@@ -2,7 +2,7 @@
 
 use common::* ;
 use instance::* ;
-use common::data::{ HSample, LearningData, Sample, Constraint } ;
+use common::data::{ Data, HSample, LearningData, Sample, Constraint } ;
 
 
 #[doc = r#"Stores the (truth) value of a qualifier on some samples.
@@ -159,6 +159,12 @@ impl Qualifiers {
       blacklist: HConSet::with_capacity(107),
     }
   }
+
+  /// Accessor to the qualifiers.
+  pub fn qualifiers(& self) -> & ArityMap< Vec< (Term, QualValues) > > {
+    & self.arity_map
+  }
+
   /// Qualifiers for a predicate.
   pub fn of<'a>(& 'a self, pred: PrdIdx) -> QualIter<'a> {
     // for (arity, quals) in self.arity_map.index_iter() {
@@ -230,6 +236,43 @@ impl Qualifiers {
         self.register_sample(pred, args) ?
       }
     }
+    Ok(())
+  }
+
+
+  /// Adds a qualifier.
+  ///
+  /// The data is necessary to evaluate the qualifier and populate its
+  /// values.
+  pub fn add_qual(& mut self, qual: Term, data: & Data) -> Res<()> {
+    let arity: Arity = if let Some(max_var) = qual.highest_var() {
+      (* max_var).into()
+    } else {
+      bail!("[bug] trying to add constant qualifier")
+    } ;
+    let values = data.samples_fold(
+      QualValues::mk(), |mut values, sample| {
+        if sample.len() >= * arity {
+          match qual.bool_eval(& * sample) {
+            Ok( Some(b) ) => values.add(sample, b),
+            Ok( None ) => panic!(
+              "incomplete model, cannot evaluate qualifier"
+            ),
+            Err(e) => panic!(
+              "[bug] error while evaluating qualifier: {}", e
+            ),
+          }
+        }
+        values
+      }
+    ) ? ;
+    debug_assert!({
+      for & (ref q, _) in self.arity_map[arity].iter() {
+        assert!(q != & qual)
+      }
+      true
+    }) ;
+    self.arity_map[arity].push( (qual, values) ) ;
     Ok(())
   }
 }

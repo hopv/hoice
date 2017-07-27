@@ -10,6 +10,8 @@ pub use mylib::safe::int::CanNew ;
 
 pub use rsmt2::errors::Res as SmtRes ;
 
+pub use num::{ Zero, One, Signed } ;
+
 use ansi::{ Style, Colour } ;
 
 pub use errors::* ;
@@ -29,10 +31,44 @@ lazy_static!{
 #[macro_export]
 #[cfg(not (feature = "bench") )]
 macro_rules! if_not_bench {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($then)*
+  ) ;
   ($($blah:tt)*) => ($($blah)*) ;
 }
 #[cfg(feature = "bench")]
 macro_rules! if_not_bench {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($else)*
+  ) ;
+  ($($blah:tt)*) => () ;
+}
+/// Does something if in verbose mode.
+#[macro_export]
+#[cfg(not (feature = "bench") )]
+macro_rules! if_verb {
+  ($($blah:tt)*) => (
+    if conf.verbose() {
+      $($blah)*
+    }
+  ) ;
+}
+#[cfg(feature = "bench")]
+macro_rules! if_verb {
+  ($($blah:tt)*) => () ;
+}
+/// Does something if in debug mode.
+#[macro_export]
+#[cfg(not (feature = "bench") )]
+macro_rules! if_debug {
+  ($($blah:tt)*) => (
+    if conf.debug() {
+      $($blah)*
+    }
+  ) ;
+}
+#[cfg(feature = "bench")]
+macro_rules! if_debug {
   ($($blah:tt)*) => () ;
 }
 
@@ -208,6 +244,7 @@ impl Styles {
 
 
 /// Verbose level.
+#[derive(PartialEq, Eq, Debug)]
 pub enum Verb {
   /// Quiet.
   Quiet,
@@ -245,6 +282,15 @@ impl Verb {
       Verb::Quiet => ::log::LogLevelFilter::Error,
     }
   }
+
+  /// True iff verbose or debug.
+  pub fn verbose(& self) -> bool {
+    * self != Verb::Quiet
+  }
+  /// True iff debug.
+  pub fn debug(& self) -> bool {
+    * self == Verb::Debug
+  }
 }
 
 
@@ -254,6 +300,7 @@ pub struct Conf {
   pub smt_log: bool,
   pub out_dir: String,
   pub smt_learn: bool,
+  pub z3_cmd: String,
   pub step: bool,
   pub verb: Verb,
   styles: Styles,
@@ -264,12 +311,23 @@ impl ColorExt for Conf {
 impl Conf {
   /// Regular constructor.
   pub fn mk(
-    file: Option<String>, smt_log: bool, out_dir: String, step: bool,
-    smt_learn: bool, verb: Verb, color: bool
+    file: Option<String>, smt_log: bool, z3_cmd: String, out_dir: String,
+    step: bool, smt_learn: bool,
+    verb: Verb, color: bool
   ) -> Self {
     Conf {
-      file, smt_log, out_dir, step, smt_learn, verb, styles: Styles::mk(color)
+      file, smt_log, out_dir, step, smt_learn, z3_cmd,
+      verb, styles: Styles::mk(color)
     }
+  }
+
+  /// True iff verbose or debug.
+  pub fn verbose(& self) -> bool {
+    self.verb.verbose()
+  }
+  /// True iff debug.
+  pub fn debug(& self) -> bool {
+    self.verb.debug()
   }
 
   /// Initializes stuff.
@@ -302,6 +360,11 @@ impl Conf {
     }
   }
 
+  /// Solver conf.
+  pub fn solver_conf(& self) -> ::rsmt2::SolverConf {
+    ::rsmt2::SolverConf::z3().cmd( self.z3_cmd.clone() )
+  }
+
 
   /// CLAP constructor.
   pub fn clap() -> Self {
@@ -320,13 +383,13 @@ impl Conf {
 
       Arg::with_name("verb").short("-v").help(
         "verbose output"
-      ).takes_value(false)
+      ).takes_value(false).multiple(true)
 
     ).arg(
 
       Arg::with_name("quiet").short("-q").help(
         "quiet output"
-      ).takes_value(false)
+      ).takes_value(false).multiple(true)
 
     ).arg(
 
@@ -371,6 +434,12 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("z3_cmd").long("--z3").help(
+        "sets the command used to call z3"
+      ).default_value("z3").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("out_dir").long("--out_dir").short("-o").help(
         "sets the output directory (used only by smt logging currently)"
       ).default_value(".").takes_value(true).number_of_values(1)
@@ -398,6 +467,9 @@ impl Conf {
     ).expect(
       "unreachable(smt_log): default is provided and input validated in clap"
     ) ;
+    let z3_cmd = matches.value_of("z3_cmd").expect(
+      "unreachable(out_dir): default is provided"
+    ) ;
     let out_dir = matches.value_of("out_dir").expect(
       "unreachable(out_dir): default is provided"
     ) ;
@@ -411,7 +483,10 @@ impl Conf {
       verb.dec()
     }
 
-    Conf::mk(file, smt_log, out_dir.into(), step, smt_learn, verb, color)
+    Conf::mk(
+      file, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
+      verb, color
+    )
   }
 }
 

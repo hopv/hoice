@@ -355,6 +355,10 @@ impl InstBuild {
       alt_complete!(
         map!(
           int, |n| {
+            let cst = self.instance.int(n.clone() + 1) ;
+            let _ = self.instance.consts.insert( cst.clone() ) ;
+            let cst = self.instance.int(n.clone() - 1) ;
+            let _ = self.instance.consts.insert( cst.clone() ) ;
             let cst = self.instance.int(n) ;
             let _ = self.instance.consts.insert( cst.clone() ) ;
             cst
@@ -618,5 +622,12 @@ impl InstBuild {
         None
       },
     }
+  }
+
+
+
+  /// Reduces the instance.
+  pub fn reduce(& mut self) -> Res<()> {
+    Ok(())
   }
 }

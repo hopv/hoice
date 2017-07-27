@@ -155,6 +155,14 @@ impl Data {
     }
   }
 
+  /// Performs an action on all samples.
+  pub fn samples_fold<T, F>(& self, init: T, f: F) -> Res<T>
+  where F: Fn(T, HSample) -> T {
+    Ok(
+      self.samples.read().map_err(corrupted_err)?.fold(f, init)
+    )
+  }
+
   /// The projected data for some predicate.
   pub fn data_of(& self, pred: PrdIdx) -> Res<::learning::ice::CData> {
     let pred_map = self.map[pred].read().map_err(corrupted_err)? ;
@@ -211,10 +219,6 @@ impl Data {
   }
 
   /// Adds a positive example. Simplifies constraints containing that sample.
-  ///
-  /// # TO DO
-  ///
-  /// - look at the clauses that became unit and propagate
   pub fn add_pos(
     & self, pred: PrdIdx, args: Args
   ) -> Res<Sample> {
@@ -324,10 +328,6 @@ impl Data {
   }
 
   /// Adds a negative example. Simplifies constraints containing that sample.
-  ///
-  /// # TO DO
-  ///
-  /// - look at the clauses that became unit and propagate
   pub fn add_neg(
     & self, pred: PrdIdx, args: Args
   ) -> Res<Sample> {
@@ -428,10 +428,6 @@ impl Data {
   }
 
   /// Adds a constraint. Propagates positive and negative samples.
-  ///
-  /// # TO DO
-  ///
-  /// - detect unit clauses and propagate right away
   pub fn add_cstr(
     & self,
     lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >

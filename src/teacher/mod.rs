@@ -7,7 +7,7 @@
 
 "#]
 
-use rsmt2::{ ParseSmt2, SolverConf, Kid } ;
+use rsmt2::{ ParseSmt2, Kid } ;
 
 use nom::IResult ;
 
@@ -45,8 +45,8 @@ macro_rules! log_debug {
 pub fn start_class(instance: Instance) -> Res<()> {
   use rsmt2::solver ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::mk( SolverConf::z3() ).chain_err(
-    || "while spawning the teacher's solver"
+  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+    || ErrorKind::Z3SpawnError
   ) ? ;
   let res = {
     let solver = solver(& mut kid, Parser).chain_err(
@@ -224,16 +224,24 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   pub fn get_candidates(& self) -> Option<(LrnIdx, Candidates)> {
     'recv: loop {
       match self.from_learners.recv() {
-        Ok( (_idx, FromLearners::Msg(s)) ) => for _line in s.lines() {
-          log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+        Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
+          for _line in _s.lines() {
+            log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+          }
         },
-        Ok( (idx, FromLearners::Err(e)) ) => print_err(
-          Error::with_chain::<Error, ErrorKind>(
-            format!(
+        Ok( (idx, FromLearners::Err(e)) ) => {
+          let err: Res<()> = Err(e) ;
+          let err: Res<()> = err.chain_err(
+            || format!(
               "from {} learner", conf.emph( & self.learners[idx].1 )
-            ).into(), e.into()
-          )
-        ),
+            )
+          ) ;
+          // println!("receiving:") ;
+          // for err in e.iter() {
+          //   println!("{}", err)
+          // }
+          print_err( err.unwrap_err() )
+        },
         Ok( (idx, FromLearners::Cands(cands)) ) => return Some( (idx, cands) ),
         Err(_) => return None
       }
