@@ -98,7 +98,12 @@ for arity `2`, and so on.
 
 A list of blacklisted qualifiers is also maintained so that one can block
 qualifiers that have already been chosen. **Do not forget** to clear the
-blacklist when relevant."#]
+blacklist when relevant.
+
+# Warning
+
+Sharing `arity_map` (behind a lock) is logically unsafe, as it breaks a
+non-sharing assumption in `add_qual`."#]
 pub struct Qualifiers {
   /// Maps arity to qualifiers. Only accessible *via* the iterator.
   ///
@@ -244,7 +249,9 @@ impl Qualifiers {
   ///
   /// The data is necessary to evaluate the qualifier and populate its
   /// values.
-  pub fn add_qual(& mut self, qual: Term, data: & Data) -> Res<()> {
+  pub fn add_qual<'a>(
+    & 'a mut self, qual: Term, data: & Data
+  ) -> Res<& 'a QualValues> {
     let arity: Arity = if let Some(max_var) = qual.highest_var() {
       (* max_var).into()
     } else {
@@ -272,8 +279,17 @@ impl Qualifiers {
       }
       true
     }) ;
+    
+    // The two operations below make sense iff `arity_map` is not shared.
     self.arity_map[arity].push( (qual, values) ) ;
-    Ok(())
+    // If it was shared, someone could insert between these two lines.
+    let & (
+      _, ref last_values
+    ) = self.arity_map[arity].last().unwrap() ;
+    //                               ^^^^^^^^|
+    // Definitely safe right after the push -|
+
+    Ok(last_values)
   }
 }
 

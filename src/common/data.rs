@@ -14,6 +14,9 @@ use instance::info::* ;
 pub type HSample = HConsed< Args > ;
 
 
+/// Vector of samples.
+pub type HSamples = Vec<HSample> ;
+
 
 /// A sample is some values for a predicate.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -165,24 +168,26 @@ impl Data {
 
   /// The projected data for some predicate.
   pub fn data_of(& self, pred: PrdIdx) -> Res<::learning::ice::CData> {
-    let pred_map = self.map[pred].read().map_err(corrupted_err)? ;
-    let mut unc = HConSet::with_capacity( pred_map.len() ) ;
-    for (sample, set) in pred_map.iter() {
+    let unc_set = self.map[pred].read().map_err(corrupted_err) ? ;
+    let pos_set = self.pos[pred].read().map_err(corrupted_err) ? ;
+    let neg_set = self.neg[pred].read().map_err(corrupted_err) ? ;
+    let (mut pos, mut neg, mut unc) = (
+      Vec::with_capacity( pos_set.len() ),
+      Vec::with_capacity( neg_set.len() ),
+      Vec::with_capacity( unc_set.len() )
+    ) ;
+    for sample in pos_set.iter() {
+      pos.push( sample.clone() )
+    }
+    for sample in neg_set.iter() {
+      neg.push( sample.clone() )
+    }
+    for (sample, set) in unc_set.iter() {
       if ! set.is_empty() {
-        let _ = unc.insert( sample.clone() ) ;
+        unc.push( sample.clone() )
       }
     }
-    Ok(
-      ::learning::ice::CData {
-        pos: self.pos[pred].read().map_err(
-          corrupted_err
-        )?.clone(),
-        neg: self.neg[pred].read().map_err(
-          corrupted_err
-        )?.clone(),
-        unc,
-      }
-    )
+    Ok( ::learning::ice::CData { pos, neg, unc } )
   }
 
   // /// Temporary function adding learning data directly.

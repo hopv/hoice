@@ -77,7 +77,7 @@ pub mod smt {
     /// Predicate.
     pub pred: PrdIdx,
     /// Samples.
-    pub unc: & 'a HConSet< Args >,
+    pub unc: & 'a HSamples,
     /// Indicates whether we're assuming the samples positive or negative.
     pub pos: bool,
   }
@@ -157,7 +157,6 @@ pub mod smt {
     fn expr_to_smt2<Writer>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> where Writer: Write {
-      use ::rsmt2::Expr2Smt ;
       let blah = "while writing `ValCoefWrap` as expression" ;
       smtry_io!(
         blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
@@ -481,7 +480,7 @@ impl<
       // Checking whether we can close this branch.
 
       if data.neg.is_empty() && self.is_legal(
-        pred, & data.unc, true
+        true, pred, & data.unc, true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
         msg!(
           self =>
@@ -512,7 +511,7 @@ impl<
       }
 
       if data.pos.is_empty() && self.is_legal(
-        pred, & data.unc, false
+        true, pred, & data.unc, false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
         msg!(
           self =>
@@ -542,79 +541,7 @@ impl<
 
 
       // Could not close the branch, look for a qualifier.
-
-      let (qual, q_data, nq_data, _gain) = {
-        let mut maybe_qual = None ;
-
-        'search_qual: for (qual, values) in self.qualifiers.of(pred) {
-          msg!{ debug self => "    {}:", qual } ;
-          if let Some(
-            (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc))
-          ) = data.gain(pred, & self.data, & values) ? {
-            msg!{
-              debug self =>
-                "    gain is {} ({}, {}, {} / {}, {}, {})",
-                gain, q_pos, q_neg, q_unc, nq_pos, nq_neg, nq_unc
-            } ;
-            let better = if let Some( (old_gain, _, _) ) = maybe_qual {
-              old_gain < gain
-            } else { true } ;
-            if better {
-              maybe_qual = Some( (gain, qual, values) )
-            }
-            if gain == 1. { break 'search_qual }
-          } else {
-            msg!{
-              debug self =>
-                "    does not split anything..."
-            } ;
-            ()
-          }
-        }
-
-        if let Some( (gain, qual, values) ) = maybe_qual {
-          let (q_data, nq_data) = data.split(values) ;
-          (qual.clone(), q_data, nq_data, gain)
-        } else {
-          if_verb!{
-            let mut msg = "\ncould not split remaining data:\n".to_string() ;
-            msg.push_str("pos (") ;
-            for pos in & data.pos {
-              msg.push_str( & format!("\n    {}", pos) )
-            }
-            msg.push_str("\n) neg (") ;
-            for neg in & data.neg {
-              msg.push_str( & format!("\n    {}", neg) )
-            }
-            msg.push_str("\n) unc (") ;
-            for unc in & data.unc {
-              msg.push_str( & format!("\n    {}", unc) )
-            }
-            msg.push_str(")") ;
-            msg!{ self => msg } ;
-          }
-          return Ok(None)
-        }
-      } ;
-      
-      msg!(
-        self =>
-          "  using qualifier {} | gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-          qual.string_do(
-            & self.instance[pred].sig.index_iter().map(
-              |(idx, typ)| ::instance::info::VarInfo {
-                name: format!("v_{}", idx), typ: * typ, idx
-              }
-            ).collect(), |s| s.to_string()
-          ).unwrap(), _gain,
-          q_data.pos.len(),
-          q_data.neg.len(),
-          q_data.unc.len(),
-          nq_data.pos.len(),
-          nq_data.neg.len(),
-          nq_data.unc.len(),
-      ) ;
-
+      let (qual, q_data, nq_data) = self.get_qualifier(pred, data) ? ;
       self.qualifiers.blacklist(& qual) ;
 
       // Remember the branch where qualifier is false.
@@ -647,15 +574,146 @@ impl<
     )
   }
 
+  /// Looks for a qualifier. Requires a mutable `self` in case it needs to
+  /// synthesize a qualifier.
+  ///
+  /// Does **not** blacklist the qualifier it returns.
+  pub fn get_qualifier(
+    & mut self, pred: PrdIdx, data: CData
+  ) -> Res< (Term, CData, CData) > {
+
+    { // Try using an existing qualifier. Early return if one is found.
+      let mut maybe_qual = None ;
+
+      'search_qual: for (qual, values) in self.qualifiers.of(pred) {
+        msg!{ debug self => "    {}:", qual } ;
+        if let Some(
+          (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc))
+        ) = data.gain(pred, & self.data, & values) ? {
+          msg!{
+            debug self =>
+              "    gain is {} ({}, {}, {} / {}, {}, {})",
+              gain, q_pos, q_neg, q_unc, nq_pos, nq_neg, nq_unc
+          } ;
+          let better = if let Some( (old_gain, _, _) ) = maybe_qual {
+            old_gain < gain
+          } else { true } ;
+          if better {
+            maybe_qual = Some( (gain, qual, values) )
+          }
+          if gain == 1. { break 'search_qual }
+        } else {
+          msg!{
+            debug self =>
+              "    does not split anything..."
+          } ;
+          ()
+        }
+      }
+
+      if let Some( (_gain, qual, values) ) = maybe_qual {
+        let (q_data, nq_data) = data.split(values) ;
+
+        msg!(
+          self =>
+            "  using qualifier {} | \
+            gain: {}, pos: ({},{},{}), neg: ({},{},{})",
+            qual.string_do(
+              & self.instance[pred].sig.index_iter().map(
+                |(idx, typ)| ::instance::info::VarInfo {
+                  name: format!("v_{}", idx), typ: * typ, idx
+                }
+              ).collect(), |s| s.to_string()
+            ).unwrap(),
+            _gain,
+            q_data.pos.len(),
+            q_data.neg.len(),
+            q_data.unc.len(),
+            nq_data.pos.len(),
+            nq_data.neg.len(),
+            nq_data.unc.len(),
+        ) ;
+        return Ok( (qual.clone(), q_data, nq_data) )
+      }
+    }
+
+    // Reachable only if none of our qualifiers can split the data.
+
+    if_verb!{
+      let mut msg = "\ncould not split remaining data:\n".to_string() ;
+      msg.push_str("pos (") ;
+      for pos in & data.pos {
+        msg.push_str( & format!("\n    {}", pos) )
+      }
+      msg.push_str("\n) neg (") ;
+      for neg in & data.neg {
+        msg.push_str( & format!("\n    {}", neg) )
+      }
+      msg.push_str("\n) unc (") ;
+      for unc in & data.unc {
+        msg.push_str( & format!("\n    {}", unc) )
+      }
+      msg.push_str(")") ;
+      msg!{ self => msg } ;
+    }
+    bail!( "qualifier synthesis is untested and offline for now" ) ;
+
+    // Synthesize qualifier separating the data.
+    let qual = match (
+      data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
+    ) {
+      (false, false, _) => Self::synthesize(
+        & mut self.synth_solver, & * self.instance, & data.pos[0], true, & data.neg[0]
+      ) ?,
+      (false, _, false) => Self::synthesize(
+        & mut self.synth_solver, & * self.instance, & data.pos[0], true, & data.unc[0]
+      ) ?,
+      (true, false, false) => Self::synthesize(
+        & mut self.synth_solver, & * self.instance, & data.neg[0], false, & data.unc[0]
+      ) ?,
+      (true, true, false) if data.unc.len() > 1 => Self::synthesize(
+        & mut self.synth_solver, & * self.instance, & data.unc[0], true, & data.unc[1]
+      ) ?,
+      _ => bail!(
+        "[unreachable] illegal status reached on predicate {}:\n\
+        cannot synthesize candidate for data\n\
+        pos: {:?}\n\
+        neg: {:?}\n\
+        unc: {:?}\n",
+        self.instance[pred], data.pos, data.neg, data.unc
+      ),
+    } ;
+
+    // Insert new qualifier.
+    let (q_data, nq_data) = {
+      let values = self.qualifiers.add_qual(qual.clone(), & self.data) ? ;
+      data.split(values)
+    } ;
+    msg!(
+      self =>
+        "  using synthetic qualifier {} | \
+        pos: ({},{},{}), neg: ({},{},{})",
+        qual,
+        q_data.pos.len(),
+        q_data.neg.len(),
+        q_data.unc.len(),
+        nq_data.pos.len(),
+        nq_data.neg.len(),
+        nq_data.unc.len(),
+    ) ;
+    Ok( (qual, q_data, nq_data) )
+  }
+
 
   /// Checks whether assuming some data as positive (if `pos` is true,
   /// negative otherwise) is legal.
   ///
-  /// **NB**: assuming the data positive / negative is legal, it will be
-  /// forced to be positive / negative in the solver automatically. Otherwise,
-  /// the actlit is deactivated (`assert (not <actlit>)`).
+  /// **NB**: if assuming the data positive / negative is legal and `force` is
+  /// true, the data will be forced to be positive / negative in the solver
+  /// automatically. Otherwise, the actlit is deactivated
+  /// (`assert (not <actlit>)`).
   pub fn is_legal(
-    & mut self, pred: PrdIdx, unc: & HConSet< Args >, pos: bool
+    & mut self, force: bool, pred: PrdIdx, unc: & HSamples, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
 
@@ -670,12 +728,16 @@ impl<
     let actlits = [actlit] ;
 
     if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+      if force {
+        self.solver.assert( & actlits[0].as_ident(), & () ) ?
+      }
       Ok(true)
     } else {
-      self.solver.assert(
-        & format!("(not {})", actlits[0].as_ident()), & ()
-      ) ? ;
+      if force {
+        self.solver.assert(
+          & format!("(not {})", actlits[0].as_ident()), & ()
+        ) ?
+      }
       Ok(false)
     }
   }
@@ -756,7 +818,9 @@ impl<
   /// integer multidimensional space.
   ///
   /// Parameter `pos` indicates whether the demi-space should include `s_1`
-  /// (`pos`) or not (`! pos`).
+  /// (`pos`) or not (`! pos`). The `solver` parameter should be the
+  /// `synth_solver`. It is passed explicitely here (for now) for ownership
+  /// reasons.
   ///
   /// The two points are given as
   /// [`HSample`s](../../common/data/type.HSample.html). These two points must
@@ -768,14 +832,20 @@ impl<
   /// If the two points have `n` integers in them, then the demi-space
   /// synthesized is of the form `c_1 * x_1 + ... + c_n * x_n + c >= 0`.
   ///
-  /// It is constructed with `self.synth_solver` in one `check-sat`.
+  /// It is constructed with the `synth_solver` in one `check-sat`.
   ///
   /// # Assumptions
   ///
   /// The two samples should be such that the vectors obtained by keeping only
   /// their integers composants are different.
+  ///
+  /// # TO DO
+  ///
+  /// - package the `synth_solver` with an instance and define `synthesize` on
+  ///   that structure to avoid this ugly function (check no deadlock occurs)
   pub fn synthesize(
-    & mut self, s_1: & HSample, pos: bool, s_2: & HSample
+    solver: & mut Slver, instance: & Instance,
+    s_1: & HSample, pos: bool, s_2: & HSample
   ) -> Res<Term> {
     use instance::Val ;
     debug_assert!( s_1.len() == s_2.len() ) ;
@@ -810,38 +880,38 @@ impl<
     let constraint_1 = ValCoefWrap::mk(& p_1, & coefs, cst, pos) ;
     let constraint_2 = ValCoefWrap::mk(& p_2, & coefs, cst, ! pos) ;
 
-    self.solver.reset() ? ;
+    solver.reset() ? ;
     // Declare coefs and constant.
-    self.solver.declare_const(& cst, & Typ::Int, & ()) ? ;
+    solver.declare_const(& cst, & Typ::Int, & ()) ? ;
     for coef in & coefs {
-      self.solver.declare_const(coef, & Typ::Int, & ()) ?
+      solver.declare_const(coef, & Typ::Int, & ()) ?
     }
-    self.solver.assert( & constraint_1, & () ) ? ;
-    self.solver.assert( & constraint_2, & () ) ? ;
+    solver.assert( & constraint_1, & () ) ? ;
+    solver.assert( & constraint_2, & () ) ? ;
 
-    let model = if self.solver.check_sat() ? {
-      self.solver.get_model() ?
+    let model = if solver.check_sat() ? {
+      solver.get_model() ?
     } else {
       bail!("[unreachable] could not separate points {:?} and {:?}", p_1, p_2)
     } ;
 
     let mut sum = Vec::with_capacity( coefs.len() ) ;
     for (var_opt, val) in model {
-      let val = self.instance.int(val) ;
+      let val = instance.int(val) ;
       if let Some(var) = var_opt {
-        let var = self.instance.var(var) ;
+        let var = instance.var(var) ;
         sum.push(
-          self.instance.op( Op::Mul, vec![val, var] )
+          instance.op( Op::Mul, vec![val, var] )
         )
       } else {
         sum.push(val)
       }
     }
-    let lhs = self.instance.op( Op::Add, sum ) ;
-    let rhs = self.instance.zero() ;
+    let lhs = instance.op( Op::Add, sum ) ;
+    let rhs = instance.zero() ;
 
     Ok(
-      self.instance.ge(lhs, rhs)
+      instance.ge(lhs, rhs)
     )
   }
 }
@@ -863,17 +933,13 @@ impl<
 pub type Branch = Vec<(Term, bool)> ;
 
 /// Projected data to classify.
-///
-/// # TO DO
-///
-/// - use vectors instead of hashsets here
 pub struct CData {
   /// Positive samples.
-  pub pos: HConSet< Args >,
+  pub pos: HSamples,
   /// Negative samples.
-  pub neg: HConSet< Args >,
+  pub neg: HSamples,
   /// Unclassified samples.
-  pub unc: HConSet< Args >,
+  pub unc: HSamples,
 }
 impl CData {
 
@@ -1020,40 +1086,37 @@ impl CData {
   pub fn split(self, qual: & QualValues) -> (Self, Self) {
     let (mut q, mut nq) = (
       CData {
-        pos: HConSet::with_capacity( self.pos.len() ),
-        neg: HConSet::with_capacity( self.neg.len() ),
-        unc: HConSet::with_capacity( self.unc.len() ),
+        pos: Vec::with_capacity( self.pos.len() ),
+        neg: Vec::with_capacity( self.neg.len() ),
+        unc: Vec::with_capacity( self.unc.len() ),
       },
       CData {
-        pos: HConSet::with_capacity( self.pos.len() ),
-        neg: HConSet::with_capacity( self.neg.len() ),
-        unc: HConSet::with_capacity( self.unc.len() ),
+        pos: Vec::with_capacity( self.pos.len() ),
+        neg: Vec::with_capacity( self.neg.len() ),
+        unc: Vec::with_capacity( self.unc.len() ),
       }
     ) ;
 
     for pos in self.pos {
-      let is_new = if qual.eval(& pos) {
-        q.pos.insert( pos )
+      if qual.eval(& pos) {
+        q.pos.push( pos )
       } else {
-        nq.pos.insert( pos )
-      } ;
-      debug_assert!( is_new )
+        nq.pos.push( pos )
+      }
     }
     for neg in self.neg {
-      let is_new = if qual.eval(& neg) {
-        q.neg.insert( neg )
+      if qual.eval(& neg) {
+        q.neg.push( neg )
       } else {
-        nq.neg.insert( neg )
-      } ;
-      debug_assert!( is_new )
+        nq.neg.push( neg )
+      }
     }
     for unc in self.unc {
-      let is_new = if qual.eval(& unc) {
-        q.unc.insert( unc )
+      if qual.eval(& unc) {
+        q.unc.push( unc )
       } else {
-        nq.unc.insert( unc )
-      } ;
-      debug_assert!( is_new )
+        nq.unc.push( unc )
+      }
     }
 
     q.pos.shrink_to_fit() ;
