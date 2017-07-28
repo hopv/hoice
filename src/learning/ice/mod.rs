@@ -71,23 +71,23 @@ pub mod smt {
   /// ```bash
   /// (=> <actlit> (and <samples>))
   /// ```
-  pub struct ActWrap<'a> {
+  pub struct ActWrap<Samples> {
     /// Actlit counter.
     pub actlit: usize,
     /// Predicate.
     pub pred: PrdIdx,
     /// Samples.
-    pub unc: & 'a HSamples,
+    pub unc: Samples,
     /// Indicates whether we're assuming the samples positive or negative.
     pub pos: bool,
   }
-  impl<'a> ActWrap<'a> {
+  impl<Samples> ActWrap<Samples> {
     /// Identifier representation of the actlit.
     pub fn as_ident(& self) -> String {
       format!("act_{}", self.actlit)
     }
   }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<'a> {
+  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> {
@@ -109,7 +109,31 @@ pub mod smt {
       Ok(())
     }
   }
-  impl<'a> ::rsmt2::Sym2Smt<()> for ActWrap<'a> {
+  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
+    & 'a HConMap<Args, T>
+  > {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing unclassified data activation as expression" ;
+      smtry_io!(
+        blah => write!(
+          w, "(=> act_{} ({}", self.actlit,
+          if self.pos { "and" } else { "not (or" }
+        )
+      ) ;
+      for (unc, _) in self.unc {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, "))") ) ;
+      if ! self.pos {
+        smtry_io!( blah => write!(w, ")") )
+      }
+      Ok(())
+    }
+  }
+  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
     fn sym_to_smt2<Writer>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> where Writer: Write {
@@ -259,11 +283,8 @@ pub struct IceLearner<'core, Slver> {
   /// Activation literal counter.
   actlit: usize,
 }
-impl<
-  'core, 'kid,
-  Slver: Solver<'kid, Parser> +
-    for<'a> ::rsmt2::QueryIdent<'kid, Parser, (), ActWrap<'a>>
-> IceLearner<'core, Slver> {
+impl<'core, 'kid, Slver> IceLearner<'core, Slver>
+where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
   pub fn mk(
     core: & 'core LearnerCore, instance: Arc<Instance>,
@@ -370,46 +391,69 @@ impl<
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     let mut predicates = Vec::with_capacity(prd_count) ;
 
-    for prd in PrdRange::zero_to(prd_count) {
+    for pred in PrdRange::zero_to(prd_count) {
+      if let Some(term) = self.instance.term_of(pred) {
+        self.candidate[pred] = Some( term.clone() ) ;
+        continue
+      }
+      let pos_len = self.data.pos[pred].read().map_err(corrupted_err)?.len() ;
+      let neg_len = self.data.neg[pred].read().map_err(corrupted_err)?.len() ;
+      let unc_len = self.data.map[pred].read().map_err(corrupted_err)?.len() ;
+      if pos_len == 0 && neg_len != 0 {
+        // Maybe we can assert everything as negative right away?
+        if self.is_legal_pred(pred, false) ? {
+          msg!(
+            self =>
+            "{} only has negative ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything negative",
+            self.instance[pred], neg_len, unc_len
+          ) ;
+          self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          continue
+        }
+      } else if neg_len == 0 && pos_len != 0 {
+        // Maybe we can assert everything as positive right away?
+        if self.is_legal_pred(pred, true) ? {
+          msg!(
+            self =>
+            "{} only has positive ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything positive",
+            self.instance[pred], pos_len, unc_len
+          ) ;
+          self.candidate[pred] = Some( self.instance.bool(true) ) ;
+          continue
+        }
+      }
       predicates.push((
-        self.data.map[prd].read().map_err(corrupted_err)?.len(),
-        self.data.pos[prd].read().map_err(corrupted_err)?.len() +
-        self.data.neg[prd].read().map_err(corrupted_err)?.len(),
-        prd
+        unc_len, pos_len + neg_len, pred
       ))
     }
 
     predicates.sort_by(
       |
         & (
-          unclassed_1, classed_1, pred_1
+          unclassed_1, classed_1, _
         ), & (
-          unclassed_2, classed_2, pred_2
+          unclassed_2, classed_2, _
         )
       | {
         use std::cmp::Ordering::* ;
-        if self.instance.term_of(pred_1).is_some() {
-          Less
-        } else if self.instance.term_of(pred_2).is_some() {
-          Greater
-        } else {
-          match (unclassed_1, unclassed_2) {
-            (0, 0) => classed_1.cmp(& classed_2).reverse(),
-            (0, _) => Less,
-            (_, 0) => Greater,
-            (_, _) => match classed_1.cmp(& classed_2).reverse() {
-              Equal => unclassed_1.cmp(& unclassed_2),
-              res => res,
-            },
-          }
+        match (unclassed_1, unclassed_2) {
+          (0, 0) => classed_1.cmp(& classed_2).reverse(),
+          (0, _) => Less,
+          (_, 0) => Greater,
+          (_, _) => match classed_1.cmp(& classed_2).reverse() {
+            Equal => unclassed_1.cmp(& unclassed_2),
+            res => res,
+          },
         }
       }
     ) ;
 
-    'pred_iter: for (unc, cla, pred) in predicates {
+    'pred_iter: for (_unc, _cla, pred) in predicates {
       msg!(
         self => "{}: {} unclassified, {} classified",
-                self.instance[pred], unc, cla
+                self.instance[pred], _unc, _cla
       ) ;
       let data = self.data.data_of(pred) ? ;
       if let Some(term) = self.instance.term_of(pred) {
@@ -480,7 +524,7 @@ impl<
       // Checking whether we can close this branch.
 
       if data.neg.is_empty() && self.is_legal(
-        true, pred, & data.unc, true
+        pred, & data.unc, true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
         msg!(
           self =>
@@ -511,7 +555,7 @@ impl<
       }
 
       if data.pos.is_empty() && self.is_legal(
-        true, pred, & data.unc, false
+        pred, & data.unc, false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
         msg!(
           self =>
@@ -588,12 +632,12 @@ impl<
       'search_qual: for (qual, values) in self.qualifiers.of(pred) {
         msg!{ debug self => "    {}:", qual } ;
         if let Some(
-          (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc))
+          (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
         ) = data.gain(pred, & self.data, & values) ? {
           msg!{
             debug self =>
               "    gain is {} ({}, {}, {} / {}, {}, {})",
-              gain, q_pos, q_neg, q_unc, nq_pos, nq_neg, nq_unc
+              gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
           } ;
           let better = if let Some( (old_gain, _, _) ) = maybe_qual {
             old_gain < gain
@@ -708,12 +752,12 @@ impl<
   /// Checks whether assuming some data as positive (if `pos` is true,
   /// negative otherwise) is legal.
   ///
-  /// **NB**: if assuming the data positive / negative is legal and `force` is
-  /// true, the data will be forced to be positive / negative in the solver
+  /// **NB**: if assuming the data positive / negative is legal,
+  /// the data will be forced to be positive / negative in the solver
   /// automatically. Otherwise, the actlit is deactivated
   /// (`assert (not <actlit>)`).
   pub fn is_legal(
-    & mut self, force: bool, pred: PrdIdx, unc: & HSamples, pos: bool
+    & mut self, pred: PrdIdx, unc: & HSamples, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
 
@@ -728,16 +772,47 @@ impl<
     let actlits = [actlit] ;
 
     if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      if force {
-        self.solver.assert( & actlits[0].as_ident(), & () ) ?
-      }
+      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
       Ok(true)
     } else {
-      if force {
-        self.solver.assert(
-          & format!("(not {})", actlits[0].as_ident()), & ()
-        ) ?
-      }
+      self.solver.assert(
+        & format!("(not {})", actlits[0].as_ident()), & ()
+      ) ? ;
+      Ok(false)
+    }
+  }
+
+
+  /// Checks whether assuming **all** the unclassified data from a predicate as
+  /// `pos` is legal.
+  ///
+  /// **NB**: if assuming the data positive / negative is legal, the data will
+  /// be forced to be positive / negative in the solver automatically.
+  /// Otherwise, the actlit is deactivated (`assert (not <actlit>)`).
+  pub fn is_legal_pred(
+    & mut self, pred: PrdIdx, pos: bool
+  ) -> Res<bool> {
+    let unc = self.data.map[pred].read().map_err(corrupted_err) ? ;
+    let unc = & * unc ;
+    if unc.is_empty() { return Ok(true) }
+
+    // Wrap actlit and increment counter.
+    let actlit = ActWrap { actlit: self.actlit, pred, unc, pos } ;
+    self.actlit += 1 ;
+
+    // Declare and assert.
+    self.solver.declare_const(& actlit, & Typ::Bool, & ()) ? ;
+    self.solver.assert( & actlit, & () ) ? ;
+
+    let actlits = [actlit] ;
+
+    if self.solver.check_sat_assuming(& actlits, & ()) ? {
+      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+      Ok(true)
+    } else {
+      self.solver.assert(
+        & format!("(not {})", actlits[0].as_ident()), & ()
+      ) ? ;
       Ok(false)
     }
   }

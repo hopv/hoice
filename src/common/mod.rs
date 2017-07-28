@@ -55,10 +55,11 @@ macro_rules! if_verb {
 }
 #[cfg(feature = "bench")]
 macro_rules! if_verb {
-  ($($blah:tt)*) => () ;
+  ($($blah:tt)*) => (()) ;
 }
 /// Does something if in debug mode.
 #[macro_export]
+#[allow(unused_macros)]
 #[cfg(not (feature = "bench") )]
 macro_rules! if_debug {
   ($($blah:tt)*) => (
@@ -69,7 +70,7 @@ macro_rules! if_debug {
 }
 #[cfg(feature = "bench")]
 macro_rules! if_debug {
-  ($($blah:tt)*) => () ;
+  ($($blah:tt)*) => (()) ;
 }
 
 

@@ -264,6 +264,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
+    self.solver.comment("looking for counterexamples...") ? ;
     for clause in clauses {
       if let Some(cex) = self.get_cex(cands, clause).chain_err(
         || format!("while getting counterexample for clause {}", clause)
