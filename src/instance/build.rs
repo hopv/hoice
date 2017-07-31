@@ -287,9 +287,9 @@ impl InstBuild {
   /// Creates an instance builder.
   pub fn mk() -> Self {
     InstBuild {
-      instance: Instance::mk(300, 11, 11),
+      instance: Instance::mk(300, 42, 42),
       errors: vec![],
-      pred_name_map: HashMap::with_capacity(11),
+      pred_name_map: HashMap::with_capacity(42),
     }
   }
 
@@ -318,6 +318,119 @@ impl InstBuild {
     }
   }
 
+  /// Detects predicates that can only be tautologies given the clauses.
+  ///
+  /// Returns the number of tautologies detected.
+  pub fn simplify_tautologies(& mut self) -> Res<usize> {
+    // Look for trivial predicates: those appearing in clauses of the form
+    // `true => P(v_1, v_2, ...)` where all `v_i`s are different.
+    let mut res = 0 ;
+    let mut cls_idx = ClsIdx::zero() ;
+    'trivial_preds: while cls_idx < self.instance.clauses().next_index() {
+      let maybe_pred = if self.instance.clauses()[cls_idx].lhs().is_empty() {
+        if let TTerm::P {
+          pred, ref args
+        } = * self.instance.clauses()[cls_idx].rhs() {
+          // rhs is a predicate application...
+          let mut vars = VarSet::with_capacity(args.len()) ;
+          let mut okay = true ;
+          for term in args {
+            let arg_okay = if let Some(idx) = term.var_idx() {
+              let is_new = vars.insert(idx) ;
+              is_new
+            } else {
+              // Not a variable.
+              false
+            } ;
+            okay = okay && arg_okay
+          }
+          if okay {
+            Some(pred)
+          } else {
+            None
+          }
+        } else { None }
+      } else { None } ;
+      if let Some(pred) = maybe_pred {
+        res += 1 ;
+        let term = self.instance.bool(true) ;
+        info!{
+          "trivial predicate {}: forcing to {}", self.instance[pred], term
+        }
+        self.instance.force_pred(pred, term) ? ;
+        let clause = self.instance.forget_clause(cls_idx) ;
+        info!{
+          "dropped associated clause {}",
+          clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
+        }
+      } else {
+        cls_idx.inc()
+      }
+    }
+    Ok(res)
+  }
+
+
+  /// Goes through the clauses and replaces forced predicates with their term.
+  ///
+  /// Returns the number of propagations: predicates replaced + clauses
+  /// dropped.
+  ///
+  /// Only works with predicates that are `true` for now.
+  pub fn propagate_forced(& mut self) -> Res<usize> {
+    let mut res = 0 ;
+    let mut cls_idx = ClsIdx::zero() ;
+
+    'clause_iter: while cls_idx < self.instance.clauses().next_index() {
+
+      // If `rhs` is true, remove clause.
+      if let TTerm::P { pred, .. }  = self.instance.clauses[cls_idx].rhs {
+        match self.instance.preds_term[pred].as_ref().map(
+          |t| t.is_true()
+        ) {
+          Some(true) => {
+            res += 1 ;
+            let clause = self.instance.forget_clause(cls_idx) ;
+            info!{
+              "dropping clause {}, rhs is true",
+              clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
+            }
+            continue 'clause_iter
+          },
+          Some(false) => bail!(
+            "progation for terms that are not `true` is not implemented"
+          ),
+          _ => (),
+        }
+      }
+
+      let clause = & mut self.instance.clauses[cls_idx] ;
+      let mut cnt = 0 ;
+      'lhs_iter: while cnt < clause.lhs.len() {
+        if let TTerm::P { pred, .. } = clause.lhs[cnt] {
+          match self.instance.preds_term[pred].as_ref().map(
+            |t| t.is_true()
+          ) {
+            Some(true) => {
+              let _ = clause.lhs.swap_remove(cnt) ;
+              res += 1 ;
+              continue 'lhs_iter
+            },
+            Some(false) => bail!(
+              "progation for terms that are not `true` is not implemented"
+            ),
+            None => (),
+          }
+        }
+        cnt += 1
+      }
+
+      cls_idx.inc()
+    }
+
+    Ok(res)
+  }
+
   /// Destructs the builder and yields the instance.
   ///
   /// The weird `line` argument works as follows: if it is
@@ -328,9 +441,24 @@ impl InstBuild {
   ///   where the error token appears in `input` plus `off` (useful when
   ///   reading a file incrementally to add an offset to error messages). 
   pub fn to_instance(
-    self, input: & [u8], line: Option<usize>
+    mut self, input: & [u8], line: Option<usize>
   ) -> Res<Instance> {
-    if self.errors.is_empty() { Ok(self.instance) } else {
+    'simplify: loop {
+      let _tautologies = self.simplify_tautologies() ? ;
+      info!{ "{} predicates found to be tautologies", _tautologies }
+      let propagations = self.propagate_forced() ? ;
+      if propagations == 0 {
+        info!{ "done simplifying\n" }
+        break 'simplify
+      } else {
+        info!{ "{} propagations\n", propagations }
+      }
+    }
+
+    if self.errors.is_empty() {
+      self.instance.shrink_to_fit() ;
+      Ok(self.instance)
+    } else {
       Err( self.to_error(input, line) )
     }
   }
@@ -517,11 +645,25 @@ impl InstBuild {
         spc_cmt >> err!( char ')', "closing clause's left-hand side" ) >>
         spc_cmt >> rhs: try_call!(
           self.parse_top_term(& var_name_map)
-        ) >> (
-          self.instance.push_clause(
-            Clause::mk(var_map, lhs, rhs)
-          )
-        )
+        ) >> ({
+          let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
+          let mut lhs_is_false = false ;
+          for lhs in lhs {
+            if ! lhs.is_true() {
+              if lhs.is_false() {
+                lhs_is_false = true ;
+                break
+              } else {
+                nu_lhs.push(lhs)
+              }
+            }
+          }
+          if ! lhs_is_false {
+            self.instance.push_clause(
+              Clause::mk(var_map, nu_lhs, rhs)
+            )
+          }
+        })
       )
     )
   }

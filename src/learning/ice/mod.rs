@@ -700,23 +700,27 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       msg.push_str(")") ;
       msg!{ self => msg } ;
     }
-    bail!( "qualifier synthesis is untested and offline for now" ) ;
+    // bail!( "qualifier synthesis is untested and offline for now" ) ;
 
     // Synthesize qualifier separating the data.
     let qual = match (
       data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
     ) {
       (false, false, _) => Self::synthesize(
-        & mut self.synth_solver, & * self.instance, & data.pos[0], true, & data.neg[0]
+        & mut self.synth_solver, & * self.instance,
+        & data.pos[0], true, & data.neg[0]
       ) ?,
       (false, _, false) => Self::synthesize(
-        & mut self.synth_solver, & * self.instance, & data.pos[0], true, & data.unc[0]
+        & mut self.synth_solver, & * self.instance,
+        & data.pos[0], true, & data.unc[0]
       ) ?,
       (true, false, false) => Self::synthesize(
-        & mut self.synth_solver, & * self.instance, & data.neg[0], false, & data.unc[0]
+        & mut self.synth_solver, & * self.instance,
+        & data.neg[0], false, & data.unc[0]
       ) ?,
       (true, true, false) if data.unc.len() > 1 => Self::synthesize(
-        & mut self.synth_solver, & * self.instance, & data.unc[0], true, & data.unc[1]
+        & mut self.synth_solver, & * self.instance,
+        & data.unc[0], true, & data.unc[1]
       ) ?,
       _ => bail!(
         "[unreachable] illegal status reached on predicate {}:\n\
@@ -864,15 +868,39 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     self.solver.comment("Sample declarations for constraints:") ? ;
     // Declare all samples used in constraints.
     for (pred, map) in self.data.map.index_iter() {
-      for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
-        let uid = sample.uid() ;
-        if ! self.dec_mem[pred].contains(& uid) {
-          let _ = self.dec_mem[pred].insert(uid) ;
-          self.solver.declare_const(
-            & SWrap(pred, sample), & Typ::Bool, & ()
-          ) ?
+      // if let Some(term) = self.instance.term_of(pred) {
+      //   if term.is_true() {
+      //     self.solver.comment(
+      //       & format!(
+      //         "Predicate {} is forced to be `true`:", self.instance[pred]
+      //       )
+      //     ) ? ;
+      //     for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
+      //       let uid = sample.uid() ;
+      //       if ! self.dec_mem[pred].contains(& uid) {
+      //         let _ = self.dec_mem[pred].insert(uid) ;
+      //         self.solver.define_fun(
+      //           & SWrap(pred, sample), & args, & Typ::Bool, & "true", & ()
+      //         ) ?
+      //       }
+      //     }
+      //   } else {
+      //     bail!(
+      //       "predicate {} is forced to {}, unsupported for now",
+      //       self.instance[pred], term
+      //     )
+      //   }
+      // } else {
+        for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
+          let uid = sample.uid() ;
+          if ! self.dec_mem[pred].contains(& uid) {
+            let _ = self.dec_mem[pred].insert(uid) ;
+            self.solver.declare_const(
+              & SWrap(pred, sample), & Typ::Bool, & ()
+            ) ?
+          }
         }
-      }
+      // }
     }
 
     self.solver.comment("Constraints:") ? ;
@@ -943,11 +971,11 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     }
     debug_assert!( p_1.len() == p_2.len() ) ;
     debug_assert!({
-      let mut same = true ;
+      let mut diff = false ;
       for (v_1, v_2) in p_1.iter().zip(& p_2) {
-        same = same && (v_1 != v_2)
+        diff = diff || (v_1 != v_2)
       }
-      ! same
+      diff
     }) ;
 
     let cst = "v" ;
@@ -972,14 +1000,17 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     let mut sum = Vec::with_capacity( coefs.len() ) ;
     for (var_opt, val) in model {
-      let val = instance.int(val) ;
-      if let Some(var) = var_opt {
-        let var = instance.var(var) ;
-        sum.push(
-          instance.op( Op::Mul, vec![val, var] )
-        )
-      } else {
-        sum.push(val)
+      use num::Zero ;
+      if ! val.is_zero() {
+        let val = instance.int(val) ;
+        if let Some(var) = var_opt {
+          let var = instance.var(var) ;
+          sum.push(
+            instance.op( Op::Mul, vec![val, var] )
+          )
+        } else {
+          sum.push(val)
+        }
       }
     }
     let lhs = instance.op( Op::Add, sum ) ;

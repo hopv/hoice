@@ -253,7 +253,7 @@ impl Qualifiers {
     & 'a mut self, qual: Term, data: & Data
   ) -> Res<& 'a QualValues> {
     let arity: Arity = if let Some(max_var) = qual.highest_var() {
-      (* max_var).into()
+      (1 + * max_var).into()
     } else {
       bail!("[bug] trying to add constant qualifier")
     } ;

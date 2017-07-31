@@ -57,9 +57,33 @@ macro_rules! if_verb {
 macro_rules! if_verb {
   ($($blah:tt)*) => (()) ;
 }
+
+
+
+/// Logs at info level. Deactivated in release.
+#[cfg( feature = "bench" )]
+macro_rules! log_info {
+  ($($tt:tt)*) => (()) ;
+}
+#[cfg( not(feature = "bench") )]
+macro_rules! log_info {
+  ($($tt:tt)*) => ( info!{$($tt)*} ) ;
+}
+
+
+/// Logs at debug level. Deactivated in release.
+#[cfg( feature = "bench" )]
+macro_rules! log_debug {
+  ($($tt:tt)*) => (()) ;
+}
+#[cfg( not(feature = "bench") )]
+macro_rules! log_debug {
+  ($($tt:tt)*) => ( debug!{$($tt)*} ) ;
+}
+
+
 /// Does something if in debug mode.
 #[macro_export]
-#[allow(unused_macros)]
 #[cfg(not (feature = "bench") )]
 macro_rules! if_debug {
   ($($blah:tt)*) => (
@@ -69,6 +93,7 @@ macro_rules! if_debug {
   ) ;
 }
 #[cfg(feature = "bench")]
+#[allow(unused_macros)]
 macro_rules! if_debug {
   ($($blah:tt)*) => (()) ;
 }
