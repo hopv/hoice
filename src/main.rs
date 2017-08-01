@@ -45,14 +45,16 @@ fn format(log: & ::log::LogRecord) -> String {
       let mut s = String::new() ;
       s.push_str(
         & format!(
-          "{}",
-          conf.bad("|===| Error:")
+          "({}\n\"",
+          conf.bad("error")
         )
       ) ;
+      let mut pref = "" ;
       for line in format!( "{}", log.args() ).lines() {
-        s.push_str( & format!("\n{} {}", conf.bad("|"), line) )
+        s.push_str( & format!("{}{}", pref, line) ) ;
+        pref = "\n"
       }
-      s.push_str(& format!("\n{}", conf.bad("|===|\n")) ) ;
+      s.push_str(& format!("\"\n)") ) ;
       s
     },
     Warn => {
@@ -123,6 +125,16 @@ fn main() {
 
   // Work and report error if any.
   if let Err(errs) = work() {
+    let errs = match * errs.kind() {
+      ErrorKind::Z3SpawnError => format!(
+        "could not spawn z3 using command `{}`\n\
+        make sure the z3 binary has that name and is in your path,\n\
+        or specify a different z3 command with option `{}`",
+        conf.emph( & conf.z3_cmd ),
+        conf.emph( "--z3" )
+      ).into(),
+      _ => errs
+    } ;
     print_err(errs) ;
     ::std::process::exit(2)
   } else {
@@ -139,8 +151,10 @@ fn work() -> Res<()> {
   // Creates smt log directory if needed.
   conf.init() ? ;
 
-
   let mut builder = ::instance::build::InstBuild::mk() ;
+  builder.reduce().chain_err(
+    || "during instance reduction"
+  ) ? ;
 
   if let Some(file_path) = conf.file.as_ref() {
     use std::fs::{ OpenOptions } ;

@@ -71,6 +71,11 @@ error_chain!{
       description("parse error")
       display("{}", data)
     }
+    #[doc = "Could not spawn z3."]
+    Z3SpawnError {
+      description("could not spawn z3")
+      display("could not spawn z3")
+    }
   }
 }
 
@@ -81,7 +86,7 @@ pub fn print_err(errs: Error) {
   for_first!(
     errs.iter() => {
       |err| lines = format!("{}", err),
-      then |err| lines = format!("{}\n{}", err, lines),
+      then |err| lines = format!("{}\n{}", lines, err),
       yild error!{"{}", lines}
     } else ()
   )

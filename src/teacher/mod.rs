@@ -7,7 +7,7 @@
 
 "#]
 
-use rsmt2::{ ParseSmt2, SolverConf, Kid } ;
+use rsmt2::{ ParseSmt2, Kid } ;
 
 use nom::IResult ;
 
@@ -18,35 +18,13 @@ use instance::{ Instance, Val } ;
 
 
 
-/// Logs at info level. Deactivated in release.
-#[cfg( feature = "bench" )]
-macro_rules! log_info {
-  ($($tt:tt)*) => (()) ;
-}
-#[cfg( not(feature = "bench") )]
-macro_rules! log_info {
-  ($($tt:tt)*) => ( info!{$($tt)*} ) ;
-}
-
-
-/// Logs at debug level. Deactivated in release.
-#[cfg( feature = "bench" )]
-macro_rules! log_debug {
-  ($($tt:tt)*) => (()) ;
-}
-#[cfg( not(feature = "bench") )]
-macro_rules! log_debug {
-  ($($tt:tt)*) => ( debug!{$($tt)*} ) ;
-}
-
-
 
 /// Starts the teaching process.
 pub fn start_class(instance: Instance) -> Res<()> {
   use rsmt2::solver ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::mk( SolverConf::z3() ).chain_err(
-    || "while spawning the teacher's solver"
+  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+    || ErrorKind::Z3SpawnError
   ) ? ;
   let res = {
     let solver = solver(& mut kid, Parser).chain_err(
@@ -72,16 +50,22 @@ pub fn start_class(instance: Instance) -> Res<()> {
 fn teach<
   'kid, S: Solver<'kid, Parser>
 >(instance: Instance, solver: S) -> Res<()> {
+  log_debug!{ "  creating teacher" }
   let mut teacher = Teacher::mk(solver, instance) ;
 
   if conf.smt_learn {
+    log_debug!{ "  spawning smt learner..." }
     teacher.add_learner( ::learning::smt::Launcher ) ?
   }
+  log_debug!{ "  spawning ice learner..." }
   teacher.add_learner( ::learning::ice::Launcher ) ? ;
 
+  log_debug!{ "  performing initial check..." }
   let cexs = teacher.initial_check() ? ;
+  log_debug!{ "  generating data from initial cex..." }
   let mut data = teacher.instance.cexs_to_data(& teacher.data, cexs) ? ;
 
+  log_debug!{ "  starting teaching loop" }
   'teach: loop {
     log_info!{
       "\nnew learning data:\n{}", data.string_do(
@@ -224,16 +208,24 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   pub fn get_candidates(& self) -> Option<(LrnIdx, Candidates)> {
     'recv: loop {
       match self.from_learners.recv() {
-        Ok( (_idx, FromLearners::Msg(s)) ) => for _line in s.lines() {
-          log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+        Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
+          for _line in _s.lines() {
+            log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+          }
         },
-        Ok( (idx, FromLearners::Err(e)) ) => print_err(
-          Error::with_chain::<Error, ErrorKind>(
-            format!(
+        Ok( (idx, FromLearners::Err(e)) ) => {
+          let err: Res<()> = Err(e) ;
+          let err: Res<()> = err.chain_err(
+            || format!(
               "from {} learner", conf.emph( & self.learners[idx].1 )
-            ).into(), e.into()
-          )
-        ),
+            )
+          ) ;
+          // println!("receiving:") ;
+          // for err in e.iter() {
+          //   println!("{}", err)
+          // }
+          print_err( err.unwrap_err() )
+        },
         Ok( (idx, FromLearners::Cands(cands)) ) => return Some( (idx, cands) ),
         Err(_) => return None
       }
@@ -241,6 +233,10 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   }
 
   /// Initial check, where all candidates are `true`.
+  ///
+  /// Drops the copy of the `Sender` end of the channel used to communicate
+  /// with the teacher (`self.to_teacher`). This entails that attempting to
+  /// receive messages will automatically fail if all learners are dead.
   pub fn initial_check(& mut self) -> Res< Cexs > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
@@ -256,7 +252,9 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
+    self.solver.comment("looking for counterexamples...") ? ;
     for clause in clauses {
+      log_debug!{ "  looking for a cex for clause {}", clause }
       if let Some(cex) = self.get_cex(cands, clause).chain_err(
         || format!("while getting counterexample for clause {}", clause)
       ) ? {
@@ -291,13 +289,16 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     self.solver.assert( clause, cands ) ? ;
     let sat = self.solver.check_sat() ? ;
     let res = if sat {
+      log_debug!{ "    sat, getting model..." }
       let model = self.solver.get_model() ? ;
       let mut map: VarMap<_> = clause.vars().iter().map(
         |info| info.typ.default_val()
       ).collect() ;
       for (var,val) in model {
+        log_debug!{ "    - v_{} = {}", var, val }
         map[var] = val
       }
+      log_debug!{ "    done constructing model" }
       Ok( Some( map ) )
     } else {
       Ok(None)

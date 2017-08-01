@@ -35,7 +35,6 @@ impl Typ {
   }
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
-    use num::Zero ;
     match * self {
       Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
@@ -198,6 +197,15 @@ impl RTerm {
     self.eval(model)?.to_bool()
   }
 
+  /// True if the term is the constant `true`.
+  pub fn is_true(& self) -> bool {
+    if let RTerm::Bool(b) = * self { b } else { false }
+  }
+  /// True if the term is the constant `false`.
+  pub fn is_false(& self) -> bool {
+    if let RTerm::Bool(b) = * self { ! b } else { false }
+  }
+
 
   /// Term evaluation.
   pub fn eval(& self, model: & VarMap<Val>) -> Res<Val> {
@@ -250,6 +258,33 @@ impl RTerm {
   pub fn int_val(& self) -> Option<Int> {
     if let RTerm::Int(ref i) = * self { Some( i.clone() ) } else { None }
   }
+
+  /// The highest variable index appearing in the term.
+  pub fn highest_var(& self) -> Option<VarIdx> {
+    let mut to_do = vec![ self ] ;
+    let mut max = None ;
+    while let Some(term) = to_do.pop() {
+      match * term {
+        RTerm::Var(i) => max = Some(
+          ::std::cmp::max( i, max.unwrap_or(0.into()) )
+        ),
+        RTerm::Int(_) => (),
+        RTerm::Bool(_) => (),
+        RTerm::App{ ref args, .. } => for arg in args {
+          to_do.push(arg)
+        },
+      }
+    }
+    max
+  }
+
+  /// Returns the variable index if the term is a variable.
+  pub fn var_idx(& self) -> Option<VarIdx> {
+    match * self {
+      RTerm::Var(i) => Some(i),
+      _ => None,
+    }
+  }
 }
 impl_fmt!{
   RTerm(self, fmt) {
@@ -263,6 +298,19 @@ impl_fmt!{
     write!(fmt, "{}", s)
   }
 }
+
+// impl<'a, WriteVar> ::rsmt2::Expr2Smt<WriteVar> for SWrap<'a>
+// where WriteVar: Fn(VarIdx) -> & Val {
+//   fn expr_to_smt2<Writer: Write>(
+//     & self, w: & mut Writer, _: & ()
+//   ) -> SmtRes<()> {
+//     smt_cast_io!(
+//       "writing sample as expression" => write!(
+//         w, "|p_{} {}|", self.0, self.1.uid()
+//       )
+//     )
+//   }
+// }
 
 
 
@@ -294,6 +342,23 @@ pub enum TTerm {
   T(Term),
 }
 impl TTerm {
+  /// True if the term is equivalent to `true`.
+  pub fn is_true(& self) -> bool {
+    match * self {
+      TTerm::N(ref t) => t.is_false(),
+      TTerm::T(ref t) => t.is_true(),
+      _ => false,
+    }
+  }
+  /// True if the term is equivalent to `false`.
+  pub fn is_false(& self) -> bool {
+    match * self {
+      TTerm::N(ref t) => t.is_true(),
+      TTerm::T(ref t) => t.is_false(),
+      _ => false,
+    }
+  }
+
   /// Writes a top term using special functions for writing predicates and
   /// variables.
   pub fn write<W, WriteVar, WritePrd>(
@@ -473,6 +538,11 @@ impl ::rsmt2::Expr2Smt<Candidates> for Clause {
 
 
 /// Stores the instance: the clauses, the factory and so on.
+///
+/// # NB
+///
+/// Clause indices can vary during instance building, because of the
+/// simplifications that can remove clauses.
 pub struct Instance {
   /// Term factory.
   factory: RwLock< HashConsign<RTerm> >,
@@ -480,6 +550,8 @@ pub struct Instance {
   consts: HConSet<RTerm>,
   /// Predicates.
   preds: PrdMap<PrdInfo>,
+  /// Predicates for which a suitable term has been found.
+  preds_term: PrdMap< Option<Term> >,
   /// Max arity of the predicates.
   pub max_pred_arity: Arity,
   /// Clauses.
@@ -496,6 +568,7 @@ impl Instance {
       ),
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
+      preds_term: PrdMap::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
     } ;
@@ -504,6 +577,35 @@ impl Instance {
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
+  }
+
+
+  /// Shrinks all collections.
+  pub fn shrink_to_fit(& mut self) {
+    self.consts.shrink_to_fit() ;
+    self.preds.shrink() ;
+    self.preds_term.shrink() ;
+    self.clauses.shrink()
+  }
+
+
+  /// Returns the term we already know works for a predicate, if any.
+  pub fn term_of(& self, pred: PrdIdx) -> Option<& Term> {
+    self.preds_term[pred].as_ref()
+  }
+
+  /// Evaluates the term a predicate is forced to, if any.
+  pub fn eval_term_of(
+    & self, pred: PrdIdx, model: & VarMap<Val>
+  ) -> Res< Option<bool> > {
+    if let Some(term) = self.term_of(pred) {
+      match term.bool_eval(model) {
+        Ok(None) => bail!("partial model during predicate term evaluation"),
+        res => res,
+      }
+    } else {
+      Ok(None)
+    }
   }
 
   /// Set of int constants **appearing in the predicates**. If more constants
@@ -530,7 +632,27 @@ impl Instance {
     ) ;
     let idx = self.preds.next_index() ;
     self.preds.push( PrdInfo { name, idx, sig } ) ;
+    self.preds_term.push(None) ;
     idx
+  }
+
+  /// Forces a predicate to be equal to something.
+  pub fn force_pred(& mut self, pred: PrdIdx, term: Term) -> Res<()> {
+    if let Some(t) = self.preds_term[pred].as_ref() {
+      if t != & term {
+        bail!(
+          "[bug] trying to force predicate {} to {},\n\
+          but it is already forced to be {}", self[pred], term, t
+        )
+      }
+    }
+    self.preds_term[pred] = Some(term) ;
+    Ok(())
+  }
+
+  /// Forget a clause. **Does not preserve the order of the clauses.**
+  pub fn forget_clause(& mut self, clause: ClsIdx) -> Clause {
+    self.clauses.swap_remove(clause)
   }
 
   /// Pushes a new clause.
@@ -549,12 +671,10 @@ impl Instance {
   }
   /// Creates the constant `0`.
   pub fn zero(& self) -> Term {
-    use num::Zero ;
     self.int( Int::zero() )
   }
   /// Creates the constant `1`.
   pub fn one(& self) -> Term {
-    use num::One ;
     self.int( Int::one() )
   }
   /// Creates a boolean.
@@ -599,29 +719,44 @@ impl Instance {
     let mut ctr = Vec::with_capacity(10) ;
 
     for (clause, cex) in cexs.into_iter() {
+      log_debug!{ "    working on clause {}...", clause }
       let clause = & self[clause] ;
+      log_debug!{ "    getting antecedents..." }
       let mut antecedents = Vec::with_capacity( clause.lhs().len() ) ;
+      log_debug!{ "    translating tterms..." }
+
+
+      log_debug!{ "    working on lhs..." }
       for tterm in clause.lhs() {
         match * tterm {
           TTerm::P { pred, ref args } => {
-            let mut values = VarMap::with_capacity( args.len() ) ;
-            for arg in args {
-              values.push(
-                arg.eval(& cex).chain_err(
-                  || "during argument evaluation to generate learning data"
-                ) ?
+            log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.preds_term.len() }
+            if self.preds_term[pred].is_none() {
+              log_debug!{ "        -> is none" }
+              let mut values = VarMap::with_capacity( args.len() ) ;
+              for arg in args {
+                values.push(
+                  arg.eval(& cex).chain_err(
+                    || "during argument evaluation to generate learning data"
+                  ) ?
+                )
+              }
+              antecedents.push(
+                (pred, values)
               )
+            } else {
+              log_debug!{ "      -> is some" }
             }
-            antecedents.push(
-              (pred, values)
-            )
           },
           _ => (),
         }
       }
       antecedents.shrink_to_fit() ;
+      
+      log_debug!{ "    working on rhs..." }
       let consequent = match * clause.rhs() {
         TTerm::P { pred, ref args } => {
+          log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.preds_term.len() }
           let mut values = VarMap::with_capacity( args.len() ) ;
           'pred_args: for arg in args {
             values.push(
@@ -634,6 +769,9 @@ impl Instance {
         },
         _ => None,
       } ;
+
+      log_debug!{ "    antecedent: {:?}", antecedents }
+      log_debug!{ "    consequent: {:?}", consequent }
 
       match ( antecedents.len(), consequent ) {
         (0, None) => bail!(
@@ -712,6 +850,8 @@ pub enum Op {
   Le,
   /// Less than.
   Lt,
+  /// Implication.
+  Impl,
   /// Equal to.
   Eql,
   /// Negation.
@@ -728,7 +868,7 @@ impl Op {
     match * self {
       Add => "+", Sub => "-", Mul => "*", Div => "/", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
-      Not => "not", And => "and", Or => "or",
+      Not => "not", And => "and", Or => "or", Impl => "=>",
     }
   }
 
@@ -738,7 +878,6 @@ impl Op {
   pub fn normalize(
     self, instance: & Instance, mut args: Vec<Term>
   ) -> Term {
-    use num::{ Zero, One } ;
     let (op, args) = match self {
       Op::And => if args.is_empty() {
         return instance.bool(false)
@@ -806,19 +945,20 @@ impl Op {
       bytes,
       Error,
       alt_complete!(
-        map!(tag!("+"),   |_| Op::Add) |
-        map!(tag!("-"),   |_| Op::Sub) |
-        map!(tag!("*"),   |_| Op::Mul) |
-        map!(tag!("/"),   |_| Op::Div) |
-        map!(tag!("mod"), |_| Op::Mod) |
-        map!(tag!("<="),  |_| Op::Le ) |
-        map!(tag!("<"),   |_| Op::Lt ) |
-        map!(tag!(">="),  |_| Op::Ge ) |
-        map!(tag!(">"),   |_| Op::Gt ) |
-        map!(tag!("="),   |_| Op::Eql) |
-        map!(tag!("not"), |_| Op::Not) |
-        map!(tag!("and"), |_| Op::And) |
-        map!(tag!("or"),  |_| Op::Or )
+        map!(tag!("+"),   |_| Op::Add ) |
+        map!(tag!("-"),   |_| Op::Sub ) |
+        map!(tag!("*"),   |_| Op::Mul ) |
+        map!(tag!("/"),   |_| Op::Div ) |
+        map!(tag!("mod"), |_| Op::Mod ) |
+        map!(tag!("<="),  |_| Op::Le  ) |
+        map!(tag!("<"),   |_| Op::Lt  ) |
+        map!(tag!(">="),  |_| Op::Ge  ) |
+        map!(tag!(">"),   |_| Op::Gt  ) |
+        map!(tag!("=>"),  |_| Op::Impl) |
+        map!(tag!("="),   |_| Op::Eql ) |
+        map!(tag!("not"), |_| Op::Not ) |
+        map!(tag!("and"), |_| Op::And ) |
+        map!(tag!("or"),  |_| Op::Or  )
       )
     )
   }
@@ -1001,6 +1141,20 @@ impl Op {
           Ok( Val::N )
         } else {
           Ok( Val::B(false) )
+        }
+      },
+      Impl => if args.len() != 2 {
+        bail!(
+          format!("evaluating `Impl` with {} (!= 2) arguments", args.len())
+        )
+      } else {
+        // Safe because of the check above.
+        let rhs = args.pop().unwrap() ;
+        let lhs = args.pop().unwrap() ;
+        match ( lhs.to_bool() ?, rhs.to_bool() ? ) {
+          (_, Some(true)) | (Some(false), _) => Ok( Val::B(true) ),
+          (Some(lhs), Some(rhs)) => Ok( Val::B(rhs || ! lhs) ),
+          _ => Ok(Val::N),
         }
       },
     }

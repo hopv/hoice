@@ -31,6 +31,11 @@ cargo build --release --features "bench"
 Note that this disables some features such as verbosity.
 
 
+## z3
+
+`hoice` relies on the [z3](https://github.com/Z3Prover/z3) SMT-solver. Make sure you have a relatively recent version of the z3 binary in your path.
+
+
 # Language
 
 [Consult the wiki](https://github.com/hopv/hoice/wiki/Language) for a description of `hoice`'s language.

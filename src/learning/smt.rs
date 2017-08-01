@@ -18,8 +18,8 @@ impl Launcher {
   pub fn launch(
     core: & LearnerCore, instance: Arc<Instance>
   ) -> Res<()> {
-    use rsmt2::{ solver, SolverConf, Kid } ;
-    let mut kid = Kid::mk( SolverConf::z3() ).chain_err(
+    use rsmt2::{ solver, Kid } ;
+    let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let solver = solver(& mut kid, Parser).chain_err(
