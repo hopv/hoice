@@ -8,6 +8,8 @@ use common::* ;
 use instance::Instance ;
 use instance::info::* ;
 
+use learning::ice::CData ;
+
 
 
 /// Hash consed samples.
@@ -28,6 +30,12 @@ impl Sample {
   /// Constructor.
   pub fn mk(pred: PrdIdx, args: HSample) -> Self {
     Sample { pred, args }
+  }
+
+  /// Tests if a sample is about some predicate and its arguments belong
+  /// to a set.
+  pub fn is_in(& self, pred: PrdIdx, samples: & HConSet<Args>) -> bool {
+    self.pred == pred && samples.contains(& self.args)
   }
 }
 impl<'a> PebcakFmt<'a> for Sample {
@@ -134,6 +142,462 @@ impl_fmt!{
 
 
 
+/// Structure storing unprojected learning data.
+///
+/// Used by the teacher to simplify constraints as it hads samples.
+///
+/// Also used by the ice learner to propagate the choices it makes.
+pub struct NewData {
+  /// Instance, only used for printing.
+  instance: Arc<Instance>,
+  /// Positive examples.
+  pos: PrdMap< HConSet<Args> >,
+  /// Negative examples.
+  neg: PrdMap< HConSet<Args> >,
+  /// Constraints.
+  constraints: CstrMap<Constraint>,
+  ///  Map from samples to contstraints.
+  map: PrdMap< HConMap<Args, CstrSet> >,
+}
+impl NewData {
+  /// Constructor.
+  pub fn mk(instance: Arc<Instance>) -> Self {
+    let pred_count = instance.preds().len() ;
+    let (
+      mut map, mut pos, mut neg
+    ) = (
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count)
+    ) ;
+    for _ in instance.preds() {
+      map.push( HConMap::with_capacity(103) ) ;
+      pos.push( HConSet::with_capacity(103) ) ;
+      neg.push( HConSet::with_capacity(103) ) ;
+    }
+    let constraints = CstrMap::with_capacity(103) ;
+    NewData { instance, pos, neg, constraints, map }
+  }
+
+  /// The projected data for some predicate.
+  pub fn data_of(& self, pred: PrdIdx) -> CData {
+    let unc_set = & self.map[pred] ;
+    let pos_set = & self.pos[pred] ;
+    let neg_set = & self.neg[pred] ;
+    let (mut pos, mut neg, mut unc) = (
+      Vec::with_capacity( pos_set.len() ),
+      Vec::with_capacity( neg_set.len() ),
+      Vec::with_capacity( unc_set.len() )
+    ) ;
+    for sample in pos_set.iter() {
+      pos.push( sample.clone() )
+    }
+    for sample in neg_set.iter() {
+      neg.push( sample.clone() )
+    }
+    for (sample, set) in unc_set.iter() {
+      if ! set.is_empty() {
+        unc.push( sample.clone() )
+      }
+    }
+    CData { pos, neg, unc }
+  }
+
+  /// Tautologizes a constraint and removes the links with its samples in
+  /// the map.
+  pub fn tautologize(& mut self, constraint: CstrIdx) -> Vec<Sample> {
+    let samples = self.constraints[constraint].tautologize() ;
+    for & Sample { pred, ref args } in & samples {
+      let _ = self.map[pred].get_mut(& args).map(
+        |set| set.remove(& constraint)
+      ) ;
+    }
+    samples
+  }
+
+  /// Adds some positive examples.
+  ///
+  /// Simplifies constraints containing these samples.
+  ///
+  /// `modded_constraints` will be updated as follows: a constraint is
+  ///
+  /// - added to the set when it is modified (but not tautologized)
+  /// - removed from the set when it is tautologized
+  pub fn add_pos(
+    & mut self, mut samples: PrdHMap< HConSet<Args> >,
+    modded_constraints: & mut CstrSet
+  ) -> Res<()> {
+    // Stack of things to propagate.
+    let mut to_propagate = Vec::with_capacity( samples.len() ) ;
+    // The stack is updated here and at the end of the `'propagate` loop below.
+    // Be careful when using `continue 'propagate` as this will skip the stack
+    // update.
+    for (pred, set) in samples.drain() {
+      to_propagate.push( (pred, set) )
+    }
+
+    'propagate: while let Some(
+      (curr_pred, curr_samples)
+    ) = to_propagate.pop() {
+      if curr_samples.is_empty() { continue }
+
+      println!(
+        "propagating {} samples for predicate {}",
+        curr_samples.len(), self.instance[curr_pred]
+      ) ;
+
+      // Get the constraints mentioning the positive samples.
+      let mut constraints ;
+      {
+        let mut tmp = None ;
+        let mut iter = curr_samples.iter() ;
+        // Find the first sample that appears in some constraints.
+        'find_first: while let Some(sample) = iter.next() {
+          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+            if ! cstr_set.is_empty() {
+              println!(
+                "  - sample {} appears in {} constraints",
+                sample, cstr_set.len()
+              ) ;
+              tmp = Some(cstr_set) ;
+              break 'find_first
+            }
+          }
+          println!("  - sample {} does not appear in any constraint", sample)
+        }
+        if let Some(set) = tmp {
+          constraints = set
+        } else { // None of the samples appear in any constraint.
+          continue 'propagate
+        }
+        // Iterate over the remaining samples and add to the constraints to
+        // check.
+        'other_samples: while let Some(sample) = iter.next() {
+          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+            if ! cstr_set.is_empty() {
+              use std::iter::Extend ;
+              println!(
+                "  - sample {} appears in {} constraints",
+                sample, cstr_set.len()
+              ) ;
+              constraints.extend( cstr_set ) ;
+              continue 'other_samples
+            }
+          }
+          println!("  - sample {} does not appear in any constraint", sample)
+        }
+      }
+
+      println!("  working on {} constraints", constraints.len()) ;
+
+      'update_constraints: for c_idx in constraints {
+
+        println!(
+          "    looking at {}", self.constraints[c_idx].to_string_info(
+            self.instance.preds()
+          ) ?
+        ) ;
+        
+        // Is `rhs` true?
+        if self.constraints[c_idx].rhs.as_ref().map(
+          | sample | sample.is_in(curr_pred, & curr_samples)
+        ).unwrap_or(false) {
+          println!("    -> rhs is true, tautologizing") ;
+          // Tautologize and break links.
+          let _ = self.tautologize(c_idx) ;
+          let _ = modded_constraints.remove(& c_idx) ;
+          // Move on.
+          continue 'update_constraints
+        }
+
+        // `lhs` simplification.
+        let mut count = 0 ;
+        while count < self.constraints[c_idx].lhs.len() {
+          if self.constraints[c_idx].lhs[count].is_in(
+            curr_pred, & curr_samples
+          ) {
+            let _ = self.constraints[c_idx].lhs.swap_remove(count) ;
+            // No need to break links here as we've already removed all links
+            // from `curr_samples` (to get the constraints).
+            // DO NOT increment `count` here as we just `swap_remove`d. `count`
+            // is already the index of an unvisited element.
+            ()
+          } else {
+            // Unknown, moving on to next sample.
+            count += 1
+          }
+        }
+        // Is `lhs` empty?
+        if self.constraints[c_idx].lhs.is_empty() {
+          println!("    -> lhs is empty, remembering for later") ;
+          // Then `rhs` has to be true.
+          let mut maybe_rhs = self.tautologize(c_idx) ;
+          let _ = modded_constraints.remove(& c_idx) ;
+          if let Some( Sample { pred, args } ) = maybe_rhs.pop() {
+            // `maybe_rhs` can only be empty now, we've removed the whole
+            // `lhs`.
+            debug_assert!( maybe_rhs.is_empty() ) ;
+            // Remember the sample has to be true.
+            let _ = samples.entry(pred).or_insert_with(
+              || HConSet::with_capacity(11)
+            ).insert(args) ;
+          } else {
+            // No `rhs`, we have `true => false`, contradiction.
+            bail!("contradiction detected, inference impossible")
+          }
+        } else {
+          // `lhs` has changed, remember that for unit clause propagation.
+          let _ = modded_constraints.insert(c_idx) ;
+        }
+      }
+
+      // Done propagating `curr_args` for `curr_pred`, push new positive
+      // samples.
+      for (pred, set) in samples.drain() {
+        to_propagate.push( (pred, set) )
+      }
+
+    }
+
+    Ok(())
+  }
+
+  /// Adds some negative examples.
+  ///
+  /// Simplifies constraints containing these samples.
+  ///
+  /// `modded_constraints` will be updated as follows: a constraint is
+  ///
+  /// - added to the set when it is modified (but not tautologized)
+  /// - removed from the set when it is tautologized
+  pub fn add_neg(
+    & mut self, mut samples: PrdHMap< HConSet<Args> >,
+    modded_constraints: & mut CstrSet
+  ) -> Res<()> {
+    // Stack of things to propagate.
+    let mut to_propagate = Vec::with_capacity( samples.len() ) ;
+    // The stack is updated here and at the end of the `'propagate` loop below.
+    // Be careful when using `continue 'propagate` as this will skip the stack
+    // update.
+    for (pred, set) in samples.drain() {
+      to_propagate.push( (pred, set) )
+    }
+
+    'propagate: while let Some(
+      (curr_pred, curr_samples)
+    ) = to_propagate.pop() {
+      if curr_samples.is_empty() { continue }
+
+      println!(
+        "propagating {} samples for predicate {}",
+        curr_samples.len(), self.instance[curr_pred]
+      ) ;
+
+      // Get the constraints mentioning the negative samples.
+      let mut constraints ;
+      {
+        let mut tmp = None ;
+        let mut iter = curr_samples.iter() ;
+        // Find the first sample that appears in some constraints.
+        'find_first: while let Some(sample) = iter.next() {
+          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+            if ! cstr_set.is_empty() {
+              println!(
+                "  - sample {} appears in {} constraints",
+                sample, cstr_set.len()
+              ) ;
+              tmp = Some(cstr_set) ;
+              break 'find_first
+            }
+          }
+          println!("  - sample {} does not appear in any constraint", sample)
+        }
+        if let Some(set) = tmp {
+          constraints = set
+        } else { // None of the samples appear in any constraint.
+          continue 'propagate
+        }
+        // Iterate over the remaining samples and add to the constraints to
+        // check.
+        'other_samples: while let Some(sample) = iter.next() {
+          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+            if ! cstr_set.is_empty() {
+              use std::iter::Extend ;
+              println!(
+                "  - sample {} appears in {} constraints",
+                sample, cstr_set.len()
+              ) ;
+              constraints.extend( cstr_set ) ;
+              continue 'other_samples
+            }
+          }
+          println!("  - sample {} does not appear in any constraint", sample)
+        }
+      }
+
+      println!("  working on {} constraints", constraints.len()) ;
+
+      'update_constraints: for c_idx in constraints {
+
+        println!(
+          "    looking at {}", self.constraints[c_idx].to_string_info(
+            self.instance.preds()
+          ) ?
+        ) ;
+        
+        // Is `rhs` false?
+        if self.constraints[c_idx].rhs.as_ref().map(
+          | sample | sample.is_in(curr_pred, & curr_samples)
+        ).unwrap_or(false) {
+          println!("    -> rhs is false, constraint is negative") ;
+          // Forget rhs.
+          self.constraints[c_idx].rhs = None
+        }
+
+        // `lhs` inspection.
+        let mut trivial = false ;
+        for sample in & self.constraints[c_idx].lhs {
+          if sample.is_in(curr_pred, & curr_samples) {
+            // This sample is false, the constraint is trivially true.
+            trivial = true ;
+            break
+          }
+        }
+        // Is constraint trivial?
+        if trivial {
+          println!("    -> lhs is always false, constraint is trivial") ;
+          let _ = self.tautologize(c_idx) ;
+        } else if self.constraints[c_idx].lhs.len() == 1
+        && self.constraints[c_idx].rhs.is_none() {
+          println!(
+            "    -> one sample in lhs of negative constraint, remembering"
+          ) ;
+          // Constraint is negative and only one sample in lhs, it has to be
+          // false.
+          let mut just_one = self.tautologize(c_idx) ;
+          if let Some( Sample {pred, args } ) = just_one.pop() {
+            debug_assert!( just_one.is_empty() ) ;
+            let _ = samples.entry(pred).or_insert_with(
+              || HConSet::with_capacity(11)
+            ).insert(args) ;
+          } else {
+            unreachable!()
+          }
+        } else {
+          // Constraint has changed, remember that for unit clause propagation.
+          let _ = modded_constraints.insert(c_idx) ;
+        }
+      }
+
+      // Done propagating `curr_args` for `curr_pred`, push new negative
+      // samples.
+      for (pred, set) in samples.drain() {
+        to_propagate.push( (pred, set) )
+      }
+
+    }
+
+    Ok(())
+  }
+
+  /// Adds a constraint. Propagates positive and negative samples.
+  pub fn add_cstr(
+    & self,
+    lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
+  ) -> Res< Option< Either<Constraint, (Sample, bool)> > > {
+    let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
+    'smpl_iter: for (pred, args) in lhs {
+      let (args, is_new) = self.samples.mk_is_new(args) ;
+      if ! is_new {
+        if self.pos[pred].read().map_err(corrupted_err)?.contains(& args) {
+          // Sample known to be positive, ignore.
+          continue 'smpl_iter
+        } else if self.neg[pred].read().map_err(
+          corrupted_err
+        )?.contains(& args) {
+          // Sample known to be negative, constraint is a tautology.
+          return Ok(None)
+        }
+      }
+      // Neither pos or neg, memorizing.
+      nu_lhs.push( Sample { pred, args } )
+    }
+    let nu_rhs = if let Some( (pred, args) ) = rhs {
+      let (args, is_new) = self.samples.mk_is_new(args) ;
+      if ! is_new {
+        if self.pos[pred].read().map_err(corrupted_err)?.contains(& args) {
+          // Sample known to be positive, constraint's a tautology.
+          return Ok(None)
+        } else if self.neg[pred].read().map_err(
+          corrupted_err
+        )?.contains(& args) {
+          // Sample known to be negative, constraint is a negative one.
+          None
+        } else {
+          Some( Sample { pred, args } )
+        }
+      } else {
+        Some( Sample { pred, args } )
+      }
+    } else { None } ;
+
+    let cstr_index = self.constraints.read().map_err(
+      corrupted_err
+    )?.next_index() ;
+
+    // Detect unit cases.
+    if nu_lhs.is_empty() {
+      // unit, rhs has to be true.
+      if let Some( Sample { pred, args } ) = nu_rhs {
+        return Ok(
+          Some(Either::Rgt( (self.add_pos(pred, args.get().clone())?, true) ))
+        )
+      } else {
+        bail!("contradiction detected, inference is impossible")
+      }
+    } else if nu_lhs.len() == 1 && nu_rhs.is_none() {
+      // unit, the single lhs has to be false.
+      let Sample { pred, args } = nu_lhs.pop().unwrap() ;
+      return Ok(
+        Some(Either::Rgt( (self.add_neg(pred, args.get().clone())?, false) ))
+      )
+    }
+
+    // Update the map from samples to constraints. Better to do that now than
+    // above, since there might be further simplifications possible.
+    for & Sample { pred, ref args } in & nu_lhs {
+      let mut map = self.map[pred].write().map_err(corrupted_err)? ;
+      let entry = map.entry(
+        args.clone()
+      ) ;
+      let set = entry.or_insert_with(
+        || CstrSet::with_capacity(17)
+      ) ;
+      let _ = set.insert(cstr_index) ;
+    }
+    if let Some( & Sample { pred, ref args } ) = nu_rhs.as_ref() {
+      let mut map = self.map[pred].write().map_err(corrupted_err)? ;
+      let entry = map.entry(
+        args.clone()
+      ) ;
+      let set = entry.or_insert_with(
+        || CstrSet::with_capacity(17)
+      ) ;
+      let _ = set.insert(cstr_index) ;
+    }
+
+    let cstr = Constraint { lhs: nu_lhs, rhs: nu_rhs } ;
+
+    self.constraints.write().map_err(corrupted_err)?.push(
+      cstr.clone()
+    ) ;
+
+    Ok( Some( Either::Lft(cstr) ) )
+  }
+}
+
+
+
 
 /// Structure storing the (unprojected) learning data.
 ///
@@ -185,7 +649,7 @@ impl Data {
   }
 
   /// The projected data for some predicate.
-  pub fn data_of(& self, pred: PrdIdx) -> Res<::learning::ice::CData> {
+  pub fn data_of(& self, pred: PrdIdx) -> Res<CData> {
     let unc_set = self.map[pred].read().map_err(corrupted_err) ? ;
     let pos_set = self.pos[pred].read().map_err(corrupted_err) ? ;
     let neg_set = self.neg[pred].read().map_err(corrupted_err) ? ;
@@ -205,7 +669,7 @@ impl Data {
         unc.push( sample.clone() )
       }
     }
-    Ok( ::learning::ice::CData { pos, neg, unc } )
+    Ok( CData { pos, neg, unc } )
   }
 
   // /// Temporary function adding learning data directly.
@@ -580,7 +1044,7 @@ impl Data {
 
   /// Uses the classification info to classify some ICE data.
   pub fn apply(
-    & self, pred: PrdIdx, data: & mut ::learning::ice::CData
+    & self, pred: PrdIdx, data: & mut CData
   ) -> Res<()> {
     let pos = self.pos[pred].read().map_err(corrupted_err)? ;
     let neg = self.neg[pred].read().map_err(corrupted_err)? ;

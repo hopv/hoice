@@ -568,6 +568,10 @@ pub trait PebcakFmt<'a> {
       |s| f(s)
     )
   }
+  /// Formatted string.
+  fn to_string_info(& self, i: Self::Info) -> Res<String> {
+    self.string_do(i, |s| s.to_string())
+  }
 }
 
 

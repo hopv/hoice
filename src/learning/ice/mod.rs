@@ -1035,7 +1035,7 @@ impl<
 
 
 
-/// A branch of the a decision tree.
+/// A branch of a decision tree.
 ///
 /// Boolean is `false` if the term should be negated.
 pub type Branch = Vec<(Term, bool)> ;
