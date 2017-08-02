@@ -684,7 +684,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Reachable only if none of our qualifiers can split the data.
 
     if_verb!{
-      let mut msg = "\ncould not split remaining data:\n".to_string() ;
+      let mut msg = format!(
+        "\ncould not split remaining data for {}:\n", self.instance[pred]
+      ) ;
       msg.push_str("pos (") ;
       for pos in & data.pos {
         msg.push_str( & format!("\n    {}", pos) )
@@ -697,7 +699,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       for unc in & data.unc {
         msg.push_str( & format!("\n    {}", unc) )
       }
-      msg.push_str(")") ;
+      msg.push_str("\n)") ;
       msg!{ self => msg } ;
     }
     // bail!( "qualifier synthesis is untested and offline for now" ) ;

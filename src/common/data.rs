@@ -45,6 +45,11 @@ impl<'a> PebcakFmt<'a> for Sample {
     write!(w, ")")
   }
 }
+impl_fmt!{
+  Sample(self, fmt) {
+    write!(fmt, "p_{} {}", self.pred, self.args)
+  }
+}
 
 
 
@@ -110,6 +115,19 @@ impl<'a> PebcakFmt<'a> for Constraint {
       rhs.pebcak_io_fmt(w, map)
     } else {
       write!(w, "false")
+    }
+  }
+}
+impl_fmt!{
+  Constraint(self, fmt) {
+    for lhs in & self.lhs {
+      write!(fmt, "{} ", lhs) ?
+    }
+    write!(fmt, "=> ") ? ;
+    if let Some(ref rhs) = self.rhs {
+      write!(fmt, "{}", rhs)
+    } else {
+      write!(fmt, "false")
     }
   }
 }
@@ -223,6 +241,44 @@ impl Data {
     Ok(())
   }
 
+  /// Propagates unit clauses recursively.
+  pub fn propagate_unit_clauses(
+    & self
+  ) -> Res<()> {
+    let (mut pos, mut neg) = (None, None) ;
+    'fixed_point: loop {
+      {
+        for cstr in self.constraints.read().map_err(corrupted_err)?.iter() {
+          if ! cstr.is_tautology() {
+            match (cstr.lhs.len(), cstr.rhs.as_ref()) {
+              (0, Some(rhs)) => {
+                pos = Some( (rhs.pred, rhs.args.get().clone()) ) ;
+                break
+              },
+              (1, None) => {
+                neg = Some( (cstr.lhs[0].pred, cstr.lhs[0].args.get().clone()) ) ;
+                break
+              },
+              _ => (),
+            }
+          }
+        }
+      }
+
+      if let Some( (pred, args) ) = pos {
+        let _ = self.add_pos(pred, args) ? ;
+        pos = None
+      } else if let Some( (pred, args) ) = neg {
+        let _ = self.add_neg(pred, args) ? ;
+        neg = None
+      } else {
+        break 'fixed_point
+      }
+    }
+    Ok(())
+
+  }
+
   /// Adds a positive example. Simplifies constraints containing that sample.
   pub fn add_pos(
     & self, pred: PrdIdx, args: Args
@@ -238,9 +294,11 @@ impl Data {
     // New positive, but not a new sample. Might appear in some constraints.
     if is_new_pos && ! is_new_sample {
 
-      let (mut curr_pred, mut curr_args) = (pred, args) ;
+      let mut to_propagate = vec![ (pred, args) ] ;
 
-      'propagate: loop {
+      'propagate: while let Some(
+        (curr_pred, curr_args)
+      ) = to_propagate.pop() {
 
         let mut all_constraints = self.map[curr_pred].write().map_err(
           corrupted_err
@@ -287,7 +345,7 @@ impl Data {
             if let Some(idx) = maybe_index {
               // Current sample appears in lhs.
               let _ = cstrs[cstr].lhs.swap_remove(idx) ;
-              dead_links.push( (curr_pred, curr_args, cstr) ) ;
+              dead_links.push( (curr_pred, curr_args.clone(), cstr) ) ;
 
               // Anything left?
               if cstrs[cstr].lhs.is_empty() {
@@ -301,15 +359,12 @@ impl Data {
                   self.pos[pred].write().map_err(
                     corrupted_err
                   )?.insert( args.clone() ) ;
-                  curr_pred = pred ;
-                  curr_args = args ;
-                  continue 'propagate
+                  to_propagate.push( (pred, args) ) ;
                 } else {
                   bail!("contradiction detected, inference is impossible")
                 }
               } else {
                 // Constraint's not unit, done.
-                break 'propagate
               }
             } else {
               // Current positive sample is rhs, clause is a tautology.
@@ -317,12 +372,8 @@ impl Data {
               for Sample { pred, args } in samples {
                 dead_links.push( (pred, args, cstr) )
               }
-              break 'propagate
             }
           }
-        } else {
-          // No constraint mentions current sample.
-          break 'propagate
         }
       }
     }
@@ -347,9 +398,15 @@ impl Data {
     // New negative, but not a new sample. Might appear in some constraints.
     if is_new_neg && ! is_new_sample {
 
-      let (mut curr_pred, mut curr_args) = (pred, args) ;
+      let mut to_propagate = vec![ (pred, args) ] ;
 
-      'propagate: loop {
+      'propagate: while let Some(
+        (curr_pred, curr_args)
+      ) = to_propagate.pop() {
+
+      // let (mut curr_pred, mut curr_args) = (pred, args) ;
+
+      // 'propagate: loop {
 
         let mut all_constraints = self.map[curr_pred].write().map_err(
           corrupted_err
@@ -399,11 +456,10 @@ impl Data {
               for Sample { pred, args } in samples {
                 dead_links.push( (pred, args, cstr) )
               }
-              break 'propagate
             } else {
               // Current sample appears in rhs, constraint's negative.
               cstrs[cstr].rhs = None ;
-              dead_links.push( (curr_pred, curr_args, cstr) ) ;
+              dead_links.push( (curr_pred, curr_args.clone(), cstr) ) ;
               if cstrs[cstr].lhs.len() == 1 {
                 // Only one sample in lhs, has to be negative, propagating.
                 let Sample { pred, args } = cstrs[cstr].lhs.pop().unwrap() ;
@@ -412,17 +468,12 @@ impl Data {
                 self.neg[pred].write().map_err(
                   corrupted_err
                 )?.insert( args.clone() ) ;
-                curr_pred = pred ;
-                curr_args = args ;
-                continue 'propagate
-              } else {
-                break 'propagate
+                to_propagate.push( (pred, args) ) ;
               }
             }
           }
         } else {
           // No constraint mentions current sample.
-          break 'propagate
         }
       }
     }
@@ -525,6 +576,27 @@ impl Data {
     ) ;
 
     Ok( Some( Either::Lft(cstr) ) )
+  }
+
+  /// Uses the classification info to classify some ICE data.
+  pub fn apply(
+    & self, pred: PrdIdx, data: & mut ::learning::ice::CData
+  ) -> Res<()> {
+    let pos = self.pos[pred].read().map_err(corrupted_err)? ;
+    let neg = self.neg[pred].read().map_err(corrupted_err)? ;
+    let mut cursor = 0 ;
+    while cursor < data.unc.len() {
+      if pos.contains(& data.unc[cursor]) {
+        let sample = data.unc.swap_remove(cursor) ;
+        data.pos.push(sample)
+      } else if neg.contains(& data.unc[cursor]) {
+        let sample = data.unc.swap_remove(cursor) ;
+        data.neg.push(sample)
+      } else {
+        cursor += 1
+      }
+    }
+    Ok(())
   }
 
 }
@@ -639,29 +711,31 @@ impl<'a> PebcakFmt<'a> for LearningData {
     if ! self.pos.is_empty() {
       write!(w, "\n ") ? ;
       for pos in & self.pos {
-        write!(w, " ") ? ;
-        pos.pebcak_io_fmt(w, map) ?
+        write!(w, "  ") ? ;
+        pos.pebcak_io_fmt(w, map) ? ;
+        write!(w, "\n") ?
       }
-      writeln!(w, "") ?
     }
     write!(w, ") neg (") ? ;
     if ! self.neg.is_empty() {
       write!(w, "\n ") ? ;
       for neg in & self.neg {
-        write!(w, " ") ? ;
-        neg.pebcak_io_fmt(w, map) ?
+        write!(w, "  ") ? ;
+        neg.pebcak_io_fmt(w, map) ? ;
+        write!(w, "\n") ?
       }
-      writeln!(w, "") ?
     }
     write!(w, ") constraints (") ? ;
     if ! self.cstr.is_empty() {
       write!(w, "\n ") ? ;
       for cstr in & self.cstr {
-        write!(w, " ") ? ;
-        cstr.pebcak_io_fmt(w, map) ?
+        write!(w, "  ") ? ;
+        cstr.pebcak_io_fmt(w, map) ? ;
+        writeln!(w, "") ?
       }
-      writeln!(w, "") ?
     }
     writeln!(w, ")")
   }
 }
+
+

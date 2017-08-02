@@ -100,7 +100,18 @@ fn teach<
         log_info!("  {}", candidates[_pred.idx])
       }
       let cexs = teacher.get_cexs(& candidates) ? ;
+      log_info!{
+        "\nlearning data before adding cex:\n{}", teacher.data.string_do(
+          teacher.instance.preds(), |s| s.to_string()
+        ) ?
+      }
       data = teacher.instance.cexs_to_data(& teacher.data, cexs) ? ;
+      log_info!{
+        "\nlearning data before propagation:\n{}", teacher.data.string_do(
+          teacher.instance.preds(), |s| s.to_string()
+        ) ?
+      }
+      teacher.data.propagate_unit_clauses() ? ;
       // teacher.data.add_learning_data(& data) ? ;
       // info!{ "data:" }
       // teacher.data.string_do(
