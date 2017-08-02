@@ -502,35 +502,32 @@ impl NewData {
 
   /// Adds a constraint. Propagates positive and negative samples.
   pub fn add_cstr(
-    & self,
+    & self, consign: & 'a mut HashConsign<Args>,
+    modded_constraints: & mut CstrSet,
     lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
-  ) -> Res< Option< Either<Constraint, (Sample, bool)> > > {
+  ) -> Res<()> {
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     'smpl_iter: for (pred, args) in lhs {
-      let (args, is_new) = self.samples.mk_is_new(args) ;
+      let (args, is_new) = consign.mk_is_new(args) ;
       if ! is_new {
-        if self.pos[pred].read().map_err(corrupted_err)?.contains(& args) {
+        if self.pos[pred].contains(& args) {
           // Sample known to be positive, ignore.
           continue 'smpl_iter
-        } else if self.neg[pred].read().map_err(
-          corrupted_err
-        )?.contains(& args) {
+        } else if self.neg[pred].contains(& args) {
           // Sample known to be negative, constraint is a tautology.
-          return Ok(None)
+          return Ok(())
         }
       }
       // Neither pos or neg, memorizing.
       nu_lhs.push( Sample { pred, args } )
     }
     let nu_rhs = if let Some( (pred, args) ) = rhs {
-      let (args, is_new) = self.samples.mk_is_new(args) ;
+      let (args, is_new) = consign.mk_is_new(args) ;
       if ! is_new {
-        if self.pos[pred].read().map_err(corrupted_err)?.contains(& args) {
+        if self.pos[pred].contains(& args) {
           // Sample known to be positive, constraint's a tautology.
-          return Ok(None)
-        } else if self.neg[pred].read().map_err(
-          corrupted_err
-        )?.contains(& args) {
+          return Ok(())
+        } else if self.neg[pred].contains(& args) {
           // Sample known to be negative, constraint is a negative one.
           None
         } else {
@@ -541,27 +538,33 @@ impl NewData {
       }
     } else { None } ;
 
-    let cstr_index = self.constraints.read().map_err(
-      corrupted_err
-    )?.next_index() ;
-
     // Detect unit cases.
     if nu_lhs.is_empty() {
       // unit, rhs has to be true.
       if let Some( Sample { pred, args } ) = nu_rhs {
-        return Ok(
-          Some(Either::Rgt( (self.add_pos(pred, args.get().clone())?, true) ))
-        )
+        let mut set = HConSet::new() ;
+        set.insert(args) ;
+        let mut positive = PrdHMap::new() ;
+        positive.insert(pred, set) ;
+        self.add_pos(positive, modded_constraints) ?
+        return Ok(())
       } else {
         bail!("contradiction detected, inference is impossible")
       }
     } else if nu_lhs.len() == 1 && nu_rhs.is_none() {
       // unit, the single lhs has to be false.
-      let Sample { pred, args } = nu_lhs.pop().unwrap() ;
-      return Ok(
-        Some(Either::Rgt( (self.add_neg(pred, args.get().clone())?, false) ))
-      )
+      let Sample { pred, args } = nu_lhs.pop().expect(
+        "[bug] empty vector after checking that its length is 1..."
+      ) ;
+      let mut set = HConSet::new() ;
+      set.insert(args) ;
+      let mut negative = PrdHMap::new() ;
+      negative.insert(pred, set) ;
+      self.add_neg(negative, modded_constraints) ?
+      return Ok(())
     }
+
+    let cstr_index = self.constraints.next_index() ;
 
     // Update the map from samples to constraints. Better to do that now than
     // above, since there might be further simplifications possible.
