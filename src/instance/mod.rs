@@ -614,6 +614,11 @@ impl Instance {
     & self.consts
   }
 
+  /// Range over the predicate indices.
+  pub fn pred_indices(& self) -> PrdRange {
+    PrdRange::zero_to( self.preds.len() )
+  }
+
   /// Predicate accessor.
   pub fn preds(& self) -> & PrdMap<PrdInfo> {
     & self.preds
@@ -710,13 +715,8 @@ impl Instance {
 
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
-    & self, data: & ::common::data::Data, cexs: ::teacher::Cexs
-  ) -> Res< ::common::data::LearningData > {
-    use common::data::* ;
-
-    let mut pos = Vec::with_capacity(10) ;
-    let mut neg = Vec::with_capacity(10) ;
-    let mut ctr = Vec::with_capacity(10) ;
+    & self, data: & mut ::common::data::NewData, cexs: ::teacher::Cexs
+  ) -> Res<()> {
 
     for (clause, cex) in cexs.into_iter() {
       log_debug!{ "    working on clause {}...", clause }
@@ -779,29 +779,14 @@ impl Instance {
         ),
         (1, None) => {
           let (pred, args) = antecedents.pop().unwrap() ;
-          neg.push(
-            data.add_neg(pred, args) ?
-          )
+          data.stage_raw_neg(pred, args) ?
         },
-        (0, Some( (pred, args) )) => pos.push(
-          data.add_pos(pred, args) ?
-        ),
-        (_, consequent) => match data.add_cstr(
-          antecedents, consequent
-        ) ? {
-          Some( Either::Lft(ct) ) => ctr.push(ct),
-          Some( Either::Rgt((s, true)) ) => pos.push(s),
-          Some( Either::Rgt((s, false)) ) => neg.push(s),
-          None => (),
-        },
+        (0, Some( (pred, args) )) => data.stage_raw_pos(pred, args) ?,
+        (_, consequent) => data.add_cstr(antecedents, consequent) ?,
       }
     }
 
-    pos.shrink_to_fit() ;
-    neg.shrink_to_fit() ;
-    ctr.shrink_to_fit() ;
-
-    Ok( LearningData::mk(pos, neg, ctr) )
+    Ok(())
   }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {

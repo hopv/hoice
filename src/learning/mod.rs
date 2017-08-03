@@ -6,5 +6,5 @@
 
 "#]
 
-pub mod smt ;
+// pub mod smt ;
 pub mod ice ;

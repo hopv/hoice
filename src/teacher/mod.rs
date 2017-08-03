@@ -53,28 +53,23 @@ fn teach<
   log_debug!{ "  creating teacher" }
   let mut teacher = Teacher::mk(solver, instance) ;
 
-  if conf.smt_learn {
-    log_debug!{ "  spawning smt learner..." }
-    teacher.add_learner( ::learning::smt::Launcher ) ?
-  }
+  // if conf.smt_learn {
+  //   log_debug!{ "  spawning smt learner..." }
+  //   teacher.add_learner( ::learning::smt::Launcher ) ?
+  // }
   log_debug!{ "  spawning ice learner..." }
   teacher.add_learner( ::learning::ice::Launcher ) ? ;
 
   log_debug!{ "  performing initial check..." }
   let cexs = teacher.initial_check() ? ;
   log_debug!{ "  generating data from initial cex..." }
-  let mut data = teacher.instance.cexs_to_data(& teacher.data, cexs) ? ;
+  teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
     log_info!{
-      "\nnew learning data:\n{}", data.string_do(
-        teacher.instance.preds(), |s| s.to_string()
-      ) ?
-    }
-    log_info!{
       "all learning data:\n{}", teacher.data.string_do(
-        teacher.instance.preds(), |s| s.to_string()
+        & (), |s| s.to_string()
       ) ?
     }
 
@@ -85,7 +80,7 @@ fn teach<
       let _ = ::std::io::stdin().read_line(& mut dummy) ;
     }
 
-    let one_alive = teacher.broadcast(data) ;
+    let one_alive = teacher.broadcast() ;
     if ! one_alive {
       bail!("all learners are dead")
     }
@@ -100,24 +95,8 @@ fn teach<
         log_info!("  {}", candidates[_pred.idx])
       }
       let cexs = teacher.get_cexs(& candidates) ? ;
-      log_info!{
-        "\nlearning data before adding cex:\n{}", teacher.data.string_do(
-          teacher.instance.preds(), |s| s.to_string()
-        ) ?
-      }
-      data = teacher.instance.cexs_to_data(& teacher.data, cexs) ? ;
-      log_info!{
-        "\nlearning data before propagation:\n{}", teacher.data.string_do(
-          teacher.instance.preds(), |s| s.to_string()
-        ) ?
-      }
-      teacher.data.propagate_unit_clauses() ? ;
-      // teacher.data.add_learning_data(& data) ? ;
-      // info!{ "data:" }
-      // teacher.data.string_do(
-      //   teacher.instance.preds(), |s| info!{ "{}", s }
-      // ) ?
-      if data.is_empty() {
+
+      if cexs.is_empty() {
         println!("(safe") ;
         for pred in teacher.instance.preds() {
           println!("  (define-pred {}", pred.name) ;
@@ -132,6 +111,21 @@ fn teach<
         println!(")") ;
         return Ok(())
       }
+
+      log_info!{
+        "\nlearning data before adding cex:\n{}",
+        teacher.data.string_do(
+          & (), |s| s.to_string()
+        ) ?
+      }
+      teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
+      log_info!{
+        "\nlearning data before propagation:\n{}",
+        teacher.data.string_do(
+          & (), |s| s.to_string()
+        ) ?
+      }
+      teacher.data.propagate() ?
     } else {
       bail!("all learners are dead")
     }
@@ -156,23 +150,24 @@ pub struct Teacher<S> {
   /// The (shared) instance.
   pub instance: Arc<Instance>,
   /// Learning data.
-  pub data: Arc<Data>,
+  pub data: NewData,
   /// Receiver.
   pub from_learners: Receiver<(LrnIdx, FromLearners)>,
   /// Sender used by learners. Becomes `None` when the learning process starts.
   pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
   /// Learners sender and description.
-  pub learners: LrnMap<(Sender<LearningData>, String)>,
+  pub learners: LrnMap<(Sender<NewData>, String)>,
 }
 impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Constructor.
   pub fn mk(solver: S, instance: Instance) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
-    let data = Arc::new( Data::mk(& instance) ) ;
+    let instance = Arc::new(instance) ;
+    let data = NewData::mk( instance.clone() ) ;
     Teacher {
-      solver, instance: Arc::new(instance), data,
-      from_learners, to_teacher: Some(to_teacher), learners
+      solver, instance, data, from_learners,
+      to_teacher: Some(to_teacher), learners
     }
   }
 
@@ -183,7 +178,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
       let name = learner.description() ;
       let instance = self.instance.clone() ;
       let data = self.data.clone() ;
-      let (to_learner, learner_recv) = to_learner() ;
+      let (to_learner, learner_recv) = new_to_learner() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
           LearnerCore::mk(index, to_teacher.clone(), learner_recv),
@@ -201,10 +196,10 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
 
   /// Broadcasts data to the learners. Returns `true` if there's no more
   /// learner left.
-  pub fn broadcast(& self, data: LearningData) -> bool {
+  pub fn broadcast(& self) -> bool {
     let mut one_alive = false ;
     for & (ref sender, ref name) in self.learners.iter() {
-      if let Err(_) = sender.send( data.clone() ) {
+      if let Err(_) = sender.send( self.data.clone() ) {
         warn!(
           "learner `{}` is dead...", name
         )

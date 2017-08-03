@@ -2,11 +2,13 @@
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
-pub use std::sync::Arc ;
+pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
 
 pub use mylib::common::hash::* ;
 pub use mylib::safe::int::CanNew ;
+
+pub use hashconsing::HashConsign ;
 
 pub use rsmt2::errors::Res as SmtRes ;
 

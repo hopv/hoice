@@ -211,7 +211,7 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: Arc<Data>
+    core: & LearnerCore, instance: Arc<Instance>, data: NewData
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
@@ -236,15 +236,14 @@ impl Launcher {
       ).run()
     } else {
       IceLearner::mk(
-        & core, instance, data,
-        conflict_solver, synth_solver
+        & core, instance, data, conflict_solver, synth_solver
       ).run()
     }
   }
 }
 impl Learner for Launcher {
   fn run(
-    & self, core: LearnerCore, instance: Arc<Instance>, data: Arc<Data>
+    & self, core: LearnerCore, instance: Arc<Instance>, data: NewData
   ) {
     if let Err(e) = Self::launch(& core, instance, data) {
       let _ = core.err(e) ;
@@ -261,8 +260,8 @@ pub struct IceLearner<'core, Slver> {
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
   pub qualifiers: Qualifiers,
-  /// Learning data.
-  pub data: Arc<Data>,
+  /// Current data.
+  data: NewData,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
   /// Solver used to synthesize an hyperplane separating two points.
@@ -287,8 +286,8 @@ impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
   pub fn mk(
-    core: & 'core LearnerCore, instance: Arc<Instance>,
-    data: Arc<Data>, solver: Slver, synth_solver: Slver
+    core: & 'core LearnerCore, instance: Arc<Instance>, data: NewData,
+    solver: Slver, synth_solver: Slver
   ) -> Self {
     let qualifiers = Qualifiers::mk(& * instance) ;
     let dec_mem = vec![
@@ -372,9 +371,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// # TO DO
   ///
   /// - factor vectors created in this function to avoid reallocation
-  pub fn learn(& mut self, data: LearningData) -> Res< Option<Candidates> > {
+  pub fn learn(
+    & mut self, mut data: NewData
+  ) -> Res< Option<Candidates> > {
+    let new_samples = data.drain_new_samples() ;
+    self.data = data ;
     self.qualifiers.clear_blacklist() ;
-    self.qualifiers.register_data(data) ? ;
+    self.qualifiers.register_samples( new_samples ) ? ;
 
     self.setup_solver().chain_err(
       || "while initializing the solver"
@@ -396,9 +399,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self.candidate[pred] = Some( term.clone() ) ;
         continue
       }
-      let pos_len = self.data.pos[pred].read().map_err(corrupted_err)?.len() ;
-      let neg_len = self.data.neg[pred].read().map_err(corrupted_err)?.len() ;
-      let unc_len = self.data.map[pred].read().map_err(corrupted_err)?.len() ;
+      let pos_len = self.data.pos[pred].len() ;
+      let neg_len = self.data.neg[pred].len() ;
+      let unc_len = self.data.map[pred].len() ;
       if pos_len == 0 && neg_len != 0 {
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
@@ -455,7 +458,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self => "{}: {} unclassified, {} classified",
                 self.instance[pred], _unc, _cla
       ) ;
-      let data = self.data.data_of(pred) ? ;
+      let data = self.data.data_of(pred) ;
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
         continue 'pred_iter
@@ -736,7 +739,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Insert new qualifier.
     let (q_data, nq_data) = {
-      let values = self.qualifiers.add_qual(qual.clone(), & self.data) ? ;
+      let values = self.qualifiers.add_qual(
+        qual.clone(), & self.data.samples
+      ) ? ;
       data.split(values)
     } ;
     msg!(
@@ -798,8 +803,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn is_legal_pred(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
-    let unc = self.data.map[pred].read().map_err(corrupted_err) ? ;
-    let unc = & * unc ;
+    let unc = & self.data.map[pred] ;
     if unc.is_empty() { return Ok(true) }
 
     // Wrap actlit and increment counter.
@@ -840,7 +844,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Positive data.
     self.solver.comment("Positive data:") ? ;
     for (pred, set) in self.data.pos.index_iter() {
-      for sample in set.read().map_err(corrupted_err)?.iter() {
+      for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
         self.solver.define_fun(
@@ -851,7 +855,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Negative data.
     self.solver.comment("Negative data:") ? ;
     for (pred, set) in self.data.neg.index_iter() {
-      for sample in set.read().map_err(corrupted_err)?.iter() {
+      for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         if ! is_new {
           bail!(
@@ -893,7 +897,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       //     )
       //   }
       // } else {
-        for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
+        for (sample, _) in map.iter() {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
@@ -907,9 +911,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     self.solver.comment("Constraints:") ? ;
     // Assert all constraints.
-    for constraint in self.data.constraints.read().map_err(
-      corrupted_err
-    )?.iter() {
+    for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
         self.solver.assert( & CWrap(constraint), & () ) ?
       }
@@ -1106,7 +1108,7 @@ impl CData {
 
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
-  pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
+  pub fn entropy(& self, pred: PrdIdx, data: & NewData) -> Res<f64> {
     let mut proba = EntropyBuilder::mk() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
@@ -1118,7 +1120,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   pub fn gain(
-    & self, pred: PrdIdx, data: & Data, qual: & QualValues
+    & self, pred: PrdIdx, data: & NewData, qual: & QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
@@ -1264,7 +1266,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & Data, prd: PrdIdx, sample: & HSample
+    & mut self, data: & NewData, prd: PrdIdx, sample: & HSample
   ) -> Res<()> {
     self.den += 1 ;
     self.num += (1. / 2.) + (
@@ -1294,7 +1296,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & Data, prd: PrdIdx, sample: & HSample
+    data: & NewData, prd: PrdIdx, sample: & HSample
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,
@@ -1302,13 +1304,9 @@ impl EntropyBuilder {
       mut sum_neg,
     ) = (0., 0., 0.) ;
 
-    if let Some(constraints) = data.map[prd].read().map_err(
-      corrupted_err
-    )?.get(& sample) {
+    if let Some(constraints) = data.map[prd].get(& sample) {
       for constraint in constraints {
-        let constraint = & data.constraints.read().map_err(
-          corrupted_err
-        )?[* constraint] ;
+        let constraint = & data.constraints[* constraint] ;
         match constraint.rhs {
           None => sum_neg = sum_neg + 1. / (constraint.lhs.len() as f64),
           Some( Sample { pred, ref args } )
