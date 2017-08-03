@@ -35,6 +35,8 @@ pub mod instance ;
 pub mod teacher ;
 pub mod learning ;
 
+pub mod check ;
+
 use common::* ;
 
 
