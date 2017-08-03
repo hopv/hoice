@@ -395,8 +395,16 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let mut predicates = Vec::with_capacity(prd_count) ;
 
     for pred in PrdRange::zero_to(prd_count) {
+      msg!{
+        self => "current data:\n{}", self.data.to_string_info(& ()) ?
+      } ;
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
+        if term.is_true() {
+          self.data.pred_all_true(pred) ? ;
+        } else {
+          bail!("[unsupported] forced candidate is not the term `true`")
+        }
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
@@ -412,6 +420,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             self.instance[pred], neg_len, unc_len
           ) ;
           self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          self.data.pred_all_false(pred) ? ;
           continue
         }
       } else if neg_len == 0 && pos_len != 0 {
@@ -424,6 +433,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             self.instance[pred], pos_len, unc_len
           ) ;
           self.candidate[pred] = Some( self.instance.bool(true) ) ;
+          self.data.pred_all_true(pred) ? ;
           continue
         }
       }
@@ -535,8 +545,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             forcing {} unclassifieds positive...", data.unc.len()
         ) ;
         for unc in data.unc {
-          let prev = self.classifier.insert(unc, true) ;
-          debug_assert!( prev.is_none() )
+          // let prev = self.classifier.insert(unc, true) ;
+          // debug_assert!( prev.is_none() )
+          self.data.stage_pos(pred, unc)
         }
         branch.shrink_to_fit() ;
         if branch.is_empty() {
@@ -566,8 +577,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             forcing {} unclassifieds negative...", data.unc.len()
         ) ;
         for unc in data.unc {
-          let prev = self.classifier.insert(unc, false) ;
-          debug_assert!( prev.is_none() )
+          // let prev = self.classifier.insert(unc, false) ;
+          // debug_assert!( prev.is_none() )
+          self.data.stage_neg(pred, unc)
         }
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;

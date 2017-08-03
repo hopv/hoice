@@ -310,7 +310,7 @@ impl NewData {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_pos(& mut self) -> Res<()> {
-    println!("|===| add propagate pos") ;
+    info!("|===| add propagate pos") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.pos_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -329,7 +329,7 @@ impl NewData {
         let _ = self.pos[curr_pred].insert( sample.clone() ) ;
       }
 
-      println!(
+      info!(
         "propagating {} samples for predicate {}",
         curr_samples.len(), self.instance[curr_pred]
       ) ;
@@ -343,7 +343,7 @@ impl NewData {
         'find_first: while let Some(sample) = iter.next() {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
-              println!(
+              info!(
                 "  - sample {} appears in {} constraints",
                 sample, cstr_set.len()
               ) ;
@@ -351,7 +351,7 @@ impl NewData {
               break 'find_first
             }
           }
-          println!("  - sample {} does not appear in any constraint", sample)
+          info!("  - sample {} does not appear in any constraint", sample)
         }
         if let Some(set) = tmp {
           constraints = set
@@ -364,7 +364,7 @@ impl NewData {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
-              println!(
+              info!(
                 "  - sample {} appears in {} constraints",
                 sample, cstr_set.len()
               ) ;
@@ -372,15 +372,15 @@ impl NewData {
               continue 'other_samples
             }
           }
-          println!("  - sample {} does not appear in any constraint", sample)
+          info!("  - sample {} does not appear in any constraint", sample)
         }
       }
 
-      println!("  working on {} constraints", constraints.len()) ;
+      info!("  working on {} constraints", constraints.len()) ;
 
       'update_constraints: for c_idx in constraints {
 
-        println!(
+        info!(
           "    looking at {}", self.constraints[c_idx].to_string_info(
             self.instance.preds()
           ) ?
@@ -390,7 +390,7 @@ impl NewData {
         if self.constraints[c_idx].rhs.as_ref().map(
           | sample | sample.is_in(curr_pred, & curr_samples)
         ).unwrap_or(false) {
-          println!("    -> rhs is true, tautologizing") ;
+          info!("    -> rhs is true, tautologizing") ;
           // Tautologize and break links.
           let _ = self.tautologize(c_idx) ;
           let _ = self.modded_constraints.remove(& c_idx) ;
@@ -417,7 +417,7 @@ impl NewData {
         }
         // Is `lhs` empty?
         if self.constraints[c_idx].lhs.is_empty() {
-          println!("    -> lhs is empty, remembering for later") ;
+          info!("    -> lhs is empty, remembering for later") ;
           // Then `rhs` has to be true.
           let mut maybe_rhs = self.tautologize(c_idx) ;
           let _ = self.modded_constraints.remove(& c_idx) ;
@@ -473,7 +473,7 @@ impl NewData {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_neg(& mut self) -> Res<()> {
-    println!("|===| add propagate neg") ;
+    info!("|===| add propagate neg") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.neg_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -492,7 +492,7 @@ impl NewData {
         let _ = self.neg[curr_pred].insert( sample.clone() ) ;
       }
 
-      println!(
+      info!(
         "propagating {} samples for predicate {}",
         curr_samples.len(), self.instance[curr_pred]
       ) ;
@@ -506,7 +506,7 @@ impl NewData {
         'find_first: while let Some(sample) = iter.next() {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
-              println!(
+              info!(
                 "  - sample {} appears in {} constraints",
                 sample, cstr_set.len()
               ) ;
@@ -514,7 +514,7 @@ impl NewData {
               break 'find_first
             }
           }
-          println!("  - sample {} does not appear in any constraint", sample)
+          info!("  - sample {} does not appear in any constraint", sample)
         }
         if let Some(set) = tmp {
           constraints = set
@@ -527,7 +527,7 @@ impl NewData {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
-              println!(
+              info!(
                 "  - sample {} appears in {} constraints",
                 sample, cstr_set.len()
               ) ;
@@ -535,15 +535,15 @@ impl NewData {
               continue 'other_samples
             }
           }
-          println!("  - sample {} does not appear in any constraint", sample)
+          info!("  - sample {} does not appear in any constraint", sample)
         }
       }
 
-      println!("  working on {} constraints", constraints.len()) ;
+      info!("  working on {} constraints", constraints.len()) ;
 
       'update_constraints: for c_idx in constraints {
 
-        println!(
+        info!(
           "    looking at {}", self.constraints[c_idx].to_string_info(
             self.instance.preds()
           ) ?
@@ -553,7 +553,7 @@ impl NewData {
         if self.constraints[c_idx].rhs.as_ref().map(
           | sample | sample.is_in(curr_pred, & curr_samples)
         ).unwrap_or(false) {
-          println!("    -> rhs is false, constraint is negative") ;
+          info!("    -> rhs is false, constraint is negative") ;
           // Forget rhs.
           self.constraints[c_idx].rhs = None
         }
@@ -569,11 +569,11 @@ impl NewData {
         }
         // Is constraint trivial?
         if trivial {
-          println!("    -> lhs is always false, constraint is trivial") ;
+          info!("    -> lhs is always false, constraint is trivial") ;
           let _ = self.tautologize(c_idx) ;
         } else if self.constraints[c_idx].lhs.len() == 1
         && self.constraints[c_idx].rhs.is_none() {
-          println!(
+          info!(
             "    -> one sample in lhs of negative constraint, remembering"
           ) ;
           // Constraint is negative and only one sample in lhs, it has to be
@@ -725,6 +725,35 @@ impl NewData {
     self.constraints.push(cstr) ;
 
     Ok(())
+  }
+
+
+  /// Sets all the unknown data of a given predicate to be false, and
+  /// propagates.
+  pub fn pred_all_false(& mut self, pred: PrdIdx) -> Res<()> {
+    {
+      let set = self.neg_to_add.entry(pred).or_insert_with(
+        || HConSet::new()
+      ) ;
+      for (sample, _) in & self.map[pred] {
+        set.insert( sample.clone() ) ;
+      }
+    }
+    self.propagate()
+  }
+
+  /// Sets all the unknown data of a given predicate to be true, and
+  /// propagates.
+  pub fn pred_all_true(& mut self, pred: PrdIdx) -> Res<()> {
+    {
+      let set = self.pos_to_add.entry(pred).or_insert_with(
+        || HConSet::new()
+      ) ;
+      for (sample, _) in & self.map[pred] {
+        set.insert( sample.clone() ) ;
+      }
+    }
+    self.propagate()
   }
 }
 
