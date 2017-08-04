@@ -2,7 +2,6 @@
 
 use nom::multispace ;
 
-use errors::* ;
 use check::* ;
 
 named!{
@@ -81,6 +80,17 @@ named!{
 named!{
   #[doc = "Parses an s-expression."],
   pub s_expr<Term>, alt_complete!(
+    // (Un)quoted ident.
+    ident |
+    // Anything but a space or a paren.
+    map!(
+      map_res!(
+        re_bytes_find!(r#"^[^\s()][^\s()]*"#),
+        |bytes| ::std::str::from_utf8(bytes).chain_err(
+          || "could not convert bytes to utf8"
+        )
+      ), |s| s.to_string()
+    ) |
     // A sequence of terms between parens.
     do_parse!(
       char!('(') >>
@@ -96,14 +106,6 @@ named!{
         s.push(')') ;
         s
       })
-    ) |
-    map!(
-      map_res!(
-        re_bytes_find!(r#"^[^ ()]"#),
-        |bytes| ::std::str::from_utf8(bytes).chain_err(
-          || "could not convert bytes to utf8"
-        )
-      ), |s| s.to_string()
     )
   )
 }
@@ -117,6 +119,7 @@ named!{
         char!('(') >>
         spc_cmt >> id: ident >>
         spc_cmt >> ty: typ >>
+        spc_cmt >> char!(')') >>
         spc_cmt >> (
           (id, ty)
         )
@@ -154,6 +157,47 @@ named!{
     spc_cmt >> rhs: s_expr >>
     spc_cmt >> char!(')') >> (
       Clause { args, lhs, rhs }
+    )
+  )
+}
+
+named!{
+  #[doc = "Parses the infer command."],
+  pub infer<()>, do_parse!(
+    char!('(') >>
+    spc_cmt >> tag!("infer") >>
+    spc_cmt >> char!(')') >> (())
+  )
+}
+
+named!{
+  #[doc = "Parses a `hc` file."],
+  pub parse_input<Input>, do_parse!(
+    spc_cmt >> pred_decs: many0!(
+      terminated!(pred_dec, spc_cmt)
+    ) >>
+    spc_cmt >> clauses: many0!(
+      terminated!(clause, spc_cmt)
+    ) >>
+    spc_cmt >> infer >>
+    spc_cmt >> (
+      Input { pred_decs, clauses }
+    )
+  )
+}
+
+
+named!{
+  #[doc = "Parses the output of a `hoice` run."],
+  pub parse_output<Output>, do_parse!(
+    spc_cmt >> char!('(') >>
+    spc_cmt >> tag!("safe") >>
+    spc_cmt >> pred_defs: many0!(
+      terminated!(pred_def, spc_cmt)
+    ) >>
+    spc_cmt >> char!(')') >>
+    spc_cmt >> (
+      Output { pred_defs }
     )
   )
 }

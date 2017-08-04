@@ -154,14 +154,19 @@ fn work() -> Res<()> {
   // Creates smt log directory if needed.
   conf.init() ? ;
 
-  let mut builder = ::instance::build::InstBuild::mk() ;
-  builder.reduce().chain_err(
-    || "during instance reduction"
-  ) ? ;
-
   if let Some(file_path) = conf.file.as_ref() {
     use std::fs::{ OpenOptions } ;
     use std::io::* ;
+
+    // Are we in check mode?
+    if let Some(output_file) = conf.check.as_ref() {
+      return ::check::do_it(file_path, output_file)
+    }
+
+    let mut builder = ::instance::build::InstBuild::mk() ;
+    builder.reduce().chain_err(
+      || "during instance reduction"
+    ) ? ;
 
     info!{ "loading instance from `{}`...", conf.emph(file_path) }
     let mut buffer = Vec::with_capacity(1007) ;
