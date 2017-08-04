@@ -194,7 +194,11 @@ fn work() -> Res<()> {
       return Ok(())
     }
 
-    let instance = builder.to_instance(& buffer, Some(0)) ? ;
+    let instance = builder.to_instance(
+      & buffer, Some(0)
+    ).chain_err(
+      || "during instance construction"
+    ) ? ;
 
     info!{
       "instance:\n{}", instance.string_do( (), |s| s.to_string() ) ?

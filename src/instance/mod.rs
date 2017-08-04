@@ -688,7 +688,7 @@ impl Instance {
   }
   /// Creates an operator application.
   pub fn op(& self, op: Op, args: Vec<Term>) -> Term {
-    op.normalize(self, args)
+    op.simplify(self, args)
   }
 
   /// Creates a less than or equal to.
@@ -857,10 +857,8 @@ impl Op {
     }
   }
 
-  /// Normalizes its arguments.
-  ///
-  /// - assumes `(self == Op::Gt || self == Op::Lt) => args.len() == 2`
-  pub fn normalize(
+  /// Tries to simplify an operator application.
+  pub fn simplify(
     self, instance: & Instance, mut args: Vec<Term>
   ) -> Term {
     let (op, args) = match self {
@@ -878,44 +876,44 @@ impl Op {
       } else {
         (self, args)
       },
-      Op::Gt => if args.len() != 2 {
-        panic!( "[bug] operator `>` applied to {} operands", args.len() )
-      } else {
-        if let Some( i ) = args[0].int_val() {
-          // Checks whether it's zero before decreasing.
-          if i.is_zero() {
-            // Args is unchanged, term is equivalent to false anyway.
-            (Op::Ge, args)
-          } else {
-            args[0] = instance.int(i - Int::one()) ;
-            (Op::Ge, args)
-          }
-        } else if let Some( i ) = args[1].int_val() {
-          args[1] = instance.int(i + Int::one()) ;
-          (Op::Ge, args)
-        } else {
-          (self, args)
-        }
-      },
-      Op::Lt => if args.len() != 2 {
-        panic!( "[bug] operator `<` applied to {} operands", args.len() )
-      } else {
-        if let Some( i ) = args[0].int_val() {
-          args[0] = instance.int(i + Int::one()) ;
-          (Op::Ge, args)
-        } else if let Some( i ) = args[1].int_val() {
-          // Checks whether it's zero before decreasing.
-          if i.is_zero() {
-            // Args is unchanged, term is equivalent to false anyway.
-            (Op::Ge, args)
-          } else {
-            args[1] = instance.int(i - Int::one()) ;
-            (Op::Ge, args)
-          }
-        } else {
-          (self, args)
-        }
-      },
+      // Op::Gt => if args.len() != 2 {
+      //   panic!( "[bug] operator `>` applied to {} operands", args.len() )
+      // } else {
+      //   if let Some( i ) = args[0].int_val() {
+      //     // Checks whether it's zero before decreasing.
+      //     if i.is_zero() {
+      //       // Args is unchanged, term is equivalent to false anyway.
+      //       (Op::Ge, args)
+      //     } else {
+      //       args[0] = instance.int(i - Int::one()) ;
+      //       (Op::Ge, args)
+      //     }
+      //   } else if let Some( i ) = args[1].int_val() {
+      //     args[1] = instance.int(i + Int::one()) ;
+      //     (Op::Ge, args)
+      //   } else {
+      //     (self, args)
+      //   }
+      // },
+      // Op::Lt => if args.len() != 2 {
+      //   panic!( "[bug] operator `<` applied to {} operands", args.len() )
+      // } else {
+      //   if let Some( i ) = args[0].int_val() {
+      //     args[0] = instance.int(i + Int::one()) ;
+      //     (Op::Le, args)
+      //   } else if let Some( i ) = args[1].int_val() {
+      //     // Checks whether it's zero before decreasing.
+      //     if i.is_zero() {
+      //       // Args is unchanged, term is equivalent to false anyway.
+      //       (Op::Le, args)
+      //     } else {
+      //       args[1] = instance.int(i - Int::one()) ;
+      //       (Op::Le, args)
+      //     }
+      //   } else {
+      //     (self, args)
+      //   }
+      // },
       _ => (self, args),
     } ;
     instance.factory.mk( RTerm::App { op, args } )

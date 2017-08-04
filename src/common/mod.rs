@@ -491,7 +491,7 @@ impl Conf {
         "checks the output of a previous run (does not run inference)"
       ).value_name(
         "<FILE>"
-      ).default_value(".").takes_value(true).number_of_values(1)
+      ).takes_value(true).number_of_values(1)
 
     ).get_matches() ;
 

@@ -202,6 +202,41 @@ impl NewData {
     }
   }
 
+  /// Checks the state of the data. Does nothing in release.
+  ///
+  /// Checks that no positive / negative data is linked to some constraints.
+  #[cfg(debug)]
+  pub fn check(& self) -> Res<()> {
+    if ! self.pos_to_add.is_empty() {
+      bail!("pos_to_add is not empty...")
+    }
+    if ! self.neg_to_add.is_empty() {
+      bail!("neg_to_add is not empty...")
+    }
+    for pred in self.instance.pred_indices() {
+      for pos in & self.pos[pred] {
+        if let set = self.map[pred].get(pos) {
+          bail!(
+            "{}{} is positive but appears in constraint(s) {:?}",
+            self.instance[pred], pos, set
+          )
+        }
+      }
+      for neg in & self.neg[pred] {
+        if let set = self.map[pred].get(neg) {
+          bail!(
+            "{}{} is negative but appears in constraint(s) {:?}",
+            self.instance[pred], neg, set
+          )
+        }
+      }
+    }
+    Ok(())
+  }
+  #[cfg(not(debug))]
+  #[inline(always)]
+  pub fn check(& self) -> Res<()> { Ok(()) }
+
   /// The new samples since the last drain.
   pub fn drain_new_samples(& mut self) -> Vec<HSample> {
     self.new_samples.drain(0..).collect()
@@ -209,20 +244,16 @@ impl NewData {
 
   /// Remember a positive example to add.
   pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) {
-    let is_new = self.pos_to_add.entry(pred).or_insert_with(
+    let _ = self.pos_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
     ).insert(args) ;
-    // It should (currently) never happen that the example was already there.
-    debug_assert!( is_new )
   }
 
   /// Remember a negative example to add.
   pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) {
-    let is_new = self.neg_to_add.entry(pred).or_insert_with(
+    let _ = self.neg_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
     ).insert(args) ;
-    // It should (currently) never happen that the example was already there.
-    debug_assert!( is_new )
   }
 
   /// Diff between two data structures. Returns the new positive, negative,
@@ -298,6 +329,7 @@ impl NewData {
         self.add_propagate_neg() ?
       }
     }
+    self.check() ? ;
     Ok(())
   }
 
@@ -326,7 +358,8 @@ impl NewData {
       if curr_samples.is_empty() { continue }
 
       for sample in & curr_samples {
-        let _ = self.pos[curr_pred].insert( sample.clone() ) ;
+        let is_new = self.pos[curr_pred].insert( sample.clone() ) ;
+        debug_assert!( is_new )
       }
 
       info!(
@@ -489,7 +522,8 @@ impl NewData {
       if curr_samples.is_empty() { continue }
 
       for sample in & curr_samples {
-        let _ = self.neg[curr_pred].insert( sample.clone() ) ;
+        let is_new = self.neg[curr_pred].insert( sample.clone() ) ;
+        debug_assert!( is_new )
       }
 
       info!(
