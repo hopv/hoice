@@ -357,15 +357,15 @@ impl NewData {
     ) = to_propagate.pop() {
       if curr_samples.is_empty() { continue }
 
-      for sample in & curr_samples {
-        let is_new = self.pos[curr_pred].insert( sample.clone() ) ;
-        debug_assert!( is_new )
-      }
-
       info!(
         "propagating {} samples for predicate {}",
         curr_samples.len(), self.instance[curr_pred]
       ) ;
+
+      for sample in & curr_samples {
+        let is_new = self.pos[curr_pred].insert( sample.clone() ) ;
+        debug_assert!( is_new )
+      }
 
       // Get the constraints mentioning the positive samples.
       let mut constraints ;
@@ -662,7 +662,9 @@ impl NewData {
       debug_assert!( is_new ) ;
       Ok(())
     } else {
-      self.stage_pos(pred, args) ;
+      if ! self.pos[pred].contains(& args) {
+        self.stage_pos(pred, args)
+      }
       Ok(())
     }
   }
@@ -677,7 +679,9 @@ impl NewData {
       debug_assert!( is_new ) ;
       Ok(())
     } else {
-      self.stage_neg(pred, args) ;
+      if ! self.neg[pred].contains(& args) {
+        self.stage_neg(pred, args) ;
+      }
       Ok(())
     }
   }

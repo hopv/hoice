@@ -670,9 +670,11 @@ impl Instance {
   pub fn var(& self, v: VarIdx) -> Term {
     self.factory.mk( RTerm::Var(v) )
   }
-  /// Creates a variable.
-  pub fn int(& self, i: Int) -> Term {
-    self.factory.mk( RTerm::Int(i) )
+  /// Creates a constant.
+  pub fn int<I: Into<Int>>(& self, i: I) -> Term {
+    self.factory.mk(
+      RTerm::Int( i.into() )
+    )
   }
   /// Creates the constant `0`.
   pub fn zero(& self) -> Term {
@@ -858,6 +860,29 @@ impl Op {
   }
 
   /// Tries to simplify an operator application.
+  ///
+  /// Currently only simplifies nullary / unary applications of `And` and `Or`.
+  ///
+  /// ```
+  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let tru = instance.bool(true) ;
+  /// let fls = instance.bool(false) ;
+  /// let var_1 = instance.var( 7.into() ) ;
+  /// let var_2 = instance.var( 2.into() ) ;
+  ///
+  /// assert_eq!( fls, Op::And.simplify(instance, vec![]) ) ;
+  /// assert_eq!( tru, Op::Or.simplify(instance, vec![]) ) ;
+  /// assert_eq!( var_2, Op::And.simplify(instance, vec![ var_2.clone() ]) ) ;
+  /// assert_eq!( var_1, Op::Or.simplify(instance, vec![ var_1.clone() ]) ) ;
+  /// let and = instance.op(Op::And, vec![ var_2.clone(), var_1.clone() ]) ;
+  /// assert_eq!(
+  ///   and, Op::And.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
+  /// ) ;
+  /// let or = instance.op(Op::Or, vec![ var_2.clone(), and.clone() ]) ;
+  /// assert_eq!(
+  ///   or, Op::Or.simplify(instance, vec![ and.clone(), var_2.clone() ])
+  /// ) ;
+  /// ```
   pub fn simplify(
     self, instance: & Instance, mut args: Vec<Term>
   ) -> Term {
@@ -1239,5 +1264,425 @@ impl<'a> PebcakFmt<'a> for Instance {
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
     write!(w, "\n")
+  }
+}
+
+
+
+#[cfg(test)]
+macro_rules! model {
+  ( $($values:expr),* ) => (
+    $crate::common::VarMap::of(
+      vec![ $($values),* ]
+    )
+  ) ;
+}
+
+
+
+
+
+#[test]
+fn simplify() {
+  let instance = & Instance::mk(10, 10, 10) ;
+  let tru = instance.bool(true) ;
+  let fls = instance.bool(false) ;
+  let var_1 = instance.var( 7.into() ) ;
+  let var_2 = instance.var( 2.into() ) ;
+
+  assert_eq!( fls, Op::And.simplify(instance, vec![]) ) ;
+  assert_eq!( tru, Op::Or.simplify(instance, vec![]) ) ;
+  assert_eq!( var_2, Op::And.simplify(instance, vec![ var_2.clone() ]) ) ;
+  assert_eq!( var_1, Op::Or.simplify(instance, vec![ var_1.clone() ]) ) ;
+  let and = instance.op(Op::And, vec![ var_2.clone(), var_1.clone() ]) ;
+  assert_eq!(
+    and, Op::And.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
+  ) ;
+  let or = instance.op(Op::Or, vec![ var_2.clone(), and.clone() ]) ;
+  assert_eq!(
+    or, Op::Or.simplify(instance, vec![ var_2.clone(), and.clone() ])
+  ) ;
+}
+
+
+
+
+
+#[cfg(test)]
+mod evaluation {
+  // use common::* ;
+  use instance::* ;
+
+  /// Just creates an instance.
+  fn instance() -> Instance {
+    Instance::mk(100, 100, 100)
+  }
+
+  #[test]
+  fn cst_add() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let sum = instance.op( Op::Add, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = sum.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 10.into() )
+  }
+
+  #[test]
+  fn cst_sub() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let sub = instance.op( Op::Sub, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = sub.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 4.into() )
+  }
+
+  #[test]
+  fn cst_mul() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let mul = instance.op( Op::Mul, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = mul.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 21.into() )
+  }
+
+  #[test]
+  fn cst_div() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let div = instance.op( Op::Div, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = div.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 2.into() )
+  }
+
+  #[test]
+  fn cst_mod() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let m0d = instance.op( Op::Mod, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = m0d.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 1.into() )
+  }
+
+  #[test]
+  fn cst_gt_1() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = gt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_gt_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(7) ;
+    let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = gt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_ge_1() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = ge.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_ge_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(7) ;
+    let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = ge.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_le_1() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = le.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_le_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(7) ;
+    let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = le.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_lt_1() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = lt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_lt_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(7) ;
+    let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = lt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_eq_1() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(7) ;
+    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_eq_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let c_2 = instance.int(3) ;
+    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_eq_3() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_eq_4() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(true) ;
+    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_impl_1() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(false) ;
+    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_impl_2() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(false) ;
+    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_impl_3() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(true) ;
+    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_impl_4() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
+    let model = model!() ;
+    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_not_1() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let not = instance.op( Op::Not, vec![ c_1 ] ) ;
+    let model = model!() ;
+    let res = not.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_not_2() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let not = instance.op( Op::Not, vec![ c_1 ] ) ;
+    let model = model!() ;
+    let res = not.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_and_1() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(true) ;
+    let c_4 = instance.bool(true) ;
+    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_and_2() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(false) ;
+    let c_4 = instance.bool(true) ;
+    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_and_3() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(true) ;
+    let c_4 = instance.bool(true) ;
+    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_and_4() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(false) ;
+    let c_3 = instance.bool(false) ;
+    let c_4 = instance.bool(true) ;
+    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn cst_or_1() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(true) ;
+    let c_4 = instance.bool(true) ;
+    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_or_2() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(false) ;
+    let c_4 = instance.bool(true) ;
+    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_or_3() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(true) ;
+    let c_3 = instance.bool(true) ;
+    let c_4 = instance.bool(true) ;
+    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_or_4() {
+    let instance = instance() ;
+    let c_1 = instance.bool(true) ;
+    let c_2 = instance.bool(false) ;
+    let c_3 = instance.bool(false) ;
+    let c_4 = instance.bool(true) ;
+    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( res )
+  }
+
+  #[test]
+  fn cst_or_5() {
+    let instance = instance() ;
+    let c_1 = instance.bool(false) ;
+    let c_2 = instance.bool(false) ;
+    let c_3 = instance.bool(false) ;
+    let c_4 = instance.bool(false) ;
+    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
+    let model = model!() ;
+    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
   }
 }
