@@ -1356,6 +1356,31 @@ mod evaluation {
     ) ;
   }
 
+  #[cfg(test)]
+  macro_rules! assert_eval {
+    ( int $model:expr => $expr:expr, $value:expr ) => ({
+      let res = $expr.eval(& $model).unwrap().to_int().unwrap().unwrap() ;
+      println!(
+        "{} evaluated with {} is {}, expecting {}", $expr, $model, res, $value
+      ) ;
+      assert_eq!( res, $value.into() )
+    }) ;
+    ( bool $model:expr => $expr:expr ) => ({
+      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
+      println!(
+        "{} evaluated with {} is {}, expecting true", $expr, $model, res
+      ) ;
+      assert!( res )
+    }) ;
+    ( bool not $model:expr => $expr:expr ) => ({
+      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
+      println!(
+        "{} evaluated with {} is {}, expecting false", $expr, $model, res
+      ) ;
+      assert!( ! res )
+    }) ;
+  }
+
   /// Just creates an instance.
   fn instance() -> Instance {
     Instance::mk(100, 100, 100)
@@ -1368,8 +1393,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let sum = instance.op( Op::Add, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = sum.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 10.into() )
+    assert_eval!(
+      int model => sum, 10
+    )
   }
 
   #[test]
@@ -1379,8 +1405,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let sub = instance.op( Op::Sub, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = sub.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 4.into() )
+    assert_eval!(
+      int model => sub, 4
+    )
   }
 
   #[test]
@@ -1389,8 +1416,9 @@ mod evaluation {
     let c_1 = instance.int(7) ;
     let sub = instance.op( Op::Sub, vec![ c_1 ] ) ;
     let model = model!() ;
-    let res = sub.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, (-7).into() )
+    assert_eval!(
+      int model => sub, (-7)
+    )
   }
 
   #[test]
@@ -1400,8 +1428,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let mul = instance.op( Op::Mul, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = mul.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 21.into() )
+    assert_eval!(
+      int model => mul, 21
+    )
   }
 
   #[test]
@@ -1411,8 +1440,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let div = instance.op( Op::Div, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = div.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 2.into() )
+    assert_eval!(
+      int model => div, 2
+    )
   }
 
   #[test]
@@ -1422,8 +1452,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let m0d = instance.op( Op::Mod, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = m0d.eval(& model).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 1.into() )
+    assert_eval!(
+      int model => m0d, 1
+    )
   }
 
   #[test]
@@ -1433,8 +1464,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = gt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => gt
+    )
   }
 
   #[test]
@@ -1444,8 +1476,9 @@ mod evaluation {
     let c_2 = instance.int(7) ;
     let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = gt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => gt
+    )
   }
 
   #[test]
@@ -1455,8 +1488,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = ge.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => ge
+    )
   }
 
   #[test]
@@ -1466,8 +1500,9 @@ mod evaluation {
     let c_2 = instance.int(7) ;
     let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = ge.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => ge
+    )
   }
 
   #[test]
@@ -1477,8 +1512,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = le.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => le
+    )
   }
 
   #[test]
@@ -1488,8 +1524,9 @@ mod evaluation {
     let c_2 = instance.int(7) ;
     let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = le.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => le
+    )
   }
 
   #[test]
@@ -1499,8 +1536,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = lt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => lt
+    )
   }
 
   #[test]
@@ -1510,8 +1548,9 @@ mod evaluation {
     let c_2 = instance.int(7) ;
     let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = lt.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => lt
+    )
   }
 
   #[test]
@@ -1521,8 +1560,9 @@ mod evaluation {
     let c_2 = instance.int(7) ;
     let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => eq
+    )
   }
 
   #[test]
@@ -1532,8 +1572,9 @@ mod evaluation {
     let c_2 = instance.int(3) ;
     let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => eq
+    )
   }
 
   #[test]
@@ -1543,8 +1584,9 @@ mod evaluation {
     let c_2 = instance.bool(true) ;
     let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => eq
+    )
   }
 
   #[test]
@@ -1554,8 +1596,9 @@ mod evaluation {
     let c_2 = instance.bool(true) ;
     let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = eq.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => eq
+    )
   }
 
   #[test]
@@ -1565,8 +1608,9 @@ mod evaluation {
     let c_2 = instance.bool(false) ;
     let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => imp
+    )
   }
 
   #[test]
@@ -1576,8 +1620,9 @@ mod evaluation {
     let c_2 = instance.bool(false) ;
     let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => imp
+    )
   }
 
   #[test]
@@ -1587,8 +1632,9 @@ mod evaluation {
     let c_2 = instance.bool(true) ;
     let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => imp
+    )
   }
 
   #[test]
@@ -1598,8 +1644,9 @@ mod evaluation {
     let c_2 = instance.bool(true) ;
     let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
     let model = model!() ;
-    let res = imp.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => imp
+    )
   }
 
   #[test]
@@ -1608,8 +1655,9 @@ mod evaluation {
     let c_1 = instance.bool(false) ;
     let not = instance.op( Op::Not, vec![ c_1 ] ) ;
     let model = model!() ;
-    let res = not.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => not
+    )
   }
 
   #[test]
@@ -1618,8 +1666,9 @@ mod evaluation {
     let c_1 = instance.bool(true) ;
     let not = instance.op( Op::Not, vec![ c_1 ] ) ;
     let model = model!() ;
-    let res = not.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => not
+    )
   }
 
   #[test]
@@ -1631,8 +1680,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => and
+    )
   }
 
   #[test]
@@ -1644,8 +1694,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => and
+    )
   }
 
   #[test]
@@ -1657,8 +1708,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => and
+    )
   }
 
   #[test]
@@ -1670,8 +1722,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = and.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => and
+    )
   }
 
   #[test]
@@ -1683,8 +1736,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => or
+    )
   }
 
   #[test]
@@ -1696,8 +1750,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => or
+    )
   }
 
   #[test]
@@ -1709,8 +1764,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => or
+    )
   }
 
   #[test]
@@ -1722,8 +1778,9 @@ mod evaluation {
     let c_4 = instance.bool(true) ;
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( res )
+    assert_eval!(
+      bool model => or
+    )
   }
 
   #[test]
@@ -1735,12 +1792,13 @@ mod evaluation {
     let c_4 = instance.bool(false) ;
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
-    let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(
+      bool not model => or
+    )
   }
 
   #[test]
-  fn model_1() {
+  fn models() {
     let instance = instance() ;
     let v_1 = instance.var( 0.into() ) ;
     let v_2 = instance.var( 1.into() ) ;
@@ -1748,38 +1806,40 @@ mod evaluation {
 
 
     let model_1 = model!( true, 2, 3 ) ;
+    let model_2 = model!( true, 7, 0 ) ;
 
-    // 7 + v_2 + (- v_3)
+    // (7 - v_2) + (v_2 * 2) + (- v_3)
     let lhs = instance.op(
       Op::Add, vec![
-        instance.int(7),
-        v_2.clone(),
+        instance.op( Op::Sub, vec![ instance.int(7), v_2.clone() ] ),
+        instance.op( Op::Mul, vec![ v_2.clone(), instance.int(2) ] ),
         instance.op( Op::Sub, vec![ v_3.clone() ] ),
       ]
     ) ;
-    let res = lhs.eval(& model_1).unwrap().to_int().unwrap().unwrap() ;
-    println!("{} evaluated with {} = {}", lhs, model_1, res) ;
-    assert_eq!( res, 6.into() ) ;
+    assert_eval!(int model_1 => lhs, 6) ;
+    assert_eval!(int model_2 => lhs, 14) ;
 
     // v_3 * 3
     let rhs = instance.op(
       Op::Mul, vec![ v_3.clone(), instance.int(3) ]
     ) ;
-    let res = rhs.eval(& model_1).unwrap().to_int().unwrap().unwrap() ;
-    assert_eq!( res, 9.into() ) ;
+    assert_eval!(int model_1 => rhs, 9) ;
+    assert_eval!(int model_2 => rhs, 0) ;
 
     // 7 + v_2 + (- v_3) > v_3 * 3
     let gt = instance.op(
       Op::Gt, vec![ lhs.clone(), rhs.clone() ]
     ) ;
-    let res = gt.eval(& model_1).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res ) ;
+    assert_eval!(bool not model_1 => gt) ;
+    assert_eval!(bool     model_2 => gt) ;
 
     // v_1 && (7 + v_2 + (- v_3) > v_3 * 3)
     let and = instance.op(
       Op::And, vec![ v_1.clone(), gt.clone() ]
     ) ;
-    let res = and.eval(& model_1).unwrap().to_bool().unwrap().unwrap() ;
-    assert!( ! res )
+    assert_eval!(bool not model_1 => and) ;
+    assert_eval!(bool     model_2 => and) ;
+
+    ()
   }
 }
