@@ -119,6 +119,46 @@ impl_fmt!{
     }
   }
 }
+impl From<bool> for Val {
+  fn from(b: bool) -> Val {
+    Val::B(b)
+  }
+}
+impl From<Int> for Val {
+  fn from(i: Int) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<usize> for Val {
+  fn from(i: usize) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<isize> for Val {
+  fn from(i: isize) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<u32> for Val {
+  fn from(i: u32) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<i32> for Val {
+  fn from(i: i32) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<u64> for Val {
+  fn from(i: u64) -> Val {
+    Val::I( i.into() )
+  }
+}
+impl From<i64> for Val {
+  fn from(i: i64) -> Val {
+    Val::I( i.into() )
+  }
+}
 macro_rules! try_val {
   (int $e:expr) => (
     if let Some(i) = $e.to_int()? { i } else {
@@ -973,10 +1013,6 @@ impl Op {
 
 
   /// Evaluation.
-  ///
-  /// # TO DO
-  ///
-  /// - add test cases, many of them
   pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
     use instance::Op::* ;
     if args.is_empty() {
@@ -993,7 +1029,13 @@ impl Op {
           } else unreachable!()
         }
       },
-      Sub => {
+      Sub => if args.len() == 1 {
+        Ok(
+          Val::I(
+            - try_val!( int args.pop().unwrap() )
+          )
+        )
+      } else {
         let mut res ;
         for_first!{
           args.into_iter() => {
@@ -1269,14 +1311,6 @@ impl<'a> PebcakFmt<'a> for Instance {
 
 
 
-#[cfg(test)]
-macro_rules! model {
-  ( $($values:expr),* ) => (
-    $crate::common::VarMap::of(
-      vec![ $($values),* ]
-    )
-  ) ;
-}
 
 
 
@@ -1313,6 +1347,15 @@ mod evaluation {
   // use common::* ;
   use instance::* ;
 
+  #[cfg(test)]
+  macro_rules! model {
+    ( $($values:expr),* ) => (
+      $crate::common::VarMap::of(
+        vec![ $( $values.into() ),* ]
+      )
+    ) ;
+  }
+
   /// Just creates an instance.
   fn instance() -> Instance {
     Instance::mk(100, 100, 100)
@@ -1330,7 +1373,7 @@ mod evaluation {
   }
 
   #[test]
-  fn cst_sub() {
+  fn cst_sub_1() {
     let instance = instance() ;
     let c_1 = instance.int(7) ;
     let c_2 = instance.int(3) ;
@@ -1338,6 +1381,16 @@ mod evaluation {
     let model = model!() ;
     let res = sub.eval(& model).unwrap().to_int().unwrap().unwrap() ;
     assert_eq!( res, 4.into() )
+  }
+
+  #[test]
+  fn cst_sub_2() {
+    let instance = instance() ;
+    let c_1 = instance.int(7) ;
+    let sub = instance.op( Op::Sub, vec![ c_1 ] ) ;
+    let model = model!() ;
+    let res = sub.eval(& model).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, (-7).into() )
   }
 
   #[test]
@@ -1683,6 +1736,50 @@ mod evaluation {
     let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
     let model = model!() ;
     let res = or.eval(& model).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res )
+  }
+
+  #[test]
+  fn model_1() {
+    let instance = instance() ;
+    let v_1 = instance.var( 0.into() ) ;
+    let v_2 = instance.var( 1.into() ) ;
+    let v_3 = instance.var( 2.into() ) ;
+
+
+    let model_1 = model!( true, 2, 3 ) ;
+
+    // 7 + v_2 + (- v_3)
+    let lhs = instance.op(
+      Op::Add, vec![
+        instance.int(7),
+        v_2.clone(),
+        instance.op( Op::Sub, vec![ v_3.clone() ] ),
+      ]
+    ) ;
+    let res = lhs.eval(& model_1).unwrap().to_int().unwrap().unwrap() ;
+    println!("{} evaluated with {} = {}", lhs, model_1, res) ;
+    assert_eq!( res, 6.into() ) ;
+
+    // v_3 * 3
+    let rhs = instance.op(
+      Op::Mul, vec![ v_3.clone(), instance.int(3) ]
+    ) ;
+    let res = rhs.eval(& model_1).unwrap().to_int().unwrap().unwrap() ;
+    assert_eq!( res, 9.into() ) ;
+
+    // 7 + v_2 + (- v_3) > v_3 * 3
+    let gt = instance.op(
+      Op::Gt, vec![ lhs.clone(), rhs.clone() ]
+    ) ;
+    let res = gt.eval(& model_1).unwrap().to_bool().unwrap().unwrap() ;
+    assert!( ! res ) ;
+
+    // v_1 && (7 + v_2 + (- v_3) > v_3 * 3)
+    let and = instance.op(
+      Op::And, vec![ v_1.clone(), gt.clone() ]
+    ) ;
+    let res = and.eval(& model_1).unwrap().to_bool().unwrap().unwrap() ;
     assert!( ! res )
   }
 }
