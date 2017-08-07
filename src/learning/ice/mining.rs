@@ -18,14 +18,14 @@ This is because in `debug`, we want to check that we're not missing qualifiers.
 But not in `release`, where we just want to go fast and save memory.
 
 The two versions must be indistinguishable from the outside."#]
-#[cfg( not(release) )]
+#[cfg(debug)]
 pub struct QualValues {
   /// Samples on which the qualifier evaluates to true.
   true_set: HConSet<Args>,
   /// Samples on which the qualifier evaluates to false.
   flse_set: HConSet<Args>,
 }
-#[cfg( not(release) )]
+#[cfg(debug)]
 impl QualValues {
   /// Constructor.
   pub fn mk() -> Self {
@@ -35,7 +35,7 @@ impl QualValues {
     }
   }
 }
-#[cfg( not(release) )]
+#[cfg(debug)]
 impl QualValuesExt for QualValues {
   fn add(& mut self, s: HSample, val: bool) {
     let _ = if val {
@@ -54,23 +54,24 @@ impl QualValuesExt for QualValues {
   }
 }
 
-#[cfg(release)]
+#[cfg( not(debug) )]
 pub struct QualValues {
   /// Samples on which the qualifier evaluates to true.
   true_set: HConSet<Args>,
 }
-#[cfg(release)]
+#[cfg( not(debug) )]
 impl QualValues {
   /// Constructor.
   pub fn mk() -> Self {
     QualValues { true_set: HConSet::with_capacity(1003) }
   }
 }
-#[cfg(release)]
+#[cfg( not(debug) )]
 impl QualValuesExt for QualValues {
   fn add(& mut self, s: HSample, val: bool) {
-    let _ = if val { self.true_set.insert(s) } ;
-    ()
+    if val {
+      let _ = self.true_set.insert(s) ;
+    }
   }
   fn eval(& self, s: & HSample) -> bool {
     self.true_set.contains(s)

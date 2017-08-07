@@ -757,7 +757,7 @@ impl Instance {
 
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
-    & self, data: & mut ::common::data::NewData, cexs: ::teacher::Cexs
+    & self, data: & mut ::common::data::Data, cexs: ::teacher::Cexs
   ) -> Res<()> {
 
     for (clause, cex) in cexs.into_iter() {

@@ -211,7 +211,7 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: NewData
+    core: & LearnerCore, instance: Arc<Instance>, data: Data
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
@@ -243,7 +243,7 @@ impl Launcher {
 }
 impl Learner for Launcher {
   fn run(
-    & self, core: LearnerCore, instance: Arc<Instance>, data: NewData
+    & self, core: LearnerCore, instance: Arc<Instance>, data: Data
   ) {
     if let Err(e) = Self::launch(& core, instance, data) {
       let _ = core.err(e) ;
@@ -261,7 +261,7 @@ pub struct IceLearner<'core, Slver> {
   /// Qualifiers for the predicates.
   pub qualifiers: Qualifiers,
   /// Current data.
-  data: NewData,
+  data: Data,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
   /// Solver used to synthesize an hyperplane separating two points.
@@ -286,7 +286,7 @@ impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
   pub fn mk(
-    core: & 'core LearnerCore, instance: Arc<Instance>, data: NewData,
+    core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Self {
     let qualifiers = Qualifiers::mk(& * instance) ;
@@ -372,7 +372,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   ///
   /// - factor vectors created in this function to avoid reallocation
   pub fn learn(
-    & mut self, mut data: NewData
+    & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
     let new_samples = data.drain_new_samples() ;
     self.data = data ;
@@ -495,21 +495,24 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   }
 
 
-  /// Backtracks to the last element of `unfinished`. Updates blacklisted
-  /// qualifiers. Returns `None` iff `unfinished` was empty meaning the
-  /// learning process is over.
-  pub fn backtrack(& mut self) -> Option<(Branch, CData)> {
+  /// Backtracks to the last element of `unfinished`.
+  ///
+  /// - updates blacklisted qualifiers
+  /// - applies the current classification to the data we're backtracking to
+  ///
+  /// Returns `None` iff `unfinished` was empty meaning the learning process
+  /// is over.
+  pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     msg!{ self => "backtracking..." } ;
     // Backtracking or exit loop.
-    if let Some( (nu_branch, nu_data) ) = self.unfinished.pop() {
+    if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
       // Update blacklisted qualifiers.
       self.qualifiers.clear_blacklist() ;
       for & (ref t, _) in & nu_branch {
         self.qualifiers.blacklist(t)
       }
       // Update data, some previously unclassified data may be classified now.
-      // (cannot happen currently)
-      // self.classify(& mut nu_data) ;
+      self.data.classify(pred, & mut nu_data) ;
       Some( (nu_branch, nu_data) )
     } else {
       None
@@ -559,7 +562,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         } else {
           self.finished.push(branch) ;
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack() {
+        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
           branch = nu_branch ;
           data = nu_data ;
           continue 'learning
@@ -588,7 +591,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             Some( self.instance.bool(false) )
           )
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack() {
+        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
           branch = nu_branch ;
           data = nu_data ;
           continue 'learning
@@ -1120,7 +1123,7 @@ impl CData {
 
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
-  pub fn entropy(& self, pred: PrdIdx, data: & NewData) -> Res<f64> {
+  pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::mk() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
@@ -1132,7 +1135,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   pub fn gain(
-    & self, pred: PrdIdx, data: & NewData, qual: & QualValues
+    & self, pred: PrdIdx, data: & Data, qual: & QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
@@ -1278,7 +1281,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & NewData, prd: PrdIdx, sample: & HSample
+    & mut self, data: & Data, prd: PrdIdx, sample: & HSample
   ) -> Res<()> {
     self.den += 1 ;
     self.num += (1. / 2.) + (
@@ -1308,7 +1311,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & NewData, prd: PrdIdx, sample: & HSample
+    data: & Data, prd: PrdIdx, sample: & HSample
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,

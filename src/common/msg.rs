@@ -37,7 +37,7 @@ pub type Channel<T> = (Sender<T>, Receiver<T>) ;
 pub fn to_learner() -> Channel<LearningData> { channel() }
 
 /// Channel from a teacher to a learner.
-pub fn new_to_learner() -> Channel<NewData> { channel() }
+pub fn new_to_learner() -> Channel<Data> { channel() }
 
 
 /// Channel from the learners to the teachers
@@ -50,7 +50,7 @@ pub fn from_learners() -> Channel<(LrnIdx, FromLearners)> { channel() }
 pub trait Learner: Sync + Send {
   /// Launches the learner.
   fn run(
-    & self, LearnerCore, Arc<::instance::Instance>, ::common::data::NewData
+    & self, LearnerCore, Arc<::instance::Instance>, ::common::data::Data
   ) ;
   /// Short description of the learner.
   fn description(& self) -> String ;
@@ -92,14 +92,14 @@ pub struct LearnerCore {
   /// Sends stuff to the teacher.
   sender: Sender<(LrnIdx, FromLearners)>,
   /// Receives stuff from the teacher.
-  recver: Receiver<NewData>
+  recver: Receiver<Data>
 }
 impl LearnerCore {
   /// Constructor.
   pub fn mk(
     idx: LrnIdx,
     sender: Sender<(LrnIdx, FromLearners)>,
-    recver: Receiver<NewData>,
+    recver: Receiver<Data>,
   ) -> Self {
     LearnerCore { idx, sender, recver }
   }
@@ -136,7 +136,7 @@ pub trait HasLearnerCore {
 
   /// Receive some learning data from the teacher. Returns `None` iff receiving
   /// fails, **meaning the teacher is disconnected**.
-  fn recv(& self) -> Option<NewData> {
+  fn recv(& self) -> Option<Data> {
     if let Ok(data) = self.core().recver.recv() { Some(data) } else { None }
   }
 }

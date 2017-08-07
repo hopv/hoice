@@ -86,13 +86,15 @@ fn teach<
     }
 
     if let Some( (_idx, candidates) ) = teacher.get_candidates() {
-      log_info!(
-        "\nCurrent candidates from {} learner:",
-        conf.emph( & teacher.learners[_idx].1 )
-      ) ;
-      for _pred in teacher.instance.preds() {
-        log_info!("{}:", _pred.name) ;
-        log_info!("  {}", candidates[_pred.idx])
+      if_verb!{
+        log_info!(
+          "\nCurrent candidates from {} learner:",
+          conf.emph( & teacher.learners[_idx].1 )
+        ) ;
+        for _pred in teacher.instance.preds() {
+          log_info!("{}:", _pred.name) ;
+          log_info!("  {}", candidates[_pred.idx])
+        }
       }
       let cexs = teacher.get_cexs(& candidates) ? ;
 
@@ -150,13 +152,13 @@ pub struct Teacher<S> {
   /// The (shared) instance.
   pub instance: Arc<Instance>,
   /// Learning data.
-  pub data: NewData,
+  pub data: Data,
   /// Receiver.
   pub from_learners: Receiver<(LrnIdx, FromLearners)>,
   /// Sender used by learners. Becomes `None` when the learning process starts.
   pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
   /// Learners sender and description.
-  pub learners: LrnMap<(Sender<NewData>, String)>,
+  pub learners: LrnMap<(Sender<Data>, String)>,
 }
 impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Constructor.
@@ -164,7 +166,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
     let instance = Arc::new(instance) ;
-    let data = NewData::mk( instance.clone() ) ;
+    let data = Data::mk( instance.clone() ) ;
     Teacher {
       solver, instance, data, from_learners,
       to_teacher: Some(to_teacher), learners

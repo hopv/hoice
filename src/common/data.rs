@@ -150,7 +150,7 @@ impl_fmt!{
 ///
 /// Also used by the ice learner to propagate the choices it makes.
 #[derive(Clone)]
-pub struct NewData {
+pub struct Data {
   /// Instance, only used for printing.
   instance: Arc<Instance>,
   /// Consign for hash consed samples.
@@ -173,7 +173,7 @@ pub struct NewData {
   /// New samples since the last reset.
   new_samples: Vec<HSample>,
 }
-impl NewData {
+impl Data {
   /// Constructor.
   pub fn mk(instance: Arc<Instance>) -> Self {
     let pred_count = instance.preds().len() ;
@@ -193,7 +193,7 @@ impl NewData {
     let samples = Arc::new(
       RwLock::new( HashConsign::with_capacity(1007) )
     ) ;
-    NewData {
+    Data {
       instance, samples, pos, neg, constraints, map,
       pos_to_add: PrdHMap::with_capacity(pred_count),
       neg_to_add: PrdHMap::with_capacity(pred_count),
@@ -766,6 +766,24 @@ impl NewData {
   }
 
 
+  /// Applies the classification represented by the data to some projected
+  /// data.
+  pub fn classify(& self, pred: PrdIdx, data: & mut CData) {
+    let mut index = 0 ;
+    while index < data.unc.len() {
+      if self.pos[pred].contains(& data.unc[index]) {
+        let to_pos = data.unc.swap_remove(index) ;
+        data.pos.push(to_pos)
+      } else if self.neg[pred].contains(& data.unc[index]) {
+        let to_neg = data.unc.swap_remove(index) ;
+        data.neg.push(to_neg)
+      } else {
+        index += 1
+      }
+    }
+  }
+
+
   /// Sets all the unknown data of a given predicate to be false, and
   /// propagates.
   pub fn pred_all_false(& mut self, pred: PrdIdx) -> Res<()> {
@@ -795,7 +813,7 @@ impl NewData {
   }
 }
 
-impl<'a> PebcakFmt<'a> for NewData {
+impl<'a> PebcakFmt<'a> for Data {
   type Info = & 'a () ;
   fn pebcak_err(& self) -> ErrorKind {
     "during data pebcak formatting".into()
