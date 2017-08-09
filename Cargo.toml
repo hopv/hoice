@@ -7,7 +7,6 @@ authors = ["Adrien Champion <adrien.champion@email.com>"]
 bench = []
 
 [dependencies]
-rayon = "*"
 lazy_static = "*"
 clap = "*"
 regex = "*"
