@@ -204,7 +204,7 @@ macro_rules! with_from_end {
 
 named!{
   #[doc = "Comment parser."],
-  pub cmt, re_bytes_find!(r#"^;;.*[\n\r]*"#)
+  pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
 }
 
 named!{

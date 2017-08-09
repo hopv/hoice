@@ -211,7 +211,7 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: Arc<Data>
+    core: & LearnerCore, instance: Arc<Instance>, data: Data
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
@@ -236,15 +236,14 @@ impl Launcher {
       ).run()
     } else {
       IceLearner::mk(
-        & core, instance, data,
-        conflict_solver, synth_solver
+        & core, instance, data, conflict_solver, synth_solver
       ).run()
     }
   }
 }
 impl Learner for Launcher {
   fn run(
-    & self, core: LearnerCore, instance: Arc<Instance>, data: Arc<Data>
+    & self, core: LearnerCore, instance: Arc<Instance>, data: Data
   ) {
     if let Err(e) = Self::launch(& core, instance, data) {
       let _ = core.err(e) ;
@@ -261,8 +260,8 @@ pub struct IceLearner<'core, Slver> {
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
   pub qualifiers: Qualifiers,
-  /// Learning data.
-  pub data: Arc<Data>,
+  /// Current data.
+  data: Data,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
   /// Solver used to synthesize an hyperplane separating two points.
@@ -287,8 +286,8 @@ impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
   pub fn mk(
-    core: & 'core LearnerCore, instance: Arc<Instance>,
-    data: Arc<Data>, solver: Slver, synth_solver: Slver
+    core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
+    solver: Slver, synth_solver: Slver
   ) -> Self {
     let qualifiers = Qualifiers::mk(& * instance) ;
     let dec_mem = vec![
@@ -372,9 +371,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// # TO DO
   ///
   /// - factor vectors created in this function to avoid reallocation
-  pub fn learn(& mut self, data: LearningData) -> Res< Option<Candidates> > {
+  pub fn learn(
+    & mut self, mut data: Data
+  ) -> Res< Option<Candidates> > {
+    let new_samples = data.drain_new_samples() ;
+    self.data = data ;
     self.qualifiers.clear_blacklist() ;
-    self.qualifiers.register_data(data) ? ;
+    self.qualifiers.register_samples( new_samples ) ? ;
 
     self.setup_solver().chain_err(
       || "while initializing the solver"
@@ -392,13 +395,21 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let mut predicates = Vec::with_capacity(prd_count) ;
 
     for pred in PrdRange::zero_to(prd_count) {
+      msg!{
+        self => "current data:\n{}", self.data.to_string_info(& ()) ?
+      } ;
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
+        if term.is_true() {
+          self.data.pred_all_true(pred) ? ;
+        } else {
+          bail!("[unsupported] forced candidate is not the term `true`")
+        }
         continue
       }
-      let pos_len = self.data.pos[pred].read().map_err(corrupted_err)?.len() ;
-      let neg_len = self.data.neg[pred].read().map_err(corrupted_err)?.len() ;
-      let unc_len = self.data.map[pred].read().map_err(corrupted_err)?.len() ;
+      let pos_len = self.data.pos[pred].len() ;
+      let neg_len = self.data.neg[pred].len() ;
+      let unc_len = self.data.map[pred].len() ;
       if pos_len == 0 && neg_len != 0 {
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
@@ -409,6 +420,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             self.instance[pred], neg_len, unc_len
           ) ;
           self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          self.data.pred_all_false(pred) ? ;
           continue
         }
       } else if neg_len == 0 && pos_len != 0 {
@@ -421,6 +433,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             self.instance[pred], pos_len, unc_len
           ) ;
           self.candidate[pred] = Some( self.instance.bool(true) ) ;
+          self.data.pred_all_true(pred) ? ;
           continue
         }
       }
@@ -455,7 +468,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self => "{}: {} unclassified, {} classified",
                 self.instance[pred], _unc, _cla
       ) ;
-      let data = self.data.data_of(pred) ? ;
+      let data = self.data.data_of(pred) ;
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
         continue 'pred_iter
@@ -482,21 +495,24 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   }
 
 
-  /// Backtracks to the last element of `unfinished`. Updates blacklisted
-  /// qualifiers. Returns `None` iff `unfinished` was empty meaning the
-  /// learning process is over.
-  pub fn backtrack(& mut self) -> Option<(Branch, CData)> {
+  /// Backtracks to the last element of `unfinished`.
+  ///
+  /// - updates blacklisted qualifiers
+  /// - applies the current classification to the data we're backtracking to
+  ///
+  /// Returns `None` iff `unfinished` was empty meaning the learning process
+  /// is over.
+  pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     msg!{ self => "backtracking..." } ;
     // Backtracking or exit loop.
-    if let Some( (nu_branch, nu_data) ) = self.unfinished.pop() {
+    if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
       // Update blacklisted qualifiers.
       self.qualifiers.clear_blacklist() ;
       for & (ref t, _) in & nu_branch {
         self.qualifiers.blacklist(t)
       }
       // Update data, some previously unclassified data may be classified now.
-      // (cannot happen currently)
-      // self.classify(& mut nu_data) ;
+      self.data.classify(pred, & mut nu_data) ;
       Some( (nu_branch, nu_data) )
     } else {
       None
@@ -532,8 +548,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             forcing {} unclassifieds positive...", data.unc.len()
         ) ;
         for unc in data.unc {
-          let prev = self.classifier.insert(unc, true) ;
-          debug_assert!( prev.is_none() )
+          // let prev = self.classifier.insert(unc, true) ;
+          // debug_assert!( prev.is_none() )
+          self.data.stage_pos(pred, unc)
         }
         branch.shrink_to_fit() ;
         if branch.is_empty() {
@@ -545,7 +562,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         } else {
           self.finished.push(branch) ;
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack() {
+        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
           branch = nu_branch ;
           data = nu_data ;
           continue 'learning
@@ -563,8 +580,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             forcing {} unclassifieds negative...", data.unc.len()
         ) ;
         for unc in data.unc {
-          let prev = self.classifier.insert(unc, false) ;
-          debug_assert!( prev.is_none() )
+          // let prev = self.classifier.insert(unc, false) ;
+          // debug_assert!( prev.is_none() )
+          self.data.stage_neg(pred, unc)
         }
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;
@@ -573,7 +591,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             Some( self.instance.bool(false) )
           )
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack() {
+        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
           branch = nu_branch ;
           data = nu_data ;
           continue 'learning
@@ -684,7 +702,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Reachable only if none of our qualifiers can split the data.
 
     if_verb!{
-      let mut msg = "\ncould not split remaining data:\n".to_string() ;
+      let mut msg = format!(
+        "\ncould not split remaining data for {}:\n", self.instance[pred]
+      ) ;
       msg.push_str("pos (") ;
       for pos in & data.pos {
         msg.push_str( & format!("\n    {}", pos) )
@@ -697,7 +717,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       for unc in & data.unc {
         msg.push_str( & format!("\n    {}", unc) )
       }
-      msg.push_str(")") ;
+      msg.push_str("\n)") ;
       msg!{ self => msg } ;
     }
     // bail!( "qualifier synthesis is untested and offline for now" ) ;
@@ -734,7 +754,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Insert new qualifier.
     let (q_data, nq_data) = {
-      let values = self.qualifiers.add_qual(qual.clone(), & self.data) ? ;
+      let values = self.qualifiers.add_qual(
+        qual.clone(), & self.data.samples
+      ) ? ;
       data.split(values)
     } ;
     msg!(
@@ -796,8 +818,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn is_legal_pred(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
-    let unc = self.data.map[pred].read().map_err(corrupted_err) ? ;
-    let unc = & * unc ;
+    let unc = & self.data.map[pred] ;
     if unc.is_empty() { return Ok(true) }
 
     // Wrap actlit and increment counter.
@@ -838,7 +859,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Positive data.
     self.solver.comment("Positive data:") ? ;
     for (pred, set) in self.data.pos.index_iter() {
-      for sample in set.read().map_err(corrupted_err)?.iter() {
+      for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
         self.solver.define_fun(
@@ -849,7 +870,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Negative data.
     self.solver.comment("Negative data:") ? ;
     for (pred, set) in self.data.neg.index_iter() {
-      for sample in set.read().map_err(corrupted_err)?.iter() {
+      for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         if ! is_new {
           bail!(
@@ -891,7 +912,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       //     )
       //   }
       // } else {
-        for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
+        for (sample, _) in map.iter() {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
@@ -905,9 +926,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     self.solver.comment("Constraints:") ? ;
     // Assert all constraints.
-    for constraint in self.data.constraints.read().map_err(
-      corrupted_err
-    )?.iter() {
+    for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
         self.solver.assert( & CWrap(constraint), & () ) ?
       }
@@ -1033,7 +1052,7 @@ impl<
 
 
 
-/// A branch of the a decision tree.
+/// A branch of a decision tree.
 ///
 /// Boolean is `false` if the term should be negated.
 pub type Branch = Vec<(Term, bool)> ;
@@ -1300,13 +1319,9 @@ impl EntropyBuilder {
       mut sum_neg,
     ) = (0., 0., 0.) ;
 
-    if let Some(constraints) = data.map[prd].read().map_err(
-      corrupted_err
-    )?.get(& sample) {
+    if let Some(constraints) = data.map[prd].get(& sample) {
       for constraint in constraints {
-        let constraint = & data.constraints.read().map_err(
-          corrupted_err
-        )?[* constraint] ;
+        let constraint = & data.constraints[* constraint] ;
         match constraint.rhs {
           None => sum_neg = sum_neg + 1. / (constraint.lhs.len() as f64),
           Some( Sample { pred, ref args } )

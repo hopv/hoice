@@ -2,7 +2,7 @@
 
 use common::* ;
 use instance::* ;
-use common::data::{ Data, HSample, LearningData, Sample, Constraint } ;
+use common::data::HSample ;
 
 
 #[doc = r#"Stores the (truth) value of a qualifier on some samples.
@@ -18,14 +18,14 @@ This is because in `debug`, we want to check that we're not missing qualifiers.
 But not in `release`, where we just want to go fast and save memory.
 
 The two versions must be indistinguishable from the outside."#]
-#[cfg( not(release) )]
+#[cfg(debug)]
 pub struct QualValues {
   /// Samples on which the qualifier evaluates to true.
   true_set: HConSet<Args>,
   /// Samples on which the qualifier evaluates to false.
   flse_set: HConSet<Args>,
 }
-#[cfg( not(release) )]
+#[cfg(debug)]
 impl QualValues {
   /// Constructor.
   pub fn mk() -> Self {
@@ -35,7 +35,7 @@ impl QualValues {
     }
   }
 }
-#[cfg( not(release) )]
+#[cfg(debug)]
 impl QualValuesExt for QualValues {
   fn add(& mut self, s: HSample, val: bool) {
     let _ = if val {
@@ -54,23 +54,24 @@ impl QualValuesExt for QualValues {
   }
 }
 
-#[cfg(release)]
+#[cfg( not(debug) )]
 pub struct QualValues {
   /// Samples on which the qualifier evaluates to true.
   true_set: HConSet<Args>,
 }
-#[cfg(release)]
+#[cfg( not(debug) )]
 impl QualValues {
   /// Constructor.
   pub fn mk() -> Self {
     QualValues { true_set: HConSet::with_capacity(1003) }
   }
 }
-#[cfg(release)]
+#[cfg( not(debug) )]
 impl QualValuesExt for QualValues {
   fn add(& mut self, s: HSample, val: bool) {
-    let _ = if val { self.true_set.insert(s) } ;
-    ()
+    if val {
+      let _ = self.true_set.insert(s) ;
+    }
   }
   fn eval(& self, s: & HSample) -> bool {
     self.true_set.contains(s)
@@ -209,10 +210,8 @@ impl Qualifiers {
   }
 
   /// Registers a sample.
-  fn register_sample(& mut self, pred: PrdIdx, args: HSample) -> Res<()> {
-    let mut exclusive_ub = self.pred_to_arity[pred] ;
-    exclusive_ub.inc() ;
-    for arity in ArityRange::zero_to( exclusive_ub ) {
+  fn register_sample(& mut self, args: HSample) -> Res<()> {
+    for arity in ArityRange::zero_to( args.len() + 1 ) {
       for pair in self.arity_map[arity].iter_mut() {
         let (term, values) = (& pair.0, & mut pair.1) ;
         if let Some(val) = term.bool_eval(& args) ? {
@@ -225,40 +224,30 @@ impl Qualifiers {
     Ok(())
   }
 
-  /// Registers some learning data.
-  pub fn register_data(& mut self, data: LearningData) -> Res<()> {
-    for Sample { pred, args } in data.pos {
-      self.register_sample(pred, args) ?
-    }
-    for Sample { pred, args } in data.neg {
-      self.register_sample(pred, args) ?
-    }
-    for Constraint { lhs, rhs } in data.cstr {
-      for Sample { pred, args } in lhs {
-        self.register_sample(pred, args) ?
-      }
-      if let Some( Sample { pred, args } ) = rhs {
-        self.register_sample(pred, args) ?
-      }
+  /// Registers some samples.
+  pub fn register_samples(
+    & mut self, new_samples: Vec<HSample>
+  ) -> Res<()> {
+    for sample in new_samples {
+      self.register_sample(sample) ?
     }
     Ok(())
   }
 
 
   /// Adds a qualifier.
-  ///
-  /// The data is necessary to evaluate the qualifier and populate its
-  /// values.
   pub fn add_qual<'a>(
-    & 'a mut self, qual: Term, data: & Data
+    & 'a mut self, qual: Term, samples: & ::common::data::HSampleConsign
   ) -> Res<& 'a QualValues> {
     let arity: Arity = if let Some(max_var) = qual.highest_var() {
       (1 + * max_var).into()
     } else {
       bail!("[bug] trying to add constant qualifier")
     } ;
-    let values = data.samples_fold(
-      QualValues::mk(), |mut values, sample| {
+    let values = samples.read().map_err(
+      corrupted_err
+    )?.fold(
+      |mut values, sample| {
         if sample.len() >= * arity {
           match qual.bool_eval(& * sample) {
             Ok( Some(b) ) => values.add(sample, b),
@@ -271,8 +260,8 @@ impl Qualifiers {
           }
         }
         values
-      }
-    ) ? ;
+      }, QualValues::mk()
+    ) ;
     debug_assert!({
       for & (ref q, _) in self.arity_map[arity].iter() {
         assert!(q != & qual)

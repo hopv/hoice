@@ -41,9 +41,28 @@ Note that this disables some features such as verbosity.
 [Consult the wiki](https://github.com/hopv/hoice/wiki/Language) for a description of `hoice`'s language.
 
 
+# Checking the result
+
+`hoice` can check its own results. The code performing this feature is completely separated from the code doing the actual inference so that the check is meaningful.
+
+In fact, the code for this is almost implemented as some string substitutions followed by an SMT query for each clause of the problem.
+
+For now, this feature is completely off-line. Put `hoice`'s result in a file, for instance with
+
+```bash
+hoice <horn_clause_file> | tee <output_file>
+```
+
+and use the `--check` option to verify that the predicates inferred verify all the horn clauses:
+
+```bash
+hoice --check <output_file> <horn_clause_file>
+```
+
+
 # Contributing
 
-We welcome any help, please read the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) to get started.
+We welcome any help, please the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) if you are not familiar with the github pull request workflow to get started.
 
 
 # License

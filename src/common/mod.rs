@@ -2,11 +2,13 @@
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
-pub use std::sync::Arc ;
+pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
 
 pub use mylib::common::hash::* ;
 pub use mylib::safe::int::CanNew ;
+
+pub use hashconsing::HashConsign ;
 
 pub use rsmt2::errors::Res as SmtRes ;
 
@@ -288,6 +290,28 @@ pub enum Verb {
   /// Debug.
   Debug,
 }
+#[test]
+fn verb() {
+  let mut verb = Verb::Quiet ;
+  assert!( ! verb.verbose() ) ;
+  assert!( ! verb.debug() ) ;
+  verb.inc() ;
+  assert_eq!( verb, Verb::Verb ) ;
+  assert!( verb.verbose() ) ;
+  assert!( ! verb.debug() ) ;
+  verb.inc() ;
+  assert_eq!( verb, Verb::Debug ) ;
+  assert!( verb.verbose() ) ;
+  assert!( verb.debug() ) ;
+  verb.dec() ;
+  assert_eq!( verb, Verb::Verb ) ;
+  assert!( verb.verbose() ) ;
+  assert!( ! verb.debug() ) ;
+  verb.dec() ;
+  assert_eq!( verb, Verb::Quiet ) ;
+  assert!( ! verb.verbose() ) ;
+  assert!( ! verb.debug() ) ;
+}
 impl Verb {
   /// Default verbosity.
   pub fn default() -> Self {
@@ -332,6 +356,7 @@ impl Verb {
 /// Basic configuration.
 pub struct Conf {
   pub file: Option<String>,
+  pub check: Option<String>,
   pub smt_log: bool,
   pub out_dir: String,
   pub smt_learn: bool,
@@ -346,12 +371,13 @@ impl ColorExt for Conf {
 impl Conf {
   /// Regular constructor.
   pub fn mk(
-    file: Option<String>, smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, smt_learn: bool,
+    file: Option<String>, check: Option<String>,
+    smt_log: bool, z3_cmd: String, out_dir: String,
+    step: bool, smt_learn: bool, 
     verb: Verb, color: bool
   ) -> Self {
     Conf {
-      file, smt_log, out_dir, step, smt_learn, z3_cmd,
+      file, check, smt_log, out_dir, step, smt_learn, z3_cmd,
       verb, styles: Styles::mk(color)
     }
   }
@@ -477,7 +503,17 @@ impl Conf {
 
       Arg::with_name("out_dir").long("--out_dir").short("-o").help(
         "sets the output directory (used only by smt logging currently)"
+      ).value_name(
+        "<DIR>"
       ).default_value(".").takes_value(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("check").long("--check").help(
+        "checks the output of a previous run (does not run inference)"
+      ).value_name(
+        "<FILE>"
+      ).takes_value(true).number_of_values(1)
 
     ).get_matches() ;
 
@@ -508,6 +544,9 @@ impl Conf {
     let out_dir = matches.value_of("out_dir").expect(
       "unreachable(out_dir): default is provided"
     ) ;
+    let check = matches.value_of("check").map(
+      |s| s.to_string()
+    ) ;
 
     let mut verb = Verb::default() ;
 
@@ -519,7 +558,7 @@ impl Conf {
     }
 
     Conf::mk(
-      file, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
+      file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
       verb, color
     )
   }
@@ -567,6 +606,10 @@ pub trait PebcakFmt<'a> {
     ).map(
       |s| f(s)
     )
+  }
+  /// Formatted string.
+  fn to_string_info(& self, i: Self::Info) -> Res<String> {
+    self.string_do(i, |s| s.to_string())
   }
 }
 
