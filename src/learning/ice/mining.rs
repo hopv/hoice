@@ -166,6 +166,15 @@ impl Qualifiers {
     }
   }
 
+  /// Number of qualifiers.
+  pub fn count(& self) -> usize {
+    let mut count = 0 ;
+    for quals in self.arity_map.iter() {
+      count += quals.len()
+    }
+    count
+  }
+
   /// Accessor to the qualifiers.
   pub fn qualifiers(& self) -> & ArityMap< Vec< (Term, QualValues) > > {
     & self.arity_map
