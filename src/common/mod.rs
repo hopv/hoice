@@ -18,10 +18,7 @@ use ansi::{ Style, Colour } ;
 
 pub use errors::* ;
 
-pub mod data ;
-#[macro_use]
-pub mod msg ;
-pub mod consts ;
+
 
 lazy_static!{
   #[doc = "Configuration from clap."]
@@ -99,6 +96,14 @@ macro_rules! if_debug {
 macro_rules! if_debug {
   ($($blah:tt)*) => (()) ;
 }
+
+
+
+
+pub mod data ;
+#[macro_use]
+pub mod msg ;
+pub mod consts ;
 
 
 /// Disjunction type.
@@ -775,7 +780,6 @@ impl<T: Eq + ::std::hash::Hash, V> HConSetExt for HConMap<T,V> {
 
 
 pub use std::time::{ Instant, Duration } ;
-use std::cell::RefCell ;
 
 pub trait DurationExt {
   fn to_str(& self) -> String ;
@@ -958,17 +962,22 @@ impl CanPrint for ProfileTree {
 
 /// Profiling macro.
 ///
-/// Takes a `self` that has a `profiler` field.
+/// Takes a `self` that has a `_profiler` field.
 #[macro_export]
+#[cfg( not(feature = "bench") )]
 macro_rules! profile {
-  ( $slf:ident $stat:expr => add $e:expr) => (
-    $slf.profiler.stat_do( $stat, |val| val + $e )
+  ( $slf:ident $stat:expr => add $e:expr ) => (
+    $slf._profiler.stat_do( $stat, |val| val + $e )
   ) ;
   ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => (
-    $slf.profiler.$meth(
+    $slf._profiler.$meth(
       vec![ $($scope),+ ]
     )
   ) ;
+}
+#[cfg(feature = "bench")]
+macro_rules! profile {
+  ( $($tt:tt)* ) => (()) ;
 }
 
 /// Profiling structure, only in `not(bench)`.
@@ -977,33 +986,35 @@ macro_rules! profile {
 ///
 /// Internally, the structures are wrapped in `RefCell`s so that mutation
 /// does not require `& mut self`.
-#[cfg( not(bench) )]
+#[cfg( not(feature = "bench") )]
 pub struct Profile {
   /// String-indexed durations.
-  map: RefCell<
+  map: ::std::cell::RefCell<
     HashMap< Vec<& 'static str>, (Option<Instant>, Duration)>
   >,
   /// Starting tick, for total time.
   start: Instant,
   /// Other statistics.
-  stats: RefCell< Stats >,
+  stats: ::std::cell::RefCell< Stats >,
 }
-#[cfg(bench)]
+#[cfg(feature = "bench")]
 pub struct Profile ;
 impl Profile {
   /// Constructor.
-  #[cfg( not(bench) )]
+  #[cfg( not(feature = "bench") )]
   pub fn mk() -> Self {
+    use std::cell::RefCell ;
     Profile {
       map: RefCell::new( HashMap::new() ),
       start: Instant::now(),
       stats: RefCell::new( HashMap::new() ),
     }
   }
-  #[cfg(bench)]
+  #[cfg(feature = "bench")]
   pub fn mk() -> Self { Profile }
 
   /// Acts on a statistic.
+  #[cfg( not(feature = "bench") )]
   pub fn stat_do<F>(& self, stat: & 'static str, f: F)
   where F: Fn(usize) -> usize {
     let mut map = self.stats.borrow_mut() ;
@@ -1013,7 +1024,7 @@ impl Profile {
   }
 
   /// Ticks.
-  #[cfg( not(bench) )]
+  #[cfg( not(feature = "bench") )]
   pub fn tick(& self, scope: Vec<& 'static str>) {
     if scope.is_empty() {
       panic!("Profile: can't use scope `total`")
@@ -1024,13 +1035,11 @@ impl Profile {
     ) ;
     time.0 = Some( Instant::now() )
   }
-  #[cfg(bench)]
-  pub fn tick(& self, _: Vec<& 'static str>) {}
 
   /// Registers the time since the last tick.
   ///
   /// Panics if there was no tick since the last time registration.
-  #[cfg( not(bench) )]
+  #[cfg( not(feature = "bench") )]
   pub fn mark(& self, scope: Vec<& 'static str>) {
     if scope.is_empty() {
       panic!("Profile: can't use scope `total`")
@@ -1049,11 +1058,9 @@ impl Profile {
       panic!("profiling: trying to mark the time without ticking first")
     }
   }
-  #[cfg(bench)]
-  pub fn mark(& self, _: & 'static str) {}
 
   /// Extracts the inner hash map.
-  #[cfg( not(bench) )]
+  #[cfg( not(feature = "bench") )]
   pub fn extract(& self) -> HashMap< Vec<& 'static str>, Duration > {
     let mut map = HashMap::new() ;
     for (scope, & (ref tick, ref time)) in self.map.borrow().iter() {
@@ -1071,13 +1078,9 @@ impl Profile {
     debug_assert!( prev.is_none() ) ;
     map
   }
-  #[cfg(bench)]
-  pub fn extract(& self) -> HashMap<& 'static str, Duration> {
-    panic!("Profile::extract is not available in benchmark mode")
-  }
 
   /// Extracts a profile tree.
-  #[cfg( not(bench) )]
+  #[cfg( not(feature = "bench") )]
   pub fn extract_tree(self) -> (ProfileTree, Stats) {
     let mut tree = ProfileTree::top(
       Instant::now().duration_since(self.start)
@@ -1093,10 +1096,6 @@ impl Profile {
       tree.insert( scope.clone(), * time )
     }
     ( tree, self.stats.into_inner() )
-  }
-  #[cfg(bench)]
-  pub fn extract_tree(& self) -> ProfileTree {
-    panic!("Profile::extract_tree is not available in benchmark mode")
   }
 }
 

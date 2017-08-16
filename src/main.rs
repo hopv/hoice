@@ -167,7 +167,7 @@ fn work() -> Res<()> {
       || "during instance reduction"
     ) ? ;
 
-    info!{ "loading instance from `{}`...", conf.emph(file_path) }
+    log_info!{ "loading instance from `{}`...", conf.emph(file_path) }
     let mut buffer = Vec::with_capacity(1007) ;
     let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
       || format!("while opening input file `{}`", conf.emph(file_path))
@@ -176,20 +176,20 @@ fn work() -> Res<()> {
       || format!("while reading input file `{}`", conf.emph(file_path))
     ) ? ;
 
-    let (rest, infer) = if let Some(res) = builder.parse(& buffer) {
+    let (_rest, infer) = if let Some(res) = builder.parse(& buffer) {
       res
     } else {
       bail!( builder.to_error(& buffer, Some(0)) )
     } ;
 
-    info!{
+    log_info!{
       "done: read {} declarations and {} clauses (read {} of {} bytes)\n",
       builder.preds().len(), builder.clauses().len(),
-      buffer.len() - rest, buffer.len()
+      buffer.len() - _rest, buffer.len()
     }
 
     if ! infer {
-      info!{ "no `infer` command provided" }
+      log_info!{ "no `infer` command provided" }
       return Ok(())
     }
 
@@ -199,7 +199,7 @@ fn work() -> Res<()> {
       || "during instance construction"
     ) ? ;
 
-    info!{
+    log_info!{
       "instance:\n{}", instance.string_do( (), |s| s.to_string() ) ?
     }
 
@@ -218,7 +218,7 @@ fn work() -> Res<()> {
     teacher::start_class(instance)
 
   } else {
-    info!{ "loading instance from `{}`...", conf.emph("stdin") }
+    log_info!{ "loading instance from `{}`...", conf.emph("stdin") }
     bail!("parsing from stdin is not implemented")
   }
 }

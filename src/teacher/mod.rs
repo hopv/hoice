@@ -167,7 +167,7 @@ pub struct Teacher<S> {
   /// Learners sender and description.
   pub learners: LrnMap<( Option< Sender<Data> >, String )>,
   /// Profiler.
-  pub profiler: Profile,
+  pub _profiler: Profile,
   /// Number of guesses.
   count: usize,
 }
@@ -181,12 +181,14 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     Teacher {
       solver, instance, data, from_learners,
       to_teacher: Some(to_teacher), learners,
-      profiler: Profile::mk(), count: 0,
+      _profiler: Profile::mk(), count: 0,
     }
   }
 
+  /// Finalizes the run.
+  #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
-    println!("Done in {} guesses", self.count) ;
+    println!("; Done in {} guesses", self.count) ;
     println!("") ;
 
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
@@ -194,7 +196,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     }
     while self.get_candidates().is_some() {}
 
-    let (tree, stats) = self.profiler.extract_tree() ;
+    let (tree, stats) = self._profiler.extract_tree() ;
     tree.print() ;
     if ! stats.is_empty() {
       println!("stats:") ;
@@ -202,6 +204,10 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     }
     println!("") ;
 
+    Ok(())
+  }
+  #[cfg(feature = "bench")]
+  pub fn finalize(self) -> Res<()> {
     Ok(())
   }
 

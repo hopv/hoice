@@ -282,7 +282,7 @@ pub struct IceLearner<'core, Slver> {
   /// Activation literal counter.
   actlit: usize,
   /// Profiler.
-  profiler: Profile,
+  _profiler: Profile,
   /// Counts the qualifier synthesized.
   qual_synth: usize,
 }
@@ -303,7 +303,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       finished: Vec::with_capacity(103),
       unfinished: Vec::with_capacity(103),
       classifier: HashMap::with_capacity(1003),
-      dec_mem, candidate, actlit: 0, profiler: Profile::mk(),
+      dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
       qual_synth: 0,
     }
   }
@@ -337,15 +337,20 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   }
 
   /// Finalizes the learning process.
+  #[cfg( not(feature = "bench") )]
   pub fn finalize(self) -> Res<()> {
     let success = self.core.stats(
-      self.profiler, vec![ vec!["learning", "smt"] ]
+      self._profiler, vec![ vec!["learning", "smt"] ]
     ) ;
     if success {
       Ok(())
     } else {
       bail!("could not send statistics to teacher")
     }
+  }
+  #[cfg(feature = "bench")]
+  pub fn finalize(self) -> Res<()> {
+    Ok(())
   }
 
   /// Sends some candidates.

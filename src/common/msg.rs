@@ -119,6 +119,7 @@ pub trait HasLearnerCore {
     ).is_ok()
   }
   /// Sends statistics.
+  #[cfg( not(feature = "bench") )]
   fn stats(
     & self, profile: Profile, lift: Vec< Vec<& 'static str> >
   ) -> bool {
@@ -131,6 +132,12 @@ pub trait HasLearnerCore {
     self.core().sender.send(
       ( self.core().idx, FromLearners::Stats( tree, stats ) )
     ).is_ok()
+  }
+  #[cfg(feature = "bench")]
+  fn stats(
+    & self, _: Profile, _: Vec< Vec<& 'static str> >
+  ) -> bool {
+    true
   }
   /// Sends a message to the teacher. Returns `false` iff sending fails,
   /// **meaning the teacher is disconnected**.
