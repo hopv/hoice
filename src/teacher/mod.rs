@@ -188,21 +188,25 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Finalizes the run.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
-    println!("; Done in {} guesses", self.count) ;
-    println!("") ;
+    if conf.stats {
+      println!("; Done in {} guesses", self.count) ;
+      println!("") ;
+    }
 
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
       * sender = None
     }
     while self.get_candidates().is_some() {}
 
-    let (tree, stats) = self._profiler.extract_tree() ;
-    tree.print() ;
-    if ! stats.is_empty() {
-      println!("stats:") ;
-      stats.print()
+    if conf.stats {
+      let (tree, stats) = self._profiler.extract_tree() ;
+      tree.print() ;
+      if ! stats.is_empty() {
+        println!("; stats:") ;
+        stats.print()
+      }
+      println!("") ;
     }
-    println!("") ;
 
     Ok(())
   }
@@ -277,13 +281,13 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
           // }
           print_err( err.unwrap_err() )
         },
-        Ok( (idx, FromLearners::Stats(tree, stats)) ) => {
+        Ok( (idx, FromLearners::Stats(tree, stats)) ) => if conf.stats {
           println!(
-            "received stats from {}", conf.emph( & self.learners[idx].1 )
+            "; received stats from {}", conf.emph( & self.learners[idx].1 )
           ) ;
           tree.print() ;
           if ! stats.is_empty() {
-            println!("stats:") ;
+            println!("; stats:") ;
             stats.print()
           }
           println!("")

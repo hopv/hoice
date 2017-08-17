@@ -401,12 +401,12 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
     profile!{ self tick "learning" }
-    let new_samples = data.drain_new_samples() ;
+    let _new_samples = data.drain_new_samples() ;
     self.data = data ;
     self.qualifiers.clear_blacklist() ;
-    profile!{ self tick "learning", "new sample registration" }
-    self.qualifiers.register_samples( new_samples ) ? ;
-    profile!{ self mark "learning", "new sample registration" }
+    // profile!{ self tick "learning", "new sample registration" }
+    // self.qualifiers.register_samples( new_samples ) ? ;
+    // profile!{ self mark "learning", "new sample registration" }
 
     self.setup_solver().chain_err(
       || "while initializing the solver"
@@ -686,43 +686,48 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   ) -> Res< (Term, CData, CData) > {
 
     { // Try using an existing qualifier. Early return if one is found.
-      let mut maybe_qual = None ;
+      let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
       profile!{ self tick "learning", "qual", "existing" }
-      'search_qual: for (qual, values) in self.qualifiers.of(pred) {
-        msg!{ debug self => "    {}:", qual } ;
-        if let Some(
-          (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
-        ) = data.gain(pred, & self.data, & values) ? {
-          msg!{
-            debug self =>
-              "    gain is {} ({}, {}, {} / {}, {}, {})",
-              gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
-          } ;
-          let better = if let Some( (old_gain, _, _) ) = maybe_qual {
-            old_gain < gain
-          } else { true } ;
-          if better {
-            maybe_qual = Some( (gain, qual, values) )
+      {
+        let quals = self.qualifiers.of(pred) ;
+        'search_qual: for values in quals {
+          msg!{ debug self.core => "    {}:", values.qual } ;
+          if let Some(
+            (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
+          ) = data.gain(pred, & self.data, values) ? {
+            msg!{
+              debug self.core =>
+                "    gain is {} ({}, {}, {} / {}, {}, {})",
+                gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
+            } ;
+            let better = if let Some( (old_gain, _) ) = maybe_qual {
+              old_gain < gain
+            } else { true } ;
+            if better {
+              maybe_qual = Some( (gain, values) )
+            }
+            if gain == 1. { break 'search_qual }
+          } else {
+            msg!{
+              debug self.core =>
+                "    does not split anything..."
+            } ;
+            ()
           }
-          if gain == 1. { break 'search_qual }
-        } else {
-          msg!{
-            debug self =>
-              "    does not split anything..."
-          } ;
-          ()
         }
       }
+      
+      profile!{ self mark "learning", "qual", "existing" }
 
-      if let Some( (_gain, qual, values) ) = maybe_qual {
+      if let Some( (_gain, values) ) = maybe_qual {
         let (q_data, nq_data) = data.split(values) ;
 
         msg!(
-          self =>
+          self.core =>
             "  using qualifier {} | \
             gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-            qual.string_do(
+            values.qual.string_do(
               & self.instance[pred].sig.index_iter().map(
                 |(idx, typ)| ::instance::info::VarInfo {
                   name: format!("v_{}", idx), typ: * typ, idx
@@ -737,10 +742,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             nq_data.neg.len(),
             nq_data.unc.len(),
         ) ;
-        profile!{ self mark "learning", "qual", "existing" }
-        return Ok( (qual.clone(), q_data, nq_data) )
-      } else {
-        profile!{ self mark "learning", "qual", "existing" }
+        return Ok( (values.qual.clone(), q_data, nq_data) )
       }
     }
 
@@ -765,7 +767,6 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       msg.push_str("\n)") ;
       msg!{ self => msg } ;
     }
-    // bail!( "qualifier synthesis is untested and offline for now" ) ;
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
@@ -804,7 +805,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // Insert new qualifier.
     let (q_data, nq_data) = {
       let values = self.qualifiers.add_qual(
-        qual.clone(), & self.data.samples
+        qual.clone(), // & self.data.samples
       ) ? ;
       data.split(values)
     } ;
@@ -1143,7 +1144,7 @@ impl CData {
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
-  pub fn simple_gain(& self, qual: & QualValues) -> Option<f64> {
+  pub fn simple_gain(& self, qual: & mut QualValues) -> Option<f64> {
     // println!("my entropy") ;
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
@@ -1192,7 +1193,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   pub fn gain(
-    & self, pred: PrdIdx, data: & Data, qual: & QualValues
+    & self, pred: PrdIdx, data: & Data, qual: & mut QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
@@ -1265,7 +1266,7 @@ impl CData {
 
   /// Splits the data given some qualifier. First is the data for which the
   /// qualifier is true.
-  pub fn split(self, qual: & QualValues) -> (Self, Self) {
+  pub fn split(self, qual: & mut QualValues) -> (Self, Self) {
     let (mut q, mut nq) = (
       CData {
         pos: Vec::with_capacity( self.pos.len() ),

@@ -368,6 +368,7 @@ pub struct Conf {
   pub z3_cmd: String,
   pub step: bool,
   pub verb: Verb,
+  pub stats: bool,
   styles: Styles,
 }
 impl ColorExt for Conf {
@@ -379,11 +380,11 @@ impl Conf {
     file: Option<String>, check: Option<String>,
     smt_log: bool, z3_cmd: String, out_dir: String,
     step: bool, smt_learn: bool, 
-    verb: Verb, color: bool
+    verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
       file, check, smt_log, out_dir, step, smt_learn, z3_cmd,
-      verb, styles: Styles::mk(color)
+      verb, stats, styles: Styles::mk(color)
     }
   }
 
@@ -520,6 +521,16 @@ impl Conf {
         "<FILE>"
       ).takes_value(true).number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("stats").long("--stats").help(
+        "reports some statistics at the end of the run"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
     ).get_matches() ;
 
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
@@ -552,6 +563,11 @@ impl Conf {
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
+    let stats = matches.value_of("stats").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(stats): default is provided and input validated in clap"
+    ) ;
 
     let mut verb = Verb::default() ;
 
@@ -564,7 +580,7 @@ impl Conf {
 
     Conf::mk(
       file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
-      verb, color
+      verb, stats, color
     )
   }
 }
@@ -928,7 +944,7 @@ impl CanPrint for Stats {
     for (stat, count) in self {
       let stat_len = ::std::cmp::min( 30, stat.len() ) ;
       println!(
-        "  {0: >1$}{2}: {3: >5}", "", 30 - stat_len, conf.emph(stat), count
+        ";   {0: >1$}{2}: {3: >5}", "", 30 - stat_len, conf.emph(stat), count
       )
     }
   }
@@ -938,7 +954,7 @@ impl CanPrint for ProfileTree {
     self.iter(
       |scope, time, sub_time| if let Some(last) = scope.last() {
         println!(
-          "{0: >1$}|- {2}s {3}{4}", "", 2 * scope.len(), time.to_str(), last,
+          "; {0: >1$}|- {2}s {3}{4}", "", 2 * scope.len(), time.to_str(), last,
           if sub_time != Duration::from_secs(0) {
             format!(" ({}s)", sub_time.to_str())
           } else {
@@ -947,7 +963,7 @@ impl CanPrint for ProfileTree {
         )
       } else {
         println!(
-          "total {}s{}", time.to_str(),
+          "; total {}s{}", time.to_str(),
           if sub_time != Duration::from_secs(0) {
             format!(" ({}s)", sub_time.to_str())
           } else {
