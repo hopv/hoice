@@ -755,6 +755,75 @@ impl Instance {
     self.op(Op::Eql, vec![lhs, rhs])
   }
 
+  /// Variable substitution.
+  ///
+  /// If the term contains a variable that's not in the map then the
+  /// substitution *fails* by returning `None`.
+  ///
+  /// Used by qualifier extraction.
+  pub fn subst(
+    & self, map: VarHMap<Term>, term: & Term
+  ) -> Option<Term> {
+    let mut current = term ;
+    // Stack for traversal.
+    let mut stack = vec![] ;
+
+    'go_down: loop {
+
+      // Go down.
+      let mut term = match * current.get() {
+        RTerm::Var(var) => if let Some(term) = map.get(& var) {
+          term.clone()
+        } else {
+          return None
+        },
+        RTerm::App { op, ref args } => {
+          current = & args[0] ;
+          stack.push(
+            (op, & args[1..], Vec::with_capacity( args.len() ))
+          ) ;
+          continue 'go_down
+        },
+        _ => current.clone(),
+      } ;
+
+      // Go up.
+      'go_up: while let Some(
+        (op, args, mut new_args)
+      ) = stack.pop() {
+        new_args.push( term ) ;
+        
+        if args.is_empty() {
+          term = self.op(op, new_args) ;
+          continue 'go_up // Just for readability
+        } else {
+          current = & args[0] ;
+          stack.push( (op, & args[1..], new_args) ) ;
+          continue 'go_down
+        }
+      }
+
+      // Only way to get here is if the stack is empty, meaning we're done.
+      return Some(term)
+    }
+  }
+
+  // /// Extracts some qualifiers from a clause.
+  // ///
+  // /// # TO DO
+  // ///
+  // /// - write an explanation of what actually happens
+  // /// - and some tests, probably
+  // pub fn qualifiers_of_clause(& self, clause: & Clause) -> HConSet<RTerm> {
+
+  //   // Extraction of the variables map based on the way the predicates are
+  //   // used.
+  //   let maps = 
+
+  //   unimplemented!()
+
+  // }
+
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: ::teacher::Cexs
