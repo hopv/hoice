@@ -96,7 +96,9 @@ fn teach<
           log_info!("  {}", candidates[_pred.idx])
         }
       }
+      profile!{ teacher tick "cexs" }
       let cexs = teacher.get_cexs(& candidates) ? ;
+      profile!{ teacher mark "cexs" }
 
       if cexs.is_empty() {
         println!("(safe") ;
@@ -111,6 +113,7 @@ fn teach<
           println!("  )")
         }
         println!(")") ;
+        teacher.finalize()? ;
         return Ok(())
       }
 
@@ -120,14 +123,18 @@ fn teach<
           & (), |s| s.to_string()
         ) ?
       }
+      profile!{ teacher tick "data", "registration" }
       teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
+      profile!{ teacher mark "data", "registration" }
       log_info!{
         "\nlearning data before propagation:\n{}",
         teacher.data.string_do(
           & (), |s| s.to_string()
         ) ?
       }
-      teacher.data.propagate() ?
+      profile!{ teacher tick "data", "propagation" }
+      teacher.data.propagate() ? ;
+      profile!{ teacher mark "data", "propagation" }
     } else {
       bail!("all learners are dead")
     }
@@ -158,7 +165,11 @@ pub struct Teacher<S> {
   /// Sender used by learners. Becomes `None` when the learning process starts.
   pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
   /// Learners sender and description.
-  pub learners: LrnMap<(Sender<Data>, String)>,
+  pub learners: LrnMap<( Option< Sender<Data> >, String )>,
+  /// Profiler.
+  pub _profiler: Profile,
+  /// Number of guesses.
+  count: usize,
 }
 impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Constructor.
@@ -169,8 +180,39 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     let data = Data::mk( instance.clone() ) ;
     Teacher {
       solver, instance, data, from_learners,
-      to_teacher: Some(to_teacher), learners
+      to_teacher: Some(to_teacher), learners,
+      _profiler: Profile::mk(), count: 0,
     }
+  }
+
+  /// Finalizes the run.
+  #[cfg( not(feature = "bench") )]
+  pub fn finalize(mut self) -> Res<()> {
+    if conf.stats {
+      println!("; Done in {} guesses", self.count) ;
+      println!("") ;
+    }
+
+    for & mut (ref mut sender, _) in self.learners.iter_mut() {
+      * sender = None
+    }
+    while self.get_candidates().is_some() {}
+
+    if conf.stats {
+      let (tree, stats) = self._profiler.extract_tree() ;
+      tree.print() ;
+      if ! stats.is_empty() {
+        println!("; stats:") ;
+        stats.print()
+      }
+      println!("") ;
+    }
+
+    Ok(())
+  }
+  #[cfg(feature = "bench")]
+  pub fn finalize(self) -> Res<()> {
+    Ok(())
   }
 
   /// Adds a new learner.
@@ -189,7 +231,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
       ).chain_err(
         || format!("while spawning learner `{}`", conf.emph(& name))
       ) ? ;
-      self.learners.push( (to_learner, name) ) ;
+      self.learners.push( ( Some(to_learner), name ) ) ;
       Ok(())
     } else {
       bail!("trying to add learner after teacher's finalization")
@@ -199,21 +241,26 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Broadcasts data to the learners. Returns `true` if there's no more
   /// learner left.
   pub fn broadcast(& self) -> bool {
+    profile!{ self tick "broadcast" }
     let mut one_alive = false ;
     for & (ref sender, ref name) in self.learners.iter() {
-      if let Err(_) = sender.send( self.data.clone() ) {
-        warn!(
-          "learner `{}` is dead...", name
-        )
-      } else {
-        one_alive = true
+      if let Some(sender) = sender.as_ref() {
+        if let Err(_) = sender.send( self.data.clone() ) {
+          warn!(
+            "learner `{}` is dead...", name
+          )
+        } else {
+          one_alive = true
+        }
       }
     }
+    profile!{ self mark "broadcast" }
     one_alive
   }
 
   /// Waits for some candidates.
   pub fn get_candidates(& self) -> Option<(LrnIdx, Candidates)> {
+    profile!{ self tick "waiting" }
     'recv: loop {
       match self.from_learners.recv() {
         Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
@@ -234,8 +281,26 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
           // }
           print_err( err.unwrap_err() )
         },
-        Ok( (idx, FromLearners::Cands(cands)) ) => return Some( (idx, cands) ),
-        Err(_) => return None
+        Ok( (idx, FromLearners::Stats(tree, stats)) ) => if conf.stats {
+          println!(
+            "; received stats from {}", conf.emph( & self.learners[idx].1 )
+          ) ;
+          tree.print() ;
+          if ! stats.is_empty() {
+            println!("; stats:") ;
+            stats.print()
+          }
+          println!("")
+        },
+        Ok( (idx, FromLearners::Cands(cands)) ) => {
+          profile!{ self mark "waiting" }
+          profile!{ self "candidates" => add 1 }
+          return Some( (idx, cands) )
+        },
+        Err(_) => {
+          profile!{ self mark "waiting" }
+          return None
+        },
       }
     }
   }
@@ -258,6 +323,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
 
   /// Looks for falsifiable clauses given some candidates.
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
+    self.count += 1 ;
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
     self.solver.comment("looking for counterexamples...") ? ;
@@ -295,8 +361,11 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
       self.solver.declare_const(var, & var.typ, & ()) ?
     }
     self.solver.assert( clause, cands ) ? ;
+    profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
+    profile!{ self mark "cexs", "check-sat" }
     let res = if sat {
+      profile!{ self tick "cexs", "model" }
       log_debug!{ "    sat, getting model..." }
       let model = self.solver.get_model() ? ;
       let mut map: VarMap<_> = clause.vars().iter().map(
@@ -307,6 +376,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
         map[var] = val
       }
       log_debug!{ "    done constructing model" }
+      profile!{ self mark "cexs", "model" }
       Ok( Some( map ) )
     } else {
       Ok(None)

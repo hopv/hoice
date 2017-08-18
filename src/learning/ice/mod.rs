@@ -281,6 +281,10 @@ pub struct IceLearner<'core, Slver> {
   candidate: PrdMap< Option<Term> >,
   /// Activation literal counter.
   actlit: usize,
+  /// Profiler.
+  _profiler: Profile,
+  /// Counts the qualifier synthesized.
+  qual_synth: usize,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
@@ -299,13 +303,16 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       finished: Vec::with_capacity(103),
       unfinished: Vec::with_capacity(103),
       classifier: HashMap::with_capacity(1003),
-      dec_mem, candidate, actlit: 0,
+      dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
+      qual_synth: 0,
     }
   }
 
   /// Runs the learner.
   pub fn run(mut self) -> Res<()> {
     let mut teacher_alive = true ;
+    profile!{ self "qualifier synthesized" => add 0 }
+    profile!{ self "qualifiers" => add self.qualifiers.count() }
     // if_verb!{
     //   teacher_alive = msg!{ & self => "Qualifiers:" } ;
     //   for quals in self.qualifiers.qualifiers() {
@@ -324,15 +331,33 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         } else {
           bail!("can't synthesize candidates for this, sorry")
         },
-        None => teacher_alive = false,
+        None => return self.finalize(),
       }
     }
+  }
+
+  /// Finalizes the learning process.
+  #[cfg( not(feature = "bench") )]
+  pub fn finalize(self) -> Res<()> {
+    let success = self.core.stats(
+      self._profiler, vec![ vec!["learning", "smt"] ]
+    ) ;
+    if success {
+      Ok(())
+    } else {
+      bail!("could not send statistics to teacher")
+    }
+  }
+  #[cfg(feature = "bench")]
+  pub fn finalize(self) -> Res<()> {
+    Ok(())
   }
 
   /// Sends some candidates.
   ///
   /// Also resets the solver and clears declaration memory.
   pub fn send_cands(& mut self, candidates: Candidates) -> Res<bool> {
+    profile!{ self tick "sending" }
     let res = self.send_candidates(
       candidates
     ) ;
@@ -341,6 +366,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     for set in self.dec_mem.iter_mut() {
       set.clear()
     } ;
+    profile!{ self mark "sending" }
     Ok(res)
   }
 
@@ -374,10 +400,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn learn(
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
-    let new_samples = data.drain_new_samples() ;
+    profile!{ self tick "learning" }
+    let _new_samples = data.drain_new_samples() ;
     self.data = data ;
     self.qualifiers.clear_blacklist() ;
-    self.qualifiers.register_samples( new_samples ) ? ;
+    // profile!{ self tick "learning", "new sample registration" }
+    // self.qualifiers.register_samples( new_samples ) ? ;
+    // profile!{ self mark "learning", "new sample registration" }
 
     self.setup_solver().chain_err(
       || "while initializing the solver"
@@ -491,6 +520,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         )
       }
     }
+    profile!{ self mark "learning" }
     Ok( Some(candidates) )
   }
 
@@ -503,6 +533,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Returns `None` iff `unfinished` was empty meaning the learning process
   /// is over.
   pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
+    profile!{ self tick "learning", "backtrack" }
     msg!{ self => "backtracking..." } ;
     // Backtracking or exit loop.
     if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
@@ -513,8 +544,10 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       }
       // Update data, some previously unclassified data may be classified now.
       self.data.classify(pred, & mut nu_data) ;
+      profile!{ self mark "learning", "backtrack" }
       Some( (nu_branch, nu_data) )
     } else {
+      profile!{ self mark "learning", "backtrack" }
       None
     }
   }
@@ -547,11 +580,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             "  no more negative data, is_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc.len()
         ) ;
+        profile!{ self tick "learning", "data" }
         for unc in data.unc {
           // let prev = self.classifier.insert(unc, true) ;
           // debug_assert!( prev.is_none() )
           self.data.stage_pos(pred, unc)
         }
+        self.data.propagate() ? ;
+        profile!{ self mark "learning", "data" }
         branch.shrink_to_fit() ;
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;
@@ -579,11 +615,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             "  no more positive data, is_legal check ok\n  \
             forcing {} unclassifieds negative...", data.unc.len()
         ) ;
+        profile!{ self tick "learning", "data" }
         for unc in data.unc {
           // let prev = self.classifier.insert(unc, false) ;
           // debug_assert!( prev.is_none() )
           self.data.stage_neg(pred, unc)
         }
+        self.data.propagate() ? ;
+        profile!{ self mark "learning", "data" }
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
@@ -603,7 +642,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
 
       // Could not close the branch, look for a qualifier.
+      profile!{ self tick "learning", "qual" }
       let (qual, q_data, nq_data) = self.get_qualifier(pred, data) ? ;
+      profile!{ self mark "learning", "qual" }
       self.qualifiers.blacklist(& qual) ;
 
       // Remember the branch where qualifier is false.
@@ -645,42 +686,48 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   ) -> Res< (Term, CData, CData) > {
 
     { // Try using an existing qualifier. Early return if one is found.
-      let mut maybe_qual = None ;
+      let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
-      'search_qual: for (qual, values) in self.qualifiers.of(pred) {
-        msg!{ debug self => "    {}:", qual } ;
-        if let Some(
-          (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
-        ) = data.gain(pred, & self.data, & values) ? {
-          msg!{
-            debug self =>
-              "    gain is {} ({}, {}, {} / {}, {}, {})",
-              gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
-          } ;
-          let better = if let Some( (old_gain, _, _) ) = maybe_qual {
-            old_gain < gain
-          } else { true } ;
-          if better {
-            maybe_qual = Some( (gain, qual, values) )
+      profile!{ self tick "learning", "qual", "existing" }
+      {
+        let quals = self.qualifiers.of(pred) ;
+        'search_qual: for values in quals {
+          msg!{ debug self.core => "    {}:", values.qual } ;
+          if let Some(
+            (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
+          ) = data.gain(pred, & self.data, values) ? {
+            msg!{
+              debug self.core =>
+                "    gain is {} ({}, {}, {} / {}, {}, {})",
+                gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
+            } ;
+            let better = if let Some( (old_gain, _) ) = maybe_qual {
+              old_gain < gain
+            } else { true } ;
+            if better {
+              maybe_qual = Some( (gain, values) )
+            }
+            if gain == 1. { break 'search_qual }
+          } else {
+            msg!{
+              debug self.core =>
+                "    does not split anything..."
+            } ;
+            ()
           }
-          if gain == 1. { break 'search_qual }
-        } else {
-          msg!{
-            debug self =>
-              "    does not split anything..."
-          } ;
-          ()
         }
       }
+      
+      profile!{ self mark "learning", "qual", "existing" }
 
-      if let Some( (_gain, qual, values) ) = maybe_qual {
+      if let Some( (_gain, values) ) = maybe_qual {
         let (q_data, nq_data) = data.split(values) ;
 
         msg!(
-          self =>
+          self.core =>
             "  using qualifier {} | \
             gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-            qual.string_do(
+            values.qual.string_do(
               & self.instance[pred].sig.index_iter().map(
                 |(idx, typ)| ::instance::info::VarInfo {
                   name: format!("v_{}", idx), typ: * typ, idx
@@ -695,7 +742,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             nq_data.neg.len(),
             nq_data.unc.len(),
         ) ;
-        return Ok( (qual.clone(), q_data, nq_data) )
+        return Ok( (values.qual.clone(), q_data, nq_data) )
       }
     }
 
@@ -720,9 +767,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       msg.push_str("\n)") ;
       msg!{ self => msg } ;
     }
-    // bail!( "qualifier synthesis is untested and offline for now" ) ;
 
     // Synthesize qualifier separating the data.
+    profile!{ self tick "learning", "qual", "synthesis" }
     let qual = match (
       data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
     ) {
@@ -751,11 +798,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self.instance[pred], data.pos, data.neg, data.unc
       ),
     } ;
+    profile!{ self mark "learning", "qual", "synthesis" }
+    profile!{ self "qualifier synthesized" => add 1 }
+    self.qual_synth += 1 ;
 
     // Insert new qualifier.
     let (q_data, nq_data) = {
       let values = self.qualifiers.add_qual(
-        qual.clone(), & self.data.samples
+        qual.clone(), // & self.data.samples
       ) ? ;
       data.split(values)
     } ;
@@ -786,6 +836,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     & mut self, pred: PrdIdx, unc: & HSamples, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
+    profile!{ self tick "learning", "smt", "legal" }
 
     // Wrap actlit and increment counter.
     let actlit = ActWrap { actlit: self.actlit, pred, unc, pos } ;
@@ -799,11 +850,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     if self.solver.check_sat_assuming(& actlits, & ()) ? {
       self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+      profile!{ self mark "learning", "smt", "legal" }
       Ok(true)
     } else {
       self.solver.assert(
         & format!("(not {})", actlits[0].as_ident()), & ()
       ) ? ;
+      profile!{ self mark "learning", "smt", "legal" }
       Ok(false)
     }
   }
@@ -818,6 +871,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn is_legal_pred(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
+    profile!{ self tick "learning", "smt", "all legal" }
     let unc = & self.data.map[pred] ;
     if unc.is_empty() { return Ok(true) }
 
@@ -833,11 +887,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     if self.solver.check_sat_assuming(& actlits, & ()) ? {
       self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+      profile!{ self mark "learning", "smt", "all legal" }
       Ok(true)
     } else {
       self.solver.assert(
         & format!("(not {})", actlits[0].as_ident()), & ()
       ) ? ;
+      profile!{ self mark "learning", "smt", "all legal" }
       Ok(false)
     }
   }
@@ -851,6 +907,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// - **declares** samples that neither pos nor neg
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<()> {
+    profile!{ self tick "learning", "smt", "setup" }
     self.actlit = 0 ;
     
     // Dummy arguments used in the `define_fun` for pos (neg) data.
@@ -931,6 +988,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self.solver.assert( & CWrap(constraint), & () ) ?
       }
     }
+    profile!{ self mark "learning", "smt", "setup" }
 
     Ok(())
   }
@@ -1086,7 +1144,7 @@ impl CData {
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
-  pub fn simple_gain(& self, qual: & QualValues) -> Option<f64> {
+  pub fn simple_gain(& self, qual: & mut QualValues) -> Option<f64> {
     // println!("my entropy") ;
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
@@ -1135,7 +1193,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   pub fn gain(
-    & self, pred: PrdIdx, data: & Data, qual: & QualValues
+    & self, pred: PrdIdx, data: & Data, qual: & mut QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
@@ -1208,7 +1266,7 @@ impl CData {
 
   /// Splits the data given some qualifier. First is the data for which the
   /// qualifier is true.
-  pub fn split(self, qual: & QualValues) -> (Self, Self) {
+  pub fn split(self, qual: & mut QualValues) -> (Self, Self) {
     let (mut q, mut nq) = (
       CData {
         pos: Vec::with_capacity( self.pos.len() ),

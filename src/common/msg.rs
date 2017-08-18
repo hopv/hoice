@@ -24,7 +24,9 @@ pub enum FromLearners {
   /// A message.
   Msg( String ),
   /// An error.
-  Err( Error )
+  Err( Error ),
+  /// Statistics.
+  Stats( ProfileTree, Stats ),
 }
 unsafe impl Send for FromLearners {}
 
@@ -32,9 +34,6 @@ unsafe impl Send for FromLearners {}
 /// Sender / receiver pair alias type.
 pub type Channel<T> = (Sender<T>, Receiver<T>) ;
 
-
-/// Channel from a teacher to a learner.
-pub fn to_learner() -> Channel<LearningData> { channel() }
 
 /// Channel from a teacher to a learner.
 pub fn new_to_learner() -> Channel<Data> { channel() }
@@ -118,6 +117,27 @@ pub trait HasLearnerCore {
     self.core().sender.send(
       ( self.core().idx, FromLearners::Cands(candidates) )
     ).is_ok()
+  }
+  /// Sends statistics.
+  #[cfg( not(feature = "bench") )]
+  fn stats(
+    & self, profile: Profile, lift: Vec< Vec<& 'static str> >
+  ) -> bool {
+    let (mut tree, stats) = profile.extract_tree() ;
+    for lift in lift {
+      if let Err(e) = tree.lift(lift) {
+        self.err(e) ;
+      }
+    }
+    self.core().sender.send(
+      ( self.core().idx, FromLearners::Stats( tree, stats ) )
+    ).is_ok()
+  }
+  #[cfg(feature = "bench")]
+  fn stats(
+    & self, _: Profile, _: Vec< Vec<& 'static str> >
+  ) -> bool {
+    true
   }
   /// Sends a message to the teacher. Returns `false` iff sending fails,
   /// **meaning the teacher is disconnected**.

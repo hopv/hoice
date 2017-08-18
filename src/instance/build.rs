@@ -354,14 +354,14 @@ impl InstBuild {
       if let Some(pred) = maybe_pred {
         res += 1 ;
         let term = self.instance.bool(true) ;
-        info!{
+        log_info!{
           "trivial predicate {}: forcing to {}", self.instance[pred], term
         }
         self.instance.force_pred(pred, term) ? ;
-        let clause = self.instance.forget_clause(cls_idx) ;
-        info!{
+        let _clause = self.instance.forget_clause(cls_idx) ;
+        log_info!{
           "dropped associated clause {}",
-          clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
+          _clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
         }
       } else {
         cls_idx.inc()
@@ -390,10 +390,10 @@ impl InstBuild {
         ) {
           Some(true) => {
             res += 1 ;
-            let clause = self.instance.forget_clause(cls_idx) ;
-            info!{
+            let _clause = self.instance.forget_clause(cls_idx) ;
+            log_info!{
               "dropping clause {}, rhs is true",
-              clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
+              _clause.string_do( & self.instance.preds, |s| s.to_string() ) ?
             }
             continue 'clause_iter
           },
@@ -445,13 +445,13 @@ impl InstBuild {
   ) -> Res<Instance> {
     'simplify: loop {
       let _tautologies = self.simplify_tautologies() ? ;
-      info!{ "{} predicates found to be tautologies", _tautologies }
+      log_info!{ "{} predicates found to be tautologies", _tautologies }
       let propagations = self.propagate_forced() ? ;
       if propagations == 0 {
-        info!{ "done simplifying\n" }
+        log_info!{ "done simplifying\n" }
         break 'simplify
       } else {
-        info!{ "{} propagations\n", propagations }
+        log_info!{ "{} propagations\n", propagations }
       }
     }
 

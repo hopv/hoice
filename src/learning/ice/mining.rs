@@ -5,78 +5,8 @@ use instance::* ;
 use common::data::HSample ;
 
 
-#[doc = r#"Stores the (truth) value of a qualifier on some samples.
 
-In `debug` mode, stores two sets of samples, one for each truth value the
-qualifier can take.
 
-In `release` mode, stores only the set of samples on which the qualifier is
-true. Any sample not in this set is assumed to make the qualifier evaluate
-to false.
-
-This is because in `debug`, we want to check that we're not missing qualifiers.
-But not in `release`, where we just want to go fast and save memory.
-
-The two versions must be indistinguishable from the outside."#]
-#[cfg(debug)]
-pub struct QualValues {
-  /// Samples on which the qualifier evaluates to true.
-  true_set: HConSet<Args>,
-  /// Samples on which the qualifier evaluates to false.
-  flse_set: HConSet<Args>,
-}
-#[cfg(debug)]
-impl QualValues {
-  /// Constructor.
-  pub fn mk() -> Self {
-    QualValues {
-      true_set: HConSet::with_capacity(1003),
-      flse_set: HConSet::with_capacity(1003),
-    }
-  }
-}
-#[cfg(debug)]
-impl QualValuesExt for QualValues {
-  fn add(& mut self, s: HSample, val: bool) {
-    let _ = if val {
-      self.true_set.insert(s)
-    } else { self.flse_set.insert(s) } ;
-    ()
-  }
-  fn eval(& self, s: & HSample) -> bool {
-    if self.true_set.contains(s) {
-      true
-    } else if self.flse_set.contains(s) {
-      false
-    } else {
-      panic!("[bug QualValues] evaluation on unknown sample: {:?}", s.get())
-    }
-  }
-}
-
-#[cfg( not(debug) )]
-pub struct QualValues {
-  /// Samples on which the qualifier evaluates to true.
-  true_set: HConSet<Args>,
-}
-#[cfg( not(debug) )]
-impl QualValues {
-  /// Constructor.
-  pub fn mk() -> Self {
-    QualValues { true_set: HConSet::with_capacity(1003) }
-  }
-}
-#[cfg( not(debug) )]
-impl QualValuesExt for QualValues {
-  fn add(& mut self, s: HSample, val: bool) {
-    if val {
-      let _ = self.true_set.insert(s) ;
-    }
-  }
-  fn eval(& self, s: & HSample) -> bool {
-    self.true_set.contains(s)
-  }
-}
 
 
 /// Trait extending `QualValues` in `release` and `debug`.
@@ -86,8 +16,80 @@ pub trait QualValuesExt {
   fn add(& mut self, HSample, bool) ;
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
-  fn eval(& self, & HSample) -> bool ;
+  fn eval(& mut self, & HSample) -> bool ;
 }
+
+
+/// Stores the (truth) value of a qualifier on some samples.
+pub struct QualValues {
+  /// The qualifier.
+  pub qual: Term,
+  /// Samples on which the qualifier evaluates to true.
+  true_set: HConSet<Args>,
+  /// Samples on which the qualifier evaluates to false.
+  flse_set: HConSet<Args>,
+}
+impl QualValues {
+  /// Constructor.
+  pub fn mk(qual: Term) -> Self {
+    QualValues {
+      qual,
+      true_set: HConSet::with_capacity(1003),
+      flse_set: HConSet::with_capacity(1003),
+    }
+  }
+}
+impl QualValuesExt for QualValues {
+  fn add(& mut self, s: HSample, val: bool) {
+    let _ = if val {
+      self.true_set.insert(s)
+    } else { self.flse_set.insert(s) } ;
+    ()
+  }
+  fn eval(& mut self, s: & HSample) -> bool {
+    if self.true_set.contains(s) {
+      true
+    } else if self.flse_set.contains(s) {
+      false
+    } else {
+      match self.qual.bool_eval(s) {
+        Ok( Some(b) ) => {
+          self.add( s.clone(), b ) ;
+          b
+        },
+        Ok(None) => panic!("[bug] incomplete arguments in learning data"),
+        Err(e) => {
+          print_err(e) ;
+          panic!("[bug] error during qualifier evaluation")
+        },
+      }
+    }
+  }
+}
+
+// #[cfg( not(debug) )]
+// pub struct QualValues {
+//   /// Samples on which the qualifier evaluates to true.
+//   true_set: HConSet<Args>,
+// }
+// #[cfg( not(debug) )]
+// impl QualValues {
+//   /// Constructor.
+//   pub fn mk() -> Self {
+//     QualValues { true_set: HConSet::with_capacity(1003) }
+//   }
+// }
+// #[cfg( not(debug) )]
+// impl QualValuesExt for QualValues {
+//   fn add(& mut self, s: HSample, val: bool) {
+//     if val {
+//       let _ = self.true_set.insert(s) ;
+//     }
+//   }
+//   fn eval(& self, s: & HSample) -> bool {
+//     self.true_set.contains(s)
+//   }
+// }
 
 
 #[doc = r#"Associates qualifiers to predicates.
@@ -110,7 +112,7 @@ pub struct Qualifiers {
   ///
   /// Invariant: `arity_map.len()` is `instance.max_pred_arity` where
   /// `instance` is the Instance used during construction.
-  arity_map: ArityMap< Vec< (Term, QualValues) > >,
+  arity_map: ArityMap< Vec<QualValues> >,
   /// Maps predicates to their arity.
   pred_to_arity: PrdMap<Arity>,
   /// Blacklisted qualifiers.
@@ -153,7 +155,7 @@ impl Qualifiers {
       }
       arity_map.push(
         terms.into_iter().map(
-          |term| ( term, QualValues::mk() )
+          |term| QualValues::mk(term)
         ).collect()
       )
     }
@@ -166,13 +168,22 @@ impl Qualifiers {
     }
   }
 
+  /// Number of qualifiers.
+  pub fn count(& self) -> usize {
+    let mut count = 0 ;
+    for quals in self.arity_map.iter() {
+      count += quals.len()
+    }
+    count
+  }
+
   /// Accessor to the qualifiers.
-  pub fn qualifiers(& self) -> & ArityMap< Vec< (Term, QualValues) > > {
+  pub fn qualifiers(& self) -> & ArityMap< Vec<QualValues> > {
     & self.arity_map
   }
 
   /// Qualifiers for a predicate.
-  pub fn of<'a>(& 'a self, pred: PrdIdx) -> QualIter<'a> {
+  pub fn of<'a>(& 'a mut self, pred: PrdIdx) -> QualIter<'a> {
     // for (arity, quals) in self.arity_map.index_iter() {
     //   println!("|===| arity {}", arity) ;
     //   for & (ref term, ref vals) in quals {
@@ -189,13 +200,9 @@ impl Qualifiers {
     //     println!("")
     //   }
     // }
-    QualIter {
-      arity_map: & self.arity_map,
-      blacklist: & self.blacklist,
-      pred_arity: self.pred_to_arity[pred],
-      curr_arity: 0.into(),
-      curr_term: 0,
-    }
+    QualIter::mk(
+      & mut self.arity_map, & self.blacklist, self.pred_to_arity[pred]
+    )
   }
 
   /// Blacklists a qualifier.
@@ -209,74 +216,74 @@ impl Qualifiers {
     self.blacklist.clear()
   }
 
-  /// Registers a sample.
-  fn register_sample(& mut self, args: HSample) -> Res<()> {
-    for arity in ArityRange::zero_to( args.len() + 1 ) {
-      for pair in self.arity_map[arity].iter_mut() {
-        let (term, values) = (& pair.0, & mut pair.1) ;
-        if let Some(val) = term.bool_eval(& args) ? {
-          values.add(args.clone(), val) ;
-        } else {
-          bail!("[bug] incomplete arguments in learning data")
-        }
-      }
-    }
-    Ok(())
-  }
+  // /// Registers a sample.
+  // fn register_sample(& mut self, args: HSample) -> Res<()> {
+  //   for arity in ArityRange::zero_to( args.len() + 1 ) {
+  //     for pair in self.arity_map[arity].iter_mut() {
+  //       let (term, values) = (& pair.0, & mut pair.1) ;
+  //       if let Some(val) = term.bool_eval(& args) ? {
+  //         values.add(args.clone(), val) ;
+  //       } else {
+  //         bail!("[bug] incomplete arguments in learning data")
+  //       }
+  //     }
+  //   }
+  //   Ok(())
+  // }
 
-  /// Registers some samples.
-  pub fn register_samples(
-    & mut self, new_samples: Vec<HSample>
-  ) -> Res<()> {
-    for sample in new_samples {
-      self.register_sample(sample) ?
-    }
-    Ok(())
-  }
+  // /// Registers some samples.
+  // pub fn register_samples(
+  //   & mut self, new_samples: Vec<HSample>
+  // ) -> Res<()> {
+  //   for sample in new_samples {
+  //     self.register_sample(sample) ?
+  //   }
+  //   Ok(())
+  // }
 
 
   /// Adds a qualifier.
   pub fn add_qual<'a>(
-    & 'a mut self, qual: Term, samples: & ::common::data::HSampleConsign
-  ) -> Res<& 'a QualValues> {
+    & 'a mut self, qual: Term
+    // , samples: & ::common::data::HSampleConsign
+  ) -> Res<& 'a mut QualValues> {
     let arity: Arity = if let Some(max_var) = qual.highest_var() {
       (1 + * max_var).into()
     } else {
       bail!("[bug] trying to add constant qualifier")
     } ;
-    let values = samples.read().map_err(
-      corrupted_err
-    )?.fold(
-      |mut values, sample| {
-        if sample.len() >= * arity {
-          match qual.bool_eval(& * sample) {
-            Ok( Some(b) ) => values.add(sample, b),
-            Ok( None ) => panic!(
-              "incomplete model, cannot evaluate qualifier"
-            ),
-            Err(e) => panic!(
-              "[bug] error while evaluating qualifier: {}", e
-            ),
-          }
-        }
-        values
-      }, QualValues::mk()
-    ) ;
+    // let values = samples.read().map_err(
+    //   corrupted_err
+    // )?.fold(
+    //   |mut values, sample| {
+    //     if sample.len() >= * arity {
+    //       match qual.bool_eval(& * sample) {
+    //         Ok( Some(b) ) => values.add(sample, b),
+    //         Ok( None ) => panic!(
+    //           "incomplete model, cannot evaluate qualifier"
+    //         ),
+    //         Err(e) => panic!(
+    //           "[bug] error while evaluating qualifier: {}", e
+    //         ),
+    //       }
+    //     }
+    //     values
+    //   }, QualValues::mk( qual.clone() )
+    // ) ;
     debug_assert!({
-      for & (ref q, _) in self.arity_map[arity].iter() {
-        assert!(q != & qual)
+      for values in self.arity_map[arity].iter() {
+        assert!(& values.qual != & qual)
       }
       true
     }) ;
+    let values = QualValues::mk( qual ) ;
     
     // The two operations below make sense iff `arity_map` is not shared.
-    self.arity_map[arity].push( (qual, values) ) ;
+    self.arity_map[arity].push( values ) ;
     // If it was shared, someone could insert between these two lines.
-    let & (
-      _, ref last_values
-    ) = self.arity_map[arity].last().unwrap() ;
-    //                               ^^^^^^^^|
-    // Definitely safe right after the push -|
+    let last_values = self.arity_map[arity].last_mut().unwrap() ;
+    //                                                 ^^^^^^^^|
+    // Definitely safe right after the push -------------------|
 
     Ok(last_values)
   }
@@ -287,7 +294,10 @@ impl Qualifiers {
 #[doc = r#"Iterator over the qualifiers of a predicate."#]
 pub struct QualIter<'a> {
   /// Reference to the arity map.
-  arity_map: & 'a ArityMap< Vec< (Term, QualValues) > >,
+  arity_map: ::std::slice::IterMut< 'a, Vec<QualValues> >,
+  /// Current values.
+  values: Option< ::std::slice::IterMut<'a, QualValues> >,
+  // & 'a mut ArityMap< Vec<QualValues> >,
   /// Blacklisted terms.
   blacklist: & 'a HConSet<RTerm>,
   /// Arity of the predicate the qualifiers are for.
@@ -296,30 +306,58 @@ pub struct QualIter<'a> {
   ///
   /// - invariant: `curr_arity <= pred_arity`
   curr_arity: Arity,
-  /// Index of the next qualifier w.r.t. the arity index.
-  curr_term: usize
+}
+impl<'a> QualIter<'a> {
+  /// Constructor.
+  pub fn mk(
+    map: & 'a mut ArityMap< Vec<QualValues> >,
+    blacklist: & 'a HConSet<RTerm>, pred_arity: Arity
+  ) -> Self {
+    let mut arity_map = map.iter_mut() ;
+    let values = arity_map.next().map( |v| v.iter_mut() ) ;
+    QualIter {
+      arity_map, values, blacklist,
+      pred_arity, curr_arity: 0.into()
+    }
+  }
 }
 impl<'a> ::std::iter::Iterator for QualIter<'a> {
-  type Item = (& 'a Term, & 'a QualValues) ;
-  fn next(& mut self) -> Option< (& 'a Term, & 'a QualValues) > {
+  type Item = & 'a mut QualValues ;
+  fn next(& mut self) -> Option<& 'a mut QualValues> {
     while self.curr_arity <= self.pred_arity {
-      if self.curr_term < self.arity_map[self.curr_arity].len() {
-        // Term of index `curr_term` exists, return that.
-        let (
-          ref term, ref values
-        ) = self.arity_map[self.curr_arity][self.curr_term] ;
-        self.curr_term += 1 ;
-        // Early return if not blacklisted.
-        if ! self.blacklist.contains(term) {
-          return Some( (term, values) )
+      if let Some( ref mut iter ) = self.values {
+        // Consume the elements until a non-blacklisted one is found.
+        while let Some(next) = iter.next() {
+          if ! self.blacklist.contains(& next.qual) {
+            return Some(next)
+          }
         }
       } else {
-        // We reached the end of the current arity, moving on to the next one.
-        self.curr_term = 0 ;
-        self.curr_arity.inc()
-        // Loop: will exit if return `None` if above predicate's arity.
+        return None
       }
+      // No next element in the current values.
+      self.curr_arity.inc() ;
+      self.values = self.arity_map.next().map(|vec| vec.iter_mut())
     }
     None
+    // while self.curr_arity <= self.pred_arity {
+    //   if self.curr_term < self.arity_map[self.curr_arity].len() {
+    //     // Term of index `curr_term` exists.
+    //     let current = self.curr_term ;
+    //     self.curr_term += 1 ;
+    //     // Early return if not blacklisted.
+    //     if ! self.blacklist.contains(
+    //       & self.arity_map[self.curr_arity][current].qual
+    //     ) {
+    //       return Some( & mut self.arity_map[self.curr_arity][self.curr_term] )
+    //     }
+    //   } else {
+    //     // We reached the end of the current arity, moving on to the next one.
+    //     self.curr_term = 0 ;
+    //     self.curr_arity.inc()
+    //     // Loop: will exit if return `None` if above predicate's arity.
+    //   }
+    // }
+    // None
   }
 }
