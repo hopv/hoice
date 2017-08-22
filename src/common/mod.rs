@@ -367,7 +367,7 @@ pub struct Conf {
   pub smt_learn: bool,
   pub z3_cmd: String,
   pub fpice_synth: bool,
-  pub para_gain: bool,
+  pub gain_threads: usize,
   pub step: bool,
   pub verb: Verb,
   pub stats: bool,
@@ -381,12 +381,12 @@ impl Conf {
   pub fn mk(
     file: Option<String>, check: Option<String>,
     smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, smt_learn: bool, fpice_synth: bool, para_gain: bool,
+    step: bool, smt_learn: bool, fpice_synth: bool, gain_threads: usize,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
-      file, check, smt_log, out_dir, step, smt_learn, fpice_synth, para_gain,
-      z3_cmd, verb, stats, styles: Styles::mk(color)
+      file, check, smt_log, out_dir, step, smt_learn, fpice_synth,
+      gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
     }
   }
 
@@ -401,6 +401,23 @@ impl Conf {
 
   /// Initializes stuff.
   pub fn init(& self) -> Res<()> {
+    // Setup the rayon thread pool.
+    if self.gain_threads > 1 {
+      use rayon::{ Configuration, initialize } ;
+      initialize(
+        Configuration::new().num_threads(
+          self.gain_threads
+        ).thread_name(
+          |i| format!("gain_{}", i)
+        )
+      ).map_err(
+        |e| Error::from_kind(
+          ErrorKind::Msg( format!("{}", e) )
+        )
+      ).chain_err(
+        || "during rayon initialization"
+      ) ?
+    }
     // Are we gonna use the output directory?
     if self.smt_log {
       ::std::fs::DirBuilder::new().recursive(true).create(
@@ -483,8 +500,7 @@ impl Conf {
     ).arg(
 
       Arg::with_name("step").long("--step").short("-s").help(
-        "forces the teacher to wait for users to press return before sending \
-        data"
+        "forces the teacher to progress incrementally"
       ).validator(
         bool_validator
       ).value_name(
@@ -512,7 +528,7 @@ impl Conf {
       Arg::with_name("out_dir").long("--out_dir").short("-o").help(
         "sets the output directory (used only by smt logging currently)"
       ).value_name(
-        "<DIR>"
+        "DIR"
       ).default_value(".").takes_value(true).number_of_values(1)
 
     ).arg(
@@ -520,7 +536,7 @@ impl Conf {
       Arg::with_name("check").long("--check").help(
         "checks the output of a previous run (does not run inference)"
       ).value_name(
-        "<FILE>"
+        "FILE"
       ).takes_value(true).number_of_values(1)
 
     // ).arg(
@@ -535,13 +551,13 @@ impl Conf {
 
     ).arg(
 
-      Arg::with_name("para_gain").long("--para_gain").help(
-        "(de)activates parallel gain computation"
+      Arg::with_name("gain_threads").long("--gain_threads").help(
+        "sets the number of threads to use when computing qualifier gains"
       ).validator(
-        bool_validator
+        int_validator
       ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+        "INT"
+      ).default_value("1").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -591,10 +607,13 @@ impl Conf {
     // ).expect(
     //   "unreachable(fpice_synth): default is provided and input validated in clap"
     // ) ;
-    let para_gain = matches.value_of("para_gain").and_then(
-      |s| bool_of_str(& s)
+    use std::str::FromStr ;
+    let gain_threads = matches.value_of("gain_threads").map(
+      |s| usize::from_str(& s)
     ).expect(
-      "unreachable(para_gain): default is provided and input validated in clap"
+      "unreachable(gain_threads): default is provided"
+    ).expect(
+      "unreachable(gain_threads): input validated in clap"
     ) ;
     let stats = matches.value_of("stats").and_then(
       |s| bool_of_str(& s)
@@ -613,7 +632,7 @@ impl Conf {
 
     Conf::mk(
       file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
-      fpice_synth, para_gain, verb, stats, color
+      fpice_synth, gain_threads, verb, stats, color
     )
   }
 }
@@ -687,6 +706,17 @@ pub mod clap_utils {
       "on" | "true" => Some(true),
       "off" | "false" => Some(false),
       _ => None,
+    }
+  }
+
+  /// Validates integer input.
+  pub fn int_validator(s: String) -> Result<(), String> {
+    use std::str::FromStr ;
+    match usize::from_str(& s) {
+      Ok(_) => Ok(()),
+      Err(_) => Err(
+        format!("expected an integer, got `{}`", s)
+      ),
     }
   }
 
