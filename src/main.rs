@@ -26,6 +26,7 @@ extern crate hashconsing ;
 #[macro_use]
 extern crate rsmt2 ;
 extern crate num ;
+extern crate rayon ;
 
 pub mod errors ;
 #[macro_use]

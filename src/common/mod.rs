@@ -367,6 +367,7 @@ pub struct Conf {
   pub smt_learn: bool,
   pub z3_cmd: String,
   pub fpice_synth: bool,
+  pub para_gain: bool,
   pub step: bool,
   pub verb: Verb,
   pub stats: bool,
@@ -380,12 +381,12 @@ impl Conf {
   pub fn mk(
     file: Option<String>, check: Option<String>,
     smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, smt_learn: bool, fpice_synth: bool,
+    step: bool, smt_learn: bool, fpice_synth: bool, para_gain: bool,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
-      file, check, smt_log, out_dir, step, smt_learn, fpice_synth, z3_cmd,
-      verb, stats, styles: Styles::mk(color)
+      file, check, smt_log, out_dir, step, smt_learn, fpice_synth, para_gain,
+      z3_cmd, verb, stats, styles: Styles::mk(color)
     }
   }
 
@@ -525,12 +526,22 @@ impl Conf {
     // ).arg(
 
     //   Arg::with_name("fpice_synth").long("--fpice_synth").help(
-    //     "activates fpice-style synthesis"
+    //     "(de)activates fpice-style synthesis"
     //   ).validator(
     //     bool_validator
     //   ).value_name(
     //     bool_format
     //   ).default_value("on").takes_value(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("para_gain").long("--para_gain").help(
+        "(de)activates parallel gain computation"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -580,6 +591,11 @@ impl Conf {
     // ).expect(
     //   "unreachable(fpice_synth): default is provided and input validated in clap"
     // ) ;
+    let para_gain = matches.value_of("para_gain").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(para_gain): default is provided and input validated in clap"
+    ) ;
     let stats = matches.value_of("stats").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -597,7 +613,7 @@ impl Conf {
 
     Conf::mk(
       file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
-      fpice_synth, verb, stats, color
+      fpice_synth, para_gain, verb, stats, color
     )
   }
 }

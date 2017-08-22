@@ -17,6 +17,10 @@ pub trait QualValuesExt {
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
   fn eval(& mut self, & HSample) -> bool ;
+  /// Checks whether the qualifier evaluates to false on a sample. Pure lazy,
+  /// will not evaluate the qualifier if it has not already been cached.
+  #[inline]
+  fn lazy_eval(& self, & HSample) -> Option<bool> ;
 }
 
 
@@ -47,11 +51,7 @@ impl QualValuesExt for QualValues {
     ()
   }
   fn eval(& mut self, s: & HSample) -> bool {
-    if self.true_set.contains(s) {
-      true
-    } else if self.flse_set.contains(s) {
-      false
-    } else {
+    if let Some(b) = self.lazy_eval(s) { b } else {
       match self.qual.bool_eval(s) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
@@ -63,6 +63,15 @@ impl QualValuesExt for QualValues {
           panic!("[bug] error during qualifier evaluation")
         },
       }
+    }
+  }
+  fn lazy_eval(& self, s: & HSample) -> Option<bool> {
+    if self.true_set.contains(s) {
+      Some(true)
+    } else if self.flse_set.contains(s) {
+      Some(false)
+    } else {
+      None
     }
   }
 }
@@ -341,6 +350,9 @@ impl<'a> QualIter<'a> {
     }
   }
 }
+// impl<'a> ::rayon::prelude::ParallelIterator for QualIter<'a> {
+//   type Item = & 'a mut QualValues ;
+// }
 impl<'a> ::std::iter::Iterator for QualIter<'a> {
   type Item = & 'a mut QualValues ;
   fn next(& mut self) -> Option<& 'a mut QualValues> {
