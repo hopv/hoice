@@ -556,15 +556,6 @@ impl InstBuild {
       bytes,
       InternalParseError,
       alt_complete!(
-        // Negation of a term.
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> tag!("not") >>
-          spc_cmt >> term: try_call!( self.parse_term(& vars) ) >>
-          spc_cmt >> char!(')') >> (
-            TTerm::N(term)
-          )
-        ) |
         // Predicate application.
         do_parse!(
           char!('(') >>

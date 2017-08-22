@@ -120,7 +120,7 @@ pub struct Qualifiers {
 }
 impl Qualifiers {
   /// Constructor.
-  pub fn mk(instance: & Instance) -> Self {
+  pub fn mk(instance: & Instance) -> Res<Self> {
     let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
     arity_map.push( vec![] ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
@@ -162,10 +162,17 @@ impl Qualifiers {
     let pred_to_arity = instance.preds().iter().map(
       |info| info.sig.len().into()
     ).collect() ;
-    Qualifiers {
+
+    let mut quals = Qualifiers {
       arity_map, pred_to_arity,
       blacklist: HConSet::with_capacity(107),
+    } ;
+
+    for qual in instance.qualifiers() {
+      quals.new_add_qual(qual) ?
     }
+
+    Ok(quals)
   }
 
   /// Number of qualifiers.
@@ -248,12 +255,6 @@ impl Qualifiers {
     } else {
       bail!("[bug] trying to add constant qualifier")
     } ;
-    debug_assert!({
-      for values in self.arity_map[arity].iter() {
-        assert!(& values.qual != & qual)
-      }
-      true
-    }) ;
     let values = QualValues::mk( qual ) ;
     // The two operations below make sense iff `arity_map` is not shared.
     self.arity_map[arity].push( values ) ;

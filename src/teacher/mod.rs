@@ -20,7 +20,7 @@ use instance::{ Instance, Val } ;
 
 
 /// Starts the teaching process.
-pub fn start_class(instance: Instance) -> Res<()> {
+pub fn start_class(instance: Instance, profiler: Profile) -> Res<()> {
   use rsmt2::solver ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
   let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
@@ -31,9 +31,9 @@ pub fn start_class(instance: Instance) -> Res<()> {
       || "while constructing the teacher's solver"
     ) ? ;
     if let Some(log) = conf.smt_log_file("teacher") ? {
-      teach( instance, solver.tee(log) )
+      teach( instance, solver.tee(log), profiler )
     } else {
-      teach( instance, solver )
+      teach( instance, solver, profiler )
     }
   } ;
 
@@ -49,9 +49,9 @@ pub fn start_class(instance: Instance) -> Res<()> {
 /// Teaching to the learners.
 fn teach<
   'kid, S: Solver<'kid, Parser>
->(instance: Instance, solver: S) -> Res<()> {
+>(instance: Instance, solver: S, profiler: Profile) -> Res<()> {
   log_debug!{ "  creating teacher" }
-  let mut teacher = Teacher::mk(solver, instance) ;
+  let mut teacher = Teacher::mk(solver, instance, profiler) ;
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
@@ -173,7 +173,7 @@ pub struct Teacher<S> {
 }
 impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   /// Constructor.
-  pub fn mk(solver: S, instance: Instance) -> Self {
+  pub fn mk(solver: S, instance: Instance, profiler: Profile) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
     let instance = Arc::new(instance) ;
@@ -181,7 +181,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     Teacher {
       solver, instance, data, from_learners,
       to_teacher: Some(to_teacher), learners,
-      _profiler: Profile::mk(), count: 0,
+      _profiler: profiler, count: 0,
     }
   }
 

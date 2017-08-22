@@ -233,11 +233,15 @@ impl Launcher {
       IceLearner::mk(
         & core, instance, data,
         conflict_solver.tee(log), synth_solver.tee(synth_log)
-      ).run()
+      ).chain_err(
+        || "while creating ice learner"
+      )?.run()
     } else {
       IceLearner::mk(
         & core, instance, data, conflict_solver, synth_solver
-      ).run()
+      ).chain_err(
+        || "while creating ice learner"
+      )?.run()
     }
   }
 }
@@ -290,19 +294,31 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn mk(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
-  ) -> Self {
-    let qualifiers = Qualifiers::mk(& * instance) ;
+  ) -> Res<Self> {
+    let qualifiers = Qualifiers::mk(& * instance).chain_err(
+      || "while creating qualifier structure"
+    ) ? ;
+    // println!("") ;
+    // println!("qualifiers:") ;
+    // for qualifiers in qualifiers.qualifiers() {
+    //   for qual in qualifiers {
+    //     println!("  {}", qual.qual)
+    //   }
+    //   println!("")
+    // }
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
     let candidate = vec![ None ; instance.preds().len() ].into() ;
-    IceLearner {
-      instance, qualifiers, data, solver, synth_solver, core,
-      finished: Vec::with_capacity(103),
-      unfinished: Vec::with_capacity(103),
-      classifier: HashMap::with_capacity(1003),
-      dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
-    }
+    Ok(
+      IceLearner {
+        instance, qualifiers, data, solver, synth_solver, core,
+        finished: Vec::with_capacity(103),
+        unfinished: Vec::with_capacity(103),
+        classifier: HashMap::with_capacity(1003),
+        dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
+      }
+    )
   }
 
   /// Runs the learner.
@@ -322,13 +338,20 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       if ! teacher_alive {
         bail!("teacher is dead T__T")
       }
+      profile!{ self tick "waiting" }
       match self.recv() {
-        Some(data) => if let Some(candidates) = self.learn(data) ? {
-          teacher_alive = self.send_cands(candidates) ?
-        } else {
-          bail!("can't synthesize candidates for this, sorry")
+        Some(data) => {
+          profile!{ self mark "waiting" }
+          if let Some(candidates) = self.learn(data) ? {
+            teacher_alive = self.send_cands(candidates) ?
+          } else {
+            bail!("can't synthesize candidates for this, sorry")
+          }
         },
-        None => return self.finalize(),
+        None => {
+          profile!{ self mark "waiting" }
+          return self.finalize()
+        },
       }
     }
   }
@@ -398,9 +421,11 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
     profile!{ self tick "learning" }
+    profile!{ self tick "learning", "setup" }
     let _new_samples = data.drain_new_samples() ;
     self.data = data ;
     self.qualifiers.clear_blacklist() ;
+    profile!{ self mark "learning", "setup" }
     // profile!{ self tick "learning", "new sample registration" }
     // self.qualifiers.register_samples( new_samples ) ? ;
     // profile!{ self mark "learning", "new sample registration" }
@@ -427,7 +452,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
         if term.is_true() {
+          profile!{ self tick "learning", "data" }
           self.data.pred_all_true(pred) ? ;
+          profile!{ self mark "learning", "data" }
         } else {
           bail!("[unsupported] forced candidate is not the term `true`")
         }
@@ -436,7 +463,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
-      if pos_len == 0 && neg_len != 0 {
+      if pos_len == 0 {
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
           msg!(
@@ -446,10 +473,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             self.instance[pred], neg_len, unc_len
           ) ;
           self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          profile!{ self tick "learning", "data" }
           self.data.pred_all_false(pred) ? ;
+          profile!{ self mark "learning", "data" }
           continue
         }
-      } else if neg_len == 0 && pos_len != 0 {
+      }
+      if neg_len == 0 {
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {
           msg!(
@@ -468,6 +498,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       ))
     }
 
+    profile!{ self tick "learning", "predicate sorting" }
     predicates.sort_by(
       |
         & (
@@ -488,6 +519,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         }
       }
     ) ;
+    profile!{ self mark "learning", "predicate sorting" }
 
     'pred_iter: for (_unc, _cla, pred) in predicates {
       msg!(
@@ -498,7 +530,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       if let Some(term) = self.instance.term_of(pred) {
         self.candidate[pred] = Some( term.clone() ) ;
         continue 'pred_iter
-      }
+      } // Should be an `else if`, but can't because of lexical lifetimes.
       if let Some(term) = self.pred_learn(pred, data) ? {
         self.candidate[pred] = Some(term)
       } else {
@@ -656,6 +688,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // Keep going.
     }
 
+    profile!{ self tick "learning", "pred finalize" }
     debug_assert!( self.unfinished.is_empty() ) ;
     let mut or_args = Vec::with_capacity( self.finished.len() ) ;
     for branch in self.finished.drain(0..) {
@@ -669,6 +702,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       }
       or_args.push( self.instance.op(Op::And, and_args) )
     }
+    profile!{ self mark "learning", "pred finalize" }
     Ok(
       Some( self.instance.op(Op::Or, or_args) )
     )
@@ -901,7 +935,10 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   ) -> Res<bool> {
     profile!{ self tick "learning", "smt", "all legal" }
     let unc = & self.data.map[pred] ;
-    if unc.is_empty() { return Ok(true) }
+    if unc.is_empty() {
+      profile!{ self mark "learning", "smt", "all legal" }
+      return Ok(true)
+    }
 
     // Wrap actlit and increment counter.
     let actlit = ActWrap { actlit: self.actlit, pred, unc, pos } ;

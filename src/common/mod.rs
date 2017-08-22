@@ -995,18 +995,26 @@ impl CanPrint for ProfileTree {
 
 /// Profiling macro.
 ///
-/// Takes a `self` that has a `_profiler` field.
+/// If passed `self`, assumes `self` has a `_profiler` field.
 #[macro_export]
 #[cfg( not(feature = "bench") )]
 macro_rules! profile {
-  ( $slf:ident $stat:expr => add $e:expr ) => (
-    $slf._profiler.stat_do( $stat, |val| val + $e )
+  ( | $prof:ident | $stat:expr => add $e:expr ) => (
+    $prof.stat_do( $stat, |val| val + $e )
   ) ;
-  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => (
-    $slf._profiler.$meth(
+  ( | $prof:ident | $meth:ident $( $scope:expr ),+ $(,)* ) => (
+    $prof.$meth(
       vec![ $($scope),+ ]
     )
   ) ;
+  ( $slf:ident $stat:expr => add $e:expr ) => ({
+    let prof = & $slf._profiler ;
+    profile!{ |prof| $stat => add $e }
+  }) ;
+  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => ({
+    let prof = & $slf._profiler ;
+    profile!{ |prof| $meth $($scope),+ }
+  }) ;
 }
 #[cfg(feature = "bench")]
 macro_rules! profile {

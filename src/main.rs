@@ -153,6 +153,8 @@ fn work() -> Res<()> {
   // Creates smt log directory if needed.
   conf.init() ? ;
 
+  let profiler = Profile::mk() ;
+
   if let Some(file_path) = conf.file.as_ref() {
     use std::fs::{ OpenOptions } ;
     use std::io::* ;
@@ -161,6 +163,10 @@ fn work() -> Res<()> {
     if let Some(output_file) = conf.check.as_ref() {
       return ::check::do_it(file_path, output_file)
     }
+
+    profile!{ |profiler| tick "loading" }
+
+    profile!{ |profiler| tick "loading", "parsing" }
 
     let mut builder = ::instance::build::InstBuild::mk() ;
     builder.reduce().chain_err(
@@ -182,6 +188,8 @@ fn work() -> Res<()> {
       bail!( builder.to_error(& buffer, Some(0)) )
     } ;
 
+    profile!{ |profiler| mark "loading", "parsing" }
+
     log_info!{
       "done: read {} declarations and {} clauses (read {} of {} bytes)\n",
       builder.preds().len(), builder.clauses().len(),
@@ -193,15 +201,32 @@ fn work() -> Res<()> {
       return Ok(())
     }
 
-    let instance = builder.to_instance(
+    profile!{ |profiler| tick "loading", "building" }
+
+    let mut instance = builder.to_instance(
       & buffer, Some(0)
     ).chain_err(
       || "during instance construction"
     ) ? ;
 
+    profile!{ |profiler| mark "loading", "building" }
+
     log_info!{
-      "instance:\n{}", instance.string_do( (), |s| s.to_string() ) ?
+      "instance:\n{}", instance.to_string_info(()) ?
     }
+
+    profile!{ |profiler| tick "loading", "simplify" }
+
+    instance.simplify_clauses() ? ;
+
+    profile!{ |profiler| mark "loading", "simplify" }
+    
+    log_info!{
+      "instance after simplification:\n{}",
+      instance.to_string_info(()) ?
+    }
+
+    profile!{ |profiler| mark "loading" }
 
     // let qualifiers = ::learning::ice::mining::Qualifiers::mk(& instance) ;
 
@@ -215,7 +240,7 @@ fn work() -> Res<()> {
     //   println!("")
     // }
 
-    teacher::start_class(instance)
+    teacher::start_class(instance, profiler)
 
   } else {
     log_info!{ "loading instance from `{}`...", conf.emph("stdin") }
