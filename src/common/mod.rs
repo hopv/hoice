@@ -366,6 +366,7 @@ pub struct Conf {
   pub out_dir: String,
   pub smt_learn: bool,
   pub z3_cmd: String,
+  pub fpice_synth: bool,
   pub step: bool,
   pub verb: Verb,
   pub stats: bool,
@@ -379,11 +380,11 @@ impl Conf {
   pub fn mk(
     file: Option<String>, check: Option<String>,
     smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, smt_learn: bool, 
+    step: bool, smt_learn: bool, fpice_synth: bool,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
-      file, check, smt_log, out_dir, step, smt_learn, z3_cmd,
+      file, check, smt_log, out_dir, step, smt_learn, fpice_synth, z3_cmd,
       verb, stats, styles: Styles::mk(color)
     }
   }
@@ -521,6 +522,16 @@ impl Conf {
         "<FILE>"
       ).takes_value(true).number_of_values(1)
 
+    // ).arg(
+
+    //   Arg::with_name("fpice_synth").long("--fpice_synth").help(
+    //     "activates fpice-style synthesis"
+    //   ).validator(
+    //     bool_validator
+    //   ).value_name(
+    //     bool_format
+    //   ).default_value("on").takes_value(true).number_of_values(1)
+
     ).arg(
 
       Arg::with_name("stats").long("--stats").help(
@@ -563,6 +574,12 @@ impl Conf {
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
+    let fpice_synth = true ;
+    // matches.value_of("fpice_synth").and_then(
+    //   |s| bool_of_str(& s)
+    // ).expect(
+    //   "unreachable(fpice_synth): default is provided and input validated in clap"
+    // ) ;
     let stats = matches.value_of("stats").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -580,7 +597,7 @@ impl Conf {
 
     Conf::mk(
       file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
-      verb, stats, color
+      fpice_synth, verb, stats, color
     )
   }
 }
@@ -978,18 +995,26 @@ impl CanPrint for ProfileTree {
 
 /// Profiling macro.
 ///
-/// Takes a `self` that has a `_profiler` field.
+/// If passed `self`, assumes `self` has a `_profiler` field.
 #[macro_export]
 #[cfg( not(feature = "bench") )]
 macro_rules! profile {
-  ( $slf:ident $stat:expr => add $e:expr ) => (
-    $slf._profiler.stat_do( $stat, |val| val + $e )
+  ( | $prof:ident | $stat:expr => add $e:expr ) => (
+    $prof.stat_do( $stat, |val| val + $e )
   ) ;
-  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => (
-    $slf._profiler.$meth(
+  ( | $prof:ident | $meth:ident $( $scope:expr ),+ $(,)* ) => (
+    $prof.$meth(
       vec![ $($scope),+ ]
     )
   ) ;
+  ( $slf:ident $stat:expr => add $e:expr ) => ({
+    let prof = & $slf._profiler ;
+    profile!{ |prof| $stat => add $e }
+  }) ;
+  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => ({
+    let prof = & $slf._profiler ;
+    profile!{ |prof| $meth $($scope),+ }
+  }) ;
 }
 #[cfg(feature = "bench")]
 macro_rules! profile {

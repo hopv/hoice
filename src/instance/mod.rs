@@ -325,6 +325,17 @@ impl RTerm {
       _ => None,
     }
   }
+
+  /// If the term is a negation, returns what's below the negation.
+  pub fn rm_neg(& self) -> Option<Term> {
+    match * self {
+      RTerm::App { op: Op::Not, ref args } => {
+        debug_assert_eq!( args.len(), 1 ) ;
+        Some( args[0].clone() )
+      },
+      _ => None,
+    }
+  }
 }
 impl_fmt!{
   RTerm(self, fmt) {
@@ -376,8 +387,6 @@ pub enum TTerm {
     /// The arguments.
     args: VarMap<Term>,
   },
-  /// Negation of something.
-  N(Term),
   /// Just a term.
   T(Term),
 }
@@ -385,7 +394,6 @@ impl TTerm {
   /// True if the term is equivalent to `true`.
   pub fn is_true(& self) -> bool {
     match * self {
-      TTerm::N(ref t) => t.is_false(),
       TTerm::T(ref t) => t.is_true(),
       _ => false,
     }
@@ -393,7 +401,6 @@ impl TTerm {
   /// True if the term is equivalent to `false`.
   pub fn is_false(& self) -> bool {
     match * self {
-      TTerm::N(ref t) => t.is_true(),
       TTerm::T(ref t) => t.is_false(),
       _ => false,
     }
@@ -411,11 +418,6 @@ impl TTerm {
     use self::TTerm::* ;
     match * self {
       P { pred, ref args } => write_prd(w, pred, args),
-      N(ref t) => {
-        write!(w, "(not ") ? ;
-        t.write(w, write_var) ? ;
-        write!(w, ")", )
-      },
       T(ref t) => t.write(w, write_var),
     }
   }
@@ -443,7 +445,6 @@ impl_fmt!{
         }
         write!(fmt, ")")
       },
-      TTerm::N(ref t) => write!(fmt, "(not {})", t),
       TTerm::T(ref t) => write!(fmt, "{}", t),
     }
   }
@@ -575,6 +576,136 @@ impl ::rsmt2::Expr2Smt<Candidates> for Clause {
 }
 
 
+/// Type of the underlying factory.
+type Factory = RwLock< HashConsign<RTerm> > ;
+
+
+
+/// Performs variable substitution over terms.
+pub trait SubstExt {
+  /// Variable substitution.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// Used for substitutions in the same clause / predicate scope.
+  fn subst(
+    & self, map: & VarHMap<Term>, term: & Term
+  ) -> (Term, bool) {
+    self.subst_custom(map, term, false).expect("total substitution can't fail")
+  }
+
+  /// Fixed-point variable substitution.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  fn subst_fp(& self, map: & VarHMap<Term>, term: & Term) -> (Term, bool) {
+    let (mut term, mut changed) = self.subst(map, term) ;
+    while changed {
+      let (new_term, new_changed) = self.subst(map, & term) ;
+      term = new_term ;
+      changed = new_changed
+    }
+    (term, changed)
+  }
+
+  /// Total variable substition, returns `None` if there was a variable in the
+  /// term that was not in the map.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// Used for substitutions between different same clause / predicate scopes.
+  fn subst_total(
+    & self, map: & VarHMap<Term>, term: & Term
+  ) -> Option< (Term, bool) > {
+    self.subst_custom(map, term, true)
+  }
+
+  /// Variable substitution.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// The substitution *fails* by returning `None` if
+  ///
+  /// - `total` and the term contains a variable that's not in the map
+  ///
+  /// Used by qualifier extraction.
+  fn subst_custom(
+    & self, map: & VarHMap<Term>, term: & Term, total: bool
+  ) -> Option<(Term, bool)> ;
+}
+
+impl SubstExt for Factory {
+  fn subst_custom(
+    & self, map: & VarHMap<Term>, term: & Term, total: bool
+  ) -> Option<(Term, bool)> {
+    let mut current = term ;
+    // Stack for traversal.
+    let mut stack = vec![] ;
+    // Number of substitutions performed.
+    let mut subst_count = 0 ;
+
+    'go_down: loop {
+
+      // Go down.
+      let mut term = match * current.get() {
+        RTerm::Var(var) => if let Some(term) = map.get(& var) {
+          subst_count += 1 ;
+          term.clone()
+        } else if total {
+          return None
+        } else {
+          current.clone()
+        },
+        RTerm::App { op, ref args } => {
+          current = & args[0] ;
+          stack.push(
+            (op, & args[1..], Vec::with_capacity( args.len() ))
+          ) ;
+          continue 'go_down
+        },
+        _ => current.clone(),
+      } ;
+
+      // Go up.
+      'go_up: while let Some(
+        (op, args, mut new_args)
+      ) = stack.pop() {
+        new_args.push( term ) ;
+        
+        if args.is_empty() {
+          term = self.mk( RTerm::App { op, args: new_args } ) ;
+          continue 'go_up // Just for readability
+        } else {
+          current = & args[0] ;
+          stack.push( (op, & args[1..], new_args) ) ;
+          continue 'go_down
+        }
+      }
+
+      // Only way to get here is if the stack is empty, meaning we're done.
+      return Some( (term, subst_count > 0) )
+    }
+  }
+}
+
+
+
+
+
+impl SubstExt for Instance {
+  fn subst_custom(
+    & self, map: & VarHMap<Term>, term: & Term, total: bool
+  ) -> Option<(Term, bool)> {
+    self.factory.subst_custom(map, term, total)
+  }
+}
+
+
+
+
 
 
 /// Stores the instance: the clauses, the factory and so on.
@@ -585,7 +716,7 @@ impl ::rsmt2::Expr2Smt<Candidates> for Clause {
 /// simplifications that can remove clauses.
 pub struct Instance {
   /// Term factory.
-  factory: RwLock< HashConsign<RTerm> >,
+  factory: Factory,
   /// Constants constructed so far.
   consts: HConSet<RTerm>,
   /// Predicates.
@@ -755,6 +886,205 @@ impl Instance {
     self.op(Op::Eql, vec![lhs, rhs])
   }
 
+  /// Simplifies the clauses.
+  ///
+  /// - propagates the equalities in all the clauses
+  ///
+  /// # TODO
+  ///
+  /// - currently kind of assumes equalities are binary, fix?
+  pub fn simplify_clauses(& mut self) -> Res<()> {
+    for clause in & mut self.clauses {
+      // println!(
+      //   "looking at clause\n{}", clause.to_string_info(& self.preds) ?
+      // ) ;
+
+      let mut maps = vec![
+        VarHMap::with_capacity( clause.lhs().len() + 1 )
+      ] ;
+
+      // Find equalities and add to map.
+      //
+      // Iterating with a counter so that we can remove terms on the fly with
+      // `swap_remove`.
+      let mut cnt = 0 ;
+      'lhs_iter: while cnt < clause.lhs.len() {
+        let current = cnt ;
+        cnt += 1 ; // Incrementing because moving on is done via `continue`.
+        match clause.lhs[current] {
+          TTerm::T(ref term) => match * term.get() {
+            RTerm::App { op: Op::Eql, ref args } => {
+              debug_assert!( args.len() >= 2 ) ;
+              let mut to_add = vec![] ;
+              // Is the lhs a variable?
+              let (var, term) = if let Some(idx) = args[0].var_idx() {
+                (idx, & args[1])
+              } else if let Some(idx) = args[1].var_idx() {
+                (idx, & args[0])
+              } else {
+                continue 'lhs_iter
+              };
+              for map in & mut maps {
+                if map.contains_key(& var) {
+                  let mut map = map.clone() ;
+                  map.insert( var, term.clone()  ) ;
+                  to_add.push(map)
+                } else {
+                  let _ = map.insert( var, term.clone() ) ;
+                }
+              }
+              for map in to_add {
+                maps.push(map)
+              }
+            },
+            _ => continue 'lhs_iter,
+          },
+          _ => continue 'lhs_iter,
+        }
+
+        // Only reachable if the top term was an equality we're gonna
+        // propagate.
+        // println!(
+        //   "  forgetting top term {}", clause.lhs[current]
+        // ) ;
+        clause.lhs.swap_remove(current) ;
+        cnt = current
+        // * tterm = TTerm::T( self.factory.mk( RTerm::Bool(true) ) )
+      }
+
+      // println!("  performing {} map propagations", maps.len()) ;
+
+      // Remove all the variables in the maps from the clause using fixed-point
+      // substitution.
+      for map in maps {
+        use mylib::coll::* ;
+        for tterm in clause.lhs.iter_mut().chain_one( & mut clause.rhs ) {
+          match * tterm {
+            TTerm::P { ref mut args, .. } => for arg in args {
+              let (new_arg, _) = self.factory.subst_fp(& map, arg) ;
+              // println!("  - arg {} -> {}", arg, new_arg) ;
+              * arg = new_arg
+            },
+            TTerm::T(ref mut term) => {
+              let (new_term, _) = self.factory.subst_fp(& map, term) ;
+              // println!("  - trm {} -> {}", term, new_term) ;
+              * term = new_term
+            },
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Extracts some qualifiers from all clauses.
+  pub fn qualifiers(& self) -> HConSet<RTerm> {
+    let mut set = HConSet::new() ;
+    for clause in & self.clauses {
+      self.qualifiers_of_clause(clause, & mut set)
+    }
+    set
+  }
+
+  /// Extracts some qualifiers from a clause.
+  ///
+  /// # TO DO
+  ///
+  /// - write an explanation of what actually happens
+  /// - and some tests, probably
+  pub fn qualifiers_of_clause(
+    & self, clause: & Clause, quals: & mut HConSet<RTerm>
+  ) {
+    use mylib::coll::* ;
+
+    // println!(
+    //   "looking at clause {}", clause.to_string_info(self.preds()).unwrap()
+    // ) ;
+
+    // Extraction of the variables map based on the way the predicates are
+    // used.
+    let mut maps = vec![] ;
+
+    for tterm in clause.lhs().iter().chain_one( clause.rhs() ) {
+      match * tterm {
+        
+        TTerm::P { ref args, .. } => {
+          // All the *clause var* to *pred var* maps for this predicate
+          // application.
+          let mut these_maps = vec![ VarHMap::with_capacity( args.len() ) ] ;
+
+          for (pred_var_index, term) in args.index_iter() {
+            if let Some(clause_var_index) = term.var_idx() {
+              // Stores the new maps to add in case a clause variable is bound
+              // several times.
+              let mut to_add = vec![] ;
+              for map in & mut these_maps {
+                if map.contains_key(& clause_var_index) {
+                  // Current clause variable is already bound in this map,
+                  // clone it, change the binding, and remember to add it
+                  // later.
+                  let mut map = map.clone() ;
+                  let _ = map.insert(
+                    clause_var_index, self.var(pred_var_index)
+                  ) ;
+                  to_add.push(map)
+                } else {
+                  // Current clause variable not bound in this map, just add
+                  // the new binding.
+                  let _ = map.insert(
+                    clause_var_index, self.var(pred_var_index)
+                  ) ;
+                }
+              }
+              use std::iter::Extend ;
+              these_maps.extend( to_add )
+            }
+          }
+
+          for map in these_maps {
+            // Push if non-empty.
+            if ! map.is_empty() {
+              maps.push(map)
+            }
+          }
+        },
+        
+        _ => ()
+      }
+    }
+
+    // println!("maps {{") ;
+    // for map in & maps {
+    //   let mut is_first = true ;
+    //   for (idx, term) in map.iter() {
+    //     println!("  {} {} -> {}", if is_first {"-"} else {" "}, idx, term) ;
+    //     is_first = false
+    //   }
+    // }
+    // println!("}} quals {{") ;
+
+    // Now look for atoms and try to apply the mappings above.
+    for tterm in clause.lhs().iter().chain_one( clause.rhs() ) {
+
+      match * tterm {
+        TTerm::T(ref term) => for map in & maps {
+          if let Some( (term, true) ) = self.subst_total(map, term) {
+            // println!("  - {}", term) ;
+            let term = if let Some(term) = term.rm_neg() {
+              term
+            } else { term } ;
+            let _ = quals.insert(term) ;
+          }
+        },
+        _ => ()
+      }
+
+    }
+
+    // println!("}}")
+
+  }
+
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: ::teacher::Cexs
@@ -901,7 +1231,7 @@ impl Op {
 
   /// Tries to simplify an operator application.
   ///
-  /// Currently only simplifies nullary / unary applications of `And` and `Or`.
+  /// # Nullary / unary applications of `And` and `Or`
   ///
   /// ```
   /// let instance = & Instance::mk(10, 10, 10) ;
@@ -923,6 +1253,22 @@ impl Op {
   ///   or, Op::Or.simplify(instance, vec![ and.clone(), var_2.clone() ])
   /// ) ;
   /// ```
+  ///
+  /// # Double negations
+  ///
+  /// ```
+  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let tru = instance.bool(true) ;
+  /// let fls = instance.bool(false) ;
+  /// let var_1 = instance.var( 7.into() ) ;
+  /// let n_var_1 = instance.op( Op::Not, vec![var_1] ) ;
+  ///
+  /// assert_eq!( var_1, Op::Not.simplify(instance, vec![ n_var_1 ]) ) ;
+  ///
+  /// let var_1 = instance.var( 7.into() ) ;
+  /// let n_var_1 = instance.op( Op::Not, vec![var_1] ) ;
+  /// assert_eq!( n_var_1, Op::Not.simplify(instance, vec![ var_1 ]) ) ;
+  /// ```
   pub fn simplify(
     self, instance: & Instance, mut args: Vec<Term>
   ) -> Term {
@@ -939,6 +1285,16 @@ impl Op {
       } else if args.len() == 1 {
         return args.pop().unwrap()
       } else {
+        (self, args)
+      },
+      Op::Not => {
+        assert!( args.len() == 1 ) ;
+        match * args[0].get() {
+          RTerm::App { op: Op::Not, ref args } => {
+            return args[0].clone()
+          },
+          _ => (),
+        }
         (self, args)
       },
       // Op::Gt => if args.len() != 2 {

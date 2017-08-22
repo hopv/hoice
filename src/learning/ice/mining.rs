@@ -120,7 +120,7 @@ pub struct Qualifiers {
 }
 impl Qualifiers {
   /// Constructor.
-  pub fn mk(instance: & Instance) -> Self {
+  pub fn mk(instance: & Instance) -> Res<Self> {
     let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
     arity_map.push( vec![] ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
@@ -130,28 +130,28 @@ impl Qualifiers {
         let _ = terms.insert( instance.ge(var.clone(), cst.clone()) ) ;
         let _ = terms.insert( instance.le(var.clone(), cst.clone()) ) ;
         let _ = terms.insert( instance.eq(var.clone(), cst.clone()) ) ;
-        for other_var in VarRange::zero_to( var_idx ) {
-          use instance::Op ;
-          let other_var = instance.var(other_var) ;
-          let add = instance.op(
-            Op::Add, vec![ var.clone(), other_var.clone() ]
-          ) ;
-          let _ = terms.insert( instance.ge(add.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.le(add.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.eq(add.clone(), cst.clone()) ) ;
-          let sub_1 = instance.op(
-            Op::Sub, vec![ var.clone(), other_var.clone() ]
-          ) ;
-          let _ = terms.insert( instance.ge(sub_1.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.le(sub_1.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.eq(sub_1.clone(), cst.clone()) ) ;
-          let sub_2 = instance.op(
-            Op::Sub, vec![ other_var, var.clone() ]
-          ) ;
-          let _ = terms.insert( instance.ge(sub_2.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.le(sub_2.clone(), cst.clone()) ) ;
-          let _ = terms.insert( instance.eq(sub_2.clone(), cst.clone()) ) ;
-        }
+        // for other_var in VarRange::zero_to( var_idx ) {
+        //   use instance::Op ;
+        //   let other_var = instance.var(other_var) ;
+        //   let add = instance.op(
+        //     Op::Add, vec![ var.clone(), other_var.clone() ]
+        //   ) ;
+        //   let _ = terms.insert( instance.ge(add.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.le(add.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.eq(add.clone(), cst.clone()) ) ;
+        //   let sub_1 = instance.op(
+        //     Op::Sub, vec![ var.clone(), other_var.clone() ]
+        //   ) ;
+        //   let _ = terms.insert( instance.ge(sub_1.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.le(sub_1.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.eq(sub_1.clone(), cst.clone()) ) ;
+        //   let sub_2 = instance.op(
+        //     Op::Sub, vec![ other_var, var.clone() ]
+        //   ) ;
+        //   let _ = terms.insert( instance.ge(sub_2.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.le(sub_2.clone(), cst.clone()) ) ;
+        //   let _ = terms.insert( instance.eq(sub_2.clone(), cst.clone()) ) ;
+        // }
       }
       arity_map.push(
         terms.into_iter().map(
@@ -162,10 +162,17 @@ impl Qualifiers {
     let pred_to_arity = instance.preds().iter().map(
       |info| info.sig.len().into()
     ).collect() ;
-    Qualifiers {
+
+    let mut quals = Qualifiers {
       arity_map, pred_to_arity,
       blacklist: HConSet::with_capacity(107),
+    } ;
+
+    for qual in instance.qualifiers() {
+      quals.new_add_qual(qual) ?
     }
+
+    Ok(quals)
   }
 
   /// Number of qualifiers.
@@ -240,6 +247,19 @@ impl Qualifiers {
   //   }
   //   Ok(())
   // }
+
+  /// Adds a qualifier whithout doing anything.
+  pub fn new_add_qual<'a>(& 'a mut self, qual: Term) -> Res<()> {
+    let arity: Arity = if let Some(max_var) = qual.highest_var() {
+      (1 + * max_var).into()
+    } else {
+      bail!("[bug] trying to add constant qualifier")
+    } ;
+    let values = QualValues::mk( qual ) ;
+    // The two operations below make sense iff `arity_map` is not shared.
+    self.arity_map[arity].push( values ) ;
+    Ok(())
+  }
 
 
   /// Adds a qualifier.
