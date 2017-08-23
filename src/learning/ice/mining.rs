@@ -17,6 +17,10 @@ pub trait QualValuesExt {
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
   fn eval(& mut self, & HSample) -> bool ;
+  /// Checks whether the qualifier evaluates to false on a sample. Pure lazy,
+  /// will not evaluate the qualifier if it has not already been cached.
+  #[inline]
+  fn lazy_eval(& self, & HSample) -> Option<bool> ;
 }
 
 
@@ -47,11 +51,7 @@ impl QualValuesExt for QualValues {
     ()
   }
   fn eval(& mut self, s: & HSample) -> bool {
-    if self.true_set.contains(s) {
-      true
-    } else if self.flse_set.contains(s) {
-      false
-    } else {
+    if let Some(b) = self.lazy_eval(s) { b } else {
       match self.qual.bool_eval(s) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
@@ -63,6 +63,15 @@ impl QualValuesExt for QualValues {
           panic!("[bug] error during qualifier evaluation")
         },
       }
+    }
+  }
+  fn lazy_eval(& self, s: & HSample) -> Option<bool> {
+    if self.true_set.contains(s) {
+      Some(true)
+    } else if self.flse_set.contains(s) {
+      Some(false)
+    } else {
+      None
     }
   }
 }
@@ -168,9 +177,7 @@ impl Qualifiers {
       blacklist: HConSet::with_capacity(107),
     } ;
 
-    for qual in instance.qualifiers() {
-      quals.new_add_qual(qual) ?
-    }
+    quals.add_quals( instance.qualifiers() ) ? ;
 
     Ok(quals)
   }
@@ -249,65 +256,84 @@ impl Qualifiers {
   // }
 
   /// Adds a qualifier whithout doing anything.
-  pub fn new_add_qual<'a>(& 'a mut self, qual: Term) -> Res<()> {
-    let arity: Arity = if let Some(max_var) = qual.highest_var() {
-      (1 + * max_var).into()
-    } else {
-      bail!("[bug] trying to add constant qualifier")
-    } ;
-    let values = QualValues::mk( qual ) ;
-    // The two operations below make sense iff `arity_map` is not shared.
-    self.arity_map[arity].push( values ) ;
+  pub fn add_quals<'a, Terms: IntoIterator<Item = Term>>(
+    & 'a mut self, quals: Terms
+  ) -> Res<()> {
+    for qual in quals {
+      let arity: Arity = if let Some(max_var) = qual.highest_var() {
+        (1 + * max_var).into()
+      } else {
+        bail!("[bug] trying to add constant qualifier")
+      } ;
+      let values = QualValues::mk( qual ) ;
+      self.arity_map[arity].push( values )
+    }
+    Ok(())
+  }
+
+  /// Adds a qualifier whithout doing anything.
+  pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
+    & 'a mut self, quals: Terms
+  ) -> Res<()> {
+    for values in quals {
+      let arity: Arity = if let Some(max_var) = values.qual.highest_var() {
+        (1 + * max_var).into()
+      } else {
+        bail!("[bug] trying to add constant qualifier")
+      } ;
+      self.arity_map[arity].push( values )
+    }
     Ok(())
   }
 
 
-  /// Adds a qualifier.
-  pub fn add_qual<'a>(
-    & 'a mut self, qual: Term
-    // , samples: & ::common::data::HSampleConsign
-  ) -> Res<& 'a mut QualValues> {
-    let arity: Arity = if let Some(max_var) = qual.highest_var() {
-      (1 + * max_var).into()
-    } else {
-      bail!("[bug] trying to add constant qualifier")
-    } ;
-    // let values = samples.read().map_err(
-    //   corrupted_err
-    // )?.fold(
-    //   |mut values, sample| {
-    //     if sample.len() >= * arity {
-    //       match qual.bool_eval(& * sample) {
-    //         Ok( Some(b) ) => values.add(sample, b),
-    //         Ok( None ) => panic!(
-    //           "incomplete model, cannot evaluate qualifier"
-    //         ),
-    //         Err(e) => panic!(
-    //           "[bug] error while evaluating qualifier: {}", e
-    //         ),
-    //       }
-    //     }
-    //     values
-    //   }, QualValues::mk( qual.clone() )
-    // ) ;
-    debug_assert!({
-      for values in self.arity_map[arity].iter() {
-        assert!(& values.qual != & qual)
-      }
-      true
-    }) ;
-    let values = QualValues::mk( qual ) ;
+  // /// Adds a qualifier.
+  // pub fn add_qual<'a>(
+  //   & 'a mut self, qual: Term
+  //   // , samples: & ::common::data::HSampleConsign
+  // ) -> Res<& 'a mut QualValues> {
+  //   let arity: Arity = if let Some(max_var) = qual.highest_var() {
+  //     (1 + * max_var).into()
+  //   } else {
+  //     bail!("[bug] trying to add constant qualifier")
+  //   } ;
+  //   // let values = samples.read().map_err(
+  //   //   corrupted_err
+  //   // )?.fold(
+  //   //   |mut values, sample| {
+  //   //     if sample.len() >= * arity {
+  //   //       match qual.bool_eval(& * sample) {
+  //   //         Ok( Some(b) ) => values.add(sample, b),
+  //   //         Ok( None ) => panic!(
+  //   //           "incomplete model, cannot evaluate qualifier"
+  //   //         ),
+  //   //         Err(e) => panic!(
+  //   //           "[bug] error while evaluating qualifier: {}", e
+  //   //         ),
+  //   //       }
+  //   //     }
+  //   //     values
+  //   //   }, QualValues::mk( qual.clone() )
+  //   // ) ;
+  //   debug_assert!({
+  //     for values in self.arity_map[arity].iter() {
+  //       assert!(& values.qual != & qual)
+  //     }
+  //     true
+  //   }) ;
+  //   let values = QualValues::mk( qual ) ;
     
-    // The two operations below make sense iff `arity_map` is not shared.
-    self.arity_map[arity].push( values ) ;
-    // If it was shared, someone could insert between these two lines.
-    let last_values = self.arity_map[arity].last_mut().unwrap() ;
-    //                                                 ^^^^^^^^|
-    // Definitely safe right after the push -------------------|
+  //   // The two operations below make sense iff `arity_map` is not shared.
+  //   self.arity_map[arity].push( values ) ;
+  //   // If it was shared, someone could insert between these two lines.
+  //   let last_values = self.arity_map[arity].last_mut().unwrap() ;
+  //   //                                                 ^^^^^^^^|
+  //   // Definitely safe right after the push -------------------|
 
-    Ok(last_values)
-  }
+  //   Ok(last_values)
+  // }
 }
+
 
 
 
@@ -341,6 +367,9 @@ impl<'a> QualIter<'a> {
     }
   }
 }
+// impl<'a> ::rayon::prelude::ParallelIterator for QualIter<'a> {
+//   type Item = & 'a mut QualValues ;
+// }
 impl<'a> ::std::iter::Iterator for QualIter<'a> {
   type Item = & 'a mut QualValues ;
   fn next(& mut self) -> Option<& 'a mut QualValues> {

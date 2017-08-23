@@ -708,6 +708,103 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     )
   }
 
+  /// Gets the best qualifier if any, parallel version using `rayon`.
+  pub fn get_best_qualifier_para<
+    'a, I: ::rayon::iter::IntoParallelIterator<Item = & 'a mut QualValues>
+  >(
+    _profiler: & Profile, all_data: & Data,
+    pred: PrdIdx, data: & CData, quals: I
+  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
+    use rayon::prelude::* ;
+
+    profile!{ |_profiler| tick "learning", "qual", "// gain" }
+
+    let mut gains: Vec<_> = quals.into_par_iter().map(
+      |values| match data.gain(pred, all_data, values) {
+        Ok( Some((gain, _, _)) ) => Ok( Some( (gain, values) ) ),
+        Ok( None ) => Ok(None),
+        Err(e) => Err(e),
+      }
+    ).collect() ;
+
+    profile!{ |_profiler| mark "learning", "qual", "// gain" }
+
+    profile!{ |_profiler| tick "learning", "qual", "gain sort" }
+
+    gains.sort_by(
+      |lft, rgt| {
+        use ::std::cmp::Ordering::* ;
+        match (lft, rgt) {
+          ( & Err(_), _   ) |
+          ( _, & Ok(None) ) => Greater,
+          ( _, & Err(_)   ) |
+          ( & Ok(None), _ ) => Less,
+
+          (
+            & Ok( Some((lft_gain, ref lft_values)) ),
+            & Ok( Some((rgt_gain, ref rgt_values)) )
+          ) => match lft_gain.partial_cmp(& rgt_gain) {
+            None | Some(Equal) => lft_values.qual.cmp(& rgt_values.qual),
+            Some(res) => res
+          }
+        }
+      }
+    ) ;
+
+    profile!{ |_profiler| mark "learning", "qual", "gain sort" }
+
+    if let Some(res) = gains.pop() { res } else {
+      bail!("[bug] empty QualIter")
+    }
+  }
+
+  /// Gets the best qualifier if any, sequential version.
+  pub fn get_best_qualifier_seq<
+    'a, I: IntoIterator<Item = & 'a mut QualValues>
+  >(
+    _profiler: & Profile, all_data: & Data,
+    pred: PrdIdx, data: & CData, quals: I,
+  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
+    let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
+
+    profile!{ |_profiler| tick "learning", "qual", "gain" }
+    'search_qual: for values in quals {
+      if let Some(
+        (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
+      ) = data.gain(pred, all_data, values) ? {
+        let better = if let Some( (old_gain, _) ) = maybe_qual {
+          old_gain < gain
+        } else { true } ;
+        if better {
+          maybe_qual = Some( (gain, values) )
+        }
+        if gain == 1. { break 'search_qual }
+      }
+    }
+    profile!{ |_profiler| mark "learning", "qual", "gain" }
+
+    Ok( maybe_qual )
+  }
+
+  /// Gets the best qualifier if any.
+  pub fn get_best_qualifier<
+    'a, I: IntoIterator<Item = & 'a mut QualValues>
+  >(
+    profiler: & Profile, all_data: & Data,
+    pred: PrdIdx, data: & CData, quals: I,
+  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
+    if conf.gain_threads <= 1 {
+      Self::get_best_qualifier_seq(
+        profiler, all_data, pred, data, quals.into_iter()
+      )
+    } else {
+      let quals: Vec<_> = quals.into_iter().collect() ;
+      Self::get_best_qualifier_para(
+        profiler, all_data, pred, data, quals
+      )
+    }
+  }
+
   /// Looks for a qualifier. Requires a mutable `self` in case it needs to
   /// synthesize a qualifier.
   ///
@@ -720,65 +817,30 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     & mut self, pred: PrdIdx, data: CData
   ) -> Res< (Term, CData, CData) > {
 
-    { // Try using an existing qualifier. Early return if one is found.
-      let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
-
-      profile!{ self tick "learning", "qual", "existing" }
-      {
-        let quals = self.qualifiers.of(pred) ;
-        'search_qual: for values in quals {
-          msg!{ debug self.core => "    {}:", values.qual } ;
-          if let Some(
-            (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
-          ) = data.gain(pred, & self.data, values) ? {
-            msg!{
-              debug self.core =>
-                "    gain is {} ({}, {}, {} / {}, {}, {})",
-                gain, _q_pos, _q_neg, _q_unc, _nq_pos, _nq_neg, _nq_unc
-            } ;
-            let better = if let Some( (old_gain, _) ) = maybe_qual {
-              old_gain < gain
-            } else { true } ;
-            if better {
-              maybe_qual = Some( (gain, values) )
-            }
-            if gain == 1. { break 'search_qual }
-          } else {
-            msg!{
-              debug self.core =>
-                "    does not split anything..."
-            } ;
-            ()
-          }
-        }
-      }
-      
-      profile!{ self mark "learning", "qual", "existing" }
-
-      if let Some( (_gain, values) ) = maybe_qual {
-        let (q_data, nq_data) = data.split(values) ;
-
-        msg!(
-          self.core =>
-            "  using qualifier {} | \
-            gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-            values.qual.string_do(
-              & self.instance[pred].sig.index_iter().map(
-                |(idx, typ)| ::instance::info::VarInfo {
-                  name: format!("v_{}", idx), typ: * typ, idx
-                }
-              ).collect(), |s| s.to_string()
-            ).unwrap(),
-            _gain,
-            q_data.pos.len(),
-            q_data.neg.len(),
-            q_data.unc.len(),
-            nq_data.pos.len(),
-            nq_data.neg.len(),
-            nq_data.unc.len(),
-        ) ;
-        return Ok( (values.qual.clone(), q_data, nq_data) )
-      }
+    if let Some( (_gain, values) ) = Self::get_best_qualifier(
+      & self._profiler, & self.data, pred, & data, self.qualifiers.of(pred)
+    ) ? {
+      let (q_data, nq_data) = data.split(values) ;
+      msg!(
+        self.core =>
+          "  using qualifier {} | \
+          gain: {}, pos: ({},{},{}), neg: ({},{},{})",
+          values.qual.string_do(
+            & self.instance[pred].sig.index_iter().map(
+              |(idx, typ)| ::instance::info::VarInfo {
+                name: format!("v_{}", idx), typ: * typ, idx
+              }
+            ).collect(), |s| s.to_string()
+          ).unwrap(),
+          _gain,
+          q_data.pos.len(),
+          q_data.neg.len(),
+          q_data.unc.len(),
+          nq_data.pos.len(),
+          nq_data.neg.len(),
+          nq_data.unc.len(),
+      ) ;
+      return Ok( (values.qual.clone(), q_data, nq_data) )
     }
 
     // Reachable only if none of our qualifiers can split the data.
@@ -805,7 +867,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    if conf.fpice_synth {
+    let mut new_quals: Vec<QualValues> = if conf.fpice_synth {
       let mut quals = HConSet::new() ;
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
@@ -819,12 +881,10 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       for sample in & data.unc {
         Self::synthesize(& * self.instance, sample, & mut quals)
       }
-      
+
       profile!{ self "qualifier synthesized" => add quals.len() }
 
-      for qual in quals {
-        self.qualifiers.new_add_qual(qual) ?
-      }
+      quals.into_iter().map(QualValues::mk).collect()
     } else {
       let qual = match (
         data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
@@ -855,14 +915,47 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         ),
       } ;
       profile!{ self "qualifier synthesized" => add 1 }
-      self.qualifiers.new_add_qual(qual) ?
-    }
+      vec![ QualValues::mk(qual) ]
+    } ;
     profile!{ self mark "learning", "qual", "synthesis" }
+
+    
+    let res = if let Some( (_gain, values) ) = Self::get_best_qualifier(
+      & self._profiler, & self.data, pred, & data, new_quals.iter_mut()
+    ) ? {
+      let (q_data, nq_data) = data.split(values) ;
+      msg!(
+        self.core =>
+          "  using synthetic qualifier {} | \
+          gain: {}, pos: ({},{},{}), neg: ({},{},{})",
+          values.qual.string_do(
+            & self.instance[pred].sig.index_iter().map(
+              |(idx, typ)| ::instance::info::VarInfo {
+                name: format!("v_{}", idx), typ: * typ, idx
+              }
+            ).collect(), |s| s.to_string()
+          ).unwrap(),
+          _gain,
+          q_data.pos.len(),
+          q_data.neg.len(),
+          q_data.unc.len(),
+          nq_data.pos.len(),
+          nq_data.neg.len(),
+          nq_data.unc.len(),
+      ) ;
+      Ok( (values.qual.clone(), q_data, nq_data) )
+    } else {
+      bail!("[bug] unable to split the data after synthesis...")
+    } ;
+
+    self.qualifiers.add_qual_values(new_quals) ? ;
+
+    res
 
     // RECURSIVE CALL.
     //
     // It's fine, the next call is logically obligated to terminate.
-    self.get_qualifier(pred, data)
+    // self.get_qualifier(pred, data, false)
 
     // // Insert new qualifier.
     // let (q_data, nq_data) = {
@@ -1234,6 +1327,7 @@ impl<
 pub type Branch = Vec<(Term, bool)> ;
 
 /// Projected data to classify.
+#[derive(Clone)]
 pub struct CData {
   /// Positive samples.
   pub pos: HSamples,
