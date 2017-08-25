@@ -430,9 +430,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     // self.qualifiers.register_samples( new_samples ) ? ;
     // profile!{ self mark "learning", "new sample registration" }
 
-    self.setup_solver().chain_err(
+    let contradiction = self.setup_solver().chain_err(
       || "while initializing the solver"
     ) ? ;
+
+    if contradiction {
+      bail!( ErrorKind::Unsat )
+    }
 
     let prd_count = self.instance.preds().len() ;
     debug_assert!{{
@@ -1059,12 +1063,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
   /// Sets the solver to check that constraints are respected.
   ///
+  /// Returns `true` if a contradiction was found.
+  ///
   /// - **does not** reset the solver or clean declaration memory (must be
   ///   done before sending previous candidates)
   /// - **defines** pos (neg) data as `true` (`false`)
   /// - **declares** samples that neither pos nor neg
   /// - asserts constraints
-  pub fn setup_solver(& mut self) -> Res<()> {
+  pub fn setup_solver(& mut self) -> Res<bool> {
     profile!{ self tick "learning", "smt", "setup" }
     self.actlit = 0 ;
     
@@ -1088,12 +1094,8 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         if ! is_new {
-          bail!(
-            "{} found:\n\
-            predicate {} must be {} for inputs {}",
-            conf.bad("contradiction"), self.instance[pred],
-            conf.emph("true and false"), sample
-          )
+          // Contradiction found.
+          return Ok(true)
         }
         self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "false", & ()
@@ -1148,7 +1150,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     }
     profile!{ self mark "learning", "smt", "setup" }
 
-    Ok(())
+    Ok(false)
   }
 
 

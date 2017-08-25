@@ -46,7 +46,8 @@ impl_fmt!{
     writeln!(
       fmt, "{0: ^1$}| {0: ^2$}{3}", "", line_str.len(), self.pref.len(),
       conf.bad( & format!("{0:^>1$}", "", self.token.len()) )
-    )
+    ) ? ;
+    writeln!(fmt, "")
   }
 }
 
@@ -75,6 +76,11 @@ error_chain!{
     Z3SpawnError {
       description("could not spawn z3")
       display("could not spawn z3")
+    }
+    #[doc = "Not really an error, unsat early return."]
+    Unsat {
+      description("unsat")
+      display("unsat")
     }
   }
 }

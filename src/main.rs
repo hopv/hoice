@@ -241,7 +241,16 @@ fn work() -> Res<()> {
     //   println!("")
     // }
 
-    teacher::start_class(instance, profiler)
+    match teacher::start_class(instance, profiler) {
+      Err(err) => match * err.kind() {
+        ::errors::ErrorKind::Unsat => {
+          println!("unsat") ;
+          Ok(())
+        },
+        _ => Err(err),
+      },
+      Ok(()) => Ok(()),
+    }
 
   } else {
     log_info!{ "loading instance from `{}`...", conf.emph("stdin") }

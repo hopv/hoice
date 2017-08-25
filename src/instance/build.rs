@@ -1,4 +1,10 @@
 //! Instance builder.
+//!
+//! # TODO
+//!
+//! - investigate further the `unused variable` warnings in the parsers
+//!
+#![allow(unused_variables)]
 
 use nom::{ IResult, multispace } ;
 
@@ -181,8 +187,17 @@ macro_rules! err {
 /// Calls a function on some values, early returns in case of custom error,
 /// propagates otherwise.
 macro_rules! try_call {
+  ($bytes:expr, $sub:ident($($args:tt)*)) => (
+    try_call!( internal $sub($bytes, $($args)*) )
+  ) ;
   ($bytes:expr, $slf:ident.$sub:ident($($args:tt)*)) => (
-    match $slf.$sub($bytes, $($args)*) {
+    try_call!( internal $slf.$sub($bytes, $($args)*) )
+  ) ;
+  ($bytes:expr, $slf:ty:$sub:ident($($args:tt)*)) => (
+    try_call!( internal $slf::$sub($bytes, $($args)*) )
+  ) ;
+  (internal $e:expr) => (
+    match $e {
       IResult::Error(e) => match e {
         ::nom::ErrorKind::Custom(e) => return IResult::Error(
           ::nom::ErrorKind::Custom(e)
@@ -523,7 +538,7 @@ impl InstBuild {
 
   /// Parses a predicate declaration.
   #[allow(unused_variables)]
-  pub fn parse_dec_pred<'b>(
+  pub fn parse_pred_dec<'b>(
     & self, bytes: & 'b [u8]
   ) -> IResult<& 'b [u8], (String, usize, Vec<Typ>), InternalParseError> {
     fix_error!(
@@ -540,8 +555,12 @@ impl InstBuild {
             fix_error!(u32, call!(Typ::parse) ), spc_cmt
           )
         ) >>
-        err!( char ')', "closing predicate signature" ) >>
-        ( (id.0.into(), id.1, sig) )
+        spc_cmt >> err!( char ')', "closing predicate signature" ) >>
+        spc_cmt >> err!(
+          tag!("Bool"), "unsupported predicate type"
+        ) >> (
+          (id.0.into(), id.1, sig)
+        )
       )
     )
   }
@@ -591,7 +610,178 @@ impl InstBuild {
     )
   }
 
-  /// Parses a predicate declaration.
+  /// Parses an assertion
+  pub fn parse_params<'b>(
+    & mut self, bytes: & 'b [u8]
+  ) -> IResult<
+    & 'b [u8],
+    (VarMap<VarInfo>, HashMap<& 'b str, VarIdx>),
+    InternalParseError
+  > {
+    let mut var_name_map = HashMap::<& 'b str, VarIdx>::new() ;
+    let mut var_map = VarMap::with_capacity(7) ;
+    fix_error!(
+      bytes, InternalParseError,
+      do_parse!(
+        err!( char '(', "opening parameter list" ) >>
+        spc_cmt >> vars: many0!(
+          do_parse!(
+            char!('(') >>
+            spc_cmt >> i: with_from_end!( err!(ident) ) >>
+            spc_cmt >> t: err!(typ) >>
+            spc_cmt >> err!(
+              char ')', "closing clause parameter declaration"
+            ) >>
+            spc_cmt >> ({
+              let (name, typ, idx) = (
+                i.0.to_string(), t, var_map.next_index()
+              ) ;
+              let prev = var_name_map.insert(i.0, idx) ;
+              if let Some(_) = prev {
+                self.errors.push((
+                  format!("found two horn clause variables named `{}`", i.0),
+                  i.1
+                ).into())
+              }
+              var_map.push( VarInfo { name, typ, idx } )
+            })
+          )
+        ) >>
+        spc_cmt >> err!( char ')', "closing parameter list" ) >> (
+          (var_map, var_name_map)
+        )
+      )
+    )
+  }
+
+  /// Parses a conjunction.
+  pub fn parse_conjunction<'b>(
+    & mut self, bytes: & 'b [u8], vars: & HashMap<& 'b str, VarIdx>
+  ) -> IResult<& 'b [u8], Vec<TTerm>, InternalParseError> {
+    fix_error!(
+      bytes, InternalParseError,
+      alt_complete!(
+
+        // A conjunction
+        do_parse!(
+          char!('(') >>
+          spc_cmt >> tag!("and") >>
+          spc_cmt >> termss: many0!(
+            terminated!(
+              try_call!( self.parse_conjunction(vars) ), spc_cmt
+            )
+          ) >>
+          spc_cmt >> err!(
+            char ')', "clausing the conjunction"
+          ) >> ({
+            let mut iter = termss.into_iter() ;
+            if let Some(mut terms) = iter.next() {
+              for ts in iter {
+                use std::iter::Extend ;
+                terms.extend(ts)
+              }
+              terms
+            } else {
+              return IResult::Error(
+                ::nom::ErrorKind::Custom(
+                  InternalParseError::mk(
+                    "illegal empty conjuction".into(), bytes.len()
+                  )
+                )
+              )
+            }
+          })
+        ) |
+
+        // A term
+        map!(
+          try_call!( self.parse_top_term(vars) ), |t| vec![t]
+        )
+
+      )
+    )
+  }
+
+  /// Parses an assertion
+  pub fn parse_assert<'b>(
+    & mut self, bytes: & 'b [u8]
+  ) -> IResult<& 'b [u8], (), InternalParseError> {
+    fix_error!(
+      bytes, InternalParseError,
+      delimited!(
+        err!( char '(', "opening the clause's qualifier" ),
+
+        map!(
+          alt_complete!(
+
+            // Forall.
+            do_parse!(
+              tag!( ::common::consts::keywords::forall ) >>
+              spc_cmt >> maps: try_call!( self.parse_params() ) >>
+              spc_cmt >> err!( char '(', "opening clause's implication" ) >>
+              spc_cmt >> err!(
+                tag!("=>"), "expected implication operator"
+              ) >>
+              spc_cmt >> lhs: try_call!( self.parse_conjunction(& maps.1) ) >>
+              spc_cmt >> rhs: try_call!( self.parse_top_term(& maps.1) ) >>
+              spc_cmt >> err!( char ')', "closing clause's implication" ) >> (
+                ( maps.0, lhs, rhs )
+              )
+            ) |
+
+            // Not exists.
+            do_parse!(
+              err!(
+                tag!("not"), format!(
+                  "expected {} or negated {}",
+                  conf.emph(::common::consts::keywords::forall),
+                  conf.emph(::common::consts::keywords::exists)
+                )
+              ) >>
+              spc_cmt >> err!( char '(', "opening the clause's qualifier" ) >>
+              spc_cmt >> err!(
+                tag!(::common::consts::keywords::exists), format!(
+                  "expected {}", conf.emph(::common::consts::keywords::exists)
+                )
+              ) >>
+              spc_cmt >> maps: try_call!( self.parse_params() ) >>
+              spc_cmt >> lhs: try_call!( self.parse_conjunction(& maps.1) ) >>
+              spc_cmt >>  err!(
+                char ')', "closing the clause's qualifier"
+              ) >> (
+                ( maps.0, lhs, TTerm::T( self.instance.bool(false) ) )
+              )
+            )
+          ),
+          |(var_map, lhs, rhs)| {
+            let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
+            let mut lhs_is_false = false ;
+            for lhs in lhs {
+              if ! lhs.is_true() {
+                if lhs.is_false() {
+                  lhs_is_false = true ;
+                  break
+                } else {
+                  nu_lhs.push(lhs)
+                }
+              }
+            }
+            if ! lhs_is_false {
+              self.instance.push_clause(
+                Clause::mk(var_map, nu_lhs, rhs)
+              )
+            }
+          }
+        ),
+
+        do_parse!(
+          spc_cmt >> err!( char ')', "closing the clause's qualifier" ) >> (())
+        )
+      )
+    )
+  }
+
+  /// Parses a clause.
   #[allow(unused_variables)]
   pub fn parse_clause<'b>(
     & mut self, bytes: & 'b [u8]
@@ -670,13 +860,20 @@ impl InstBuild {
       do_parse!(
         spc_cmt >> parsed: many0!(
 
-          // Predicate declaration.
           do_parse!(
             char!('(') >>
             spc_cmt >> alt_complete!(
+
+              // Set info.
+              try_call!( parse_set_info() ) |
+
+              // Set logic.
+              try_call!( parse_set_logic() ) |
+
+              // Predicate declaration.
               do_parse!(
                 tag!( ::common::consts::keywords::prd_dec ) >>
-                spc_cmt >> pred_info: try_call!( self.parse_dec_pred() ) >> ({
+                spc_cmt >> pred_info: try_call!( self.parse_pred_dec() ) >> ({
                   let (name, from_end, map) = pred_info ;
                   let pred_index = self.instance.push_pred(
                     name.clone(), VarMap::of(map)
@@ -694,13 +891,13 @@ impl InstBuild {
 
               // Clause.
               do_parse!(
-                tag!( ::common::consts::keywords::clause_def ) >>
-                spc_cmt >> clause: try_call!( self.parse_clause() ) >>
+                tag!( ::common::consts::keywords::assert ) >>
+                spc_cmt >> clause: try_call!( self.parse_assert() ) >>
                 (())
               )
             ) >>
             spc_cmt >> err!(
-              char ')', "closing predicate declaration or clause"
+              char ')', "closing item"
             ) >>
             spc_cmt >> (())
           )
@@ -725,10 +922,15 @@ impl InstBuild {
           do_parse!(
             char!('(') >>
             spc_cmt >> err!(
-              tag!("infer"),
-              "expected predicate declaration, clause, or `infer` command"
+              tag!( ::common::consts::keywords::check_sat ),
+              format!(
+                "expected {}, {}, or {} command",
+                ::common::consts::keywords::prd_dec,
+                ::common::consts::keywords::clause_def,
+                ::common::consts::keywords::check_sat
+              )
             ) >>
-            spc_cmt >> err!( char ')', "closing `infer` command" ) >>
+            spc_cmt >> err!( char ')', "closing check-sat command" ) >>
             (true)
           ) |
           map!( eof!(), |_| false )
@@ -763,4 +965,42 @@ impl InstBuild {
   pub fn reduce(& mut self) -> Res<()> {
     Ok(())
   }
+}
+
+
+#[doc = "Parses (and ignores) a `set-info`."]
+pub fn parse_set_info<'b>(bytes: & 'b [u8]) -> IResult<
+  & 'b [u8], (), InternalParseError
+> {
+  fix_error!(
+    bytes, InternalParseError,
+    do_parse!(
+      tag!("set-info") >>
+      spc_cmt >> err!(
+        re_bytes_find!(r#"^:[a-zA-Z][a-zA-Z\-0-9]*"#),
+        "expected keyword"
+      ) >>
+      spc_cmt >> opt!(
+        alt_complete!(
+          re_bytes_find!(r#"^"[^"]*""#) |
+          re_bytes_find!(r#"^[^)]*"#)
+        )
+      ) >> (())
+    )
+  )
+}
+
+#[doc = "Parses (and ignores) a `set-logic HORN`."]
+pub fn parse_set_logic<'b>(bytes: & 'b [u8]) -> IResult<
+  & 'b [u8], (), InternalParseError
+> {
+  fix_error!(
+    bytes, InternalParseError,
+    do_parse!(
+      tag!("set-logic") >>
+      spc_cmt >> err!(
+        tag!("HORN"), "unsupported logic"
+      ) >> (())
+    )
+  )
 }

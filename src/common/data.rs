@@ -464,7 +464,7 @@ impl Data {
             self.stage_pos(pred, args)
           } else {
             // No `rhs`, we have `true => false`, contradiction.
-            bail!("contradiction detected, inference impossible")
+            bail!(ErrorKind::Unsat)
           }
         } else
         // Is the constraint negative and the `lhs` has only one element?
@@ -735,7 +735,7 @@ impl Data {
         self.add_propagate_pos() ? ;
         return Ok(())
       } else {
-        bail!("contradiction detected, inference is impossible")
+        bail!(ErrorKind::Unsat)
       }
     } else if nu_lhs.len() == 1 && nu_rhs.is_none() {
       // unit, the single lhs has to be false.

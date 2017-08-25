@@ -85,7 +85,7 @@ fn teach<
       bail!("all learners are dead")
     }
 
-    if let Some( (_idx, candidates) ) = teacher.get_candidates() {
+    if let Some( (_idx, candidates) ) = teacher.get_candidates() ? {
       if_verb!{
         log_info!(
           "\nCurrent candidates from {} learner:",
@@ -101,14 +101,15 @@ fn teach<
       profile!{ teacher mark "cexs" }
 
       if cexs.is_empty() {
-        println!("(safe") ;
+        println!("sat") ;
+        println!("(model") ;
         for pred in teacher.instance.preds() {
-          println!("  (define-pred {}", pred.name) ;
+          println!("  (define-fun {}", pred.name) ;
           print!(  "    (") ;
           for (var, typ) in pred.sig.index_iter() {
             print!(" ({} {})", teacher.instance.var(var), typ)
           }
-          println!(" )") ;
+          println!(" ) Bool") ;
           println!("    {}", candidates[pred.idx]) ;
           println!("  )")
         }
@@ -196,7 +197,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
       * sender = None
     }
-    while self.get_candidates().is_some() {}
+    while self.get_candidates()?.is_some() {}
 
     if conf.stats {
       let (tree, stats) = self._profiler.extract_tree() ;
@@ -259,7 +260,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   }
 
   /// Waits for some candidates.
-  pub fn get_candidates(& self) -> Option<(LrnIdx, Candidates)> {
+  pub fn get_candidates(& self) -> Res< Option<(LrnIdx, Candidates)> > {
     profile!{ self tick "waiting" }
     'recv: loop {
       match self.from_learners.recv() {
@@ -295,11 +296,14 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
         Ok( (idx, FromLearners::Cands(cands)) ) => {
           profile!{ self mark "waiting" }
           profile!{ self "candidates" => add 1 }
-          return Some( (idx, cands) )
+          return Ok( Some( (idx, cands) ) )
+        },
+        Ok( (_, FromLearners::Unsat) ) => {
+          bail!( ErrorKind::Unsat )
         },
         Err(_) => {
           profile!{ self mark "waiting" }
-          return None
+          return Ok( None )
         },
       }
     }
