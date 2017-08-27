@@ -232,7 +232,9 @@ named!{
 named!{
   #[doc = "Simple ident parser."],
   pub sident<& str>, map_res!(
-    re_bytes_find!("^[a-zA-Z][a-zA-Z0-9_]*"),
+    re_bytes_find!(
+      r#"^[a-zA-Z][a-zA-Z0-9~!@\$%^&\*_\-\+=<>\.\?\^/]*"#
+    ),
     |bytes| ::std::str::from_utf8(bytes).chain_err(
       || "could not convert bytes to utf8"
     )
