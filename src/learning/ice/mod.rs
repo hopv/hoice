@@ -525,6 +525,8 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     ) ;
     profile!{ self mark "learning", "predicate sorting" }
 
+    let mut used_quals = HConSet::with_capacity(107) ;
+
     'pred_iter: for (_unc, _cla, pred) in predicates {
       msg!(
         self => "{}: {} unclassified, {} classified",
@@ -535,7 +537,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         self.candidate[pred] = Some( term.clone() ) ;
         continue 'pred_iter
       } // Should be an `else if`, but can't because of lexical lifetimes.
-      if let Some(term) = self.pred_learn(pred, data) ? {
+      if let Some(term) = self.pred_learn(pred, data, & mut used_quals) ? {
         self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
@@ -554,6 +556,12 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       }
     }
     profile!{ self mark "learning" }
+
+    profile!{ self tick "decay" }
+    let brushed = self.qualifiers.brush_quals(used_quals, 25) ;
+    profile!{ self "brushed qualifiers" => add brushed }
+    profile!{ self mark "decay" }
+
     Ok( Some(candidates) )
   }
 
@@ -587,7 +595,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData
+    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<RTerm>
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -677,6 +685,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
       let (qual, q_data, nq_data) = self.get_qualifier(pred, data) ? ;
+      let _ = used_quals.insert( qual.clone() ) ;
       profile!{ self mark "learning", "qual" }
       self.qualifiers.blacklist(& qual) ;
 

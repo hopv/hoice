@@ -121,7 +121,12 @@ pub struct Qualifiers {
   ///
   /// Invariant: `arity_map.len()` is `instance.max_pred_arity` where
   /// `instance` is the Instance used during construction.
-  arity_map: ArityMap< Vec<QualValues> >,
+  arity_map: ArityMap< HConMap<RTerm, QualValues> >,
+  /// Decay map. Maps qualifiers to the number of times, up to now, that the
+  /// qualifier has **not** been used.
+  ///
+  /// Invariant: the keys are exactly the term stored in `arity_map`.
+  decay_map: HConMap<RTerm, (Arity, usize)>,
   /// Maps predicates to their arity.
   pred_to_arity: PrdMap<Arity>,
   /// Blacklisted qualifiers.
@@ -131,14 +136,26 @@ impl Qualifiers {
   /// Constructor.
   pub fn mk(instance: & Instance) -> Res<Self> {
     let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
-    arity_map.push( vec![] ) ;
+    let mut decay_map = HConMap::with_capacity(
+      instance.consts().len() * (* instance.max_pred_arity) * 4
+    ) ;
+    arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
+      let arity = arity_map.next_index() ;
       let var = instance.var(var_idx) ;
-      let mut terms = HConSet::with_capacity( instance.consts().len() * 5 ) ;
+      let mut terms = HConMap::with_capacity(
+        instance.consts().len() * 4
+      ) ;
       for cst in instance.consts() {
-        let _ = terms.insert( instance.ge(var.clone(), cst.clone()) ) ;
-        let _ = terms.insert( instance.le(var.clone(), cst.clone()) ) ;
-        let _ = terms.insert( instance.eq(var.clone(), cst.clone()) ) ;
+        let term = instance.ge(var.clone(), cst.clone()) ;
+        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+        let term = instance.le(var.clone(), cst.clone()) ;
+        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+        let term = instance.eq(var.clone(), cst.clone()) ;
+        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
         // for other_var in VarRange::zero_to( var_idx ) {
         //   use instance::Op ;
         //   let other_var = instance.var(other_var) ;
@@ -162,18 +179,14 @@ impl Qualifiers {
         //   let _ = terms.insert( instance.eq(sub_2.clone(), cst.clone()) ) ;
         // }
       }
-      arity_map.push(
-        terms.into_iter().map(
-          |term| QualValues::mk(term)
-        ).collect()
-      )
+      arity_map.push(terms)
     }
     let pred_to_arity = instance.preds().iter().map(
       |info| info.sig.len().into()
     ).collect() ;
 
     let mut quals = Qualifiers {
-      arity_map, pred_to_arity,
+      arity_map, decay_map, pred_to_arity,
       blacklist: HConSet::with_capacity(107),
     } ;
 
@@ -192,8 +205,37 @@ impl Qualifiers {
   }
 
   /// Accessor to the qualifiers.
-  pub fn qualifiers(& self) -> & ArityMap< Vec<QualValues> > {
+  pub fn qualifiers(& self) -> & ArityMap< HConMap<RTerm, QualValues> > {
     & self.arity_map
+  }
+
+  /// Updates qualifiers' decay given the qualifiers **chosen** at this
+  /// iteration, and removes qualifiers with a decay strictly above some value.
+  pub fn brush_quals(
+    & mut self, mut chosen_quals: HConSet<RTerm>, threshold: usize
+  ) -> usize {
+    let mut brushed = 0 ;
+    // The borrow-checker does now want to capture `self.arity_map` in the
+    // closure given to `self.decay_map.retain`. Doing a swap to please it.
+    let mut ownership_hack = HConMap::with_capacity(0) ;
+    ::std::mem::swap( & mut self.decay_map, & mut ownership_hack ) ;
+    ownership_hack.retain(
+      |term, & mut (arity, ref mut decay)| {
+        * decay = if chosen_quals.remove(& term) { 0 } else { * decay + 1 } ;
+        if * decay > threshold {
+          let is_some = self.arity_map[arity].remove(& term) ;
+          debug_assert!( is_some.is_some() ) ;
+          brushed += 1 ;
+          false
+        } else {
+          true
+        }
+      }
+    ) ;
+    ::std::mem::swap( & mut self.decay_map, & mut ownership_hack ) ;
+    debug_assert!( chosen_quals.is_empty() ) ;
+    debug_assert_eq!( self.decay_map.len(), self.count() ) ;
+    brushed
   }
 
   /// Qualifiers for a predicate.
@@ -255,36 +297,47 @@ impl Qualifiers {
   //   Ok(())
   // }
 
-  /// Adds a qualifier whithout doing anything.
+  /// Adds some qualifiers as terms.
   pub fn add_quals<'a, Terms: IntoIterator<Item = Term>>(
     & 'a mut self, quals: Terms
   ) -> Res<()> {
+    self.add_qual_values(
+      quals.into_iter().map( |qual| QualValues::mk(qual) )
+    )
+  }
+
+  /// Adds some qualifiers as qualifier values.
+  pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
+    & 'a mut self, quals: Terms
+  ) -> Res<()> {
     for qual in quals {
-      let arity: Arity = if let Some(max_var) = qual.highest_var() {
+      let arity: Arity = if let Some(max_var) = qual.qual.highest_var() {
         (1 + * max_var).into()
       } else {
         bail!("[bug] trying to add constant qualifier")
       } ;
-      let values = QualValues::mk( qual ) ;
-      self.arity_map[arity].push( values )
+      let _ = self.decay_map.insert( qual.qual.clone(), (arity, 0) ) ;
+      let _ = self.arity_map[arity].insert( qual.qual.clone(), qual ) ;
     }
     Ok(())
   }
 
-  /// Adds a qualifier whithout doing anything.
-  pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
-    & 'a mut self, quals: Terms
-  ) -> Res<()> {
-    for values in quals {
-      let arity: Arity = if let Some(max_var) = values.qual.highest_var() {
-        (1 + * max_var).into()
-      } else {
-        bail!("[bug] trying to add constant qualifier")
-      } ;
-      self.arity_map[arity].push( values )
-    }
-    Ok(())
-  }
+  // /// Adds a qualifier whithout doing anything.
+  // pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
+  //   & 'a mut self, quals: Terms
+  // ) -> Res<()> {
+  //   for values in quals {
+  //     let arity: Arity = if let Some(max_var) = values.qual.highest_var() {
+  //       (1 + * max_var).into()
+  //     } else {
+  //       bail!("[bug] trying to add constant qualifier")
+  //     } ;
+  //     let _ = self.decay_map.insert( qual.clone(), (arity, 0) ) ;
+  //     let term = values.qual.clone() ;
+  //     let _ = self.arity_map[arity].insert( term, values ) ;
+  //   }
+  //   Ok(())
+  // }
 
 
   // /// Adds a qualifier.
@@ -340,9 +393,11 @@ impl Qualifiers {
 #[doc = r#"Iterator over the qualifiers of a predicate."#]
 pub struct QualIter<'a> {
   /// Reference to the arity map.
-  arity_map: ::std::slice::IterMut< 'a, Vec<QualValues> >,
+  arity_map: ::std::slice::IterMut< 'a, HConMap<RTerm, QualValues> >,
   /// Current values.
-  values: Option< ::std::slice::IterMut<'a, QualValues> >,
+  values: Option<
+    ::std::collections::hash_map::IterMut<'a, Term, QualValues>
+  >,
   // & 'a mut ArityMap< Vec<QualValues> >,
   /// Blacklisted terms.
   blacklist: & 'a HConSet<RTerm>,
@@ -356,7 +411,7 @@ pub struct QualIter<'a> {
 impl<'a> QualIter<'a> {
   /// Constructor.
   pub fn mk(
-    map: & 'a mut ArityMap< Vec<QualValues> >,
+    map: & 'a mut ArityMap< HConMap<RTerm, QualValues> >,
     blacklist: & 'a HConSet<RTerm>, pred_arity: Arity
   ) -> Self {
     let mut arity_map = map.iter_mut() ;
@@ -376,9 +431,9 @@ impl<'a> ::std::iter::Iterator for QualIter<'a> {
     while self.curr_arity <= self.pred_arity {
       if let Some( ref mut iter ) = self.values {
         // Consume the elements until a non-blacklisted one is found.
-        while let Some(next) = iter.next() {
-          if ! self.blacklist.contains(& next.qual) {
-            return Some(next)
+        while let Some( (term, values) ) = iter.next() {
+          if ! self.blacklist.contains(term) {
+            return Some(values)
           }
         }
       } else {
