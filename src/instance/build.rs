@@ -1355,6 +1355,17 @@ impl<'a> InstBuild<'a> {
     Ok((var_map, hash_map))
   }
 
+  /// Bool parser.
+  fn bool(& mut self) -> Option<bool> {
+    if self.tag_opt("true") {
+      Some(true)
+    } else if self.tag_opt("false") {
+      Some(false)
+    } else {
+      None
+    }
+  }
+
   /// Integer parser.
   fn int(& mut self) -> Option<Int> {
     if let Some((start_pos, char)) = self.next() {
@@ -1458,14 +1469,16 @@ impl<'a> InstBuild<'a> {
         let kids = Vec::with_capacity(11) ;
         self.term_stack.push( (op, kids) ) ;
         continue 'read_kids
+      } else if let Some(int) = self.int() {
+        self.instance.int(int)
+      } else if let Some(b) = self.bool() {
+        self.instance.bool(b)
       } else if let Some((_, id)) = self.ident_opt() {
         if let Some(idx) = map.get(id) {
           self.instance.var(* idx)
         } else {
           bail!("unknown variable `{}`", conf.bad(id))
         }
-      } else if let Some(int) = self.int() {
-        self.instance.int(int)
       } else {
         if self.term_stack.is_empty() {
           break 'read_kids
@@ -1539,14 +1552,16 @@ impl<'a> InstBuild<'a> {
           self.fail("expected operator or predicate, got")
         )
       }
+    } else if let Some(b) = self.bool() {
+      Ok( Some( TTerm::T( self.instance.bool(b) ) ) )
+    } else if let Some(int) = self.int() {
+      Ok( Some( TTerm::T( self.instance.int(int) ) ) )
     } else if let Some((_,id)) = self.ident_opt() {
       if let Some(idx) = map.get(id) {
         Ok( Some( TTerm::T( self.instance.var(* idx) ) ) )
       } else {
         bail!("unknown variable `{}`", conf.bad(id))
       }
-    } else if let Some(int) = self.int() {
-      Ok( Some( TTerm::T( self.instance.int(int) ) ) )
     } else {
       Ok(None)
     } ;
