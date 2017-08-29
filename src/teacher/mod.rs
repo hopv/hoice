@@ -350,7 +350,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
-      {
+      if conf.smt_log {
         for lhs in clause.lhs() {
           self.solver.comment(
             & format!("{}\n", lhs)
@@ -361,10 +361,12 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
         ) ?
       }
     }
+    profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       self.solver.declare_const(var, & var.typ, & ()) ?
     }
     self.solver.assert( clause, cands ) ? ;
+    profile!{ self mark "cexs", "prep" }
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
     profile!{ self mark "cexs", "check-sat" }

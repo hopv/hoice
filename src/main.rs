@@ -167,48 +167,62 @@ fn work() -> Res<()> {
 
     profile!{ |profiler| tick "loading" }
 
-    profile!{ |profiler| tick "loading", "parsing" }
-
-    let mut builder = ::instance::build::InstBuild::mk() ;
-    builder.reduce().chain_err(
-      || "during instance reduction"
-    ) ? ;
+    profile!{ |profiler| tick "loading", "reading file" }
 
     log_info!{ "loading instance from `{}`...", conf.emph(file_path) }
-    let mut buffer = Vec::with_capacity(1007) ;
-    let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
-      || format!("while opening input file `{}`", conf.emph(file_path))
-    ) ? ;
-    let _ = file.read_to_end(& mut buffer).chain_err(
-      || format!("while reading input file `{}`", conf.emph(file_path))
-    ) ? ;
+    // let mut buffer = Vec::with_capacity(1007) ;
+    // let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
+    //   || format!("while opening input file `{}`", conf.emph(file_path))
+    // ) ? ;
+    // let _ = file.read_to_end(& mut buffer).chain_err(
+    //   || format!("while reading input file `{}`", conf.emph(file_path))
+    // ) ? ;
 
-    let (_rest, infer) = if let Some(res) = builder.parse(& buffer) {
-      res
-    } else {
-      bail!( builder.to_error(& buffer, Some(0)) )
+    let mut instance = {
+      let mut txt = String::with_capacity(2000) ;
+      let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
+        || format!("while opening input file `{}`", conf.emph(file_path))
+      ) ? ;
+      let _ = file.read_to_string(& mut txt).chain_err(
+        || format!("while reading input file `{}`", conf.emph(file_path))
+      ) ? ;
+      let mut builder = ::instance::build::InstBuild::mk(& txt) ;
+      builder.reduce().chain_err(
+        || "during instance reduction"
+      ) ? ;
+
+      profile!{ |profiler| mark "loading", "reading file" }
+
+      profile!{ |profiler| tick "loading", "parsing" }
+
+      // let (_rest, infer) = if let Some(res) = builder.parse(& buffer) {
+      //   res
+      // } else {
+      //   bail!( builder.to_error(& buffer, Some(0)) )
+      // } ;
+      let infer = builder.new_parse() ? ;
+
+      profile!{ |profiler| mark "loading", "parsing" }
+
+      // log_info!{
+      //   "done: read {} declarations and {} clauses (read {} of {} bytes)\n",
+      //   builder.preds().len(), builder.clauses().len(),
+      //   buffer.len() - _rest, buffer.len()
+      // }
+
+      if ! infer {
+        log_info!{ "no `check-sat` command provided" }
+        return Ok(())
+      }
+
+      profile!{ |profiler| tick "loading", "building" }
+
+      builder.to_instance(
+        // & buffer, Some(0)
+      ).chain_err(
+        || "during instance construction"
+      ) ?
     } ;
-
-    profile!{ |profiler| mark "loading", "parsing" }
-
-    log_info!{
-      "done: read {} declarations and {} clauses (read {} of {} bytes)\n",
-      builder.preds().len(), builder.clauses().len(),
-      buffer.len() - _rest, buffer.len()
-    }
-
-    if ! infer {
-      log_info!{ "no `infer` command provided" }
-      return Ok(())
-    }
-
-    profile!{ |profiler| tick "loading", "building" }
-
-    let mut instance = builder.to_instance(
-      & buffer, Some(0)
-    ).chain_err(
-      || "during instance construction"
-    ) ? ;
 
     profile!{ |profiler| mark "loading", "building" }
 
