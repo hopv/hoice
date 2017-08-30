@@ -1,7 +1,7 @@
 #![doc = r#"Checks the result of a `hoice` run.
 
 This code is completely separated from the rest of the code, on purpose. It
-basically takes the original `hc` file, a file containing the output of the
+basically takes the original `smt2` file, a file containing the output of the
 `hoice` run, and checks that the result makes sense.
 
 It does so using an SMT solver, and performing string substitution (roughly)
@@ -12,7 +12,7 @@ use common::* ;
 
 pub mod parse ;
 
-use self::parse::{ parse_input, parse_output } ;
+use self::parse::{ parse_input, parse_output, parse_eld_output } ;
 
 /// A predicate is just a string.
 pub type Pred = String ;
@@ -104,7 +104,11 @@ impl Output {
   /// Loads some input data from some bytes.
   pub fn of_bytes(bytes: & [u8]) -> Res<Self> {
     use nom::IResult ;
-    match parse_output(bytes) {
+    match if conf.check_eld {
+      parse_eld_output(bytes)
+    } else {
+      parse_output(bytes)
+    } {
       IResult::Done(_, input) => Ok(input),
       IResult::Error(e) => bail!(
         "parse error: {:?}", e
@@ -131,7 +135,7 @@ impl Output {
 
   /// Checks the signature of the predicates match the declarations of an input
   /// `hc` file. Also checks that all predicates are defined *once*.
-  pub fn check_consistency(& self, input: & Input) -> Res<()> {
+  pub fn check_consistency(& mut self, input: & Input) -> Res<()> {
     info!{ "checking predicate signature consistency..." }
     let mut map = HashMap::with_capacity( self.pred_defs.len() ) ;
     for & PredDef { ref pred, ref args, .. } in & self.pred_defs {
@@ -162,8 +166,17 @@ impl Output {
           count += 1
         }
       } else {
-        bail!(
+        warn!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
+        ) ;
+        let mut args = vec![] ;
+        let mut cnt = 0 ;
+        for ty in sig {
+          args.push( (format!("v_{}", cnt), ty.clone()) ) ;
+          cnt += 1
+        }
+        self.pred_defs.push(
+          PredDef { pred: pred.clone(), args, body: "true".into() }
         )
       }
     }
@@ -181,7 +194,7 @@ pub struct Data {
 }
 impl Data {
   /// Direct contructor.
-  pub fn mk(input: Input, output: Output) -> Res<Self> {
+  pub fn mk(input: Input, mut output: Output) -> Res<Self> {
     output.check_consistency(& input) ? ;
     Ok( Data { input, output } )
   }
@@ -263,7 +276,7 @@ impl Data {
 
     if ! okay {
       bail!(
-        "hoice's predicates do not verify all the clauses of the input file"
+        "predicates do not verify all the clauses of the input file"
       )
     }
 

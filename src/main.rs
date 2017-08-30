@@ -167,18 +167,10 @@ fn work() -> Res<()> {
 
     profile!{ |profiler| tick "loading" }
 
-    profile!{ |profiler| tick "loading", "reading file" }
-
-    log_info!{ "loading instance from `{}`...", conf.emph(file_path) }
-    // let mut buffer = Vec::with_capacity(1007) ;
-    // let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
-    //   || format!("while opening input file `{}`", conf.emph(file_path))
-    // ) ? ;
-    // let _ = file.read_to_end(& mut buffer).chain_err(
-    //   || format!("while reading input file `{}`", conf.emph(file_path))
-    // ) ? ;
-
     let mut instance = {
+      profile!{ |profiler| tick "loading", "reading file" }
+      log_info!{ "loading instance from `{}`...", conf.emph(file_path) }
+
       let mut txt = String::with_capacity(2000) ;
       let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
         || format!("while opening input file `{}`", conf.emph(file_path))
@@ -187,9 +179,9 @@ fn work() -> Res<()> {
         || format!("while reading input file `{}`", conf.emph(file_path))
       ) ? ;
       let mut builder = ::instance::build::InstBuild::mk(& txt) ;
-      builder.reduce().chain_err(
-        || "during instance reduction"
-      ) ? ;
+      // builder.reduce().chain_err(
+      //   || "during instance reduction"
+      // ) ? ;
 
       profile!{ |profiler| mark "loading", "reading file" }
 

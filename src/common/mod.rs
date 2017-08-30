@@ -362,6 +362,7 @@ impl Verb {
 pub struct Conf {
   pub file: Option<String>,
   pub check: Option<String>,
+  pub check_eld: bool,
   pub smt_log: bool,
   pub out_dir: String,
   pub smt_learn: bool,
@@ -381,7 +382,7 @@ impl ColorExt for Conf {
 impl Conf {
   /// Regular constructor.
   pub fn mk(
-    file: Option<String>, check: Option<String>,
+    file: Option<String>, check: Option<String>, check_eld: bool,
     smt_log: bool, z3_cmd: String, out_dir: String,
     step: bool, decay: bool, max_decay: usize,
     smt_learn: bool, fpice_synth: bool,
@@ -389,7 +390,8 @@ impl Conf {
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
-      file, check, smt_log, out_dir, step, decay, max_decay, smt_learn,
+      file, check, check_eld,
+      smt_log, out_dir, step, decay, max_decay, smt_learn,
       fpice_synth,
       gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
     }
@@ -566,6 +568,16 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("check_eld").long("--check_eld").help(
+        "if `check` is active, expect eldarica-style result"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("gain_threads").long("--gain_threads").help(
         "sets the number of threads to use when computing qualifier gains, \
         0 for auto"
@@ -632,6 +644,11 @@ impl Conf {
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
+    let check_eld = matches.value_of("check_eld").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(check_eld): default is provided and input validated in clap"
+    ) ;
     let fpice_synth = true ;
     // matches.value_of("fpice_synth").and_then(
     //   |s| bool_of_str(& s)
@@ -669,7 +686,7 @@ impl Conf {
     }
 
     Conf::mk(
-      file, check, smt_log, z3_cmd.into(), out_dir.into(), step,
+      file, check, check_eld, smt_log, z3_cmd.into(), out_dir.into(), step,
       decay, max_decay,
       smt_learn, fpice_synth, gain_threads, verb, stats, color
     )

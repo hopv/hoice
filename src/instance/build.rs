@@ -6,7 +6,7 @@
 //!
 #![allow(unused_variables)]
 
-use nom::{ IResult, multispace } ;
+use nom::multispace ;
 
 use common::* ;
 use instance::* ;
@@ -149,158 +149,11 @@ impl<'a, S: Into<String>> From< (S, usize ) > for InternalParseError {
   }
 }
 
-/// Tries to parse something. If it fails, parses anything and returns an
-/// error.
-macro_rules! err {
-  ($bytes:expr, $sub_mac:ident!( $($args:tt)* ), $e:expr) => (
-    return_error!(
-      $bytes,
-      ::nom::ErrorKind::Custom(
-        InternalParseError::from( ($e, $bytes) )
-      ),
-      $sub_mac!($($args)*)
-    )
-  ) ;
-  ($bytes:expr, $fun:ident, $e:expr) => (
-    return_error!(
-      $bytes,
-      ::nom::ErrorKind::Custom(
-        InternalParseError::from( ($e, $bytes) )
-      ),
-      $fun
-    )
-  ) ;
-  ($bytes:expr, ident) => (
-    err!( $bytes, ident, "expected identifier" )
-  ) ;
-  ($bytes:expr, op) => (
-    err!( $bytes, call!( Op::parse ), "expected operator" )
-  ) ;
-  ($bytes:expr, typ) => (
-    err!( $bytes, call!( Typ::parse ), "expected type" )
-  ) ;
-  ($bytes:expr, char $c:expr, $e:expr) => (
-    err!( $bytes, char!($c), format!("expected `{}` {}", $c, $e) )
-  ) ;
-}
-
-/// Calls a function on some values, early returns in case of custom error,
-/// propagates otherwise.
-macro_rules! try_call {
-  ($bytes:expr, $sub:ident($($args:tt)*)) => (
-    try_call!( internal $sub($bytes, $($args)*) )
-  ) ;
-  ($bytes:expr, $slf:ident.$sub:ident($($args:tt)*)) => (
-    try_call!( internal $slf.$sub($bytes, $($args)*) )
-  ) ;
-  ($bytes:expr, $slf:ty:$sub:ident($($args:tt)*)) => (
-    try_call!( internal $slf::$sub($bytes, $($args)*) )
-  ) ;
-  (internal $e:expr) => (
-    match $e {
-      IResult::Error(e) => match e {
-        ::nom::ErrorKind::Custom(e) => return IResult::Error(
-          ::nom::ErrorKind::Custom(e)
-        ),
-        _ => IResult::Error(::nom::ErrorKind::Fix),
-      },
-      IResult::Done(i,o) => IResult::Done(i,o),
-      IResult::Incomplete(n) => IResult::Incomplete(n),
-    }
-  ) ;
-}
-
-
-macro_rules! with_from_end {
-  ($bytes:expr, $($tail:tt)*) => (
-    map!($bytes, $($tail)*, |res| (res, $bytes.len()))
-  ) ;
-}
-
-named!{
-  #[doc = "Comment parser."]
-  #[inline(always)],
-  pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
-}
-
-named!{
-  #[doc = "Parses comments and spaces."]
-  #[inline(always)],
-  pub spc_cmt<()>, map!(
-    many0!( alt_complete!(cmt | multispace) ), |_| ()
-  )
-}
-
-named!{
-  #[doc = "Simple ident parser."],
-  pub sident<& str>, map_res!(
-    re_bytes_find!(
-      r#"^[a-zA-Z][a-zA-Z0-9~!@\$%^&\*_\-\+=<>\.\?\^/]*"#
-    ),
-    |bytes| ::std::str::from_utf8(bytes).chain_err(
-      || "could not convert bytes to utf8"
-    )
-  )
-}
-
-named!{
-  #[doc = "Quoted ident parser."],
-  pub qident<& str>, alt_complete!(
-    delimited!(
-      char!('|'), sident, char!('|')
-    ) |
-    map_res!(
-      re_bytes_find!(r#"^\|[^\|]*\|"#),
-      |bytes| ::std::str::from_utf8(bytes).chain_err(
-        || "could not convert bytes to utf8"
-      )
-    )
-  )
-}
-
-named!{
-  #[doc = "Ident parser."],
-  pub ident<& str>, alt_complete!(
-    sident | qident
-  )
-}
-
-named!{
-  #[doc = "Integer parser."],
-  pub int<Int>, map!(
-    re_bytes_find!("^([1-9][0-9]*|0)"),
-    |bytes| Int::parse_bytes(bytes, 10).expect(
-      "[bug] problem in integer parsing"
-    )
-  )
-}
-
-named!{
-  #[doc = "Boolean parser."],
-  pub bool<bool>, alt!(
-    map!( tag!("false"), |_| false ) |
-    map!( tag!("true"), |_| true )
-  )
-}
-
-/// Parser that Fails whatever the input.
-pub fn fail<T>(_bytes: & [u8]) -> IResult<& [u8], T> {
-  IResult::Error(
-    error_position!(
-      ::nom::ErrorKind::Custom(0), _bytes
-    )
-  )
-}
-
 
 /// Instance builder.
 pub struct InstBuild<'a> {
   /// The instance under construction.
   instance: Instance,
-  /// Errors.
-  errors: Vec<InternalParseError>,
-  /// Map from predicate names to predicate indices.
-  pred_name_map: HashMap<String, PrdIdx>,
   /// Profiler.
   _profiler: Profile,
   /// Term stack to avoid recursion.
@@ -321,8 +174,6 @@ impl<'a> InstBuild<'a> {
   pub fn mk(string: & 'a str) -> Self {
     InstBuild {
       instance: Instance::mk(300, 42, 42),
-      errors: vec![],
-      pred_name_map: HashMap::with_capacity(42),
       _profiler: Profile::mk(),
       term_stack: Vec::with_capacity(17),
       chars: string.char_indices(),
@@ -330,31 +181,6 @@ impl<'a> InstBuild<'a> {
       buff: Vec::with_capacity(17),
       mem: Vec::with_capacity(17),
       new_pred_name_map: HashMap::with_capacity(42),
-    }
-  }
-
-  /// Destroys the builder into its errors.
-  ///
-  /// The weird `line` argument works as follows: if it is
-  ///
-  /// - `None`, then the data generated will have no line info (useful when
-  ///   reading from `stdin`) ;
-  /// - `Some(off)`, then the data will have a line info which is the line 
-  ///   where the error token appears in `input` plus `off` (useful when
-  ///   reading a file incrementally to add an offset to error messages). 
-  pub fn to_error(self, input: & [u8], line: Option<usize>) -> Error {
-    // Print all errors but the last one, which we propagate upward.
-    let count = self.errors.len() ;
-    for err in self.errors {
-      print_err( err.to_error(input, line) )
-    }
-    if count > 0 {
-      format!(
-        "parsing failed with {} errors",
-        conf.bad(& format!("{}", count))
-      ).into()
-    } else {
-      "[bug] parsing failed because of an unknown error".into()
     }
   }
 
@@ -512,532 +338,55 @@ impl<'a> InstBuild<'a> {
     self.instance.clauses()
   }
 
-  /// Parses a term.
-  #[allow(unused_variables)]
-  pub fn parse_term<'b>(
-    & mut self, bytes: & 'b [u8], vars: & HashMap<& 'b str, VarIdx>
-  ) -> IResult<& 'b [u8], Term, InternalParseError> {
-    profile!{ self tick "parsing", "term" }
-    let res = fix_error!(
-      bytes,
-      InternalParseError,
-      alt!(
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> op: err!( op ) >>
-          spc_cmt >> args: many0!(
-            terminated!(
-              try_call!( self.parse_term(vars) ),
-              spc_cmt
-            )
-          ) >>
-          spc_cmt >> err!( char ')', "closing operator application" ) >> ({
-            profile!{ self tick "parsing", "term", "op" }
-            let res = self.instance.op(op, args) ;
-            profile!{ self mark "parsing", "term", "op" }
-            res
-          })
-        ) |
-        map!(
-          int, |n| {
-            profile!{ self tick "parsing", "term", "constant (int)" }
-            let cst = self.instance.int(n.clone() + 1) ;
-            let _ = self.instance.consts.insert( cst.clone() ) ;
-            let cst = self.instance.int(n.clone() - 1) ;
-            let _ = self.instance.consts.insert( cst.clone() ) ;
-            let cst = self.instance.int(n) ;
-            let _ = self.instance.consts.insert( cst.clone() ) ;
-            profile!{ self mark "parsing", "term", "constant (int)" }
-            cst
-          }
-        ) |
-        map!(
-          bool, |n| {
-            profile!{ self tick "parsing", "term", "constant (bool)" }
-            let res = self.instance.bool(n) ;
-            profile!{ self mark "parsing", "term", "constant (bool)" }
-            res
-          }
-        ) |
-        map!(
-          ident,
-          |id| {
-            profile!{ self tick "parsing", "term", "ident" }
-            let res = if let Some(idx) = vars.get(id) {
-              self.instance.var(* idx)
-            } else {
-              self.errors.push(
-                (format!("unknown variable `{}`", id), bytes.len()).into()
-              ) ;
-              self.instance.var( vars.len().into() )
-            } ;
-            profile!{ self mark "parsing", "term", "ident" }
-            res
-          }
-        )
-      )
-    ) ;
-    profile!{ self mark "parsing", "term" }
-    res
-  }
-
-  /// Parses a predicate declaration.
-  #[allow(unused_variables)]
-  pub fn parse_pred_dec<'b>(
-    & self, bytes: & 'b [u8]
-  ) -> IResult<& 'b [u8], (String, usize, Vec<Typ>), InternalParseError> {
-    profile!{ self tick "parsing", "pred_dec" }
-    let res = fix_error!(
-      bytes,
-      InternalParseError,
-      do_parse!(
-        spc_cmt >>
-        id: with_from_end!( err!(ident) ) >>
-        spc_cmt >>
-        err!( char '(', "opening predicate signature" ) >>
-        spc_cmt >>
-        sig: many0!(
-          terminated!(
-            fix_error!(u32, call!(Typ::parse) ), spc_cmt
-          )
-        ) >>
-        spc_cmt >> err!( char ')', "closing predicate signature" ) >>
-        spc_cmt >> err!(
-          tag!("Bool"), "unsupported predicate type"
-        ) >> (
-          (id.0.into(), id.1, sig)
-        )
-      )
-    ) ;
-    profile!{ self mark "parsing", "pred_dec" }
-    res
-  }
 
 
-  /// Parses a top term.
-  #[allow(unused_variables)]
-  pub fn parse_top_term<'b>(
-    & mut self, bytes: & 'b [u8], vars: & HashMap<& 'b str, VarIdx>
-  ) -> IResult<& 'b [u8], TTerm, InternalParseError> {
-    profile!{ self tick "parsing", "top_term" }
-    let res = fix_error!(
-      bytes,
-      InternalParseError,
-      alt!(
-        // Predicate application.
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> not!( peek!( call!(Op::parse) ) ) >>
-          id: with_from_end!( err!(ident) ) >>
-          spc_cmt >> args: many0!(
-            terminated!(
-              try_call!( self.parse_term(& vars) ),
-              spc_cmt
-            )
-          ) >>
-          spc_cmt >> err!(
-            char ')', "closing predicate application"
-          ) >> ({
-            profile!{ self tick "parsing", "top_term", "add pred" }
-            let pred = if let Some(pred) = self.pred_name_map.get(id.0) {
-              * pred
-            } else {
-              self.errors.push(
-                (format!("unknown predicate `{}`", id.0), id.1).into()
-              ) ;
-              self.instance.preds.next_index()
-            } ;
-            profile!{ self mark "parsing", "top_term", "add pred" }
-            TTerm::P { pred, args: args.into() }
-          })
-        ) |
-        // Just a term.
-        do_parse!(
-          term: try_call!( self.parse_term(& vars) ) >> (
-            TTerm::T(term)
-          )
-        )
-      )
-    ) ;
-    profile!{ self mark "parsing", "top_term" }
-    res
-  }
+  // /// Reduces the instance.
+  // pub fn reduce(& mut self) -> Res<()> {
+  //   Ok(())
+  // }
 
-  /// Parses an assertion
-  pub fn parse_params<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> IResult<
-    & 'b [u8],
-    (VarMap<VarInfo>, HashMap<& 'b str, VarIdx>),
-    InternalParseError
-  > {
-    let mut var_name_map = HashMap::<& 'b str, VarIdx>::new() ;
-    let mut var_map = VarMap::with_capacity(7) ;
-    profile!{ self tick "parsing", "params" }
-    let res = fix_error!(
-      bytes, InternalParseError,
-      do_parse!(
-        err!( char '(', "opening parameter list" ) >>
-        spc_cmt >> vars: many0!(
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> i: with_from_end!( err!(ident) ) >>
-            spc_cmt >> t: err!(typ) >>
-            spc_cmt >> err!(
-              char ')', "closing clause parameter declaration"
-            ) >>
-            spc_cmt >> ({
-              let (name, typ, idx) = (
-                i.0.to_string(), t, var_map.next_index()
-              ) ;
-              let prev = var_name_map.insert(i.0, idx) ;
-              if let Some(_) = prev {
-                self.errors.push((
-                  format!("found two horn clause variables named `{}`", i.0),
-                  i.1
-                ).into())
-              }
-              var_map.push( VarInfo { name, typ, idx } )
-            })
-          )
-        ) >>
-        spc_cmt >> err!( char ')', "closing parameter list" ) >> (
-          (var_map, var_name_map)
-        )
-      )
-    ) ;
-    profile!{ self mark "parsing", "params" }
-    res
-  }
 
-  /// Parses a conjunction.
-  pub fn parse_conjunction<'b>(
-    & mut self, bytes: & 'b [u8], vars: & HashMap<& 'b str, VarIdx>
-  ) -> IResult<& 'b [u8], Vec<TTerm>, InternalParseError> {
-    profile!{ self tick "parsing", "conjunction" }
-    let res = fix_error!(
-      bytes, InternalParseError,
-      alt!(
-
-        // A conjunction
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> tag!("and") >>
-          spc_cmt >> termss: many0!(
-            terminated!(
-              try_call!( self.parse_conjunction(vars) ), spc_cmt
-            )
-          ) >>
-          spc_cmt >> err!(
-            char ')', "closing the conjunction"
-          ) >> ({
-            profile!{ self tick "parsing", "conjunction", "add" }
-            let mut iter = termss.into_iter() ;
-            if let Some(mut terms) = iter.next() {
-              for ts in iter {
-                use std::iter::Extend ;
-                terms.extend(ts)
-              }
-              profile!{ self mark "parsing", "conjunction", "add" }
-              terms
-            } else {
-              return IResult::Error(
-                ::nom::ErrorKind::Custom(
-                  InternalParseError::mk(
-                    "illegal empty conjuction".into(), bytes.len()
-                  )
-                )
-              )
-            }
-          })
-        ) |
-
-        // A term
-        map!(
-          try_call!( self.parse_top_term(vars) ), |t| vec![t]
-        )
-
-      )
-    ) ;
-    profile!{ self mark "parsing", "conjunction" }
-    res
-  }
-
-  /// Parses an assertion
-  pub fn parse_assert<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> IResult<& 'b [u8], (), InternalParseError> {
-    profile!{ self tick "parsing", "assert" }
-    let res = fix_error!(
-      bytes, InternalParseError,
-      delimited!(
-        err!( char '(', "opening the clause's qualifier" ),
-
-        map!(
-          alt!(
-
-            // Not exists.
-            do_parse!(
-              tag!("not") >>
-              spc_cmt >> err!( char '(', "opening the clause's qualifier" ) >>
-              spc_cmt >> err!(
-                tag!(::common::consts::keywords::exists), format!(
-                  "expected {}", conf.emph(::common::consts::keywords::exists)
-                )
-              ) >>
-              spc_cmt >> maps: try_call!( self.parse_params() ) >>
-              spc_cmt >> lhs: try_call!( self.parse_conjunction(& maps.1) ) >>
-              spc_cmt >>  err!(
-                char ')', "closing the clause's qualifier"
-              ) >> (
-                ( maps.0, lhs, TTerm::T( self.instance.bool(false) ) )
-              )
-            ) |
-
-            // Forall.
-            do_parse!(
-              err!(
-                tag!( ::common::consts::keywords::forall ), format!(
-                  "expected {} or negated {}",
-                  conf.emph(::common::consts::keywords::forall),
-                  conf.emph(::common::consts::keywords::exists)
-                )
-              ) >>
-              spc_cmt >> maps: try_call!( self.parse_params() ) >>
-              spc_cmt >> err!( char '(', "opening clause's implication" ) >>
-              spc_cmt >> err!(
-                tag!("=>"), "expected implication operator"
-              ) >>
-              spc_cmt >> lhs: try_call!( self.parse_conjunction(& maps.1) ) >>
-              spc_cmt >> rhs: try_call!( self.parse_top_term(& maps.1) ) >>
-              spc_cmt >> err!( char ')', "closing clause's implication" ) >> (
-                ( maps.0, lhs, rhs )
-              )
-            )
-          ),
-          |(var_map, lhs, rhs)| {
-            let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
-            let mut lhs_is_false = false ;
-            for lhs in lhs {
-              if ! lhs.is_true() {
-                if lhs.is_false() {
-                  lhs_is_false = true ;
-                  break
-                } else {
-                  nu_lhs.push(lhs)
-                }
-              }
-            }
-            if ! lhs_is_false {
-              self.instance.push_clause(
-                Clause::mk(var_map, nu_lhs, rhs)
-              )
-            }
-          }
-        ),
-
-        do_parse!(
-          spc_cmt >> err!( char ')', "closing the clause's qualifier" ) >> (())
-        )
-      )
-    ) ;
-    profile!{ self mark "parsing", "assert" }
-    res
-  }
-
-  /// Parses a clause.
-  #[allow(unused_variables)]
-  pub fn parse_clause<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> IResult<& 'b [u8], (), InternalParseError> {
-    let mut var_name_map = HashMap::<& 'b str, VarIdx>::new() ;
-    let mut var_map = VarMap::with_capacity(7) ;
-    profile!{ self tick "parsing", "clause" }
-    let res = fix_error!(
-      bytes,
-      InternalParseError,
-      do_parse!(
-        err!( char '(', "opening clause's signature" ) >>
-        spc_cmt >> vars: many0!(
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> i: with_from_end!( err!(ident) ) >>
-            spc_cmt >> t: err!(typ) >>
-            spc_cmt >> err!(
-              char ')', "closing clause parameter declaration"
-            ) >>
-            spc_cmt >> ({
-              let (name, typ, idx) = (
-                i.0.to_string(), t, var_map.next_index()
-              ) ;
-              let prev = var_name_map.insert(i.0, idx) ;
-              if let Some(_) = prev {
-                self.errors.push((
-                  format!("found two horn clause variables named `{}`", i.0),
-                  i.1
-                ).into())
-              }
-              var_map.push( VarInfo { name, typ, idx } )
-            })
-          )
-        ) >>
-        spc_cmt >> err!( char ')', "closing clause's signature" ) >>
-        spc_cmt >> err!( char '(', "opening clause's left-hand side" ) >>
-        spc_cmt >> lhs: many0!(
-          terminated!(
-            try_call!( self.parse_top_term(& var_name_map) ), spc_cmt
-          )
-        ) >>
-        spc_cmt >> err!( char ')', "closing clause's left-hand side" ) >>
-        spc_cmt >> rhs: try_call!(
-          self.parse_top_term(& var_name_map)
-        ) >> ({
-          let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
-          let mut lhs_is_false = false ;
-          for lhs in lhs {
-            if ! lhs.is_true() {
-              if lhs.is_false() {
-                lhs_is_false = true ;
-                break
-              } else {
-                nu_lhs.push(lhs)
-              }
-            }
-          }
-          if ! lhs_is_false {
-            self.instance.push_clause(
-              Clause::mk(var_map, nu_lhs, rhs)
-            )
-          }
-        })
-      )
-    ) ;
-    profile!{ self mark "parsing", "clause" }
-    res
-  }
-
-  /// Parses some declarations.
-  #[allow(unused_variables)]
-  pub fn internal_parse_data<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> IResult<& 'b [u8], (), InternalParseError> {
-    profile!{ self tick "parsing", "parse_data" }
-    let res = fix_error!(
-      bytes,
-      InternalParseError,
-      do_parse!(
-        spc_cmt >> parsed: many0!(
-
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> alt_complete!(
-
-              // Set info.
-              try_call!( parse_set_info() ) |
-
-              // Set logic.
-              try_call!( parse_set_logic() ) |
-
-              // Predicate declaration.
-              do_parse!(
-                tag!( ::common::consts::keywords::prd_dec ) >>
-                spc_cmt >> pred_info: try_call!( self.parse_pred_dec() ) >> ({
-                  let (name, from_end, map) = pred_info ;
-                  let pred_index = self.instance.push_pred(
-                    name.clone(), VarMap::of(map)
-                  ) ;
-                  let prev = self.pred_name_map.insert(name, pred_index) ;
-                  if let Some(prev) = prev {
-                    self.errors.push((
-                      format!("predicate `{}` is already declared", prev),
-                      from_end
-                    ).into())
-                  }
-                  ()
-                })
-              ) |
-
-              // Clause.
-              do_parse!(
-                tag!( ::common::consts::keywords::assert ) >>
-                spc_cmt >> clause: try_call!( self.parse_assert() ) >>
-                (())
-              )
-            ) >>
-            spc_cmt >> err!(
-              char ')', "closing item"
-            ) >>
-            spc_cmt >> (())
-          )
-        ) >>
-        ( () )
-      )
-
-    ) ;
-    profile!{ self mark "parsing", "parse_data" }
-    res
-  }
-
-  /// Parses some declarations and an optional `infer` command.
-  #[allow(unused_variables)]
-  pub fn internal_parse_all<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> IResult<& 'b [u8], bool, InternalParseError> {
-    fix_error!(
-      bytes,
-      InternalParseError,
-      do_parse!(
-        try_call!( self.internal_parse_data() ) >>
-        spc_cmt >> done: alt_complete!(
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> err!(
-              tag!( ::common::consts::keywords::check_sat ),
-              format!(
-                "expected {}, {}, or {} command",
-                ::common::consts::keywords::prd_dec,
-                ::common::consts::keywords::clause_def,
-                ::common::consts::keywords::check_sat
-              )
-            ) >>
-            spc_cmt >> err!( char ')', "closing check-sat command" ) >>
-            (true)
-          ) |
-          map!( eof!(), |_| false )
-        ) >>
-        ( done )
-      )
-    )
-  }
-
-  /// Parses some declarations.
-  pub fn parse<'b>(
-    & mut self, bytes: & 'b [u8]
-  ) -> Option<(usize, bool)> {
-    profile!{ self tick "parsing" }
-    match self.internal_parse_all(bytes) {
-      IResult::Done( i, done ) => {
-        profile!{ self mark "parsing" }
-        Some( (i.len(), done) )
-      },
-      IResult::Error( ::nom::ErrorKind::Custom(err) ) => {
-        self.errors.push(err) ;
-        None
-      },
-      e => {
-        self.errors.push(
-          (format!("unexpected parse result: {:?}", e), bytes).into()
-        ) ;
-        None
-      },
+  /// Generates a parse error at the current position.
+  fn error_here<S: Into<String>>(& mut self, msg: S) -> ErrorKind {
+    if let Some( (pos, _) ) = self.next() {
+      self.error(pos, msg)
+    } else {
+      self.error(self.string.len(), msg)
     }
   }
 
-
-
-  /// Reduces the instance.
-  pub fn reduce(& mut self) -> Res<()> {
-    Ok(())
+  /// Generates a parse error at the given position.
+  fn error<S: Into<String>>(
+    & self, mut char_pos: usize, msg: S
+  ) -> ErrorKind {
+    let msg = msg.into() ;
+    let mut line_count = 0 ;
+    let (mut pref, mut token, mut suff) = (
+      "".to_string(), "<eof>".to_string(), "".to_string()
+    ) ;
+    for line in self.string.lines() {
+      line_count += 1 ;
+      if char_pos <= line.len() {
+        pref = line[0..char_pos].to_string() ;
+        token = if char_pos < line.len() {
+          line[char_pos..char_pos].to_string()
+        } else {
+          ".".into()
+        } ;
+        suff = if char_pos + 1 < line.len() {
+          line[(char_pos + 1)..].to_string()
+        } else {
+          "".into()
+        } ;
+      } else {
+        char_pos -= line.len() + 1
+      }
+    }
+    ErrorKind::ParseError(
+      ParseErrorData {
+        msg, pref, token, suff, line: Some(line_count)
+      }
+    )
   }
 
 
@@ -1090,8 +439,8 @@ impl<'a> InstBuild<'a> {
       Ok(())
     } else {
       bail!(
-        self.fail(
-          format!("expected `{}`, got", conf.emph(tag))
+        self.error_here(
+          format!("expected `{}`", conf.emph(tag))
         )
       )
     }
@@ -1139,7 +488,7 @@ impl<'a> InstBuild<'a> {
       Ok(id)
     } else {
       bail!(
-        self.fail("expected an identifier, got")
+        self.error_here("expected an identifier")
       )
     }
   }
@@ -1195,13 +544,13 @@ impl<'a> InstBuild<'a> {
     }
   }
 
-  /// Fails at the current position.
-  fn fail<S: AsRef<str>>(& mut self, blah: S) -> ErrorKind {
-    let (pos, token) = self.next_token() ;
-    ErrorKind::Msg(
-      format!("parse error at {}: {} `{}`", pos, blah.as_ref(), token)
-    )
-  }
+  // /// Fails at the current position.
+  // fn fail<S: AsRef<str>>(& mut self, blah: S) -> ErrorKind {
+  //   let (pos, token) = self.next_token() ;
+  //   ErrorKind::Msg(
+  //     format!("parse error at {}: {} `{}`", pos, blah.as_ref(), token)
+  //   )
+  // }
 
   /// Tries to parse a character.
   fn char_opt(& mut self, char: char) -> bool {
@@ -1221,8 +570,8 @@ impl<'a> InstBuild<'a> {
     if self.char_opt(char) { Ok(()) } else {
       let (pos, token) = self.next_token() ;
       bail!(
-        self.fail(
-          format!("expected `{}`, got", conf.emph(& char.to_string()))
+        self.error_here(
+          format!("expected `{}`", conf.emph(& char.to_string()))
         )
       )
     }
@@ -1257,7 +606,7 @@ impl<'a> InstBuild<'a> {
     }
     self.ws_cmt() ;
     if ! self.tag_opt("HORN") {
-      bail!( self.fail("unknown logic: ") )
+      bail!( self.error_here("unknown logic: ") )
     }
     Ok(true)
   }
@@ -1267,7 +616,7 @@ impl<'a> InstBuild<'a> {
     if let Some(typ) = self.typ_opt() {
       Ok(typ)
     } else {
-      bail!( self.fail("expected type, got") )
+      bail!( self.error_here("expected type") )
     }
   }
   /// Tries to parse a type.
@@ -1303,7 +652,7 @@ impl<'a> InstBuild<'a> {
     self.ws_cmt() ;
     if ! self.tag_opt("Bool") {
       bail!(
-        self.fail("expected Bool type, got")
+        self.error_here("expected Bool type")
       )
     }
 
@@ -1313,9 +662,12 @@ impl<'a> InstBuild<'a> {
     let prev = self.new_pred_name_map.insert(ident, pred_index) ;
     if let Some(prev) = prev {
       bail!(
-        format!(
-          "parse error at {}: predicate `{}` is already declared",
-          pos, conf.bad( & format!("{}", self.instance[prev]) )
+        self.error(
+          pos,
+          format!(
+            "predicate `{}` is already declared",
+            conf.bad( & format!("{}", self.instance[prev]) )
+          )
         )
       )
     }
@@ -1334,7 +686,7 @@ impl<'a> InstBuild<'a> {
     self.ws_cmt() ;
     while self.char_opt('(') {
       self.ws_cmt() ;
-      let (_, ident) = self.ident() ? ;
+      let (pos, ident) = self.ident() ? ;
       self.ws_cmt() ;
       let typ = self.typ() ? ;
       self.ws_cmt() ;
@@ -1344,7 +696,11 @@ impl<'a> InstBuild<'a> {
       let prev = hash_map.insert(ident, idx) ;
       if let Some(_) = prev {
         bail!(
-          "found two qualifier variables named `{}`", conf.bad(ident)
+          self.error(
+            pos, format!(
+              "found two qualifier variables named `{}`", conf.bad(ident)
+            )
+          )
         )
       }
       var_map.push( VarInfo { name: ident.into(), typ, idx } )
@@ -1397,7 +753,7 @@ impl<'a> InstBuild<'a> {
     if let Some(op) = self.op_opt() {
       Ok(op)
     } else {
-      bail!( self.fail("expected operator, got") )
+      bail!( self.error_here("expected operator") )
     }
   }
   /// Tries to parse an operator.
@@ -1473,17 +829,21 @@ impl<'a> InstBuild<'a> {
         self.instance.int(int)
       } else if let Some(b) = self.bool() {
         self.instance.bool(b)
-      } else if let Some((_, id)) = self.ident_opt() {
+      } else if let Some((pos, id)) = self.ident_opt() {
         if let Some(idx) = map.get(id) {
           self.instance.var(* idx)
         } else {
-          bail!("unknown variable `{}`", conf.bad(id))
+          bail!(
+            self.error(
+              pos, format!("unknown variable `{}`", conf.bad(id))
+            )
+          )
         }
       } else {
         if self.term_stack.is_empty() {
           break 'read_kids
         } else {
-          bail!( self.fail("expected term, got") )
+          bail!( self.error_here("expected term") )
         }
       } ;
 
@@ -1515,7 +875,7 @@ impl<'a> InstBuild<'a> {
   //   if let Some(term) = self.term_opt(map) ? {
   //     Ok(term)
   //   } else {
-  //     bail!( self.fail("expected term, got") )
+  //     bail!( self.fail("expected term") )
   //   }
   // }
   /// Tries to parse a term.
@@ -1541,7 +901,10 @@ impl<'a> InstBuild<'a> {
           * idx
         } else {
           bail!(
-            "parse error at {}: unknown predicate `{}`", pos, conf.bad(ident)
+            self.error(
+              pos,
+              format!("unknown predicate `{}`", conf.bad(ident))
+            )
           )
         } ;
         Ok( Some(
@@ -1549,18 +912,22 @@ impl<'a> InstBuild<'a> {
         ) )
       } else {
         bail!(
-          self.fail("expected operator or predicate, got")
+          self.error_here("expected operator or predicate")
         )
       }
     } else if let Some(b) = self.bool() {
       Ok( Some( TTerm::T( self.instance.bool(b) ) ) )
     } else if let Some(int) = self.int() {
       Ok( Some( TTerm::T( self.instance.int(int) ) ) )
-    } else if let Some((_,id)) = self.ident_opt() {
+    } else if let Some((pos,id)) = self.ident_opt() {
       if let Some(idx) = map.get(id) {
         Ok( Some( TTerm::T( self.instance.var(* idx) ) ) )
       } else {
-        bail!("unknown variable `{}`", conf.bad(id))
+        bail!(
+          self.error(
+            pos, format!("unknown variable `{}`", conf.bad(id))
+          )
+        )
       }
     } else {
       Ok(None)
@@ -1576,15 +943,13 @@ impl<'a> InstBuild<'a> {
   //   if Some( (pos, ') self.char_opt('(') {
   //     let (pos, ident) = if let Some(res) = self.ident_opt() { res } else {
   //       bail!(
-  //         self.fail("expected operator or identifier, got")
+  //         self.fail("expected operator or identifier")
   //       )
   //     } ;
   //     let pred = if let Some(idx) = self.new_pred_name_map.get(ident) {
   //       * idx
   //     } else {
-  //       bail!(
-  //         "parse error at {}: unknown predicate `{}`", pos, conf.bad(ident)
-  //       )
+  //       bail!(//         "unknown predicate `{}`", pos, conf.bad(ident) //       )
   //     } ;
   //     self.ws_cmt() ;
   //     let mut args = VarMap::with_capacity(11) ;
@@ -1640,7 +1005,7 @@ impl<'a> InstBuild<'a> {
     let rhs = if let Some(top_term) = self.top_term_opt(& hash_map) ? {
       top_term
     } else {
-      bail!( self.fail("expected top term, got") )
+      bail!( self.error_here("expected top term") )
     } ;
     self.ws_cmt() ;
     self.char(')') ? ;
@@ -1686,7 +1051,7 @@ impl<'a> InstBuild<'a> {
       res
     } else {
       bail!(
-        self.fail("expected forall or negated exists, got")
+        self.error_here("expected forall or negated exists")
       )
     } ;
     self.ws_cmt() ;
@@ -1742,7 +1107,7 @@ impl<'a> InstBuild<'a> {
         return Ok(true)
       } else {
         bail!(
-          self.fail("expected top-level item, got")
+          self.error_here("expected top-level item")
         )
       }
 
@@ -1755,39 +1120,24 @@ impl<'a> InstBuild<'a> {
 }
 
 
-#[doc = "Parses (and ignores) a `set-info`."]
-pub fn parse_set_info<'b>(bytes: & 'b [u8]) -> IResult<
-  & 'b [u8], (), InternalParseError
-> {
-  fix_error!(
-    bytes, InternalParseError,
-    do_parse!(
-      tag!("set-info") >>
-      spc_cmt >> err!(
-        re_bytes_find!(r#"^:[a-zA-Z][a-zA-Z\-0-9]*"#),
-        "expected keyword"
-      ) >>
-      spc_cmt >> opt!(
-        alt_complete!(
-          re_bytes_find!(r#"^"[^"]*""#) |
-          re_bytes_find!(r#"^[^)]*"#)
-        )
-      ) >> (())
-    )
+named!{
+  #[doc = "Comment parser."],
+  pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
+}
+
+named!{
+  #[doc = "Parses comments and spaces."],
+  pub spc_cmt<()>, map!(
+    many0!( alt_complete!(cmt | multispace) ), |_| ()
   )
 }
 
-#[doc = "Parses (and ignores) a `set-logic HORN`."]
-pub fn parse_set_logic<'b>(bytes: & 'b [u8]) -> IResult<
-  & 'b [u8], (), InternalParseError
-> {
-  fix_error!(
-    bytes, InternalParseError,
-    do_parse!(
-      tag!("set-logic") >>
-      spc_cmt >> err!(
-        tag!("HORN"), "unsupported logic"
-      ) >> (())
+named!{
+  #[doc = "Integer parser."],
+  pub int<Int>, map!(
+    re_bytes_find!("^([1-9][0-9]*|0)"),
+    |bytes| Int::parse_bytes(bytes, 10).expect(
+      "[bug] problem in integer parsing"
     )
   )
 }
