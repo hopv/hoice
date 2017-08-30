@@ -870,14 +870,14 @@ impl<'a> InstBuild<'a> {
   }
 
 
-  // /// Parses a term and fails.
-  // fn term(& mut self, map: & HashMap<& 'a str, VarIdx>) -> Res<Term> {
-  //   if let Some(term) = self.term_opt(map) ? {
-  //     Ok(term)
-  //   } else {
-  //     bail!( self.fail("expected term") )
-  //   }
-  // }
+  /// Parses a top term or fails.
+  fn top_term(& mut self, map: & HashMap<& 'a str, VarIdx>) -> Res<TTerm> {
+    if let Some(term) = self.top_term_opt(map) ? {
+      Ok(term)
+    } else {
+      bail!( self.error_here("expected term") )
+    }
+  }
   /// Tries to parse a term.
   fn top_term_opt(
     & mut self, map: & HashMap<& 'a str, VarIdx>
@@ -972,17 +972,20 @@ impl<'a> InstBuild<'a> {
   fn conjunction(
     & mut self, var_map: & HashMap<& 'a str, VarIdx>
   ) -> Res< Vec<TTerm> > {
-    self.char('(') ? ;
-    self.ws_cmt() ;
-    self.tag("and") ? ;
-    self.ws_cmt() ;
-    let mut conj = Vec::with_capacity(11) ;
-    while let Some(tterm) = self.top_term_opt(var_map) ? {
-      conj.push(tterm) ;
-      self.ws_cmt()
+    if self.char_opt('(') {
+      self.ws_cmt() ;
+      self.tag("and") ? ;
+      self.ws_cmt() ;
+      let mut conj = Vec::with_capacity(11) ;
+      while let Some(tterm) = self.top_term_opt(var_map) ? {
+        conj.push(tterm) ;
+        self.ws_cmt()
+      }
+      self.char(')') ? ;
+      Ok(conj)
+    } else {
+      Ok( vec![ self.top_term(var_map) ? ] )
     }
-    self.char(')') ? ;
-    Ok(conj)
   }
 
 
@@ -1096,13 +1099,13 @@ impl<'a> InstBuild<'a> {
       self.ws_cmt() ;
 
       if self.set_info() ? {
-        ()
+        println!("set info")
       } else if self.set_logic() ? {
-        ()
+        println!("set logic")
       } else if self.pred_dec() ? {
-        ()
+        println!("declare fun")
       } else if self.assert() ? {
-        ()
+        println!("assert")
       } else if self.check_sat() {
         return Ok(true)
       } else {
