@@ -25,6 +25,8 @@ pub enum FromLearners {
   Msg( String ),
   /// An error.
   Err( Error ),
+  /// Unsat result.
+  Unsat,
   /// Statistics.
   Stats( ProfileTree, Stats ),
 }
@@ -149,8 +151,19 @@ pub trait HasLearnerCore {
   /// Sends an error to the teacher. Returns `false` iff sending fails,
   /// **meaning the teacher is disconnected**.
   fn err(& self, err: Error) -> bool {
+    match * err.kind() {
+      ErrorKind::Unsat => return self.unsat(),
+      _ => (),
+    }
     self.core().sender.send(
       ( self.core().idx, FromLearners::Err(err) )
+    ).is_ok()
+  }
+  /// Sends an unsat result to the teacher. Returns `false` iff sending fails,
+  /// **meaning the teacher is disconnected**.
+  fn unsat(& self) -> bool {
+    self.core().sender.send(
+      ( self.core().idx, FromLearners::Unsat )
     ).is_ok()
   }
 

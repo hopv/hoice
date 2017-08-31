@@ -20,8 +20,11 @@ use instance::{ Instance, Val } ;
 
 
 /// Starts the teaching process.
-pub fn start_class(instance: Instance, profiler: Profile) -> Res<()> {
+pub fn start_class(
+  instance: & Arc<Instance>, profiler: & Profile
+) -> Res< Option<Candidates> > {
   use rsmt2::solver ;
+  let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
   let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
     || ErrorKind::Z3SpawnError
@@ -37,19 +40,17 @@ pub fn start_class(instance: Instance, profiler: Profile) -> Res<()> {
     }
   } ;
 
-  let res_2 = kid.kill().chain_err(
+  kid.kill().chain_err(
     || "while killing solver kid"
-  ) ;
-  res.and_then(
-    |()| res_2
-  )
+  ) ? ;
+  res
 }
 
 
 /// Teaching to the learners.
-fn teach<
-  'kid, S: Solver<'kid, Parser>
->(instance: Instance, solver: S, profiler: Profile) -> Res<()> {
+fn teach< 'kid, S: Solver<'kid, Parser> >(
+  instance: Arc<Instance>, solver: S, profiler: & Profile
+) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }
   let mut teacher = Teacher::mk(solver, instance, profiler) ;
 
@@ -85,58 +86,60 @@ fn teach<
       bail!("all learners are dead")
     }
 
-    if let Some( (_idx, candidates) ) = teacher.get_candidates() {
-      if_verb!{
+    match teacher.get_candidates() ? {
+
+      // Unsat result, done.
+      Some( (_idx, None) ) => {
         log_info!(
-          "\nCurrent candidates from {} learner:",
-          conf.emph( & teacher.learners[_idx].1 )
+          "\ngot unsat result from {} learner", teacher.learners[_idx].1
         ) ;
-        for _pred in teacher.instance.preds() {
-          log_info!("{}:", _pred.name) ;
-          log_info!("  {}", candidates[_pred.idx])
-        }
-      }
-      profile!{ teacher tick "cexs" }
-      let cexs = teacher.get_cexs(& candidates) ? ;
-      profile!{ teacher mark "cexs" }
+        teacher.finalize() ? ;
+        return Ok(None)
+      },
 
-      if cexs.is_empty() {
-        println!("(safe") ;
-        for pred in teacher.instance.preds() {
-          println!("  (define-pred {}", pred.name) ;
-          print!(  "    (") ;
-          for (var, typ) in pred.sig.index_iter() {
-            print!(" ({} {})", teacher.instance.var(var), typ)
+      // Got a candidate.
+      Some( ( _idx, Some(candidates) ) ) => {
+        if_verb!{
+          log_info!(
+            "\nCurrent candidates from {} learner:",
+            conf.emph( & teacher.learners[_idx].1 )
+          ) ;
+          for _pred in teacher.instance.preds() {
+            log_info!("{}:", _pred.name) ;
+            log_info!("  {}", candidates[_pred.idx])
           }
-          println!(" )") ;
-          println!("    {}", candidates[pred.idx]) ;
-          println!("  )")
         }
-        println!(")") ;
-        teacher.finalize()? ;
-        return Ok(())
-      }
+        profile!{ teacher tick "cexs" }
+        let cexs = teacher.get_cexs(& candidates) ? ;
+        profile!{ teacher mark "cexs" }
 
-      log_info!{
-        "\nlearning data before adding cex:\n{}",
-        teacher.data.string_do(
-          & (), |s| s.to_string()
-        ) ?
-      }
-      profile!{ teacher tick "data", "registration" }
-      teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
-      profile!{ teacher mark "data", "registration" }
-      log_info!{
-        "\nlearning data before propagation:\n{}",
-        teacher.data.string_do(
-          & (), |s| s.to_string()
-        ) ?
-      }
-      profile!{ teacher tick "data", "propagation" }
-      teacher.data.propagate() ? ;
-      profile!{ teacher mark "data", "propagation" }
-    } else {
-      bail!("all learners are dead")
+        if cexs.is_empty() {
+          teacher.finalize() ? ;
+          return Ok( Some(candidates) )
+        }
+
+        log_info!{
+          "\nlearning data before adding cex:\n{}",
+          teacher.data.string_do(
+            & (), |s| s.to_string()
+          ) ?
+        }
+        profile!{ teacher tick "data", "registration" }
+        teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
+        profile!{ teacher mark "data", "registration" }
+        log_info!{
+          "\nlearning data before propagation:\n{}",
+          teacher.data.string_do(
+            & (), |s| s.to_string()
+          ) ?
+        }
+        profile!{ teacher tick "data", "propagation" }
+        teacher.data.propagate() ? ;
+        profile!{ teacher mark "data", "propagation" }
+      },
+
+      // Channel is dead.
+      None => bail!("all learners are dead"),
     }
   }
 }
@@ -153,7 +156,7 @@ pub type Cexs = ClsHMap<Cex> ;
 
 
 /// The teacher, stores a solver.
-pub struct Teacher<S> {
+pub struct Teacher<'a, S> {
   /// The solver.
   pub solver: S,
   /// The (shared) instance.
@@ -167,16 +170,17 @@ pub struct Teacher<S> {
   /// Learners sender and description.
   pub learners: LrnMap<( Option< Sender<Data> >, String )>,
   /// Profiler.
-  pub _profiler: Profile,
+  pub _profiler: & 'a Profile,
   /// Number of guesses.
   count: usize,
 }
-impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
+impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Constructor.
-  pub fn mk(solver: S, instance: Instance, profiler: Profile) -> Self {
+  pub fn mk(
+    solver: S, instance: Arc<Instance>, profiler: & 'a Profile
+  ) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
-    let instance = Arc::new(instance) ;
     let data = Data::mk( instance.clone() ) ;
     Teacher {
       solver, instance, data, from_learners,
@@ -185,35 +189,24 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     }
   }
 
-  /// Finalizes the run.
+  /// Finalizes the run, does nothing in bench mode.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
     if conf.stats {
       println!("; Done in {} guesses", self.count) ;
       println!("") ;
     }
-
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
       * sender = None
     }
-    while self.get_candidates().is_some() {}
-
-    if conf.stats {
-      let (tree, stats) = self._profiler.extract_tree() ;
-      tree.print() ;
-      if ! stats.is_empty() {
-        println!("; stats:") ;
-        stats.print()
-      }
-      println!("") ;
-    }
+    while self.get_candidates()?.is_some() {}
 
     Ok(())
   }
+  /// Finalizes the run, does nothing in bench mode.
   #[cfg(feature = "bench")]
-  pub fn finalize(self) -> Res<()> {
-    Ok(())
-  }
+  #[inline(always)]
+  pub fn finalize(self) -> Res<()> { Ok(()) }
 
   /// Adds a new learner.
   pub fn add_learner<L: Learner + 'static>(& mut self, learner: L) -> Res<()> {
@@ -259,7 +252,13 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
   }
 
   /// Waits for some candidates.
-  pub fn get_candidates(& self) -> Option<(LrnIdx, Candidates)> {
+  ///
+  /// Returns `None` when there are no more kids. Otherwise, the second
+  /// element of the pair is `None` if a learner concluded `unsat`, and
+  /// `Some` of the candidates otherwise.
+  pub fn get_candidates(
+    & self
+  ) -> Res< Option<(LrnIdx, Option<Candidates>)> > {
     profile!{ self tick "waiting" }
     'recv: loop {
       match self.from_learners.recv() {
@@ -295,11 +294,14 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
         Ok( (idx, FromLearners::Cands(cands)) ) => {
           profile!{ self mark "waiting" }
           profile!{ self "candidates" => add 1 }
-          return Some( (idx, cands) )
+          return Ok( Some( (idx, Some(cands)) ) )
+        },
+        Ok( (idx, FromLearners::Unsat) ) => {
+          return Ok( Some( (idx, None) ) )
         },
         Err(_) => {
           profile!{ self mark "waiting" }
-          return None
+          return Ok( None )
         },
       }
     }
@@ -346,7 +348,7 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
-      {
+      if conf.smt_log {
         for lhs in clause.lhs() {
           self.solver.comment(
             & format!("{}\n", lhs)
@@ -357,10 +359,12 @@ impl<'kid, S: Solver<'kid, Parser>> Teacher<S> {
         ) ?
       }
     }
+    profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       self.solver.declare_const(var, & var.typ, & ()) ?
     }
     self.solver.assert( clause, cands ) ? ;
+    profile!{ self mark "cexs", "prep" }
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
     profile!{ self mark "cexs", "check-sat" }

@@ -167,49 +167,28 @@ fn work() -> Res<()> {
 
     profile!{ |profiler| tick "loading" }
 
-    profile!{ |profiler| tick "loading", "parsing" }
 
-    let mut builder = ::instance::build::InstBuild::mk() ;
-    builder.reduce().chain_err(
-      || "during instance reduction"
-    ) ? ;
-
-    log_info!{ "loading instance from `{}`...", conf.emph(file_path) }
-    let mut buffer = Vec::with_capacity(1007) ;
+    profile!{ |profiler| tick "loading", "reading file" }
+    let mut txt = String::with_capacity(2000) ;
     let mut file = OpenOptions::new().read(true).open(file_path).chain_err(
       || format!("while opening input file `{}`", conf.emph(file_path))
     ) ? ;
-    let _ = file.read_to_end(& mut buffer).chain_err(
+    let _ = file.read_to_string(& mut txt).chain_err(
       || format!("while reading input file `{}`", conf.emph(file_path))
     ) ? ;
+    profile!{ |profiler| mark "loading", "reading file" }
 
-    let (_rest, infer) = if let Some(res) = builder.parse(& buffer) {
-      res
-    } else {
-      bail!( builder.to_error(& buffer, Some(0)) )
-    } ;
+    let mut parser = ::instance::parse::Parser::mk(& txt) ;
+    let mut builder = ::instance::build::InstBuild::mk() ;
 
+    profile!{ |profiler| tick "loading", "parsing" }
+    let mut parse_res = parser.parse( builder.instance() ) ? ;
     profile!{ |profiler| mark "loading", "parsing" }
 
-    log_info!{
-      "done: read {} declarations and {} clauses (read {} of {} bytes)\n",
-      builder.preds().len(), builder.clauses().len(),
-      buffer.len() - _rest, buffer.len()
-    }
-
-    if ! infer {
-      log_info!{ "no `infer` command provided" }
-      return Ok(())
-    }
-
     profile!{ |profiler| tick "loading", "building" }
-
-    let mut instance = builder.to_instance(
-      & buffer, Some(0)
-    ).chain_err(
-      || "during instance construction"
+    let mut instance = builder.to_instance().chain_err(
+      || "during instance extraction"
     ) ? ;
-
     profile!{ |profiler| mark "loading", "building" }
 
     log_info!{
@@ -217,9 +196,7 @@ fn work() -> Res<()> {
     }
 
     profile!{ |profiler| tick "loading", "simplify" }
-
     instance.simplify_clauses() ? ;
-
     profile!{ |profiler| mark "loading", "simplify" }
     
     log_info!{
@@ -228,6 +205,66 @@ fn work() -> Res<()> {
     }
 
     profile!{ |profiler| mark "loading" }
+
+    let mut model = None ;
+
+    'parse_and_work: loop {
+
+      use instance::parse::Parsed ;
+      
+      match parse_res {
+
+        // Check-sat, start class.
+        Parsed::CheckSat => {
+          let arc_instance = Arc::new(instance) ;
+          model = teacher::start_class(
+            & arc_instance, & profiler
+          ) ? ;
+          if model.is_some() {
+            println!("sat")
+          } else {
+            println!("unsat")
+          }
+
+          { // Careful with this block, so that the unwrap does not fail
+            while Arc::strong_count(& arc_instance) != 1 {}
+            instance = if let Ok(instance) = Arc::try_unwrap( arc_instance ) {
+              instance
+            } else {
+              bail!("\
+                [bug] finalized teacher but there are still \
+                strong references to the instance\
+              ")
+            }
+          }
+
+        },
+
+        // Print model if available.
+        Parsed::GetModel => if let Some(ref model) = model {
+          println!("(model") ;
+          for pred in instance.preds() {
+            println!("  (define-fun {}", pred.name) ;
+            print!(  "    (") ;
+            for (var, typ) in pred.sig.index_iter() {
+              print!(" ({} {})", instance.var(var), typ)
+            }
+            println!(" ) Bool") ;
+            println!("    {}", model[pred.idx]) ;
+            println!("  )")
+          }
+          println!(")")
+        } else {
+          bail!("no model available")
+        },
+
+        Parsed::None => break 'parse_and_work,
+      }
+
+      parse_res = parser.parse( & mut instance ) ? ;
+    }
+
+    print_stats(profiler) ;
 
     // let qualifiers = ::learning::ice::mining::Qualifiers::mk(& instance) ;
 
@@ -241,10 +278,28 @@ fn work() -> Res<()> {
     //   println!("")
     // }
 
-    teacher::start_class(instance, profiler)
+    Ok(())
 
   } else {
     log_info!{ "loading instance from `{}`...", conf.emph("stdin") }
     bail!("parsing from stdin is not implemented")
+  }
+}
+
+
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg(feature = "bench")]
+fn print_stats(_: Profile) {}
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg( not(feature = "bench") )]
+fn print_stats(profiler: Profile) {
+  if conf.stats {
+    let (tree, stats) = profiler.extract_tree() ;
+    tree.print() ;
+    if ! stats.is_empty() {
+      println!("; stats:") ;
+      stats.print()
+    }
+    println!("") ;
   }
 }

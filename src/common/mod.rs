@@ -362,6 +362,7 @@ impl Verb {
 pub struct Conf {
   pub file: Option<String>,
   pub check: Option<String>,
+  pub check_eld: bool,
   pub smt_log: bool,
   pub out_dir: String,
   pub smt_learn: bool,
@@ -369,6 +370,8 @@ pub struct Conf {
   pub fpice_synth: bool,
   pub gain_threads: usize,
   pub step: bool,
+  pub decay: bool,
+  pub max_decay: usize,
   pub verb: Verb,
   pub stats: bool,
   styles: Styles,
@@ -379,13 +382,17 @@ impl ColorExt for Conf {
 impl Conf {
   /// Regular constructor.
   pub fn mk(
-    file: Option<String>, check: Option<String>,
+    file: Option<String>, check: Option<String>, check_eld: bool,
     smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, smt_learn: bool, fpice_synth: bool, gain_threads: usize,
+    step: bool, decay: bool, max_decay: usize,
+    smt_learn: bool, fpice_synth: bool,
+    gain_threads: usize,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
-      file, check, smt_log, out_dir, step, smt_learn, fpice_synth,
+      file, check, check_eld,
+      smt_log, out_dir, step, decay, max_decay, smt_learn,
+      fpice_synth,
       gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
     }
   }
@@ -408,7 +415,7 @@ impl Conf {
         Configuration::new().num_threads(
           self.gain_threads
         ).thread_name(
-          |i| format!("gain_{}", i)
+          |i| format!("hoice_gain_{}", i)
         )
       ).map_err(
         |e| Error::from_kind(
@@ -509,6 +516,16 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("decay").long("--decay").short("-d").help(
+        "activates qualifier decay (forgetting unused qualifiers)"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("smt_log").long("--smt_log").help(
         "(de)activates smt logging to the output directory"
       ).validator(
@@ -551,13 +568,34 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("check_eld").long("--check_eld").help(
+        "if `check` is active, expect eldarica-style result"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("gain_threads").long("--gain_threads").help(
-        "sets the number of threads to use when computing qualifier gains"
+        "sets the number of threads to use when computing qualifier gains, \
+        0 for auto"
       ).validator(
         int_validator
       ).value_name(
         "INT"
       ).default_value("1").takes_value(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("max_decay").long("--max_decay").help(
+        "sets the qualifier decay threshold"
+      ).validator(
+        int_validator
+      ).value_name(
+        "INT"
+      ).default_value("50").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -587,6 +625,11 @@ impl Conf {
     ).expect(
       "unreachable(step): default is provided and input validated in clap"
     ) ;
+    let decay = matches.value_of("decay").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(decay): default is provided and input validated in clap"
+    ) ;
     let smt_log = matches.value_of("smt_log").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -601,6 +644,11 @@ impl Conf {
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
+    let check_eld = matches.value_of("check_eld").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(check_eld): default is provided and input validated in clap"
+    ) ;
     let fpice_synth = true ;
     // matches.value_of("fpice_synth").and_then(
     //   |s| bool_of_str(& s)
@@ -614,6 +662,13 @@ impl Conf {
       "unreachable(gain_threads): default is provided"
     ).expect(
       "unreachable(gain_threads): input validated in clap"
+    ) ;
+    let max_decay = matches.value_of("max_decay").map(
+      |s| usize::from_str(& s)
+    ).expect(
+      "unreachable(max_decay): default is provided"
+    ).expect(
+      "unreachable(max_decay): input validated in clap"
     ) ;
     let stats = matches.value_of("stats").and_then(
       |s| bool_of_str(& s)
@@ -631,8 +686,9 @@ impl Conf {
     }
 
     Conf::mk(
-      file, check, smt_log, z3_cmd.into(), out_dir.into(), step, smt_learn,
-      fpice_synth, gain_threads, verb, stats, color
+      file, check, check_eld, smt_log, z3_cmd.into(), out_dir.into(), step,
+      decay, max_decay,
+      smt_learn, fpice_synth, gain_threads, verb, stats, color
     )
   }
 }
@@ -1176,8 +1232,9 @@ impl Profile {
       scope, & (ref should_be_none, ref time)
     ) in self.map.borrow().iter() {
       if should_be_none.is_some() {
-        panic!(
-          "Profile::extract_tree: still have a live instant for {:?}", scope
+        println!(
+          "[Warning] Profile::extract_tree: \
+          still have a live instant for {:?}", scope
         )
       }
       tree.insert( scope.clone(), * time )

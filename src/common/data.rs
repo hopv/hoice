@@ -342,7 +342,6 @@ impl Data {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_pos(& mut self) -> Res<()> {
-    log_debug!("|===| add propagate pos") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.pos_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -464,7 +463,7 @@ impl Data {
             self.stage_pos(pred, args)
           } else {
             // No `rhs`, we have `true => false`, contradiction.
-            bail!("contradiction detected, inference impossible")
+            bail!(ErrorKind::Unsat)
           }
         } else
         // Is the constraint negative and the `lhs` has only one element?
@@ -508,7 +507,6 @@ impl Data {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_neg(& mut self) -> Res<()> {
-    log_debug!("|===| add propagate neg") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.neg_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -735,7 +733,7 @@ impl Data {
         self.add_propagate_pos() ? ;
         return Ok(())
       } else {
-        bail!("contradiction detected, inference is impossible")
+        bail!(ErrorKind::Unsat)
       }
     } else if nu_lhs.len() == 1 && nu_rhs.is_none() {
       // unit, the single lhs has to be false.
