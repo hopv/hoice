@@ -342,7 +342,6 @@ impl Data {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_pos(& mut self) -> Res<()> {
-    log_debug!("|===| add propagate pos") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.pos_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -508,7 +507,6 @@ impl Data {
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
   pub fn add_propagate_neg(& mut self) -> Res<()> {
-    log_debug!("|===| add propagate neg") ;
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.neg_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.

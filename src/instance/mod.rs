@@ -9,6 +9,7 @@ use self::info::* ;
 
 pub mod info ;
 pub mod build ;
+pub mod parse ;
 
 /// Types.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
