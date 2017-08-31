@@ -201,14 +201,36 @@ named!{
           )
         ) >>
         spc_cmt >> char!('(') >>
-        spc_cmt >> tag!("=>") >>
-        spc_cmt >> lhs: conjunction >>
-        spc_cmt >> rhs: s_expr >>
-        spc_cmt >> char!(')') >>
+        spc_cmt >> clause: alt_complete!(
+          do_parse!(
+            tag!("not") >>
+            spc_cmt >> char!('(') >>
+            spc_cmt >> tag!("or") >>
+            spc_cmt >> lhs: many0!(
+              terminated!(s_expr, spc_cmt)
+            ) >>
+            spc_cmt >> char!(')') >> (
+              Clause {
+                args: args.clone(), lets: lets.clone(),
+                lhs, rhs: "false".into()
+              }
+            )
+          ) |
+          do_parse!(
+            tag!("=>") >>
+            spc_cmt >> lhs: conjunction >>
+            spc_cmt >> rhs: s_expr >> (
+              Clause {
+                args: args.clone(), lets: lets.clone(),
+                lhs, rhs
+              }
+            )
+          )
+        ) >>
         spc_cmt >> many0!(
           terminated!(char!(')'), spc_cmt)
         ) >> (
-          Clause { args, lets, lhs, rhs }
+          clause
         )
       ) |
 
@@ -325,9 +347,9 @@ named!{
 named!{
   #[doc = "Parses the output of an eldarica run."],
   pub parse_eld_output<Output>, do_parse!(
-    spc_cmt >> dbg_dmp!(tag!("sat")) >>
+    spc_cmt >> tag!("sat") >>
     spc_cmt >> pred_defs: many0!(
-      terminated!(dbg_dmp!(pred_def), spc_cmt)
+      terminated!(pred_def, spc_cmt)
     ) >>
     spc_cmt >> (
       Output { pred_defs }
