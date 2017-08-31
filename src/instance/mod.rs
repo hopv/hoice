@@ -113,7 +113,11 @@ impl Val {
 impl_fmt!{
   Val(self, fmt) {
     match * self {
-      Val::I(ref i) => write!(fmt, "{}", i),
+      Val::I(ref i) => if i.is_negative() {
+        write!(fmt, "(- {})", - i)
+      } else {
+        write!(fmt, "{}", i)
+      },
       Val::B(b) => write!(fmt, "{}", b),
       Val::N => fmt.write_str("?"),
     }
@@ -213,7 +217,14 @@ impl RTerm {
             write!(w, "{}", sep) ? ;
             write_var(w, v) ?
           },
-          Int(ref i) => write!(w, "{}{}", sep, i) ?,
+          Int(ref i) => {
+            write!(w, "{}", sep) ? ;
+            if i.is_negative() {
+              write!(w, "(- {})", - i) ?
+            } else {
+              write!(w, "{}", i) ?
+            }
+          },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
           App { op, ref args } => {
             write!(w, "{}({}", sep, op) ? ;

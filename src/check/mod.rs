@@ -105,6 +105,7 @@ impl Output {
   pub fn of_bytes(bytes: & [u8]) -> Res<Self> {
     use nom::IResult ;
     match if conf.check_eld {
+      println!("eld...") ;
       parse_eld_output(bytes)
     } else {
       parse_output(bytes)

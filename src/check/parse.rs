@@ -19,7 +19,7 @@ named!{
 named!{
   #[doc = "Simple ident parser."],
   pub sident<& str>, map_res!(
-    re_bytes_find!(r#"^[a-zA-Z~!@\$%^&\*_\-\+=<>\.\?\^/][a-zA-Z0-9~!@\$%^&\*_\-\+=<>\.\?\^/]*"#),
+    re_bytes_find!(r#"^[a-zA-Z~!@\$%^&\*_\-\+=<>\.\?\^/][a-zA-Z0-9~!@\$%^&\*_\-\+=<>\.\?\^/:]*"#),
     |bytes| ::std::str::from_utf8(bytes).chain_err(
       || "could not convert bytes to utf8"
     )
@@ -28,23 +28,18 @@ named!{
 
 named!{
   #[doc = "Quoted ident parser."],
-  pub qident<& str>, alt_complete!(
-    delimited!(
-      char!('|'), sident, char!('|')
-    ) |
-    map_res!(
-      re_bytes_find!(r#"^\|[^\|]*\|"#),
-      |bytes| ::std::str::from_utf8(bytes).chain_err(
-        || "could not convert bytes to utf8"
-      )
+  pub qident<& str>, map_res!(
+    re_bytes_find!(r#"^\|[^\|]*\|"#),
+    |bytes| ::std::str::from_utf8(bytes).chain_err(
+      || "could not convert bytes to utf8"
     )
   )
 }
 
 named!{
   #[doc = "Ident parser."],
-  pub ident<String>, map!(
-    alt_complete!(sident | qident), |s| s.to_string()
+  pub ident<String>, alt_complete!(
+    map!(sident, |s| format!("|{}|", s)) | map!(qident, |s| s.to_string())
   )
 }
 
@@ -285,10 +280,9 @@ named!{
 named!{
   #[doc = "Parses the output of an eldarica run."],
   pub parse_eld_output<Output>, do_parse!(
-    spc_cmt >> tag!("Warning: ignoring get-model") >>
-    spc_cmt >> tag!("sat") >>
+    spc_cmt >> dbg_dmp!(tag!("sat")) >>
     spc_cmt >> pred_defs: many0!(
-      terminated!(pred_def, spc_cmt)
+      terminated!(dbg_dmp!(pred_def), spc_cmt)
     ) >>
     spc_cmt >> (
       Output { pred_defs }

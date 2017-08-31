@@ -1099,13 +1099,13 @@ impl<'a> InstBuild<'a> {
       self.ws_cmt() ;
 
       if self.set_info() ? {
-        println!("set info")
+        ()
       } else if self.set_logic() ? {
-        println!("set logic")
+        ()
       } else if self.pred_dec() ? {
-        println!("declare fun")
+        ()
       } else if self.assert() ? {
-        println!("assert")
+        ()
       } else if self.check_sat() {
         return Ok(true)
       } else {
