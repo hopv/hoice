@@ -105,6 +105,18 @@ impl<'a> InParser<'a> {
     assert!( self.buf.is_empty() )
   }
 
+  /// True if there is a next character.
+  fn has_next(& mut self) -> bool {
+    if ! self.buf.is_empty() {
+      true
+    } else if let Some(c) = self.next() {
+      self.buf.push(c) ;
+      true
+    } else {
+      false
+    }
+  }
+
   /// Next character.
   fn next(& mut self) -> Option<char> {
     if let Some(c) = self.buf.pop() {
@@ -477,13 +489,26 @@ impl<'a> InParser<'a> {
             break
           }
         }
-        // println!("`") ;
+        println!("`") ;
         bail!("expected item")
       }
 
       self.ws_cmt() ;
       self.char(')').chain_err(|| "closing item") ? ;
       self.ws_cmt()
+    }
+
+    if self.has_next() {
+      print!("> `") ;
+      while let Some(next) = self.next() {
+        if next != '\n' {
+          print!("{}", next)
+        } else {
+          break
+        }
+      }
+      println!("`") ;
+      bail!("could not parse the whole input file")
     }
 
     Ok(
@@ -494,13 +519,15 @@ impl<'a> InParser<'a> {
 
   /// Define-fun.
   fn define_fun(& mut self) -> Res<bool> {
-    if self.tag_opt("define-fun") {
+    if ! self.tag_opt("define-fun") {
       return Ok(false)
     }
     self.ws_cmt() ;
     let pred = self.ident() ? ;
     self.ws_cmt() ;
     let args = self.args() ? ;
+    self.ws_cmt() ;
+    self.tag("Bool") ? ;
     self.ws_cmt() ;
     let body = self.sexpr() ? ;
     self.ws_cmt() ;
@@ -524,6 +551,14 @@ impl<'a> InParser<'a> {
 
     while self.char_opt('(') {
       self.ws_cmt() ;
+        // while let Some(next) = self.next() {
+        //   if next != '\n' {
+        //     print!("{}", next)
+        //   } else {
+        //     break
+        //   }
+        // }
+        // println!("`") ;
 
       if self.define_fun() ? {
         ()
@@ -536,13 +571,28 @@ impl<'a> InParser<'a> {
             break
           }
         }
-        // println!("`") ;
+        println!("`") ;
         bail!("expected define-fun")
       }
 
       self.ws_cmt() ;
-      self.char(')').chain_err(|| "closing model") ? ;
+      self.char(')').chain_err(|| "closing define-fun") ? ;
       self.ws_cmt()
+    }
+    self.char(')').chain_err(|| "closing model") ? ;
+    self.ws_cmt() ;
+
+    if self.has_next() {
+      print!("> `") ;
+      while let Some(next) = self.next() {
+        if next != '\n' {
+          print!("{}", next)
+        } else {
+          break
+        }
+      }
+      println!("`") ;
+      bail!("could not parse the whole output file")
     }
 
     Ok(
