@@ -52,6 +52,8 @@ pub struct PredDef {
 pub struct Clause {
   /// Arguments.
   pub args: Args,
+  /// Let bindings.
+  pub lets: Vec< Vec<(Ident, String)> >,
   /// LHS.
   pub lhs: Vec<Term>,
   /// RHS.
@@ -221,7 +223,9 @@ impl Data {
     let mut count = 0 ;
 
     // Check all clauses one by one.
-    for & Clause { ref args, ref lhs, ref rhs } in & self.input.clauses {
+    for & Clause {
+      ref args, ref lets, ref lhs, ref rhs
+    } in & self.input.clauses {
       count += 1 ;
       solver.push(1) ? ;
 
@@ -240,6 +244,22 @@ impl Data {
         term.push_str(")") ;
         term
       } ;
+      let mut let_binding = String::new() ;
+      let mut term_end = String::new() ;
+      for letb in lets {
+        term_end.push(')') ;
+        let_binding.push_str("(let ( ") ;
+        for & (ref id, ref term) in letb {
+          let_binding.push('(') ;
+          let_binding.push_str(& id) ;
+          let_binding.push(' ') ;
+          let_binding.push_str(& term) ;
+          let_binding.push(')')
+        }
+        let_binding.push_str(" ) ") ;
+      }
+
+      let term = format!("{}{}{}", let_binding, term, term_end) ;
 
       solver.assert(& term, & ()) ? ;
 

@@ -178,12 +178,37 @@ named!{
       do_parse!(
         spc_cmt >> tag!("forall") >>
         spc_cmt >> args: arguments >>
+        spc_cmt >> lets: many0!(
+          do_parse!(
+            char!('(') >>
+            spc_cmt >> tag!("let") >>
+            spc_cmt >> char!('(') >>
+            spc_cmt >> bindings: many0!(
+              do_parse!(
+                char!('(') >>
+                spc_cmt >> id: ident >>
+                spc_cmt >> term: s_expr >>
+                spc_cmt >> char!(')') >>
+                spc_cmt >> (
+                  (id, term)
+                )
+              )
+            ) >>
+            spc_cmt >> char!(')') >>
+            spc_cmt >> (
+              bindings
+            )
+          )
+        ) >>
         spc_cmt >> char!('(') >>
         spc_cmt >> tag!("=>") >>
         spc_cmt >> lhs: conjunction >>
         spc_cmt >> rhs: s_expr >>
-        spc_cmt >> char!(')') >> (
-          Clause { args, lhs, rhs }
+        spc_cmt >> char!(')') >>
+        spc_cmt >> many0!(
+          terminated!(char!(')'), spc_cmt)
+        ) >> (
+          Clause { args, lets, lhs, rhs }
         )
       ) |
 
@@ -192,14 +217,34 @@ named!{
         spc_cmt >> char!('(') >>
         spc_cmt >> tag!("exists") >>
         spc_cmt >> args: arguments >>
+        spc_cmt >> lets: many0!(
+          do_parse!(
+            char!('(') >>
+            spc_cmt >> tag!("let") >>
+            spc_cmt >> char!('(') >>
+            spc_cmt >> bindings: many0!(
+              do_parse!(
+                char!('(') >>
+                spc_cmt >> id: ident >>
+                spc_cmt >> term: s_expr >>
+                spc_cmt >> char!(')') >> (
+                  (id, term)
+                )
+              )
+            ) >>
+            spc_cmt >> char!(')') >> (
+              bindings
+            )
+          )
+        ) >>
         spc_cmt >> lhs: conjunction >>
-        spc_cmt >> char!(')') >> (
-          Clause { args, lhs, rhs: "false".into() }
+        spc_cmt >> many0!(
+          terminated!(char!(')'), spc_cmt)
+        ) >> (
+          Clause { args, lets, lhs, rhs: "false".into() }
         )
       )
-    ) >>
-    spc_cmt >> char!(')') >>
-    spc_cmt >> char!(')') >> (
+    ) >> (
       clause
     )
   )
@@ -252,7 +297,7 @@ named!{
     spc_cmt >> clauses: many0!(
       terminated!(clause, spc_cmt)
     ) >>
-    spc_cmt >> dbg_dmp!(infer) >>
+    spc_cmt >> infer >>
     spc_cmt >> (
       Input { pred_decs, clauses }
     )
