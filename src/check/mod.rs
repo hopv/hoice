@@ -181,12 +181,6 @@ impl Data {
   pub fn check< 'kid, S: Solver<'kid, Parser> >(
     & self, mut solver: S
   ) -> Res<()> {
-    // Define all predicates.
-    for & PredDef { ref pred, ref args, ref body } in & self.output.pred_defs {
-      solver.define_fun(
-        pred, args, & "Bool".to_string(), body, & ()
-      ) ?
-    }
 
     let mut okay = true ;
     let mut count = 0 ;
@@ -196,42 +190,22 @@ impl Data {
       ref args, ref body // ref lets, ref lhs, ref rhs
     } in & self.input.clauses {
       count += 1 ;
-      solver.push(1) ? ;
+      solver.reset() ? ;
+      // Define all predicates.
+      for & PredDef {
+        ref pred, ref args, ref body
+      } in & self.output.pred_defs {
+        solver.define_fun(
+          pred, args, & "Bool".to_string(), body, & ()
+        ) ?
+      }
 
       // Declare arguments.
       for & (ref ident, ref typ) in args {
         solver.declare_const(ident, typ, & ()) ?
       }
 
-      let term = body.clone() ;
-      // // Build term.
-      // let term = {
-      //   let mut term = format!("(and (not {})", rhs) ;
-      //   for lhs in lhs {
-      //     term.push(' ') ;
-      //     term.push_str(lhs)
-      //   }
-      //   term.push_str(")") ;
-      //   term
-      // } ;
-      // let mut let_binding = String::new() ;
-      // let mut term_end = String::new() ;
-      // for letb in lets {
-      //   term_end.push(')') ;
-      //   let_binding.push_str("(let ( ") ;
-      //   for & (ref id, ref term) in letb {
-      //     let_binding.push('(') ;
-      //     let_binding.push_str(& id) ;
-      //     let_binding.push(' ') ;
-      //     let_binding.push_str(& term) ;
-      //     let_binding.push(')')
-      //   }
-      //   let_binding.push_str(" ) ") ;
-      // }
-
-      // let term = format!("{}{}{}", let_binding, term, term_end) ;
-
-      solver.assert(& term, & ()) ? ;
+      solver.assert( & format!("(not {})", body), & ()) ? ;
 
       if solver.check_sat() ? {
         okay = false ;
@@ -261,8 +235,6 @@ impl Data {
       } else {
         info!("clause {} is fine", count)
       }
-
-      solver.pop(1) ?
     }
 
     if ! okay {

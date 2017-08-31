@@ -424,13 +424,35 @@ impl<'a> InParser<'a> {
     } else {
       false
     } ;
+    
+    let mut cnt = 1 ;
 
     let (args, body) = if self.tag_opt("forall") {
       if negated {
         bail!("negated forall in assertion")
       }
       self.ws_cmt() ;
-      let args = self.args().chain_err(|| "while parsing arguments") ? ;
+      use std::iter::Extend ;
+      let mut args = vec![] ;
+      loop {
+        let these_args = self.args().chain_err(
+          || "while parsing arguments"
+        ) ? ;
+        args.extend(these_args) ;
+        self.ws_cmt() ;
+        if self.char_opt('(') {
+          self.ws_cmt() ;
+          if self.tag_opt("forall") {
+            cnt += 1 ;
+            self.ws_cmt()
+          } else {
+            self.txen('(') ;
+            break
+          }
+        } else {
+          break
+        }
+      }
       self.ws_cmt() ;
       let body = self.sexpr().chain_err(|| "while parsing body") ? ;
       (args, body)
@@ -447,8 +469,11 @@ impl<'a> InParser<'a> {
 
     let body = if negated { format!("(not {})", body) } else { body } ;
 
-    self.char(')').chain_err(|| "closing qualifier") ? ;
-    self.ws_cmt() ;
+    while cnt > 0 {
+      self.char(')').chain_err(|| "closing qualifier") ? ;
+      self.ws_cmt() ;
+      cnt -= 1
+    }
     if negated {
       self.char(')').chain_err(|| "closing negation") ? ;
     }
