@@ -260,6 +260,17 @@ impl<'a> InParser<'a> {
     }
   }
 
+  /// Unquoted identifier char.
+  fn ident_char(c: char) -> bool {
+    if c.is_alphanumeric() { true } else {
+      match c {
+        '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' |
+        '_' | '-' | '+' | '=' | '<' | '>' | '.' | '?' | '/' => true,
+        _ => false,
+      }
+    }
+  }
+
   /// Identifier or fails.
   fn ident(& mut self) -> Res<Ident> {
     if let Some(id) = self.ident_opt() ? {
@@ -275,21 +286,13 @@ impl<'a> InParser<'a> {
         let id = self.not_char('|') ;
         self.char('|') ? ;
         id
-      } else if next.is_alphabetic() {
+      } else if Self::ident_char(next) && ! next.is_numeric() {
         let mut id = String::new() ;
         id.push(next) ;
         while let Some(next) = self.next() {
-          if next.is_alphanumeric() { id.push(next) } else {
-            match next {
-              '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' |
-              '_' | '-' | '+' | '=' | '<' | '>' | '.' | '?' | '/' => id.push(
-                next
-              ),
-              _ => {
-                self.txen(next) ;
-                break
-              },
-            }
+          if Self::ident_char(next) { id.push(next) } else {
+            self.txen(next) ;
+            break
           }
         }
         id
@@ -548,13 +551,19 @@ impl<'a> InParser<'a> {
       return Ok(false)
     }
     self.ws_cmt() ;
-    let pred = self.ident() ? ;
+    let pred = self.ident().chain_err(
+      || "while parsing predicate identifier"
+    ) ? ;
     self.ws_cmt() ;
-    let args = self.args() ? ;
+    let args = self.args().chain_err(
+      || "while parsing arguments"
+    ) ? ;
     self.ws_cmt() ;
     self.tag("Bool") ? ;
     self.ws_cmt() ;
-    let body = self.sexpr() ? ;
+    let body = self.sexpr().chain_err(
+      || "while parsing body"
+    ) ? ;
     self.ws_cmt() ;
     self.pred_defs.push(
       PredDef { pred, args, body }
@@ -585,7 +594,9 @@ impl<'a> InParser<'a> {
         // }
         // println!("`") ;
 
-      if self.define_fun() ? {
+      if self.define_fun().chain_err(
+        || "while parsing a define-fun"
+      ) ? {
         ()
       } else {
         print!("> `") ;
