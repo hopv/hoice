@@ -68,11 +68,11 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
-    log_info!{
-      "all learning data:\n{}", teacher.data.string_do(
-        & (), |s| s.to_string()
-      ) ?
-    }
+    // log_info!{
+    //   "all learning data:\n{}", teacher.data.string_do(
+    //     & (), |s| s.to_string()
+    //   ) ?
+    // }
 
     if conf.step {
       let mut dummy = String::new() ;
@@ -118,21 +118,31 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
           return Ok( Some(candidates) )
         }
 
-        log_info!{
-          "\nlearning data before adding cex:\n{}",
-          teacher.data.string_do(
-            & (), |s| s.to_string()
-          ) ?
-        }
+        // log_info!{
+        //   "\nlearning data before adding cex:\n{}",
+        //   teacher.data.string_do(
+        //     & (), |s| s.to_string()
+        //   ) ?
+        // }
         profile!{ teacher tick "data", "registration" }
-        teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
-        profile!{ teacher mark "data", "registration" }
-        log_info!{
-          "\nlearning data before propagation:\n{}",
-          teacher.data.string_do(
-            & (), |s| s.to_string()
-          ) ?
+        if let Err(e) = teacher.instance.cexs_to_data(
+          & mut teacher.data, cexs
+        ) {
+          match e.kind() {
+            & ErrorKind::Unsat => {
+              teacher.finalize() ? ;
+              return Ok(None)
+            },
+            _ => bail!(e),
+          }
         }
+        profile!{ teacher mark "data", "registration" }
+        // log_info!{
+        //   "\nlearning data before propagation:\n{}",
+        //   teacher.data.string_do(
+        //     & (), |s| s.to_string()
+        //   ) ?
+        // }
         profile!{ teacher tick "data", "propagation" }
         teacher.data.propagate() ? ;
         profile!{ teacher mark "data", "propagation" }
