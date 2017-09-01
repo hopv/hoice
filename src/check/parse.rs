@@ -39,7 +39,7 @@ named!{
 named!{
   #[doc = "Ident parser."],
   pub ident<String>, alt_complete!(
-    map!(sident, |s| format!("|{}|", s)) | map!(qident, |s| s.to_string())
+    map!(sident, |s| format!("{}", s)) | map!(qident, |s| s.to_string())
   )
 }
 
@@ -264,7 +264,7 @@ impl<'a> InParser<'a> {
   fn ident_char(c: char) -> bool {
     if c.is_alphanumeric() { true } else {
       match c {
-        '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' |
+        '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' | ':' |
         '_' | '-' | '+' | '=' | '<' | '>' | '.' | '?' | '/' => true,
         _ => false,
       }
@@ -554,6 +554,7 @@ impl<'a> InParser<'a> {
     let pred = self.ident().chain_err(
       || "while parsing predicate identifier"
     ) ? ;
+    // println!("pred: {}", pred) ;
     self.ws_cmt() ;
     let args = self.args().chain_err(
       || "while parsing arguments"
@@ -575,13 +576,20 @@ impl<'a> InParser<'a> {
   /// Parses an `smt2` file.
   pub fn parse_output(mut self) -> Res<Output> {
     // println!("parsing") ;
+    if conf.check_eld {
+      self.ws_cmt() ;
+      self.tag("Warning: ignoring get-model") ?
+    }
     self.ws_cmt() ;
     self.tag("sat") ? ;
     self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
-    self.tag("model") ? ;
-    self.ws_cmt() ;
+
+    if ! conf.check_eld {
+      self.char('(') ? ;
+      self.ws_cmt() ;
+      self.tag("model") ? ;
+      self.ws_cmt()
+    }
 
     while self.char_opt('(') {
       self.ws_cmt() ;
@@ -615,8 +623,10 @@ impl<'a> InParser<'a> {
       self.char(')').chain_err(|| "closing define-fun") ? ;
       self.ws_cmt()
     }
-    self.char(')').chain_err(|| "closing model") ? ;
-    self.ws_cmt() ;
+    if ! conf.check_eld {
+      self.char(')').chain_err(|| "closing model") ? ;
+      self.ws_cmt() ;
+    }
 
     if self.has_next() {
       print!("> `") ;
