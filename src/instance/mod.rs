@@ -331,6 +331,26 @@ impl RTerm {
     max
   }
 
+  /// All the variables appearing in a term.
+  pub fn vars(& self) -> VarSet {
+    let mut to_do = vec![ self ] ;
+    let mut set = VarSet::with_capacity(11) ;
+    while let Some(term) = to_do.pop() {
+      match * term {
+        RTerm::Var(i) => {
+          let _ = set.insert(i) ; ()
+        },
+        RTerm::Int(_) => (),
+        RTerm::Bool(_) => (),
+        RTerm::App{ ref args, .. } => for arg in args {
+          to_do.push(arg)
+        },
+      }
+    }
+    set.shrink_to_fit() ;
+    set
+  }
+
   /// Returns the variable index if the term is a variable.
   pub fn var_idx(& self) -> Option<VarIdx> {
     match * self {
@@ -353,7 +373,7 @@ impl RTerm {
 impl_fmt!{
   RTerm(self, fmt) {
     let mut buf = Vec::with_capacity(250) ;
-    self.write(& mut buf, |w, idx| write!(w, "v_{}", idx)).expect(
+    self.write(& mut buf, |w, var| var.default_write(w)).expect(
       "fatal error during real term pretty printing"
     ) ;
     let s = ::std::str::from_utf8(& buf).expect(
@@ -392,6 +412,7 @@ pub type Term = HConsed<RTerm> ;
 
 
 /// Top term, as they appear in clauses.
+#[derive(Clone)]
 pub enum TTerm {
   /// A predicate application.
   P {
@@ -416,6 +437,21 @@ impl TTerm {
     match * self {
       TTerm::T(ref t) => t.is_false(),
       _ => false,
+    }
+  }
+
+  /// Variables appearing in a top term.
+  pub fn vars(& self) -> VarSet {
+    match * self {
+      TTerm::P { ref args, .. } => {
+        use std::iter::Extend ;
+        let mut vars = VarSet::with_capacity(17) ;
+        for term in args {
+          vars.extend( term.vars() )
+        }
+        vars
+      },
+      TTerm::T(ref term) => term.vars(),
     }
   }
 
@@ -444,7 +480,7 @@ impl TTerm {
   W: Write,
   WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
     self.write(
-      w, |w, v| write!(w, "v{}", v), write_prd
+      w, |w, var| var.default_write(w), write_prd
     )
   }
 }
@@ -543,9 +579,9 @@ impl ::std::ops::Index<VarIdx> for Clause {
     & self.vars[index]
   }
 }
-impl ::rsmt2::Expr2Smt<Candidates> for Clause {
+impl ::rsmt2::Expr2Smt<PrdMap<PrdInfo>> for Clause {
   fn expr_to_smt2<Writer: Write>(
-    & self, writer: & mut Writer, cands: & Candidates
+    & self, writer: & mut Writer, prd_info: & PrdMap<PrdInfo>
   ) -> SmtRes<()> {
     smt_cast_io!{
       "writing clause as smt2" =>
@@ -562,11 +598,12 @@ impl ::rsmt2::Expr2Smt<Candidates> for Clause {
               write!(writer, " ") ;
               lhs.write_smt2(
                 writer, |w, prd, args| {
-                  cands[prd].write(
-                    w, |w, var| args[var].write(
-                      w, |w, var| write!(w, "v{}", var)
-                    )
-                  )
+                  write!(w, "({}", prd_info[prd].name) ? ;
+                  for arg in args {
+                    write!(w, " ") ? ;
+                    arg.write(w, |w, var| var.default_write(w)) ?
+                  }
+                  write!(w, ")")
                 }
               )
             )
@@ -578,11 +615,12 @@ impl ::rsmt2::Expr2Smt<Candidates> for Clause {
         } ;
         self.rhs.write_smt2(
           writer, |w, prd, args| {
-            cands[prd].write(
-              w, |w, var| args[var].write(
-                w, |w, var| write!(w, "v{}", var)
-              )
-            )
+            write!(w, "({}", prd_info[prd].name) ? ;
+            for arg in args {
+              write!(w, " ") ? ;
+              arg.write(w, |w, var| var.default_write(w)) ?
+            }
+            write!(w, ")")
           }
         ) ;
         if self.lhs.is_empty() { Ok(()) } else {
@@ -747,7 +785,7 @@ pub struct Instance {
   /// Predicates.
   preds: PrdMap<PrdInfo>,
   /// Predicates for which a suitable term has been found.
-  preds_term: PrdMap< Option<Term> >,
+  pred_terms: PrdMap< Option< Vec<TTerm> > >,
   /// Max arity of the predicates.
   pub max_pred_arity: Arity,
   /// Clauses.
@@ -767,7 +805,7 @@ impl Instance {
       ),
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
-      preds_term: PrdMap::with_capacity(pred_capa),
+      pred_terms: PrdMap::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
@@ -781,46 +819,65 @@ impl Instance {
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Option<Candidates> {
-    for term_opt in & self.preds_term {
+  pub fn is_trivial(& self) -> Option<Model> {
+    for term_opt in & self.pred_terms {
       if term_opt.is_none() { return None }
     }
-    // Only reachable if all elements of `self.preds_term` are `Some(_)`.
+    // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
     Some(
-      self.preds_term.iter().map(
+      self.pred_terms.iter().map(
         |term| term.as_ref().unwrap().clone()
       ).collect()
     )
   }
 
 
+  /// Prints a top term as a term in a model.
+  ///
+  /// Meaning a variables are printed with default printing: `<var_idx>` is
+  /// printed as `v_<var_idx>`.
+  pub fn print_tterm_as_model<W: Write>(
+    & self, w: & mut W, tterm: & TTerm
+  ) -> ::std::io::Result<()> {
+    match * tterm {
+      TTerm::T(ref term) => write!(w, "{}", term),
+      TTerm::P { pred, ref args } => {
+        write!(w, "({}", self[pred]) ? ;
+        for arg in args {
+          write!(w, " {}", arg) ?
+        }
+        write!(w, ")")
+      },
+    }
+  }
+
   /// Shrinks all collections.
   pub fn shrink_to_fit(& mut self) {
     self.consts.shrink_to_fit() ;
     self.preds.shrink() ;
-    self.preds_term.shrink() ;
+    self.pred_terms.shrink() ;
     self.clauses.shrink()
   }
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn term_of(& self, pred: PrdIdx) -> Option<& Term> {
-    self.preds_term[pred].as_ref()
+  pub fn terms_of(& self, pred: PrdIdx) -> Option<& Vec<TTerm>> {
+    self.pred_terms[pred].as_ref()
   }
 
-  /// Evaluates the term a predicate is forced to, if any.
-  pub fn eval_term_of(
-    & self, pred: PrdIdx, model: & VarMap<Val>
-  ) -> Res< Option<bool> > {
-    if let Some(term) = self.term_of(pred) {
-      match term.bool_eval(model) {
-        Ok(None) => bail!("partial model during predicate term evaluation"),
-        res => res,
-      }
-    } else {
-      Ok(None)
-    }
-  }
+  // /// Evaluates the term a predicate is forced to, if any.
+  // pub fn eval_term_of(
+  //   & self, pred: PrdIdx, model: & VarMap<Val>
+  // ) -> Res< Option<bool> > {
+  //   if let Some(term) = self.term_of(pred) {
+  //     match term.bool_eval(model) {
+  //       Ok(None) => bail!("partial model during predicate term evaluation"),
+  //       res => res,
+  //     }
+  //   } else {
+  //     Ok(None)
+  //   }
+  // }
 
   /// Set of int constants **appearing in the predicates**. If more constants
   /// are created after the instance building step, they will not appear here.
@@ -851,7 +908,7 @@ impl Instance {
     ) ;
     let idx = self.preds.next_index() ;
     self.preds.push( PrdInfo { name, idx, sig } ) ;
-    self.preds_term.push(None) ;
+    self.pred_terms.push(None) ;
     self.pred_to_clauses.push(
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
@@ -859,16 +916,14 @@ impl Instance {
   }
 
   /// Forces a predicate to be equal to something.
-  pub fn force_pred(& mut self, pred: PrdIdx, term: Term) -> Res<()> {
-    if let Some(t) = self.preds_term[pred].as_ref() {
-      if t != & term {
-        bail!(
-          "[bug] trying to force predicate {} to {},\n\
-          but it is already forced to be {}", self[pred], term, t
-        )
-      }
+  pub fn force_pred(& mut self, pred: PrdIdx, terms: Vec<TTerm>) -> Res<()> {
+    if let Some(_) = self.pred_terms[pred].as_ref() {
+      bail!(
+        "[bug] trying to force predicate {} twice",
+        conf.sad(& self[pred].name)
+      )
     }
-    self.preds_term[pred] = Some(term) ;
+    self.pred_terms[pred] = Some(terms) ;
     Ok(())
   }
 
@@ -1239,8 +1294,8 @@ impl Instance {
       for tterm in clause.lhs() {
         match * tterm {
           TTerm::P { pred, ref args } => {
-            log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.preds_term.len() }
-            if self.preds_term[pred].is_none() {
+            log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.pred_terms.len() }
+            if self.pred_terms[pred].is_none() {
               log_debug!{ "        -> is none" }
               let mut values = VarMap::with_capacity( args.len() ) ;
               for arg in args {
@@ -1265,7 +1320,7 @@ impl Instance {
       log_debug!{ "    working on rhs..." }
       let consequent = match * clause.rhs() {
         TTerm::P { pred, ref args } => {
-          log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.preds_term.len() }
+          log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.pred_terms.len() }
           let mut values = VarMap::with_capacity( args.len() ) ;
           'pred_args: for arg in args {
             values.push(
@@ -1797,7 +1852,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       write!(w, "\n") ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
-    write!(w, "\npred to clauses:") ? ;
+    write!(w, "\npred to clauses:\n") ? ;
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       write!(w, "  {}: lhs {{", self[pred]) ? ;
       for lhs in lhs {

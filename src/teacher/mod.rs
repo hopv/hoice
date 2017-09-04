@@ -14,7 +14,7 @@ use nom::IResult ;
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Val } ;
+use instance::{ Instance, Val, TTerm, Typ, Term } ;
 
 
 
@@ -62,7 +62,11 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   teacher.add_learner( ::learning::ice::Launcher ) ? ;
 
   log_debug!{ "  performing initial check..." }
-  let cexs = teacher.initial_check() ? ;
+  let (cexs, cands) = teacher.initial_check() ? ;
+  if cexs.is_empty() {
+    teacher.finalize() ? ;
+    return Ok( Some(cands) )
+  }
   log_debug!{ "  generating data from initial cex..." }
   teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
 
@@ -106,7 +110,9 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
           ) ;
           for _pred in teacher.instance.preds() {
             log_info!("{}:", _pred.name) ;
-            log_info!("  {}", candidates[_pred.idx])
+            if let Some(term) = candidates[_pred.idx].as_ref() {
+              log_info!("  {}", term)
+            }
           }
         }
         profile!{ teacher tick "cexs" }
@@ -322,15 +328,19 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Drops the copy of the `Sender` end of the channel used to communicate
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
-  pub fn initial_check(& mut self) -> Res< Cexs > {
+  pub fn initial_check(& mut self) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    for _ in 0..self.instance.preds().len() {
-      cands.push( self.instance.bool(true) )
+    for pred in self.instance.pred_indices() {
+      if self.instance.terms_of(pred).is_some() {
+        cands.push( None )
+      } else {
+        cands.push( Some(self.instance.bool(true)) )
+      }
     }
-    self.get_cexs(& cands)
+    self.get_cexs(& cands).map(|res| (res, cands))
   }
 
   /// Looks for falsifiable clauses given some candidates.
@@ -371,9 +381,31 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     }
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
-      self.solver.declare_const(var, & var.typ, & ()) ?
+      self.solver.declare_const(& var.idx, & var.typ, & ()) ?
     }
-    self.solver.assert( clause, cands ) ? ;
+    for (pred, cand) in cands.index_iter() {
+      if let Some(term) = cand.as_ref() {
+        let pred = & self.instance[pred] ;
+        let sig: Vec<_> = pred.sig.index_iter().map(
+          |(var, typ)| (var, * typ)
+        ).collect() ;
+        self.solver.define_fun(
+          & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+        ) ?
+      } else if let Some(tterms) = self.instance.terms_of(pred) {
+        let pred = & self.instance[pred] ;
+        let sig: Vec<_> = pred.sig.index_iter().map(
+          |(var, typ)| (var, * typ)
+        ).collect() ;
+        self.solver.define_fun(
+          & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+          self.instance.preds()
+        ) ?
+      } else {
+        bail!("illegal incomplete candidates")
+      }
+    }
+    self.solver.assert( clause, self.instance.preds() ) ? ;
     profile!{ self mark "cexs", "prep" }
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
@@ -386,7 +418,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         |info| info.typ.default_val()
       ).collect() ;
       for (var,val) in model {
-        log_debug!{ "    - v_{} = {}", var, val }
+        log_debug!{ "    - {} = {}", var.default_str(), val }
         map[var] = val
       }
       log_debug!{ "    done constructing model" }
@@ -399,6 +431,79 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     res
   }
 }
+
+
+
+/// Wraps a vector of top terms to write as the body of a `define-fun`.
+///
+/// The vector is understood as a conjunction.
+pub struct TTermsWrap<'a>( & 'a Vec<TTerm> ) ;
+impl<'a> ::rsmt2::Expr2Smt<
+  PrdMap< ::instance::info::PrdInfo >
+> for TTermsWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, preds: & PrdMap<::instance::info::PrdInfo>
+  ) -> SmtRes<()> {
+    let msg = "writing tterms as smt2" ;
+    smt_cast_io!{
+      msg =>
+      if self.0.len() > 1 {
+        smtry_io!(msg => write!(w, "(and") ) ;
+        for tterm in self.0 {
+          smtry_io!(msg => write!(w, " ")) ;
+          smtry_io!(
+            msg => tterm.write(
+              w,
+              |w, var| var.default_write(w),
+              |w, prd, args| {
+                write!(w, "({}", preds[prd]) ? ;
+                for arg in args {
+                  write!(w, " ") ? ;
+                  arg.write(w, |w, var| var.default_write(w)) ?
+                }
+                write!(w, ")")
+              }
+            )
+          ) ;
+        }
+        write!(w, ")")
+      } else if self.0.len() == 1 {
+        self.0[0].write(
+          w,
+          |w, var| var.default_write(w),
+          |w, prd, args| {
+            write!(w, "({}", preds[prd]) ? ;
+            for arg in args {
+              write!(w, " ") ? ;
+              arg.write(w, |w, var| var.default_write(w)) ?
+            }
+            write!(w, ")")
+          }
+        )
+      } else {
+        bail!("predicate definition is empty")
+      }
+    }
+  }
+}
+
+
+
+/// Wraps a term to write as the body of a `define-fun`.
+pub struct TermWrap<'a>( & 'a Term ) ;
+impl<'a> ::rsmt2::Expr2Smt<()> for TermWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: & ()
+  ) -> SmtRes<()> {
+    let msg = "writing term as smt2" ;
+    smt_cast_io!{
+      msg => self.0.write(
+        w, |w, var| var.default_write(w),
+      )
+    }
+  }
+}
+
 
 
 
@@ -424,7 +529,7 @@ impl ParseSmt2 for Parser {
     use std::str::FromStr ;
     preceded!(
       bytes,
-      char!('v'),
+      tag!("v_"),
       map!(
         map_res!(
           map_res!(

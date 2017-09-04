@@ -250,7 +250,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let prd_count = self.instance.preds().len() ;
     debug_assert!{{
       let mut okay = true ;
-      for term_opt in self.candidate.iter_mut() {
+      for term_opt in & self.candidate {
         okay = okay && term_opt.is_none() ;
       }
       okay
@@ -262,15 +262,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if let Some(term) = self.instance.term_of(pred) {
-        self.candidate[pred] = Some( term.clone() ) ;
-        if term.is_true() {
-          profile!{ self tick "learning", "data" }
-          self.data.pred_all_true(pred) ? ;
-          profile!{ self mark "learning", "data" }
-        } else {
-          bail!("[unsupported] forced candidate is not the term `true`")
-        }
+      if self.instance.terms_of(pred).is_some() {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
@@ -342,28 +334,16 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
                 self.instance[pred], _unc, _cla
       ) ;
       let data = self.data.data_of(pred) ;
-      if let Some(term) = self.instance.term_of(pred) {
-        self.candidate[pred] = Some( term.clone() ) ;
-        continue 'pred_iter
-      } // Should be an `else if`, but can't because of lexical lifetimes.
       if let Some(term) = self.pred_learn(pred, data, & mut used_quals) ? {
         self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
       }
     }
-    let mut candidates = PrdMap::with_capacity(prd_count) ;
-    for none_soon in self.candidate.iter_mut() {
-      let mut term_opt = None ;
-      ::std::mem::swap(none_soon, & mut term_opt) ;
-      if let Some(term) = term_opt {
-        candidates.push(term)
-      } else {
-        bail!(
-          "[bug] done generating candidates but some of them are still `None`"
-        )
-      }
-    }
+    let mut candidates: PrdMap<_> = vec![
+      None ; self.instance.preds().len()
+    ].into() ;
+    ::std::mem::swap(& mut candidates, & mut self.candidate) ;
     profile!{ self mark "learning" }
 
     if conf.decay {

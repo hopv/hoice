@@ -1,5 +1,6 @@
 //! Base types and functions.
 
+use std::fmt ;
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
 pub use std::sync::{ Arc, RwLock } ;
@@ -40,7 +41,7 @@ macro_rules! if_not_bench {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
     $($else)*
   ) ;
-  ($($blah:tt)*) => () ;
+  ($($blah:tt)*) => (()) ;
 }
 /// Does something if in verbose mode.
 #[macro_export]
@@ -151,7 +152,20 @@ wrap_usize!{
   #[doc = "Total map from variables to something."]
   map: VarMap with iter: VarMapIter
 }
-use std::fmt ;
+impl VarIdx {
+  /// Default way to write variables: `v_<idx>`.
+  pub fn default_write<W>(& self, w: & mut W) -> ::std::io::Result<()>
+  where W: Write {
+    write!(w, "v_{}", self)
+  }
+  /// Default string representation of a variable.
+  pub fn default_str(& self) -> String {
+    let mut s = vec![] ;
+    self.default_write(& mut s).unwrap() ;
+    ::std::str::from_utf8(& s).unwrap().into()
+  }
+}
+
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
   fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
     write!(fmt, "(") ? ;
@@ -165,20 +179,20 @@ impl<T: fmt::Display> fmt::Display for VarMap<T> {
   }
 }
 
-impl ::rsmt2::Sym2Smt<()> for VarIdx {
+impl<T> ::rsmt2::Sym2Smt<T> for VarIdx {
   fn sym_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
     smt_cast_io!{
       "while writing var index as symbol" =>
-      write!(w, "v_{}", self)
+      self.default_write(w)
     }
   }
 }
 
-impl ::rsmt2::Expr2Smt<()> for VarIdx {
+impl<T> ::rsmt2::Expr2Smt<T> for VarIdx {
   fn expr_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
     use ::rsmt2::Sym2Smt ;
     self.sym_to_smt2(w, & ())
@@ -210,9 +224,11 @@ wrap_usize!{
 }
 
 
-/// Maps predicates to terms.
-pub type Candidates = PrdMap< ::instance::Term > ;
+/// Maps predicates to optional terms.
+pub type Candidates = PrdMap< Option<::instance::Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
+/// Maps predicates to terms.
+pub type Model = PrdMap< Vec<::instance::TTerm> > ;
 
 
 
@@ -956,11 +972,9 @@ impl ProfileTree {
     let mut current = self ;
     for scp in & scope {
       let tmp = current ;
-      current = (
-        tmp.branches.get_mut(scp).ok_or(
-          format!("trying to lift inexisting scope {:?}", scope).into()
-        ) as Res<_>
-      ) ?
+      current = if let Some(current) = tmp.branches.get_mut(scp) {
+        current
+      } else { return Ok(()) }
     }
     let mut sum = Duration::from_secs(0) ;
     for (_, branch) in & current.branches {

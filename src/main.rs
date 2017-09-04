@@ -224,7 +224,7 @@ fn work() -> Res<()> {
             Some(model)
           } else {
             let arc_instance = Arc::new(instance) ;
-            let model = teacher::start_class(
+            let partial_model = teacher::start_class(
               & arc_instance, & profiler
             ) ? ;
             { // Careful with this block, so that the unwrap does not fail
@@ -238,7 +238,28 @@ fn work() -> Res<()> {
                 ")
               }
             }
-            model
+            if let Some(partial_model) = partial_model {
+              let mut model = PrdMap::with_capacity( partial_model.len() ) ;
+              for (pred, term_opt) in partial_model.into_index_iter() {
+                if let Some(term) = term_opt {
+                  model.push( vec![ ::instance::TTerm::T(term) ] ) ;
+                  if_not_bench!(
+                    assert!( instance.terms_of(pred).is_none() )
+                  )
+                } else if let Some(terms) = instance.terms_of(pred) {
+                  model.push( terms.clone() )
+                } else {
+                  // Right now, models should always be complete.
+                  bail!(
+                    "illegal model, predicate {} is undefined",
+                    conf.sad( & instance[pred].name )
+                  )
+                }
+              }
+              Some(model)
+            } else {
+              None
+            }
           } ;
           if model.is_some() {
             println!("sat")
@@ -250,6 +271,7 @@ fn work() -> Res<()> {
 
         // Print model if available.
         Parsed::GetModel => if let Some(ref model) = model {
+          let stdout = & mut ::std::io::stdout() ;
           println!("(model") ;
           for pred in instance.preds() {
             println!("  (define-fun {}", pred.name) ;
@@ -258,7 +280,24 @@ fn work() -> Res<()> {
               print!(" ({} {})", instance.var(var), typ)
             }
             println!(" ) Bool") ;
-            println!("    {}", model[pred.idx]) ;
+            if model[pred.idx].len() > 1 {
+              print!("    (and") ;
+              for tterm in & model[pred.idx] {
+                print!("      ") ;
+                instance.print_tterm_as_model(stdout, tterm) ? ;
+                println!("")
+              }
+              print!("    )")
+            } else if model[pred.idx].len() == 1 {
+              print!("    ") ;
+              instance.print_tterm_as_model(stdout, & model[pred.idx][0]) ? ;
+              println!("")
+            } else {
+              bail!(
+                "model for predicate {} is empty",
+                conf.sad( & pred.name )
+              )
+            }
             println!("  )")
           }
           println!(")")
