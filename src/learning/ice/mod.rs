@@ -10,7 +10,6 @@ use self::mining::* ;
 use self::smt::* ;
 
 
-
 /// Smt-related things.
 pub mod smt {
   use common::* ;
@@ -1702,7 +1701,7 @@ impl ::rsmt2::ParseSmt2 for Parser {
   fn parse_value<'a>(
     & self, bytes: & 'a [u8]
   ) -> ::nom::IResult<& 'a [u8], Int> {
-    use instance::build::{ int, spc_cmt } ;
+    use common::parse::* ;
     dbg_dmp!(bytes, alt_complete!(
       // bytes,
       int | do_parse!(

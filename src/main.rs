@@ -179,20 +179,14 @@ fn work() -> Res<()> {
     profile!{ |profiler| mark "loading", "reading file" }
 
     let mut parser = ::instance::parse::Parser::mk(& txt) ;
-    let mut builder = ::instance::build::InstBuild::mk() ;
+    let mut instance = ::instance::Instance::mk(3_000, 42, 42) ;
 
     profile!{ |profiler| tick "loading", "parsing" }
-    let mut parse_res = parser.parse( builder.instance() ) ? ;
+    let mut parse_res = parser.parse( & mut instance ) ? ;
     profile!{ |profiler| mark "loading", "parsing" }
 
-    profile!{ |profiler| tick "loading", "building" }
-    let mut instance = builder.to_instance().chain_err(
-      || "during instance extraction"
-    ) ? ;
-    profile!{ |profiler| mark "loading", "building" }
-
     log_info!{
-      "instance:\n{}", instance.to_string_info(()) ?
+      "instance:\n{}\n\n", instance.to_string_info(()) ?
     }
 
     profile!{ |profiler| tick "loading", "simplify" }
@@ -200,8 +194,16 @@ fn work() -> Res<()> {
     profile!{ |profiler| mark "loading", "simplify" }
     
     log_info!{
-      "instance after simplification:\n{}",
+      "instance after simplification:\n{}\n\n",
       instance.to_string_info(()) ?
+    }
+
+    profile!{ |profiler| tick "loading", "reducing" }
+    ::instance::reduction::work(& mut instance) ? ;
+    profile!{ |profiler| mark "loading", "reducing" }
+
+    log_info!{
+      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
     }
 
     profile!{ |profiler| mark "loading" }
@@ -216,26 +218,32 @@ fn work() -> Res<()> {
 
         // Check-sat, start class.
         Parsed::CheckSat => {
-          let arc_instance = Arc::new(instance) ;
-          model = teacher::start_class(
-            & arc_instance, & profiler
-          ) ? ;
+          model = if let Some(model) = instance.is_trivial() {
+            // Pre-processing already decided satisfiability.
+            info!( "answering satisfiability query by pre-processing only" ) ;
+            Some(model)
+          } else {
+            let arc_instance = Arc::new(instance) ;
+            let model = teacher::start_class(
+              & arc_instance, & profiler
+            ) ? ;
+            { // Careful with this block, so that the unwrap does not fail
+              while Arc::strong_count(& arc_instance) != 1 {}
+              instance = if let Ok(
+                instance
+              ) = Arc::try_unwrap( arc_instance ) { instance } else {
+                bail!("\
+                  [bug] finalized teacher but there are still \
+                  strong references to the instance\
+                ")
+              }
+            }
+            model
+          } ;
           if model.is_some() {
             println!("sat")
           } else {
             println!("unsat")
-          }
-
-          { // Careful with this block, so that the unwrap does not fail
-            while Arc::strong_count(& arc_instance) != 1 {}
-            instance = if let Ok(instance) = Arc::try_unwrap( arc_instance ) {
-              instance
-            } else {
-              bail!("\
-                [bug] finalized teacher but there are still \
-                strong references to the instance\
-              ")
-            }
           }
 
         },

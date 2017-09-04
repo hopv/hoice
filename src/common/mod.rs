@@ -1244,8 +1244,30 @@ impl Profile {
 }
 
 
+/// Basic parsing helpers.
+pub mod parse {
+  use common::* ;
+  pub use nom::multispace ;
 
+  named!{
+    #[doc = "Comment parser."],
+    pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
+  }
 
+  named!{
+    #[doc = "Parses comments and spaces."],
+    pub spc_cmt<()>, map!(
+      many0!( alt_complete!(cmt | multispace) ), |_| ()
+    )
+  }
 
-
-
+  named!{
+    #[doc = "Integer parser."],
+    pub int<Int>, map!(
+      re_bytes_find!("^([1-9][0-9]*|0)"),
+      |bytes| Int::parse_bytes(bytes, 10).expect(
+        "[bug] problem in integer parsing"
+      )
+    )
+  }
+}

@@ -8,8 +8,9 @@ use common::* ;
 use self::info::* ;
 
 pub mod info ;
-pub mod build ;
+// pub mod build ;
 pub mod parse ;
+pub mod reduction ;
 
 /// Types.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -92,7 +93,7 @@ impl Val {
   pub fn parse(
     bytes: & [u8]
   ) -> ::nom::IResult<& [u8], Self, Error> {
-    use self::build::* ;
+    use common::parse::* ;
     fix_error!(
       bytes,
       Error,
@@ -498,6 +499,11 @@ impl Clause {
     & self.vars
   }
 
+  // /// Replaces a predicate application by some top terms.
+  // ///
+  // /// Does not preserve the order of the top terms.
+  // pub fn subst_top(& mut self, pred: PrdIdx, top) -> 
+
   /// Writes a clause given a special function to write predicates.  
   fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
@@ -762,6 +768,20 @@ impl Instance {
     instance
   }
 
+  /// Returns a model for the instance when all the predicates have terms
+  /// assigned to them.
+  pub fn is_trivial(& self) -> Option<Candidates> {
+    for term_opt in & self.preds_term {
+      if term_opt.is_none() { return None }
+    }
+    // Only reachable if all elements of `self.preds_term` are `Some(_)`.
+    Some(
+      self.preds_term.iter().map(
+        |term| term.as_ref().unwrap().clone()
+      ).collect()
+    )
+  }
+
 
   /// Shrinks all collections.
   pub fn shrink_to_fit(& mut self) {
@@ -900,7 +920,7 @@ impl Instance {
 
   /// Simplifies the clauses.
   ///
-  /// - propagates the equalities in all the clauses
+  /// - propagates the lhs equalities in all the clauses
   ///
   /// # TODO
   ///
@@ -1185,7 +1205,6 @@ impl ::std::ops::Index<PrdIdx> for Instance {
     & self.preds[index]
   }
 }
-
 
 
 
@@ -1667,7 +1686,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       for typ in & pred.sig {
         write!(w, " {}", typ) ?
       }
-      write!(w, " )\n)\n") ?
+      write!(w, " )\n)\n ") ?
     }
     for clause in & self.clauses {
       write!(w, "\n") ? ;
