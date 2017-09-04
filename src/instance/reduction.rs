@@ -7,6 +7,34 @@ vector using single dispatch. That way, they can be combined however we want.
 use common::* ;
 use instance::* ;
 
+
+/// Returns the active strategies.
+fn strategies() -> Vec< Box<RedStrat> > {
+  vec![
+    Box::new( TrueImplies::mk() ),
+  ]
+}
+
+
+/// Reduces an instance.
+pub fn work(instance: & mut Instance) -> Res<()> {
+  let mut strategies = strategies() ;
+  let mut changed = true ;
+  'all_strats_fp: while changed {
+    changed = false ;
+    for strat in & mut strategies {
+      let mut this_changed = strat.apply(instance) ? ;
+      'strat_fp: while this_changed {
+        this_changed = strat.apply(instance) ?
+      }
+      changed = changed || this_changed
+    }
+  }
+  Ok(())
+}
+
+
+
 /// Reduction strategy trait.
 ///
 /// Function `apply` will be applied until fixed point (`false` is returned).
@@ -28,61 +56,45 @@ impl TrueImplies {
   }
 
   /// Propagates the predicates stored in `self`.
-  fn propagate(& mut self, instance: & mut Instance) -> Res<()> {
-    let mut cls_idx = ClsIdx::zero() ;
-
-    'clause_iter: while cls_idx < instance.clauses().next_index() {
-
-      // If `rhs` is true, remove clause.
-      if let TTerm::P { pred, .. }  = instance.clauses[cls_idx].rhs {
-        match instance.preds_term[pred].as_ref().map(
-          |t| t.is_true()
-        ) {
-          Some(true) => {
-            let _clause = instance.forget_clause(cls_idx) ;
-            log_info!{
-              "dropping clause {}, rhs is true",
-              _clause.string_do( & instance.preds, |s| s.to_string() ) ?
-            }
-            continue 'clause_iter
-          },
-          Some(false) => bail!(
-            "progation for terms that are not `true` is not implemented"
-          ),
-          _ => (),
-        }
-      }
-
-      let clause = & mut instance.clauses[cls_idx] ;
-      let mut cnt = 0 ;
-      'lhs_iter: while cnt < clause.lhs.len() {
-        if let TTerm::P { pred, .. } = clause.lhs[cnt] {
-          match instance.preds_term[pred].as_ref().map(
-            |t| t.is_true()
-          ) {
-            Some(true) => {
-              let _ = clause.lhs.swap_remove(cnt) ;
-              continue 'lhs_iter
-            },
-            Some(false) => bail!(
-              "progation for terms that are not `true` is not implemented"
-            ),
-            None => (),
-          }
-        }
-        cnt += 1
-      }
-
-      cls_idx.inc()
+  fn propagate(& mut self, instance: & mut Instance) {
+    let (mut lhs, mut rhs) = (
+      ClsSet::with_capacity(self.true_preds.len() * 3),
+      ClsSet::with_capacity(self.true_preds.len() * 2)
+    ) ;
+    for pred in & self.true_preds {
+      instance.drain_unlink_pred(* pred, & mut lhs, & mut rhs) ;
     }
-    Ok(())
+
+    // At this point, all the LHSs to update are in `lhs`, and likewise for
+    // `rhs`. Now we iterate over `lhs`, ignoring those that are also in `rhs`
+    // because these clauses will just be dropped afterwards anyways.
+    for clause in lhs {
+      if ! rhs.contains(& clause) {
+        // Remove all applications of predicates we know are true.
+        let clause = & mut instance.clauses[clause] ;
+        let mut cnt = 0 ;
+        'lhs_iter: while cnt < clause.lhs.len() {
+          if let TTerm::P { pred, .. } = clause.lhs[cnt] {
+            if self.true_preds.contains(& pred) {
+              let _ = clause.lhs.swap_remove(cnt) ;
+              continue 'lhs_iter // Don't increment `cnt` when swap removing.
+            }
+          }
+          cnt += 1
+        }
+      }
+    }
+
+    // Now we just need to remove all clauses in `rhs`.
+    instance.forget_clauses( rhs.into_iter().collect() ) ;
+    self.true_preds.clear()
   }
 
   /// Finds `true => p(...)` and forces `p` to be `true` in the instance.
   ///
   /// Does not propagate.
   fn find_true_implies(& mut self, instance: & mut Instance) -> Res<()> {
-    self.true_preds.clear() ;
+    debug_assert!( self.true_preds.is_empty() ) ;
     let mut cls_idx = ClsIdx::zero() ;
     'trivial_preds: while cls_idx < instance.clauses().next_index() {
       let maybe_pred = if instance.clauses()[cls_idx].lhs().is_empty() {
@@ -132,36 +144,10 @@ impl RedStrat for TrueImplies {
   fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
     self.find_true_implies(instance) ? ;
     if ! self.true_preds.is_empty() {
-      self.propagate(instance) ? ;
+      self.propagate(instance) ;
       Ok(true)
     } else {
       Ok(false)
     }
   }
-}
-
-
-/// Returns the active strategies.
-fn strategies() -> Vec< Box<RedStrat> > {
-  vec![
-    Box::new( TrueImplies::mk() ),
-  ]
-}
-
-
-/// Reduces an instance.
-pub fn work(instance: & mut Instance) -> Res<()> {
-  let mut strategies = strategies() ;
-  let mut changed = true ;
-  'all_strats_fp: while changed {
-    changed = false ;
-    for strat in & mut strategies {
-      let mut this_changed = strat.apply(instance) ? ;
-      'strat_fp: while this_changed {
-        this_changed = strat.apply(instance) ?
-      }
-      changed = changed || this_changed
-    }
-  }
-  Ok(())
 }

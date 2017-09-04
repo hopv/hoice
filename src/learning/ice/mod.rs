@@ -1,7 +1,5 @@
 //! ICE learner.
 
-pub mod mining ;
-
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
@@ -9,196 +7,7 @@ use instance::{ Instance, Term, RTerm, Op, Typ, Val } ;
 use self::mining::* ;
 use self::smt::* ;
 
-
-/// Smt-related things.
-pub mod smt {
-  use common::* ;
-  use common::data::* ;
-
-  /// Wrapper around predicate / sample that forces smt printing.
-  pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for SWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      smt_cast_io!(
-        "writing sample as expression" => write!(
-          w, "|p_{} {}|", self.0, self.1.uid()
-        )
-      )
-    }
-  }
-  impl<'a> ::rsmt2::Sym2Smt<()> for SWrap<'a> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      use ::rsmt2::Expr2Smt ;
-      self.expr_to_smt2(w, & ())
-    }
-  }
-
-
-  /// Wrapper around constraints that forces smt printing consistent with
-  /// [`SWrap`](struct.SWrap.html).
-  pub struct CWrap<'a>(pub & 'a Constraint) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for CWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing constraint as expression" ;
-      smtry_io!( blah => write!(w, "(=> (and") ) ;
-      for lhs in & self.0.lhs {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, ") ") ) ;
-      if let Some(rhs) = self.0.rhs.as_ref() {
-        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
-      } else {
-        smtry_io!( blah => write!(w, "false") ) ;
-      }
-      smtry_io!( blah => write!(w, ")") ) ;
-      Ok(())
-    }
-  }
-
-  /// Wrapper for activation literals activating samples for some predicate.
-  ///
-  /// `Sym2Smt` implementation just yields the actlit, used to declare said
-  /// actlit. `Expr2Smt` is the actual activation expression
-  ///
-  /// ```bash
-  /// (=> <actlit> (and <samples>))
-  /// ```
-  pub struct ActWrap<Samples> {
-    /// Actlit counter.
-    pub actlit: usize,
-    /// Predicate.
-    pub pred: PrdIdx,
-    /// Samples.
-    pub unc: Samples,
-    /// Indicates whether we're assuming the samples positive or negative.
-    pub pos: bool,
-  }
-  impl<Samples> ActWrap<Samples> {
-    /// Identifier representation of the actlit.
-    pub fn as_ident(& self) -> String {
-      format!("act_{}", self.actlit)
-    }
-  }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
-      for unc in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, "))") ) ;
-      if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
-      }
-      Ok(())
-    }
-  }
-  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
-    & 'a HConMap<Args, T>
-  > {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
-      for (unc, _) in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, "))") ) ;
-      if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
-      }
-      Ok(())
-    }
-  }
-  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      smt_cast_io!(
-        "writing actlit symbol" => write!(w, "act_{}", self.actlit)
-      )
-    }
-  }
-
-
-  /// Wrapper around some values and some coefficients, used by
-  /// [synthesize](../struct.IceLearner.html#method.synthesize) to assert the
-  /// constraints on its points.
-  ///
-  /// The expression it encodes is
-  ///
-  /// ```bash
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
-  /// ```
-  ///
-  /// where `[ v_1, ..., v_n ] = self.vals` and
-  /// `[ c_1, ..., c_n ] = self.coefs`.
-  pub struct ValCoefWrap<'a> {
-    /// Values.
-    pub vals: & 'a Vec<Int>,
-    /// Coefficients.
-    pub coefs: & 'a Vec<VarIdx>,
-    /// Constant.
-    pub cst: & 'static str,
-    /// Positivity of the values.
-    pub pos: bool,
-  }
-  impl<'a> ValCoefWrap<'a> {
-    /// Constructor.
-    pub fn mk(
-      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
-      cst: & 'static str, pos: bool
-    ) -> Self {
-      debug_assert!( vals.len() == coefs.len() ) ;
-      ValCoefWrap { vals, coefs, cst, pos }
-    }
-  }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
-    fn expr_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      let blah = "while writing `ValCoefWrap` as expression" ;
-      smtry_io!(
-        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
-      ) ;
-      for (val, coef) in self.vals.iter().zip( self.coefs ) {
-        use ::rsmt2::Sym2Smt ;
-        smtry_io!(blah =>
-          write!(w, " (* {} ", val) ;
-          coef.sym_to_smt2(w, & ()) ;
-          write!(w, ")")
-        )
-      }
-      smtry_io!(
-        blah => write!(w, " {}) 0)", self.cst)
-      ) ;
-      Ok(())
-    }
-  }
-}
+pub mod mining ;
 
 
 
@@ -1728,3 +1537,195 @@ impl ::rsmt2::ParseSmt2 for Parser {
 }
 
 
+
+
+
+/// Smt-related things.
+pub mod smt {
+  use common::* ;
+  use common::data::* ;
+
+  /// Wrapper around predicate / sample that forces smt printing.
+  pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
+  impl<'a> ::rsmt2::Expr2Smt<()> for SWrap<'a> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      smt_cast_io!(
+        "writing sample as expression" => write!(
+          w, "|p_{} {}|", self.0, self.1.uid()
+        )
+      )
+    }
+  }
+  impl<'a> ::rsmt2::Sym2Smt<()> for SWrap<'a> {
+    fn sym_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      use ::rsmt2::Expr2Smt ;
+      self.expr_to_smt2(w, & ())
+    }
+  }
+
+
+  /// Wrapper around constraints that forces smt printing consistent with
+  /// [`SWrap`](struct.SWrap.html).
+  pub struct CWrap<'a>(pub & 'a Constraint) ;
+  impl<'a> ::rsmt2::Expr2Smt<()> for CWrap<'a> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing constraint as expression" ;
+      smtry_io!( blah => write!(w, "(=> (and") ) ;
+      for lhs in & self.0.lhs {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, ") ") ) ;
+      if let Some(rhs) = self.0.rhs.as_ref() {
+        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
+      } else {
+        smtry_io!( blah => write!(w, "false") ) ;
+      }
+      smtry_io!( blah => write!(w, ")") ) ;
+      Ok(())
+    }
+  }
+
+  /// Wrapper for activation literals activating samples for some predicate.
+  ///
+  /// `Sym2Smt` implementation just yields the actlit, used to declare said
+  /// actlit. `Expr2Smt` is the actual activation expression
+  ///
+  /// ```bash
+  /// (=> <actlit> (and <samples>))
+  /// ```
+  pub struct ActWrap<Samples> {
+    /// Actlit counter.
+    pub actlit: usize,
+    /// Predicate.
+    pub pred: PrdIdx,
+    /// Samples.
+    pub unc: Samples,
+    /// Indicates whether we're assuming the samples positive or negative.
+    pub pos: bool,
+  }
+  impl<Samples> ActWrap<Samples> {
+    /// Identifier representation of the actlit.
+    pub fn as_ident(& self) -> String {
+      format!("act_{}", self.actlit)
+    }
+  }
+  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing unclassified data activation as expression" ;
+      smtry_io!(
+        blah => write!(
+          w, "(=> act_{} ({}", self.actlit,
+          if self.pos { "and" } else { "not (or" }
+        )
+      ) ;
+      for unc in self.unc {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, "))") ) ;
+      if ! self.pos {
+        smtry_io!( blah => write!(w, ")") )
+      }
+      Ok(())
+    }
+  }
+  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
+    & 'a HConMap<Args, T>
+  > {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing unclassified data activation as expression" ;
+      smtry_io!(
+        blah => write!(
+          w, "(=> act_{} ({}", self.actlit,
+          if self.pos { "and" } else { "not (or" }
+        )
+      ) ;
+      for (unc, _) in self.unc {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, "))") ) ;
+      if ! self.pos {
+        smtry_io!( blah => write!(w, ")") )
+      }
+      Ok(())
+    }
+  }
+  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
+    fn sym_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      smt_cast_io!(
+        "writing actlit symbol" => write!(w, "act_{}", self.actlit)
+      )
+    }
+  }
+
+
+  /// Wrapper around some values and some coefficients, used by
+  /// [synthesize](../struct.IceLearner.html#method.synthesize) to assert the
+  /// constraints on its points.
+  ///
+  /// The expression it encodes is
+  ///
+  /// ```bash
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
+  /// ```
+  ///
+  /// where `[ v_1, ..., v_n ] = self.vals` and
+  /// `[ c_1, ..., c_n ] = self.coefs`.
+  pub struct ValCoefWrap<'a> {
+    /// Values.
+    pub vals: & 'a Vec<Int>,
+    /// Coefficients.
+    pub coefs: & 'a Vec<VarIdx>,
+    /// Constant.
+    pub cst: & 'static str,
+    /// Positivity of the values.
+    pub pos: bool,
+  }
+  impl<'a> ValCoefWrap<'a> {
+    /// Constructor.
+    pub fn mk(
+      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
+      cst: & 'static str, pos: bool
+    ) -> Self {
+      debug_assert!( vals.len() == coefs.len() ) ;
+      ValCoefWrap { vals, coefs, cst, pos }
+    }
+  }
+  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
+    fn expr_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      let blah = "while writing `ValCoefWrap` as expression" ;
+      smtry_io!(
+        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
+      ) ;
+      for (val, coef) in self.vals.iter().zip( self.coefs ) {
+        use ::rsmt2::Sym2Smt ;
+        smtry_io!(blah =>
+          write!(w, " (* {} ", val) ;
+          coef.sym_to_smt2(w, & ()) ;
+          write!(w, ")")
+        )
+      }
+      smtry_io!(
+        blah => write!(w, " {}) 0)", self.cst)
+      ) ;
+      Ok(())
+    }
+  }
+}

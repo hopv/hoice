@@ -732,6 +732,13 @@ impl SubstExt for Instance {
 ///
 /// Clause indices can vary during instance building, because of the
 /// simplifications that can remove clauses.
+///
+/// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
+/// do this is to never access an instance's fields directly from the outside.
+///
+/// # TODO
+///
+/// - tests for `pred_to_clauses` consistency
 pub struct Instance {
   /// Term factory.
   factory: Factory,
@@ -745,6 +752,9 @@ pub struct Instance {
   pub max_pred_arity: Arity,
   /// Clauses.
   clauses: ClsMap<Clause>,
+  /// Maps predicates to the clauses where they appear in the lhs and rhs
+  /// respectively.
+  pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
 }
 impl Instance {
   /// Instance constructor.
@@ -760,6 +770,7 @@ impl Instance {
       preds_term: PrdMap::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
+      pred_to_clauses: PrdMap::with_capacity(pred_capa),
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
     let (wan,too) = (instance.one(), instance.zero()) ;
@@ -841,6 +852,9 @@ impl Instance {
     let idx = self.preds.next_index() ;
     self.preds.push( PrdInfo { name, idx, sig } ) ;
     self.preds_term.push(None) ;
+    self.pred_to_clauses.push(
+      ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
+    ) ;
     idx
   }
 
@@ -858,16 +872,107 @@ impl Instance {
     Ok(())
   }
 
+  /// Unlinks a predicate from all the clauses it's linked to.
+  fn drain_unlink_pred(
+    & mut self, pred: PrdIdx, lhs: & mut ClsSet, rhs: & mut ClsSet
+  ) -> () {
+    for clause in self.pred_to_clauses[pred].0.drain() {
+      let _ = lhs.insert(clause) ;
+    }
+    for clause in self.pred_to_clauses[pred].1.drain() {
+      let _ = rhs.insert(clause) ;
+    }
+  }
+
+  /// Goes trough the predicates in `from`, and updates `pred_to_clauses` so
+  /// that they point to `to` instead.
+  fn relink_pred_and_clause(
+    & mut self, from: ClsIdx, to: ClsIdx
+  ) -> Res<()> {
+    for lhs in self.clauses[from].lhs() {
+      if let TTerm::P { pred, .. } = * lhs {
+        // 
+        let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
+        let _ = self.pred_to_clauses[pred].0.insert(to) ;
+        debug_assert!(was_there)
+      }
+    }
+    if let TTerm::P { pred, .. } = * self.clauses[from].rhs() {
+      let was_there = self.pred_to_clauses[pred].1.remove(& from) ;
+      let _ = self.pred_to_clauses[pred].1.insert(to) ;
+      debug_assert!(was_there)
+    }
+    Ok(())
+  }
+
+  // /// Unlinks a predicate from a clause.
+  // fn unlink_pred_and_clause(
+  //   & mut self, pred: PrdIdx, clause: ClsIdx
+  // ) -> Res<()> {
+  //   let in_lhs = self.pred_to_clauses[pred].0.remove(& clause) ;
+  //   let in_rhs = self.pred_to_clauses[pred].1.remove(& clause) ;
+  //   if ! (in_lhs && in_rhs ) {
+  //     bail!(
+  //       "predicate {} is not linked to clause number {}, failed to unlink",
+  //       conf.sad(& self[pred].name), clause
+  //     )
+  //   } else {
+  //     Ok(())
+  //   }
+  // }
+
+  /// Forget some clauses.
+  fn forget_clauses(& mut self, mut clauses: Vec<ClsIdx>) {
+    // Forgetting is done by swap remove, so we sort in DESCENDING order so
+    // that indices always make sense.
+    clauses.sort_unstable_by(
+      |c_1, c_2| c_2.cmp(c_1)
+    ) ;
+    for clause in clauses {
+      let _ = self.forget_clause(clause) ;
+    }
+  }
+
   /// Forget a clause. **Does not preserve the order of the clauses.**
-  pub fn forget_clause(& mut self, clause: ClsIdx) -> Clause {
+  ///
+  /// Also unlinks predicates from `pred_to_clauses`.
+  fn forget_clause(& mut self, clause: ClsIdx) -> Clause {
+    // Remove all links from the clause's predicates to this clause.
+    for lhs in self.clauses[clause].lhs() {
+      if let TTerm::P { pred, .. } = * lhs {
+        // 
+        let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
+        debug_assert!(was_there)
+      }
+    }
+    if let TTerm::P { pred, .. } = * self.clauses[clause].rhs() {
+      let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
+      debug_assert!(was_there)
+    }
+    // Relink the last clause as its index is going to be `clause`. Except if
+    // `clause` is already the last one.
+    let last_clause: ClsIdx = ( self.clauses.len() - 1 ).into() ;
+    if clause != last_clause {
+      self.relink_pred_and_clause(last_clause, clause).expect(
+        "inconsistency in predicate and clause links"
+      )
+    }
     self.clauses.swap_remove(clause)
   }
 
   /// Pushes a new clause.
-  pub fn push_clause(& mut self, clause: Clause) {
+  fn push_clause(& mut self, clause: Clause) {
+    let clause_index = self.clauses.next_index() ;
+    for lhs in clause.lhs() {
+      if let TTerm::P { pred, .. } = * lhs {
+        let _ = self.pred_to_clauses[pred].0.insert(clause_index) ;
+      }
+    }
+    if let TTerm::P { pred, .. } = * clause.rhs() {
+      let _ = self.pred_to_clauses[pred].1.insert(clause_index) ;
+    }
     self.clauses.push(clause)
   }
-
 
   /// Creates a variable.
   pub fn var(& self, v: VarIdx) -> Term {
@@ -1692,7 +1797,19 @@ impl<'a> PebcakFmt<'a> for Instance {
       write!(w, "\n") ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
-    write!(w, "\n")
+    write!(w, "\npred to clauses:") ? ;
+    for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
+      write!(w, "  {}: lhs {{", self[pred]) ? ;
+      for lhs in lhs {
+        write!(w, " {}", lhs) ?
+      }
+      write!(w, " }}, rhs {{") ? ;
+      for rhs in rhs {
+        write!(w, " {}", rhs) ?
+      }
+      write!(w, " }}\n") ?
+    }
+    Ok(())
   }
 }
 
