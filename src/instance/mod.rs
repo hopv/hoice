@@ -412,7 +412,7 @@ pub type Term = HConsed<RTerm> ;
 
 
 /// Top term, as they appear in clauses.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TTerm {
   /// A predicate application.
   P {
@@ -916,12 +916,16 @@ impl Instance {
   }
 
   /// Forces a predicate to be equal to something.
+  ///
+  /// Does not impact `pred_to_clauses`.
   pub fn force_pred(& mut self, pred: PrdIdx, terms: Vec<TTerm>) -> Res<()> {
-    if let Some(_) = self.pred_terms[pred].as_ref() {
-      bail!(
-        "[bug] trying to force predicate {} twice",
-        conf.sad(& self[pred].name)
-      )
+    if let Some(ts) = self.pred_terms[pred].as_ref() {
+      if ts != & terms {
+        bail!(
+          "[bug] trying to force predicate {} twice",
+          conf.sad(& self[pred].name)
+        )
+      }
     }
     self.pred_terms[pred] = Some(terms) ;
     Ok(())
@@ -995,14 +999,13 @@ impl Instance {
     // Remove all links from the clause's predicates to this clause.
     for lhs in self.clauses[clause].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
-        // 
         let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
-        debug_assert!(was_there)
+        debug_assert!( was_there || self.pred_terms[pred].is_some() )
       }
     }
     if let TTerm::P { pred, .. } = * self.clauses[clause].rhs() {
       let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
-      debug_assert!(was_there)
+      debug_assert!(was_there || self.pred_terms[pred].is_some())
     }
     // Relink the last clause as its index is going to be `clause`. Except if
     // `clause` is already the last one.

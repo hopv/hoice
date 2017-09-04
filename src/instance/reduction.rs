@@ -99,6 +99,10 @@ impl TrueImplies {
     }
 
     // Now we just need to remove all clauses in `rhs`.
+    info!{ "forgetting clauses in `rhs`" }
+    for clause in & rhs {
+      info!{ "{}: {}", clause, instance[* clause].string_do( & instance.preds, |s| s.to_string() ).unwrap() }
+    }
     instance.forget_clauses( rhs.into_iter().collect() ) ;
     self.true_preds.clear()
   }
