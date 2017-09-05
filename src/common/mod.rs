@@ -86,6 +86,9 @@ macro_rules! log_debug {
 #[macro_export]
 #[cfg(not (feature = "bench") )]
 macro_rules! if_debug {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($then)*
+  ) ;
   ($($blah:tt)*) => (
     if conf.debug() {
       $($blah)*
@@ -95,6 +98,9 @@ macro_rules! if_debug {
 #[cfg(feature = "bench")]
 #[allow(unused_macros)]
 macro_rules! if_debug {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($else)*
+  ) ;
   ($($blah:tt)*) => (()) ;
 }
 

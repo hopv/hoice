@@ -945,15 +945,30 @@ impl Instance {
 
   /// Goes trough the predicates in `from`, and updates `pred_to_clauses` so
   /// that they point to `to` instead.
-  fn relink_pred_and_clause(
+  fn relink_preds_to_clauses(
     & mut self, from: ClsIdx, to: ClsIdx
   ) -> Res<()> {
+    log_info!{
+      "instance:\n{}\n\n", self.to_string_info(()) ?
+    }
+    info!{ "\n \n relinking to {}: {}", to, self[from].string_do(
+      & self.preds, |s| s.to_string() ).unwrap()
+    }
+    let mut _set = if_debug!{
+      // This set remembers the predicates removed. The first `debug_assert`
+      // consistency check below fails when a predicate appears more than
+      // once in the lhs. Hence the set.
+      then { PrdSet::new() } else { () }
+    } ;
     for lhs in self.clauses[from].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
-        // 
+        info!{ "- {}", self[pred] }
+        let _unknown_pred = if_debug!{
+          then { _set.insert(pred) } else { () }
+        } ;
         let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
         let _ = self.pred_to_clauses[pred].0.insert(to) ;
-        debug_assert!(was_there)
+        debug_assert!(was_there || ! _unknown_pred)
       }
     }
     if let TTerm::P { pred, .. } = * self.clauses[from].rhs() {
@@ -1011,7 +1026,7 @@ impl Instance {
     // `clause` is already the last one.
     let last_clause: ClsIdx = ( self.clauses.len() - 1 ).into() ;
     if clause != last_clause {
-      self.relink_pred_and_clause(last_clause, clause).expect(
+      self.relink_preds_to_clauses(last_clause, clause).expect(
         "inconsistency in predicate and clause links"
       )
     }
