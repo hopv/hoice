@@ -968,7 +968,7 @@ impl Instance {
         } ;
         let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
         let _ = self.pred_to_clauses[pred].0.insert(to) ;
-        debug_assert!({ println!("blah") ; was_there || _already_rmed } )
+        debug_assert!({ was_there || _already_rmed } )
       }
     }
     if let TTerm::P { pred, .. } = * self.clauses[from].rhs() {
@@ -1432,7 +1432,7 @@ impl Op {
   pub fn as_str(& self) -> & str {
     use instance::Op::* ;
     match * self {
-      Add => "+", Sub => "-", Mul => "*", Div => "/", Mod => "mod",
+      Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>",
     }
@@ -1561,7 +1561,7 @@ impl Op {
         map!(tag!("+"),   |_| Op::Add ) |
         map!(tag!("-"),   |_| Op::Sub ) |
         map!(tag!("*"),   |_| Op::Mul ) |
-        map!(tag!("/"),   |_| Op::Div ) |
+        map!(tag!("div"), |_| Op::Div ) |
         map!(tag!("mod"), |_| Op::Mod ) |
         map!(tag!("<="),  |_| Op::Le  ) |
         map!(tag!("<"),   |_| Op::Lt  ) |
