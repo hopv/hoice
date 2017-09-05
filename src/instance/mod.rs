@@ -954,7 +954,7 @@ impl Instance {
     info!{ "\n \n relinking to {}: {}", to, self[from].string_do(
       & self.preds, |s| s.to_string() ).unwrap()
     }
-    let mut _set = if_debug!{
+    let mut _set = if_not_bench!{
       // This set remembers the predicates removed. The first `debug_assert`
       // consistency check below fails when a predicate appears more than
       // once in the lhs. Hence the set.
@@ -963,12 +963,12 @@ impl Instance {
     for lhs in self.clauses[from].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
         info!{ "- {}", self[pred] }
-        let _unknown_pred = if_debug!{
-          then { _set.insert(pred) } else { () }
+        let _already_rmed = if_not_bench!{
+          then { ! _set.insert(pred) } else { true }
         } ;
         let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
         let _ = self.pred_to_clauses[pred].0.insert(to) ;
-        debug_assert!(was_there || ! _unknown_pred)
+        debug_assert!({ println!("blah") ; was_there || _already_rmed } )
       }
     }
     if let TTerm::P { pred, .. } = * self.clauses[from].rhs() {
