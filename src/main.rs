@@ -281,13 +281,13 @@ fn work() -> Res<()> {
             }
             println!(" ) Bool") ;
             if model[pred.idx].len() > 1 {
-              print!("    (and") ;
+              print!("    (and\n") ;
               for tterm in & model[pred.idx] {
                 print!("      ") ;
                 instance.print_tterm_as_model(stdout, tterm) ? ;
                 println!("")
               }
-              print!("    )")
+              println!("    )")
             } else if model[pred.idx].len() == 1 {
               print!("    ") ;
               instance.print_tterm_as_model(stdout, & model[pred.idx][0]) ? ;

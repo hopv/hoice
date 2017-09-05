@@ -394,6 +394,7 @@ pub struct Conf {
   pub step: bool,
   pub decay: bool,
   pub max_decay: usize,
+  pub simple_red: bool,
   pub verb: Verb,
   pub stats: bool,
   styles: Styles,
@@ -406,14 +407,14 @@ impl Conf {
   pub fn mk(
     file: Option<String>, check: Option<String>, check_eld: bool,
     smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, decay: bool, max_decay: usize,
+    step: bool, decay: bool, max_decay: usize, simple_red: bool,
     smt_learn: bool, fpice_synth: bool,
     gain_threads: usize,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
     Conf {
       file, check, check_eld,
-      smt_log, out_dir, step, decay, max_decay, smt_learn,
+      smt_log, out_dir, step, decay, max_decay, simple_red, smt_learn,
       fpice_synth,
       gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
     }
@@ -538,6 +539,16 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("simple_red").long("--simple_red").help(
+        "activates simple reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("decay").long("--decay").short("-d").help(
         "activates qualifier decay (forgetting unused qualifiers)"
       ).validator(
@@ -647,6 +658,11 @@ impl Conf {
     ).expect(
       "unreachable(step): default is provided and input validated in clap"
     ) ;
+    let simple_red = matches.value_of("simple_red").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(simple_red): default is provided and input validated in clap"
+    ) ;
     let decay = matches.value_of("decay").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -709,7 +725,7 @@ impl Conf {
 
     Conf::mk(
       file, check, check_eld, smt_log, z3_cmd.into(), out_dir.into(), step,
-      decay, max_decay,
+      decay, max_decay, simple_red,
       smt_learn, fpice_synth, gain_threads, verb, stats, color
     )
   }

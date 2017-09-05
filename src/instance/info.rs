@@ -5,6 +5,7 @@ use super::Typ ;
 
 
 /// Variable info.
+#[derive(Clone)]
 pub struct VarInfo {
   /// Variable's name.
   pub name: String,
