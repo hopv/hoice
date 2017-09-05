@@ -345,17 +345,88 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Looks for falsifiable clauses given some candidates.
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
+    use std::iter::Extend ;
     self.count += 1 ;
+    self.solver.reset() ? ;
+
+    // These will be passed to clause printing to inline trivial predicates.
+    let (mut true_preds, mut false_preds) = ( PrdSet::new(), PrdSet::new() ) ;
+    // Clauses to ignore, because they are trivially true. (lhs is false or
+    // rhs is true).
+    let mut clauses_to_ignore = ClsSet::new() ;
+    // Define non-trivially true or false predicates.
+    'define_preds: for (pred, cand) in cands.index_iter() {
+      if let Some(term) = cand.as_ref() {
+        match term.bool() {
+          Some(true) => {
+            let _ =  true_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).1
+            )
+          },
+          Some(false) => {
+            let _ = false_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).0
+            )
+          },
+          None => {
+            let pred = & self.instance[pred] ;
+            let sig: Vec<_> = pred.sig.index_iter().map(
+              |(var, typ)| (var, * typ)
+            ).collect() ;
+            self.solver.define_fun(
+              & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+            ) ?
+          }
+        }
+      } else if let Some(tterms) = self.instance.terms_of(pred) {
+        if tterms.len() == 1 {
+          match tterms[0].bool() {
+            Some(true)  => {
+              let _ =  true_preds.insert(pred) ;
+              clauses_to_ignore.extend(
+                self.instance.clauses_of(pred).1
+              ) ;
+              continue 'define_preds
+            },
+            Some(false) => {
+              let _ = false_preds.insert(pred) ;
+              clauses_to_ignore.extend(
+                self.instance.clauses_of(pred).0
+              ) ;
+              continue 'define_preds
+            },
+            None => (),
+          }
+        }
+        let pred = & self.instance[pred] ;
+        let sig: Vec<_> = pred.sig.index_iter().map(
+          |(var, typ)| (var, * typ)
+        ).collect() ;
+        self.solver.define_fun(
+          & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+          self.instance.preds()
+        ) ?
+      } else {
+        bail!("illegal incomplete candidates")
+      }
+    }
+
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
     self.solver.comment("looking for counterexamples...") ? ;
     for clause in clauses {
-      log_debug!{ "  looking for a cex for clause {}", clause }
-      if let Some(cex) = self.get_cex(cands, clause).chain_err(
-        || format!("while getting counterexample for clause {}", clause)
-      ) ? {
-        let prev = map.insert(clause, cex) ;
-        debug_assert_eq!(prev, None)
+      if ! clauses_to_ignore.contains(& clause) {
+        // log_debug!{ "  looking for a cex for clause {}", clause }
+        if let Some(cex) = self.get_cex(
+          clause, & true_preds, & false_preds
+        ).chain_err(
+          || format!("while getting counterexample for clause {}", clause)
+        ) ? {
+          let prev = map.insert(clause, cex) ;
+          debug_assert_eq!(prev, None)
+        }
       }
     }
     Ok(map)
@@ -363,7 +434,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, cands: & Candidates, clause_idx: ClsIdx
+    & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
   ) -> SmtRes< Option<Cex> > {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
@@ -383,29 +454,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     for var in clause.vars() {
       self.solver.declare_const(& var.idx, & var.typ, & ()) ?
     }
-    for (pred, cand) in cands.index_iter() {
-      if let Some(term) = cand.as_ref() {
-        let pred = & self.instance[pred] ;
-        let sig: Vec<_> = pred.sig.index_iter().map(
-          |(var, typ)| (var, * typ)
-        ).collect() ;
-        self.solver.define_fun(
-          & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
-        ) ?
-      } else if let Some(tterms) = self.instance.terms_of(pred) {
-        let pred = & self.instance[pred] ;
-        let sig: Vec<_> = pred.sig.index_iter().map(
-          |(var, typ)| (var, * typ)
-        ).collect() ;
-        self.solver.define_fun(
-          & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
-          self.instance.preds()
-        ) ?
-      } else {
-        bail!("illegal incomplete candidates")
-      }
-    }
-    self.solver.assert( clause, self.instance.preds() ) ? ;
+    self.solver.assert(
+      clause, & (true_preds, false_preds, self.instance.preds())
+    ) ? ;
     profile!{ self mark "cexs", "prep" }
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;

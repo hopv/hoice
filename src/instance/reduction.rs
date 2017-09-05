@@ -24,15 +24,10 @@ pub fn work(instance: & mut Instance) -> Res<()> {
   'all_strats_fp: while changed {
     changed = false ;
     for strat in & mut strategies {
-      info!("\napplying {}", conf.emph( strat.name() )) ;
+      log_info!("\napplying {}", conf.emph( strat.name() )) ;
       let mut this_changed = strat.apply(instance) ? ;
       changed = changed || this_changed ;
       'strat_fp: while this_changed {
-        if this_changed {
-          log_info!{
-            "instance:\n{}\n\n", instance.to_string_info(()) ?
-          }
-        }
         this_changed = strat.apply(instance) ?
       }
     }
@@ -99,10 +94,6 @@ impl TrueImplies {
     }
 
     // Now we just need to remove all clauses in `rhs`.
-    info!{ "forgetting clauses in `rhs`" }
-    for clause in & rhs {
-      info!{ "{}: {}", clause, instance[* clause].string_do( & instance.preds, |s| s.to_string() ).unwrap() }
-    }
     instance.forget_clauses( rhs.into_iter().collect() ) ;
     self.true_preds.clear()
   }
@@ -146,10 +137,10 @@ impl TrueImplies {
         }
         instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
         let _clause = instance.forget_clause(cls_idx) ;
-        log_info!{
-          "dropped associated clause {}",
-          _clause.string_do( & instance.preds, |s| s.to_string() ) ?
-        }
+        // log_info!{
+        //   "dropped associated clause {}",
+        //   _clause.string_do( & instance.preds, |s| s.to_string() ) ?
+        // }
       } else {
         cls_idx.inc()
       }
@@ -198,7 +189,6 @@ impl SimpleOneRhs {
   /// Finds predicates satisfying the constraints above and creates the maps.
   fn find_preds_to_subst(& mut self, instance: & mut Instance) -> Res<()> {
     'pred_loop: for pred in instance.pred_indices() {
-      info!( "\nworking on {}", conf.emph(& instance[pred].name) ) ;
       if instance.pred_to_clauses[pred].1.len() == 1 {
         let clause_index = * instance.pred_to_clauses[
           pred
@@ -246,26 +236,6 @@ impl SimpleOneRhs {
           bail!("inconsistency in predicate and clause links")
         }
 
-        info!( "vars {{" ) ;
-        for var in & vars {
-          info!("  {}", clause[* var])
-        }
-        info!("}}") ;
-        info!( "var_map {{" ) ;
-        for (from, to) in var_map.index_iter() {
-          if * to < var_map.len() {
-            info!("  v_{} -> {}", from, clause[* to])
-          } else {
-            info!("  v_{} -> v_{} (fresh)", from, to)
-          }
-        }
-        info!("}}") ;
-        info!( "auxiliary terms {{" ) ;
-        for term in & terms {
-          info!("  {}", term)
-        }
-        info!("}}") ;
-
         // At this point we know all the variables the predicate application
         // uses. We now split the lhs of the clause between the terms that 
         // mention only these variables.
@@ -274,27 +244,16 @@ impl SimpleOneRhs {
 
         // To do (maybe): modify the clause in place. Not doing it currently as
         // the loop might early return.
-        info!( "\n lhs time:" ) ;
         for lhs in clause.lhs() {
-          info!( "  {}", lhs ) ;
           let lhs_vars = lhs.vars() ;
-          info!("  - vars {{") ;
-          for var in & lhs_vars {
-            info!("    {}", clause[* var])
-          }
-          info!("  }}") ;
           if lhs_vars.is_subset(& vars) {
-            info!("  - subset") ;
             terms.push( lhs.clone() )
           } else {
-            info!("  - not subset") ;
             continue 'pred_loop
           }
         }
 
         self.obsolete_clauses.push(clause_index) ;
-
-        info!("\n everything okay, pushing") ;
 
         let prev = self.pred_map.insert(pred, (terms, var_map)) ;
         if prev.is_some() {
@@ -321,9 +280,6 @@ impl RedStrat for SimpleOneRhs {
     self.find_preds_to_subst(instance) ? ;
     if ! self.pred_map.is_empty() {
       self.propagate(instance) ? ;
-      log_info!{
-        "instance:\n{}\n\n", instance.to_string_info(()) ?
-      }
     }
     bail!("unimplemented") ;
     // Ok(false)

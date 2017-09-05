@@ -258,6 +258,10 @@ impl RTerm {
   pub fn is_false(& self) -> bool {
     if let RTerm::Bool(b) = * self { ! b } else { false }
   }
+  /// Boolean corresponding to the term if it's a bool constant.
+  pub fn bool(& self) -> Option<bool> {
+    if let RTerm::Bool(b) = * self { Some(b) } else { None }
+  }
 
 
   /// Term evaluation.
@@ -439,6 +443,13 @@ impl TTerm {
       _ => false,
     }
   }
+  /// Boolean corresponding to the top term if it's a bool constant.
+  pub fn bool(& self) -> Option<bool> {
+    match * self {
+      TTerm::T(ref t) => t.bool(),
+      _ => None,
+    }
+  }
 
   /// Variables appearing in a top term.
   pub fn vars(& self) -> VarSet {
@@ -579,10 +590,15 @@ impl ::std::ops::Index<VarIdx> for Clause {
     & self.vars[index]
   }
 }
-impl ::rsmt2::Expr2Smt<PrdMap<PrdInfo>> for Clause {
+impl<'a> ::rsmt2::Expr2Smt<
+  (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
+> for Clause {
   fn expr_to_smt2<Writer: Write>(
-    & self, writer: & mut Writer, prd_info: & PrdMap<PrdInfo>
+    & self, writer: & mut Writer, info: & (
+      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
+    )
   ) -> SmtRes<()> {
+    let (ref true_preds, ref false_preds, ref prd_info) = * info ;
     smt_cast_io!{
       "writing clause as smt2" =>
         write!(writer, "(not ") ;
@@ -598,12 +614,18 @@ impl ::rsmt2::Expr2Smt<PrdMap<PrdInfo>> for Clause {
               write!(writer, " ") ;
               lhs.write_smt2(
                 writer, |w, prd, args| {
-                  write!(w, "({}", prd_info[prd].name) ? ;
-                  for arg in args {
-                    write!(w, " ") ? ;
-                    arg.write(w, |w, var| var.default_write(w)) ?
+                  if true_preds.contains(& prd) {
+                    write!(w, "true")
+                  } else if false_preds.contains(& prd) {
+                    write!(w, "false")
+                  } else {
+                    write!(w, "({}", prd_info[prd].name) ? ;
+                    for arg in args {
+                      write!(w, " ") ? ;
+                      arg.write(w, |w, var| var.default_write(w)) ?
+                    }
+                    write!(w, ")")
                   }
-                  write!(w, ")")
                 }
               )
             )
@@ -615,12 +637,18 @@ impl ::rsmt2::Expr2Smt<PrdMap<PrdInfo>> for Clause {
         } ;
         self.rhs.write_smt2(
           writer, |w, prd, args| {
-            write!(w, "({}", prd_info[prd].name) ? ;
-            for arg in args {
-              write!(w, " ") ? ;
-              arg.write(w, |w, var| var.default_write(w)) ?
+            if true_preds.contains(& prd) {
+              write!(w, "true")
+            } else if false_preds.contains(& prd) {
+              write!(w, "false")
+            } else {
+              write!(w, "({}", prd_info[prd].name) ? ;
+              for arg in args {
+                write!(w, " ") ? ;
+                arg.write(w, |w, var| var.default_write(w)) ?
+              }
+              write!(w, ")")
             }
-            write!(w, ")")
           }
         ) ;
         if self.lhs.is_empty() { Ok(()) } else {
@@ -865,6 +893,12 @@ impl Instance {
     self.pred_terms[pred].as_ref()
   }
 
+  /// Returns the clauses in which the predicate appears in the lhs and rhs
+  /// respectively.
+  pub fn clauses_of(& self, pred: PrdIdx) -> (& ClsSet, & ClsSet) {
+    (& self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1)
+  }
+
   // /// Evaluates the term a predicate is forced to, if any.
   // pub fn eval_term_of(
   //   & self, pred: PrdIdx, model: & VarMap<Val>
@@ -948,12 +982,6 @@ impl Instance {
   fn relink_preds_to_clauses(
     & mut self, from: ClsIdx, to: ClsIdx
   ) -> Res<()> {
-    log_info!{
-      "instance:\n{}\n\n", self.to_string_info(()) ?
-    }
-    info!{ "\n \n relinking to {}: {}", to, self[from].string_do(
-      & self.preds, |s| s.to_string() ).unwrap()
-    }
     let mut _set = if_not_bench!{
       // This set remembers the predicates removed. The first `debug_assert`
       // consistency check below fails when a predicate appears more than
@@ -962,7 +990,6 @@ impl Instance {
     } ;
     for lhs in self.clauses[from].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
-        info!{ "- {}", self[pred] }
         let _already_rmed = if_not_bench!{
           then { ! _set.insert(pred) } else { true }
         } ;
