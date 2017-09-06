@@ -977,6 +977,20 @@ impl Instance {
     self.pred_terms[pred].as_ref()
   }
 
+  /// If the input predicate is forced to a constant boolean, returns its
+  /// value.
+  pub fn bool_value_of(& self, pred: PrdIdx) -> Option<bool> {
+    self.terms_of(pred).and_then(
+      |terms| if terms.len() == 1 {
+        if let TTerm::T(ref term) = terms[0] {
+          term.bool()
+        } else { None }
+      } else {
+        None
+      }
+    )
+  }
+
   /// Forced predicates in topological order.
   pub fn sorted_forced_terms(& self) -> & Vec<PrdIdx> {
     & self.sorted_pred_terms

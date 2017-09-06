@@ -394,6 +394,7 @@ pub struct Config {
   pub step: bool,
   pub decay: bool,
   pub max_decay: usize,
+  pub pre_proc: bool,
   pub simple_red: bool,
   pub verb: Verb,
   pub stats: bool,
@@ -403,22 +404,22 @@ impl ColorExt for Config {
   fn styles(& self) -> & Styles { & self.styles }
 }
 impl Config {
-  /// Regular constructor.
-  pub fn mk(
-    file: Option<String>, check: Option<String>, check_eld: bool,
-    smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, decay: bool, max_decay: usize, simple_red: bool,
-    smt_learn: bool, fpice_synth: bool,
-    gain_threads: usize,
-    verb: Verb, stats: bool, color: bool
-  ) -> Self {
-    Config {
-      file, check, check_eld,
-      smt_log, out_dir, step, decay, max_decay, simple_red, smt_learn,
-      fpice_synth,
-      gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
-    }
-  }
+  // /// Regular constructor.
+  // pub fn mk(
+  //   file: Option<String>, check: Option<String>, check_eld: bool,
+  //   smt_log: bool, z3_cmd: String, out_dir: String,
+  //   step: bool, decay: bool, max_decay: usize, simple_red: bool,
+  //   smt_learn: bool, fpice_synth: bool,
+  //   gain_threads: usize,
+  //   verb: Verb, stats: bool, color: bool
+  // ) -> Self {
+  //   Config {
+  //     file, check, check_eld,
+  //     smt_log, out_dir, step, decay, max_decay, simple_red, smt_learn,
+  //     fpice_synth,
+  //     gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
+  //   }
+  // }
 
   /// True iff verbose or debug.
   pub fn verbose(& self) -> bool {
@@ -549,6 +550,16 @@ impl Config {
 
     ).arg(
 
+      Arg::with_name("pre_proc").long("--pre_proc").help(
+        "activates simple reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("decay").long("--decay").short("-d").help(
         "activates qualifier decay (forgetting unused qualifiers)"
       ).validator(
@@ -659,10 +670,16 @@ impl Config {
     ).expect(
       "unreachable(step): default is provided and input validated in clap"
     ) ;
+    let pre_proc = matches.value_of("pre_proc").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(pre_proc): default is provided and input validated in clap"
+    ) ;
     let simple_red = matches.value_of("simple_red").and_then(
       |s| bool_of_str(& s)
     ).expect(
-      "unreachable(simple_red): default is provided and input validated in clap"
+      "unreachable(simple_red): \
+      default is provided and input validated in clap"
     ) ;
     let decay = matches.value_of("decay").and_then(
       |s| bool_of_str(& s)
@@ -728,7 +745,7 @@ impl Config {
       file, check, check_eld,
       smt_log, z3_cmd, out_dir, step,
       decay, max_decay,
-      simple_red,
+      pre_proc, simple_red,
       smt_learn,
       fpice_synth,
       gain_threads,
@@ -1094,7 +1111,7 @@ impl ProfileTree {
 
 
 /// Maps strings to counters.
-pub type Stats = HashMap<& 'static str, usize> ;
+pub type Stats = HashMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// Debug print (multi-line).
@@ -1200,10 +1217,11 @@ impl Profile {
 
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]
-  pub fn stat_do<F>(& self, stat: & 'static str, f: F)
-  where F: Fn(usize) -> usize {
+  pub fn stat_do<F, S>(& self, stat: S, f: F)
+  where F: Fn(usize) -> usize, S: Into<String> {
+    let stat = stat.into() ;
     let mut map = self.stats.borrow_mut() ;
-    let val = map.get(stat).map(|n| * n).unwrap_or(0) ;
+    let val = map.get(& stat).map(|n| * n).unwrap_or(0) ;
     let _ = map.insert(stat, f(val)) ;
     ()
   }

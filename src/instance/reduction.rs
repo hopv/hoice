@@ -23,7 +23,7 @@ fn strategies() -> Vec< Box<RedStrat> > {
 
 
 /// Reduces an instance.
-pub fn work(instance: & mut Instance) -> Res<()> {
+pub fn work(instance: & mut Instance, profiler: & Profile) -> Res<()> {
   let mut strategies = strategies() ;
   let mut changed = true ;
   'all_strats_fp: while changed {
@@ -32,10 +32,26 @@ pub fn work(instance: & mut Instance) -> Res<()> {
     for strat in & mut strategies {
       if instance.clauses.is_empty() { break 'all_strats_fp }
       log_info!("\napplying {}", conf.emph( strat.name() )) ;
-      let mut this_changed = strat.apply(instance) ? ;
+      let (mut pred_cnt, mut clse_cnt) = strat.apply(instance) ? ;
+      let mut this_changed = pred_cnt + clse_cnt > 0 ;
       changed = changed || this_changed ;
       'strat_fp: while this_changed {
-        this_changed = strat.apply(instance) ?
+        let (nu_pred_cnt, nu_clse_cnt) = strat.apply(instance) ? ;
+        pred_cnt += nu_pred_cnt ;
+        clse_cnt += nu_clse_cnt ;
+        this_changed = nu_pred_cnt + nu_clse_cnt > 0
+      }
+      profile!{
+        |profiler| format!("{} pred red", strat.name()) => add pred_cnt
+      }
+      profile!{
+        |profiler| "predicates eliminated" => add pred_cnt
+      }
+      profile!{
+        |profiler| format!("{} clause red", strat.name()) => add clse_cnt
+      }
+      profile!{
+        |profiler| "clauses eliminated" => add clse_cnt
       }
     }
   }
@@ -49,8 +65,9 @@ pub fn work(instance: & mut Instance) -> Res<()> {
 ///
 /// Function `apply` will be applied until fixed point (`false` is returned).
 pub trait RedStrat {
-  /// Applies the reduction strategy. Returns `true` if it did something.
-  fn apply(& mut self, & mut Instance) -> Res<bool> ;
+  /// Applies the reduction strategy. Returns the number of predicates reduced
+  /// and the number of clauses forgotten.
+  fn apply(& mut self, & mut Instance) -> Res<(usize, usize)> ;
   /// Name of the strategy.
   fn name(& self) -> & 'static str ;
 }
@@ -60,8 +77,9 @@ pub trait RedStrat {
 pub struct LhsOnlyToFalse {}
 impl RedStrat for LhsOnlyToFalse {
   fn name(& self) -> & 'static str { "lhs only" }
-  fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
-    let mut found_one = false ;
+  fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
+    let mut pred_cnt = 0 ;
+    let mut clse_cnt = 0 ;
     // Used when draining the clauses a predicate appears in.
     let (mut lhs_pred, mut rhs_pred) = (
       ClsSet::new(), ClsSet::new()
@@ -75,7 +93,7 @@ impl RedStrat for LhsOnlyToFalse {
         }
       }
       if let Some(pred) = lhs_only {
-        found_one = true ;
+        pred_cnt += 1 ;
         let term = instance.bool(false) ;
         log_info!{
           "  trivial predicate {}: forcing to {}",
@@ -84,13 +102,14 @@ impl RedStrat for LhsOnlyToFalse {
         instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
         instance.drain_unlink_pred(pred, & mut lhs_pred, & mut rhs_pred) ;
         debug_assert!( rhs_pred.is_empty() ) ;
+        clse_cnt += lhs_pred.len() ;
         instance.forget_clauses( lhs_pred.drain().collect() )
       } else {
         // No predicate of interest found.
         break 'find_lhs_only
       }
     }
-    Ok(found_one)
+    Ok( (pred_cnt, clse_cnt) )
   }
 }
 
@@ -99,8 +118,9 @@ impl RedStrat for LhsOnlyToFalse {
 pub struct RhsOnlyToTrue {}
 impl RedStrat for RhsOnlyToTrue {
   fn name(& self) -> & 'static str { "rhs only" }
-  fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
-    let mut found_one = false ;
+  fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
+    let mut pred_cnt = 0 ;
+    let mut clse_cnt = 0 ;
     // Used when draining the clauses a predicate appears in.
     let (mut lhs_pred, mut rhs_pred) = (
       ClsSet::new(), ClsSet::new()
@@ -114,7 +134,7 @@ impl RedStrat for RhsOnlyToTrue {
         }
       }
       if let Some(pred) = rhs_only {
-        found_one = true ;
+        pred_cnt += 1 ;
         let term = instance.bool(true) ;
         log_info!{
           "  trivial predicate {}: forcing to {}",
@@ -123,13 +143,14 @@ impl RedStrat for RhsOnlyToTrue {
         instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
         instance.drain_unlink_pred(pred, & mut lhs_pred, & mut rhs_pred) ;
         debug_assert!( lhs_pred.is_empty() ) ;
+        clse_cnt += rhs_pred.len() ;
         instance.forget_clauses( rhs_pred.drain().collect() )
       } else {
         // No predicate of interest found.
         break 'find_rhs_only
       }
     }
-    Ok(found_one)
+    Ok( (pred_cnt, clse_cnt) )
   }
 }
 
@@ -142,11 +163,15 @@ impl RedStrat for RhsOnlyToTrue {
 pub struct TrueImplies {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
+  /// Number of clauses reduced.
+  clse_cnt: usize,
 }
 impl TrueImplies {
   /// Constructor.
   fn mk() -> Self {
-    TrueImplies { true_preds: PrdSet::with_capacity(7) }
+    TrueImplies {
+      true_preds: PrdSet::with_capacity(7), clse_cnt: 0
+    }
   }
 
   /// Propagates the predicates stored in `self`.
@@ -180,6 +205,7 @@ impl TrueImplies {
     }
 
     // Now we just need to remove all clauses in `rhs`.
+    self.clse_cnt += rhs.len() ;
     instance.forget_clauses( rhs.into_iter().collect() ) ;
     self.true_preds.clear()
   }
@@ -223,6 +249,7 @@ impl TrueImplies {
           conf.emph(& instance[pred].name), term
         }
         instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
+        self.clse_cnt += 1 ;
         let _clause = instance.forget_clause(cls_idx) ;
         // log_info!{
         //   "dropped associated clause {}",
@@ -237,15 +264,16 @@ impl TrueImplies {
 }
 impl RedStrat for TrueImplies {
   fn name(& self) -> & 'static str { "true => ..." }
-  fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
+  fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
     debug_assert!( self.true_preds.is_empty() ) ;
     self.find_true_implies(instance) ? ;
+    let pred_cnt = self.true_preds.len() ;
     if ! self.true_preds.is_empty() {
-      self.propagate(instance) ;
-      Ok(true)
-    } else {
-      Ok(false)
+      self.propagate(instance)
     }
+    let clse_cnt = self.clse_cnt ;
+    self.clse_cnt = 0 ;
+    Ok( (pred_cnt, clse_cnt) )
   }
 }
 
@@ -510,15 +538,14 @@ impl SimpleOneRhs {
 }
 impl RedStrat for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
-  fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
+  fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
     debug_assert!( self.pred_map.is_empty() ) ;
     debug_assert!( self.obsolete_clauses.is_empty() ) ;
     self.find_preds_to_subst(instance) ? ;
+    let res = ( self.pred_map.len(), self.obsolete_clauses.len() ) ;
     if ! self.pred_map.is_empty() {
-      self.propagate(instance) ? ;
-      Ok(true)
-    } else {
-      Ok(false)
+      self.propagate(instance) ?
     }
+    Ok(res)
   }
 }

@@ -89,7 +89,7 @@ pub fn work() -> Res<()> {
     }
 
     profile!{ |profiler| tick "loading", "reducing" }
-    ::instance::reduction::work(& mut instance) ? ;
+    ::instance::reduction::work(& mut instance, & profiler) ? ;
     profile!{ |profiler| mark "loading", "reducing" }
 
     log_info!{
