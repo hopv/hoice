@@ -12,6 +12,7 @@ use instance::* ;
 fn strategies() -> Vec< Box<RedStrat> > {
   let mut strats: Vec< Box<RedStrat> > = vec![
     Box::new( TrueImplies::mk() ),
+    Box::new( LhsOnlyToFalse {} ),
   ] ;
   if conf.simple_red {
     strats.push( Box::new( SimpleOneRhs::mk() ) )
@@ -169,6 +170,44 @@ impl RedStrat for TrueImplies {
   }
 }
 
+
+/// Forces to false predicates appearing only in the lhs of the clauses.
+pub struct LhsOnlyToFalse {}
+impl RedStrat for LhsOnlyToFalse {
+  fn name(& self) -> & 'static str { "lhs only" }
+  fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
+    let mut found_one = false ;
+    // Used when draining the clauses a predicate appears in.
+    let (mut lhs_pred, mut rhs_pred) = (
+      ClsSet::new(), ClsSet::new()
+    ) ;
+    'find_lhs_only: loop {
+      let mut lhs_only = None ;
+      for pred in instance.pred_indices() {
+        if instance.terms_of(pred).is_none()
+        && instance.pred_to_clauses[pred].1.is_empty() {
+          lhs_only = Some(pred)
+        }
+      }
+      if let Some(pred) = lhs_only {
+        found_one = true ;
+        let term = instance.bool(false) ;
+        log_info!{
+          "  trivial predicate {}: forcing to {}",
+          conf.emph(& instance[pred].name), term
+        }
+        instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
+        instance.drain_unlink_pred(pred, & mut lhs_pred, & mut rhs_pred) ;
+        debug_assert!( rhs_pred.is_empty() ) ;
+        instance.forget_clauses( lhs_pred.drain().collect() )
+      } else {
+        // No predicate of interest found.
+        break 'find_lhs_only
+      }
+    }
+    Ok(found_one)
+  }
+}
 
 
 /// Unfolds predicates that appear as the rhs of a single clause, and for
