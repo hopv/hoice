@@ -88,9 +88,11 @@ pub fn work() -> Res<()> {
       instance.to_string_info(()) ?
     }
 
-    profile!{ |profiler| tick "loading", "reducing" }
-    ::instance::reduction::work(& mut instance, & profiler) ? ;
-    profile!{ |profiler| mark "loading", "reducing" }
+    if conf.pre_proc {
+      profile!{ |profiler| tick "loading", "reducing" }
+      ::instance::reduction::work(& mut instance, & profiler) ? ;
+      profile!{ |profiler| mark "loading", "reducing" }
+    }
 
     log_info!{
       "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
