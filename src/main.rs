@@ -206,6 +206,8 @@ fn work() -> Res<()> {
       "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
     }
 
+    instance.finalize() ;
+
     profile!{ |profiler| mark "loading" }
 
     let mut model = None ;
@@ -218,9 +220,11 @@ fn work() -> Res<()> {
 
         // Check-sat, start class.
         Parsed::CheckSat => {
-          model = if let Some(model) = instance.is_trivial() {
+          model = if let Some(model) = instance.is_trivial() ? {
             // Pre-processing already decided satisfiability.
-            info!( "answering satisfiability query by pre-processing only" ) ;
+            log_info!(
+              "answering satisfiability query by pre-processing only"
+            ) ;
             Some(model)
           } else {
             let arc_instance = Arc::new(instance) ;
@@ -239,24 +243,7 @@ fn work() -> Res<()> {
               }
             }
             if let Some(partial_model) = partial_model {
-              let mut model = PrdMap::with_capacity( partial_model.len() ) ;
-              for (pred, term_opt) in partial_model.into_index_iter() {
-                if let Some(term) = term_opt {
-                  model.push( vec![ ::instance::TTerm::T(term) ] ) ;
-                  if_not_bench!(
-                    assert!( instance.terms_of(pred).is_none() )
-                  )
-                } else if let Some(terms) = instance.terms_of(pred) {
-                  model.push( terms.clone() )
-                } else {
-                  // Right now, models should always be complete.
-                  bail!(
-                    "illegal model, predicate {} is undefined",
-                    conf.sad( & instance[pred].name )
-                  )
-                }
-              }
-              Some(model)
+              Some( instance.model_of(partial_model) ? )
             } else {
               None
             }
@@ -273,29 +260,30 @@ fn work() -> Res<()> {
         Parsed::GetModel => if let Some(ref model) = model {
           let stdout = & mut ::std::io::stdout() ;
           println!("(model") ;
-          for pred in instance.preds() {
-            println!("  (define-fun {}", pred.name) ;
+          for & (ref pred, ref tterms) in model {
+            let pred_info = & instance[* pred] ;
+            println!("  (define-fun {}", pred_info.name) ;
             print!(  "    (") ;
-            for (var, typ) in pred.sig.index_iter() {
+            for (var, typ) in pred_info.sig.index_iter() {
               print!(" ({} {})", instance.var(var), typ)
             }
             println!(" ) Bool") ;
-            if model[pred.idx].len() > 1 {
+            if tterms.len() > 1 {
               print!("    (and\n") ;
-              for tterm in & model[pred.idx] {
+              for tterm in tterms {
                 print!("      ") ;
                 instance.print_tterm_as_model(stdout, tterm) ? ;
                 println!("")
               }
               println!("    )")
-            } else if model[pred.idx].len() == 1 {
+            } else if tterms.len() == 1 {
               print!("    ") ;
-              instance.print_tterm_as_model(stdout, & model[pred.idx][0]) ? ;
+              instance.print_tterm_as_model(stdout, & tterms[0]) ? ;
               println!("")
             } else {
               bail!(
                 "model for predicate {} is empty",
-                conf.sad( & pred.name )
+                conf.sad( & pred_info.name )
               )
             }
             println!("  )")

@@ -25,8 +25,10 @@ pub fn work(instance: & mut Instance) -> Res<()> {
   let mut strategies = strategies() ;
   let mut changed = true ;
   'all_strats_fp: while changed {
+    if instance.clauses.is_empty() { break 'all_strats_fp }
     changed = false ;
     for strat in & mut strategies {
+      if instance.clauses.is_empty() { break 'all_strats_fp }
       log_info!("\napplying {}", conf.emph( strat.name() )) ;
       let mut this_changed = strat.apply(instance) ? ;
       changed = changed || this_changed ;
@@ -35,6 +37,7 @@ pub fn work(instance: & mut Instance) -> Res<()> {
       }
     }
   }
+  log_info!("") ;
   Ok(())
 }
 
@@ -136,7 +139,8 @@ impl TrueImplies {
         let _ = self.true_preds.insert(pred) ;
         let term = instance.bool(true) ;
         log_info!{
-          "trivial predicate {}: forcing to {}", instance[pred], term
+          "  trivial predicate {}: forcing to {}",
+          conf.emph(& instance[pred].name), term
         }
         instance.force_pred(pred, vec![ TTerm::T(term) ]) ? ;
         let _clause = instance.forget_clause(cls_idx) ;
@@ -196,6 +200,12 @@ impl SimpleOneRhs {
         let clause_index = * instance.pred_to_clauses[
           pred
         ].1.iter().next().unwrap() ;
+
+        // Skip if predicate also appears in lhs.
+        if instance.pred_to_clauses[pred].0.contains(& clause_index) {
+          continue 'pred_loop
+        }
+
         let clause = & instance[clause_index] ;
         // Set of variables to detect when the same variable is given twice
         // as argument.
@@ -250,6 +260,14 @@ impl SimpleOneRhs {
         for lhs in clause.lhs() {
           let lhs_vars = lhs.vars() ;
           if lhs_vars.is_subset(& vars) {
+            // If this term is a predicate application we're already reducing,
+            // skip. Otherwise, we would create circular dependencies.
+            if let Some(lhs_pred) = lhs.pred() {
+              debug_assert!( pred != lhs_pred ) ;
+              if self.pred_map.contains_key(& lhs_pred) {
+                continue 'pred_loop
+              }
+            }
             terms.push( lhs.clone() )
           } else {
             continue 'pred_loop
@@ -259,6 +277,7 @@ impl SimpleOneRhs {
         self.obsolete_clauses.push(clause_index) ;
 
         let prev = self.pred_map.insert(pred, (terms, var_map)) ;
+        log_info!{ "unfolding predicate {}", conf.emph(& instance[pred].name) }
         if prev.is_some() {
           bail!(
             "unfolding predicate {} twice with different definitions...",
@@ -308,6 +327,7 @@ impl SimpleOneRhs {
     let mut terms_to_add = vec![] ;
 
     for (pred, (tterms, var_map)) in self.pred_map.drain() {
+      log_info!{ "forcing pred {}", instance[pred] }
       debug_assert!( terms_to_add.is_empty() ) ;
       instance.drain_unlink_pred(pred, & mut lhs, & mut rhs) ;
 
@@ -316,29 +336,32 @@ impl SimpleOneRhs {
           continue
         }
         debug_assert!( terms_to_add.is_empty() ) ;
-        let mut cnt = 0 ;
-        let lhs = & mut instance.clauses[clause].lhs ;
-        'iter_lhs: while cnt < lhs.len() {
-          match lhs[cnt] {
-            TTerm::P { pred: this_pred, ref args } if pred == this_pred => {
-              let mut subst = VarHMap::with_capacity(
-                instance.preds[pred].sig.len()
-              ) ;
-              for (from, to) in var_map.index_iter() {
-                let _prev = subst.insert(* to, args[from].clone()) ;
-                debug_assert!( _prev.is_none() )
-              }
-              for tterm in & tterms {
-                terms_to_add.push(
-                  Self::tterm_subst(& instance.factory, & subst, tterm) ?
-                )
-              }
-            },
-            _ => { cnt += 1 ; continue 'iter_lhs },
+
+        {
+          let mut cnt = 0 ;
+          let lhs = & mut instance.clauses[clause].lhs ;
+          'iter_lhs: while cnt < lhs.len() {
+            match lhs[cnt] {
+              TTerm::P { pred: this_pred, ref args } if pred == this_pred => {
+                let mut subst = VarHMap::with_capacity(
+                  instance.preds[pred].sig.len()
+                ) ;
+                for (from, to) in var_map.index_iter() {
+                  let _prev = subst.insert(* to, args[from].clone()) ;
+                  debug_assert!( _prev.is_none() )
+                }
+                for tterm in & tterms {
+                  terms_to_add.push(
+                    Self::tterm_subst(& instance.factory, & subst, tterm) ?
+                  )
+                }
+              },
+              _ => { cnt += 1 ; continue 'iter_lhs },
+            }
+            lhs.swap_remove(cnt) ;
           }
-          lhs.swap_remove(cnt) ;
         }
-        lhs.extend( terms_to_add.drain(0..) )
+        instance.clause_lhs_extend( clause, & mut terms_to_add )
       }
 
       for clause in rhs.drain() {
@@ -402,12 +425,6 @@ impl SimpleOneRhs {
 
     }
 
-    log_info!{
-      "instance:\n{}\n\n", instance.to_string_info(()) ?
-    }
-
-    info!{ "forgetting clauses" }
-
     instance.forget_clauses( self.obsolete_clauses.drain(0..).collect() ) ;
     Ok(())
   }
@@ -415,9 +432,6 @@ impl SimpleOneRhs {
 impl RedStrat for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
   fn apply(& mut self, instance: & mut Instance) -> Res<bool> {
-    log_info!{
-      "instance:\n{}\n\n", instance.to_string_info(()) ?
-    }
     debug_assert!( self.pred_map.is_empty() ) ;
     debug_assert!( self.obsolete_clauses.is_empty() ) ;
     self.find_preds_to_subst(instance) ? ;

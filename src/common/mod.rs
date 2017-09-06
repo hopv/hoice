@@ -234,7 +234,7 @@ wrap_usize!{
 pub type Candidates = PrdMap< Option<::instance::Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Maps predicates to terms.
-pub type Model = PrdMap< Vec<::instance::TTerm> > ;
+pub type Model = Vec< (PrdIdx, Vec<::instance::TTerm>) > ;
 
 
 

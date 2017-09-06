@@ -451,6 +451,14 @@ impl TTerm {
     }
   }
 
+  /// The predicate a top term is an application of, if any.
+  pub fn pred(& self) -> Option<PrdIdx> {
+    match * self {
+      TTerm::P { pred, .. } => Some(pred),
+      _ => None,
+    }
+  }
+
   /// Variables appearing in a top term.
   pub fn vars(& self) -> VarSet {
     match * self {
@@ -814,6 +822,10 @@ pub struct Instance {
   preds: PrdMap<PrdInfo>,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< Vec<TTerm> > >,
+  /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
+  ///
+  /// Populated by the `finalize` function.
+  sorted_pred_terms: Vec<PrdIdx>,
   /// Max arity of the predicates.
   pub max_pred_arity: Arity,
   /// Clauses.
@@ -834,6 +846,7 @@ impl Instance {
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
+      sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
@@ -845,18 +858,39 @@ impl Instance {
     instance
   }
 
+  /// Returns the model corresponding to the input predicates and the forced
+  /// predicates.
+  ///
+  /// The model is sorted in topological order.
+  pub fn model_of(& self, candidates: Candidates) -> Res<Model> {
+    use std::iter::Extend ;
+    let mut res = Model::with_capacity( self.preds.len() ) ;
+    res.extend(
+      candidates.into_index_iter().filter_map(
+        |(pred, tterms_opt)| tterms_opt.map(
+          |tterm| (pred, vec![ TTerm::T(tterm) ])
+        )
+      )
+    ) ;
+    for pred in & self.sorted_pred_terms {
+      let pred = * pred ;
+      if let Some(ref tterms) = self.pred_terms[pred] {
+        res.push( (pred, tterms.clone()) )
+      } else {
+        bail!("inconsistency in sorted forced predicates")
+      }
+    }
+    Ok(res)
+  }
+
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Option<Model> {
+  pub fn is_trivial(& self) -> Res< Option<Model> > {
     for term_opt in & self.pred_terms {
-      if term_opt.is_none() { return None }
+      if term_opt.is_none() { return Ok(None) }
     }
     // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
-    Some(
-      self.pred_terms.iter().map(
-        |term| term.as_ref().unwrap().clone()
-      ).collect()
-    )
+    self.model_of( vec![].into() ).map(|res| Some(res))
   }
 
 
@@ -879,12 +913,62 @@ impl Instance {
     }
   }
 
-  /// Shrinks all collections.
-  pub fn shrink_to_fit(& mut self) {
+  /// Finalizes instance creation.
+  ///
+  /// - shrinks all collections
+  /// - sorts forced predicates by dependencies
+  ///
+  /// # TODO
+  ///
+  /// - optimize sorting of forced preds by dependencies (low priority)
+  pub fn finalize(& mut self) {
     self.consts.shrink_to_fit() ;
     self.preds.shrink() ;
     self.pred_terms.shrink() ;
-    self.clauses.shrink()
+    self.clauses.shrink() ;
+
+    let mut tmp: Vec< (PrdIdx, PrdSet) > = Vec::with_capacity(
+      self.preds.len()
+    ) ;
+
+    // Populate `sorted_pred_terms`.
+    for (pred, tterms) in self.pred_terms.index_iter() {
+      if let Some(ref tterms) = * tterms {
+        let mut deps = PrdSet::with_capacity( self.preds.len() ) ;
+        for tterm in tterms {
+          if let Some(pred) = tterm.pred() {
+            deps.insert(pred) ;
+          }
+        }
+        tmp.push( (pred, deps) )
+      }
+    }
+
+    // Sort by dependencies.
+    let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
+    for (pred, want_none) in self.pred_terms.index_iter() {
+      if want_none.is_none() { known_preds.insert(pred) ; () }
+    }
+    while ! tmp.is_empty() {
+      let mut cnt = 0 ; // Will use swap remove.
+      'find_preds: while cnt < tmp.len() {
+        for pred in & tmp[cnt].1 {
+          if ! known_preds.contains(pred) {
+            // Don't know this predicate, keep going in `tmp`.
+            cnt += 1 ;
+            continue 'find_preds
+          }
+        }
+        // Reachable only we already have all of the current pred's
+        // dependencies.
+        let (pred, _) = tmp.swap_remove(cnt) ;
+        self.sorted_pred_terms.push(pred) ;
+        known_preds.insert(pred) ;
+        () // No `cnt` increment after swap remove.
+      }
+    }
+
+    self.sorted_pred_terms.shrink_to_fit()
   }
 
 
@@ -893,10 +977,43 @@ impl Instance {
     self.pred_terms[pred].as_ref()
   }
 
+  /// Forced predicates in topological order.
+  pub fn sorted_forced_terms(& self) -> & Vec<PrdIdx> {
+    & self.sorted_pred_terms
+  }
+
   /// Returns the clauses in which the predicate appears in the lhs and rhs
   /// respectively.
   pub fn clauses_of(& self, pred: PrdIdx) -> (& ClsSet, & ClsSet) {
     (& self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1)
+  }
+
+  /// Adds some terms to the lhs of a clause.
+  ///
+  /// Updates `pred_to_clauses`.
+  pub fn clause_lhs_extend(
+    & mut self, clause: ClsIdx, tterms: & mut Vec<TTerm>
+  ) {
+    self.clauses[clause].lhs.reserve( tterms.len() ) ;
+    for tterm in tterms.drain(0..) {
+      if let TTerm::P { pred, .. } = tterm {
+        self.pred_to_clauses[pred].0.insert(clause) ;
+      }
+      self.clauses[clause].lhs.push(tterm)
+    }
+  }
+
+  /// Replaces the rhs of a clause.
+  pub fn clause_rhs_force(
+    & mut self, clause: ClsIdx, tterm: TTerm
+  ) {
+    if let TTerm::P { pred, .. } = self.clauses[clause].rhs {
+      self.pred_to_clauses[pred].1.remove(& clause) ;
+    }
+    if let TTerm::P { pred, .. } = tterm {
+      self.pred_to_clauses[pred].1.insert(clause) ;
+    }
+    self.clauses[clause].rhs = tterm
   }
 
   // /// Evaluates the term a predicate is forced to, if any.
@@ -1908,6 +2025,58 @@ impl<'a> PebcakFmt<'a> for Instance {
         write!(w, " {}", rhs) ?
       }
       write!(w, " }}\n") ?
+    }
+    write!(w, "forced preds:\n") ? ;
+    if self.sorted_pred_terms.len() == self.pred_terms.len() {
+      for pred in & self.sorted_pred_terms {
+        write!(w, "  (define-fun {} (", self[* pred]) ? ;
+        for (var, typ) in self[* pred].sig.index_iter() {
+          write!(w, " (v_{} {})", var, typ) ?
+        }
+        let tterms = self.pred_terms[* pred].as_ref().unwrap() ;
+        write!(w, " )") ? ;
+        if tterms.len() > 1 {
+          write!(w, "\n    (and") ?
+        }
+        for tterm in self.pred_terms[* pred].as_ref().unwrap() {
+          write!(w, "\n      {}", tterm) ?
+        }
+        if tterms.len() > 1 {
+          write!(w, "\n    )") ?
+        }
+        write!(w, "\n    )\n  )\n") ?
+      }
+    } else {
+      for (pred, tterms) in self.pred_terms.index_iter() {
+        if let Some(ref tterms) = * tterms {
+          write!(w, "  (define-fun {} (", self[pred]) ? ;
+          for (var, typ) in self[pred].sig.index_iter() {
+            write!(w, " (v_{} {})", var, typ) ?
+          }
+          write!(w, " )") ? ;
+          if tterms.len() > 1 {
+            write!(w, "\n    (and") ?
+          }
+          for tterm in tterms {
+            write!(w, "\n      ") ? ;
+            tterm.write(
+              w, |w, var| var.default_write(w),
+              |w, pred, args| {
+                write!(w, "({}", self[pred]) ? ;
+                for arg in args {
+                  write!(w, " ") ? ;
+                  arg.write(w, |w, var| var.default_write(w)) ?
+                }
+                write!(w, ")")
+              }
+            ) ?
+          }
+          if tterms.len() > 1 {
+            write!(w, "\n    )") ?
+          }
+          write!(w, "\n    )\n  )\n") ?
+        }
+      }
     }
     Ok(())
   }

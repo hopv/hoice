@@ -354,12 +354,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     // Clauses to ignore, because they are trivially true. (lhs is false or
     // rhs is true).
     let mut clauses_to_ignore = ClsSet::new() ;
-    // Define non-trivially true or false predicates.
-    'define_preds: for (pred, cand) in cands.index_iter() {
-      if let Some(term) = cand.as_ref() {
+
+    // Define non-forced predicates that are not trivially true or false.
+    'define_non_forced: for (pred, cand) in cands.index_iter() {
+      if let Some(ref term) = * cand {
         match term.bool() {
           Some(true) => {
-            let _ =  true_preds.insert(pred) ;
+            let _ = true_preds.insert(pred) ;
             clauses_to_ignore.extend(
               self.instance.clauses_of(pred).1
             )
@@ -378,40 +379,114 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             self.solver.define_fun(
               & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
             ) ?
-          }
+          },
         }
-      } else if let Some(tterms) = self.instance.terms_of(pred) {
-        if tterms.len() == 1 {
-          match tterms[0].bool() {
-            Some(true)  => {
-              let _ =  true_preds.insert(pred) ;
-              clauses_to_ignore.extend(
-                self.instance.clauses_of(pred).1
-              ) ;
-              continue 'define_preds
-            },
-            Some(false) => {
-              let _ = false_preds.insert(pred) ;
-              clauses_to_ignore.extend(
-                self.instance.clauses_of(pred).0
-              ) ;
-              continue 'define_preds
-            },
-            None => (),
-          }
-        }
-        let pred = & self.instance[pred] ;
-        let sig: Vec<_> = pred.sig.index_iter().map(
-          |(var, typ)| (var, * typ)
-        ).collect() ;
-        self.solver.define_fun(
-          & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
-          self.instance.preds()
-        ) ?
-      } else {
-        bail!("illegal incomplete candidates")
       }
     }
+
+    // Define forced predicates in topological order.
+    'forced_preds: for pred in self.instance.sorted_forced_terms() {
+      let pred = * pred ;
+      let tterms = if let Some(tterms) = self.instance.terms_of(pred) {
+        tterms
+      } else {
+        bail!(
+          "inconsistency between forced predicates and \
+          sorted forced predicates"
+        )
+      } ;
+
+      // Skip if trivially true or false.
+      if tterms.len() == 1 {
+        match tterms[0].bool() {
+          Some(true)  => {
+            let _ = true_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).1
+            ) ;
+            continue 'forced_preds
+          },
+          Some(false) => {
+            let _ = false_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).0
+            ) ;
+            continue 'forced_preds
+          },
+          None => (),
+        }
+      }
+
+      // Reachable only if preds is not `true` or `false`.
+      let pred = & self.instance[pred] ;
+      let sig: Vec<_> = pred.sig.index_iter().map(
+        |(var, typ)| (var, * typ)
+      ).collect() ;
+      self.solver.define_fun(
+        & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+        & ( & true_preds, & false_preds, self.instance.preds() )
+      ) ?
+
+    }
+
+    // // Define non-trivially true or false predicates.
+    // 'define_preds: for (pred, cand) in cands.index_iter() {
+    //   if let Some(term) = cand.as_ref() {
+    //     match term.bool() {
+    //       Some(true) => {
+    //         let _ =  true_preds.insert(pred) ;
+    //         clauses_to_ignore.extend(
+    //           self.instance.clauses_of(pred).1
+    //         )
+    //       },
+    //       Some(false) => {
+    //         let _ = false_preds.insert(pred) ;
+    //         clauses_to_ignore.extend(
+    //           self.instance.clauses_of(pred).0
+    //         )
+    //       },
+    //       None => {
+    //         let pred = & self.instance[pred] ;
+    //         let sig: Vec<_> = pred.sig.index_iter().map(
+    //           |(var, typ)| (var, * typ)
+    //         ).collect() ;
+    //         self.solver.define_fun(
+    //           & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+    //         ) ?
+    //       }
+    //     }
+    //   } else if let Some(tterms) = self.instance.terms_of(pred) {
+    //     if tterms.len() == 1 {
+    //       match tterms[0].bool() {
+    //         Some(true)  => {
+    //           let _ =  true_preds.insert(pred) ;
+    //           clauses_to_ignore.extend(
+    //             self.instance.clauses_of(pred).1
+    //           ) ;
+    //           continue 'define_preds
+    //         },
+    //         Some(false) => {
+    //           let _ = false_preds.insert(pred) ;
+    //           clauses_to_ignore.extend(
+    //             self.instance.clauses_of(pred).0
+    //           ) ;
+    //           continue 'define_preds
+    //         },
+    //         None => (),
+    //       }
+    //     }
+    //     let pred = & self.instance[pred] ;
+    //     let sig: Vec<_> = pred.sig.index_iter().map(
+    //       |(var, typ)| (var, * typ)
+    //     ).collect() ;
+    //     self.solver.define_fun(
+    //       & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+    //       self.instance.preds()
+    //     ) ?
+    //   } else {
+    //     bail!("illegal incomplete candidates")
+    //   }
+    // }
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
@@ -488,13 +563,23 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 /// Wraps a vector of top terms to write as the body of a `define-fun`.
 ///
 /// The vector is understood as a conjunction.
+///
+/// The info for smt2 printing is
+///
+/// - set of predicates defined as true
+/// - set of predicates defined as false
+/// - predicate info to print non-trivial predicates
 pub struct TTermsWrap<'a>( & 'a Vec<TTerm> ) ;
-impl<'a> ::rsmt2::Expr2Smt<
-  PrdMap< ::instance::info::PrdInfo >
+impl<'a, 'b> ::rsmt2::Expr2Smt<
+  (& 'b PrdSet, & 'b PrdSet, & 'b PrdMap< ::instance::info::PrdInfo >)
 > for TTermsWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, preds: & PrdMap<::instance::info::PrdInfo>
+    & self, w: & mut Writer, info: & (
+      & 'b PrdSet, & 'b PrdSet, & 'b PrdMap<::instance::info::PrdInfo>
+    )
   ) -> SmtRes<()> {
+    let (true_preds, false_preds, pred_info) = * info ;
+    
     let msg = "writing tterms as smt2" ;
     smt_cast_io!{
       msg =>
@@ -504,10 +589,13 @@ impl<'a> ::rsmt2::Expr2Smt<
           smtry_io!(msg => write!(w, " ")) ;
           smtry_io!(
             msg => tterm.write(
-              w,
-              |w, var| var.default_write(w),
-              |w, prd, args| {
-                write!(w, "({}", preds[prd]) ? ;
+              w, |w, var| var.default_write(w),
+              |w, pred, args| if true_preds.contains(& pred) {
+                write!(w, "true")
+              } else if false_preds.contains(& pred) {
+                write!(w, "false")
+              } else {
+                write!(w, "({}", pred_info[pred]) ? ;
                 for arg in args {
                   write!(w, " ") ? ;
                   arg.write(w, |w, var| var.default_write(w)) ?
@@ -520,10 +608,13 @@ impl<'a> ::rsmt2::Expr2Smt<
         write!(w, ")")
       } else if self.0.len() == 1 {
         self.0[0].write(
-          w,
-          |w, var| var.default_write(w),
-          |w, prd, args| {
-            write!(w, "({}", preds[prd]) ? ;
+          w, |w, var| var.default_write(w),
+          |w, pred, args| if true_preds.contains(& pred) {
+            write!(w, "true")
+          } else if false_preds.contains(& pred) {
+            write!(w, "false")
+          } else {
+            write!(w, "({}", pred_info[pred]) ? ;
             for arg in args {
               write!(w, " ") ? ;
               arg.write(w, |w, var| var.default_write(w)) ?
