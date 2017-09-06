@@ -23,7 +23,7 @@ pub use errors::* ;
 
 lazy_static!{
   #[doc = "Configuration from clap."]
-  pub static ref conf: Conf = Conf::clap() ;
+  pub static ref conf: Config = Config::clap() ;
 }
 
 
@@ -381,7 +381,7 @@ impl Verb {
 
 
 /// Basic configuration.
-pub struct Conf {
+pub struct Config {
   pub file: Option<String>,
   pub check: Option<String>,
   pub check_eld: bool,
@@ -399,10 +399,10 @@ pub struct Conf {
   pub stats: bool,
   styles: Styles,
 }
-impl ColorExt for Conf {
+impl ColorExt for Config {
   fn styles(& self) -> & Styles { & self.styles }
 }
-impl Conf {
+impl Config {
   /// Regular constructor.
   pub fn mk(
     file: Option<String>, check: Option<String>, check_eld: bool,
@@ -412,7 +412,7 @@ impl Conf {
     gain_threads: usize,
     verb: Verb, stats: bool, color: bool
   ) -> Self {
-    Conf {
+    Config {
       file, check, check_eld,
       smt_log, out_dir, step, decay, max_decay, simple_red, smt_learn,
       fpice_synth,
@@ -648,6 +648,7 @@ impl Conf {
     ).expect(
       "unreachable(color): default is provided and input validated in clap"
     ) ;
+    let styles = Styles::mk(color) ;
     let smt_learn = matches.value_of("smt_learn").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -675,10 +676,10 @@ impl Conf {
     ) ;
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
-    ) ;
+    ).to_string() ;
     let out_dir = matches.value_of("out_dir").expect(
       "unreachable(out_dir): default is provided"
-    ) ;
+    ).to_string() ;
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
@@ -723,11 +724,16 @@ impl Conf {
       verb.dec()
     }
 
-    Conf::mk(
-      file, check, check_eld, smt_log, z3_cmd.into(), out_dir.into(), step,
-      decay, max_decay, simple_red,
-      smt_learn, fpice_synth, gain_threads, verb, stats, color
-    )
+    Config {
+      file, check, check_eld,
+      smt_log, z3_cmd, out_dir, step,
+      decay, max_decay,
+      simple_red,
+      smt_learn,
+      fpice_synth,
+      gain_threads,
+      verb, stats, styles
+    }
   }
 }
 

@@ -810,7 +810,7 @@ impl SubstExt for Instance {
 /// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
 /// do this is to never access an instance's fields directly from the outside.
 ///
-/// # TODO
+/// # TO DO
 ///
 /// - tests for `pred_to_clauses` consistency
 pub struct Instance {
@@ -918,7 +918,7 @@ impl Instance {
   /// - shrinks all collections
   /// - sorts forced predicates by dependencies
   ///
-  /// # TODO
+  /// # TO DO
   ///
   /// - optimize sorting of forced preds by dependencies (low priority)
   pub fn finalize(& mut self) {
@@ -1156,15 +1156,28 @@ impl Instance {
   /// Also unlinks predicates from `pred_to_clauses`.
   fn forget_clause(& mut self, clause: ClsIdx) -> Clause {
     // Remove all links from the clause's predicates to this clause.
+    let mut _set = if_not_bench!{
+      // This set remembers the predicates removed. The first `debug_assert`
+      // consistency check below fails when a predicate appears more than
+      // once in the lhs. Hence the set.
+      then { PrdSet::new() } else { () }
+    } ;
     for lhs in self.clauses[clause].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
+        let _already_rmed = if_not_bench!{
+          then { ! _set.insert(pred) } else { true }
+        } ;
         let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
-        debug_assert!( was_there || self.pred_terms[pred].is_some() )
+        debug_assert!(
+          was_there || _already_rmed || self.pred_terms[pred].is_some()
+        )
       }
     }
     if let TTerm::P { pred, .. } = * self.clauses[clause].rhs() {
       let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
-      debug_assert!(was_there || self.pred_terms[pred].is_some())
+      debug_assert!(
+        was_there || self.pred_terms[pred].is_some()
+      )
     }
     // Relink the last clause as its index is going to be `clause`. Except if
     // `clause` is already the last one.
@@ -1244,7 +1257,7 @@ impl Instance {
   ///
   /// - propagates the lhs equalities in all the clauses
   ///
-  /// # TODO
+  /// # TO DO
   ///
   /// - currently kind of assumes equalities are binary, fix?
   pub fn simplify_clauses(& mut self) -> Res<()> {
