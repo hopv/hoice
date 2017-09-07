@@ -686,6 +686,26 @@ pub trait SubstExt {
   ) -> (Term, bool) {
     self.subst_custom(map, term, false).expect("total substitution can't fail")
   }
+  /// In-place variable substitution for top terms.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// Used for substitutions in the same clause / predicate scope.
+  fn tterm_subst(
+    & self, map: & VarHMap<Term>, term: & mut TTerm
+  ) {
+    match * term {
+      TTerm::T(ref mut term) => {
+        * term = self.subst(map, term).0
+      },
+      TTerm::P { ref mut args, .. } => {
+        for arg in args.iter_mut() {
+          * arg = self.subst(map, arg).0
+        }
+      },
+    }
+  }
 
   /// Fixed-point variable substitution.
   ///
@@ -1269,20 +1289,21 @@ impl Instance {
 
   /// Simplifies the clauses.
   ///
-  /// - propagates the lhs equalities in all the clauses
+  /// - propagates variable equalities in clauses' lhs
   ///
   /// # TO DO
   ///
   /// - currently kind of assumes equalities are binary, fix?
   pub fn simplify_clauses(& mut self) -> Res<()> {
     for clause in & mut self.clauses {
+      log_info!{ "working on a clause" }
       // println!(
       //   "looking at clause\n{}", clause.to_string_info(& self.preds) ?
       // ) ;
 
-      let mut maps = vec![
-        VarHMap::with_capacity( clause.lhs().len() + 1 )
-      ] ;
+      let mut var_map = VarHMap::with_capacity( clause.vars().len() ) ;
+
+      log_info!{ "  iterating on lhs" }
 
       // Find equalities and add to map.
       //
@@ -1292,31 +1313,62 @@ impl Instance {
       'lhs_iter: while cnt < clause.lhs.len() {
         let current = cnt ;
         cnt += 1 ; // Incrementing because moving on is done via `continue`.
+
         match clause.lhs[current] {
           TTerm::T(ref term) => match * term.get() {
             RTerm::App { op: Op::Eql, ref args } => {
               debug_assert!( args.len() >= 2 ) ;
-              let mut to_add = vec![] ;
-              // Is the lhs a variable?
-              let (var, term) = if let Some(idx) = args[0].var_idx() {
-                (idx, & args[1])
-              } else if let Some(idx) = args[1].var_idx() {
-                (idx, & args[0])
+              
+              // Are both the lhs and the rhs variables?
+              let lhs_var = if let Some(idx) = args[0].var_idx() {
+                idx
               } else {
                 continue 'lhs_iter
-              };
-              for map in & mut maps {
-                if map.contains_key(& var) {
-                  let mut map = map.clone() ;
-                  map.insert( var, term.clone()  ) ;
-                  to_add.push(map)
-                } else {
-                  let _ = map.insert( var, term.clone() ) ;
+              } ;
+              let rhs_var = if let Some(idx) = args[1].var_idx() {
+                idx
+              } else {
+                continue 'lhs_iter
+              } ;
+
+              log_info!{
+                "\n  found (= {} {})",
+                clause.vars()[lhs_var],
+                clause.vars()[rhs_var],
+              }
+
+              // Look for representatives.
+              match (
+                var_map.get(& lhs_var).map(|idx| * idx),
+                var_map.get(& rhs_var).map(|idx| * idx)
+              ) {
+                ( Some(lhs_rep), Some(rhs_rep) ) => {
+                  let _ = var_map.insert(lhs_rep, rhs_rep) ;
+                  let _prev = var_map.insert(lhs_var, rhs_rep) ;
+                  debug_assert!( _prev.is_some() )
+                },
+                ( Some(lhs_rep), None ) => {
+                  let _prev = var_map.insert(rhs_var, lhs_rep) ;
+                  debug_assert!( _prev.is_none() )
+                },
+                ( None, Some(rhs_rep) ) => {
+                  let _prev = var_map.insert(lhs_var, rhs_rep) ;
+                  debug_assert!( _prev.is_none() )
+                },
+                ( None, None ) => {
+                  let _prev = var_map.insert(lhs_var, rhs_var) ;
+                  debug_assert!( _prev.is_none() )
+                },
+              }
+
+              log_info!{ "    updated map {{" }
+              for (var, rep) in & var_map {
+                log_info!{
+                  "      {} -> {}",
+                  clause.vars()[* var], clause.vars()[* rep]
                 }
               }
-              for map in to_add {
-                maps.push(map)
-              }
+              log_info!{ "    }}" }
             },
             _ => continue 'lhs_iter,
           },
@@ -1329,30 +1381,51 @@ impl Instance {
         //   "  forgetting top term {}", clause.lhs[current]
         // ) ;
         clause.lhs.swap_remove(current) ;
-        cnt = current
+        cnt = current // <- we just swap removed, need to backtrack counter
         // * tterm = TTerm::T( self.factory.mk( RTerm::Bool(true) ) )
       }
 
-      // println!("  performing {} map propagations", maps.len()) ;
+      log_info!{ " \n  stabilizing var_map" }
 
-      // Remove all the variables in the maps from the clause using fixed-point
-      // substitution.
-      for map in maps {
-        use mylib::coll::* ;
-        for tterm in clause.lhs.iter_mut().chain_one( & mut clause.rhs ) {
-          match * tterm {
-            TTerm::P { ref mut args, .. } => for arg in args {
-              let (new_arg, _) = self.factory.subst_fp(& map, arg) ;
-              // println!("  - arg {} -> {}", arg, new_arg) ;
-              * arg = new_arg
-            },
-            TTerm::T(ref mut term) => {
-              let (new_term, _) = self.factory.subst_fp(& map, term) ;
-              // println!("  - trm {} -> {}", term, new_term) ;
-              * term = new_term
-            },
+      let mut stable_var_map: VarHMap<Term> = VarHMap::with_capacity(
+        var_map.len()
+      ) ;
+
+      for (var, rep) in & var_map {
+        let (var, mut rep) = (* var, * rep) ;
+        log_info!{ "  - {} -> {}", clause.vars()[var], clause.vars()[rep] }
+
+        loop {
+          rep = if let Some(rep) = stable_var_map.get(& rep) {
+            rep.var_idx().unwrap()
+          } else if let Some(rep) = var_map.get(& rep) {
+            * rep
+          } else {
+            break
           }
         }
+
+        let _prev = stable_var_map.insert(
+          var, self.factory.mk( RTerm::Var(rep) )
+        ) ;
+        debug_assert!( _prev.is_none() )
+      }
+
+      log_info!{ " \n  stabilized map {{" }
+      for (var, rep) in & stable_var_map {
+        log_info!{
+          "    {} -> {}",
+          clause.vars()[* var], clause.vars()[ rep.var_idx().unwrap() ]
+        }
+      }
+      log_info!{ "  }}" }
+
+      // println!("  performing {} map propagations", maps.len()) ;
+      log_info!{ "  replacing variables" }
+
+      use mylib::coll::* ;
+      for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
+        self.factory.tterm_subst(& stable_var_map, tterm)
       }
     }
     Ok(())

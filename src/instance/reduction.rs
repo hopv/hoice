@@ -11,9 +11,9 @@ use instance::* ;
 /// Returns the active strategies.
 fn strategies() -> Vec< Box<RedStrat> > {
   let mut strats: Vec< Box<RedStrat> > = vec![
+    Box::new( TrueImplies::mk() ),
     Box::new( LhsOnlyToFalse {} ),
     Box::new( RhsOnlyToTrue {} ),
-    Box::new( TrueImplies::mk() ),
   ] ;
   if conf.simple_red {
     strats.push( Box::new( SimpleOneRhs::mk() ) )

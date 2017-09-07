@@ -75,9 +75,10 @@ pub fn work() -> Res<()> {
     let mut parse_res = parser.parse( & mut instance ) ? ;
     profile!{ |profiler| mark "loading", "parsing" }
 
-    log_info!{
-      "instance:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_info!{
+    //   "instance:\n{}\n\n", instance.to_string_info(()) ?
+    // }
+    log_info!{ "done loading, simplifying..." }
 
     profile!{ |profiler| tick "loading", "simplify" }
     instance.simplify_clauses() ? ;
@@ -87,6 +88,7 @@ pub fn work() -> Res<()> {
       "instance after simplification:\n{}\n\n",
       instance.to_string_info(()) ?
     }
+    log_info!{ "done simplifying, reducing" }
 
     if conf.pre_proc {
       profile!{ |profiler| tick "loading", "reducing" }
@@ -94,9 +96,10 @@ pub fn work() -> Res<()> {
       profile!{ |profiler| mark "loading", "reducing" }
     }
 
-    log_info!{
-      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_info!{
+    //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+    // }
+    log_info!{ "done reducing" }
 
     instance.finalize() ;
 
@@ -153,32 +156,34 @@ pub fn work() -> Res<()> {
           let stdout = & mut ::std::io::stdout() ;
           println!("(model") ;
           for & (ref pred, ref tterms) in model {
-            let pred_info = & instance[* pred] ;
-            println!("  (define-fun {}", pred_info.name) ;
-            print!(  "    (") ;
-            for (var, typ) in pred_info.sig.index_iter() {
-              print!(" ({} {})", instance.var(var), typ)
-            }
-            println!(" ) Bool") ;
-            if tterms.len() > 1 {
-              print!("    (and\n") ;
-              for tterm in tterms {
-                print!("      ") ;
-                instance.print_tterm_as_model(stdout, tterm) ? ;
-                println!("")
+            if ! tterms.is_empty() {
+              let pred_info = & instance[* pred] ;
+              println!("  (define-fun {}", pred_info.name) ;
+              print!(  "    (") ;
+              for (var, typ) in pred_info.sig.index_iter() {
+                print!(" ({} {})", instance.var(var), typ)
               }
-              println!("    )")
-            } else if tterms.len() == 1 {
-              print!("    ") ;
-              instance.print_tterm_as_model(stdout, & tterms[0]) ? ;
-              println!("")
-            } else {
-              bail!(
-                "model for predicate {} is empty",
-                conf.sad( & pred_info.name )
-              )
+              println!(" ) Bool") ;
+              if tterms.len() > 1 {
+                print!("    (and\n") ;
+                for tterm in tterms {
+                  print!("      ") ;
+                  instance.print_tterm_as_model(stdout, tterm) ? ;
+                  println!("")
+                }
+                println!("    )")
+              } else if tterms.len() == 1 {
+                print!("    ") ;
+                instance.print_tterm_as_model(stdout, & tterms[0]) ? ;
+                println!("")
+              } else {
+                bail!(
+                  "model for predicate {} is empty",
+                  conf.sad( & pred_info.name )
+                )
+              }
+              println!("  )")
             }
-            println!("  )")
           }
           println!(")")
         } else {
