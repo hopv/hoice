@@ -1,13 +1,13 @@
 //! Entry point for the binary.
 
-extern crate hoice ;
+extern crate hoice_lib ;
 
 extern crate log ;
 extern crate env_logger ;
 #[macro_use]
 extern crate mylib ;
 
-use hoice::common::* ;
+use hoice_lib::common::* ;
 
 
 /// Log record formatter.
@@ -97,7 +97,7 @@ fn main() {
   }
 
   // Work and report error if any.
-  if let Err(errs) = ::hoice::work() {
+  if let Err(errs) = ::hoice_lib::work() {
     let errs = match * errs.kind() {
       ErrorKind::Z3SpawnError => format!(
         "could not spawn z3 using command `{}`\n\

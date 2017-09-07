@@ -1687,7 +1687,9 @@ impl Op {
   /// # Nullary / unary applications of `And` and `Or`
   ///
   /// ```
+  /// # use hoice_lib::instance::* ;
   /// let instance = & Instance::mk(10, 10, 10) ;
+  ///
   /// let tru = instance.bool(true) ;
   /// let fls = instance.bool(false) ;
   /// let var_1 = instance.var( 7.into() ) ;
@@ -1697,29 +1699,29 @@ impl Op {
   /// assert_eq!( tru, Op::Or.simplify(instance, vec![]) ) ;
   /// assert_eq!( var_2, Op::And.simplify(instance, vec![ var_2.clone() ]) ) ;
   /// assert_eq!( var_1, Op::Or.simplify(instance, vec![ var_1.clone() ]) ) ;
+  ///
   /// let and = instance.op(Op::And, vec![ var_2.clone(), var_1.clone() ]) ;
   /// assert_eq!(
   ///   and, Op::And.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
   /// ) ;
-  /// let or = instance.op(Op::Or, vec![ var_2.clone(), and.clone() ]) ;
+  /// let or = instance.op(Op::Or, vec![ var_2.clone(), var_1.clone() ]) ;
   /// assert_eq!(
-  ///   or, Op::Or.simplify(instance, vec![ and.clone(), var_2.clone() ])
+  ///   or, Op::Or.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
   /// ) ;
   /// ```
   ///
   /// # Double negations
   ///
   /// ```
+  /// # use hoice_lib::instance::* ;
   /// let instance = & Instance::mk(10, 10, 10) ;
-  /// let tru = instance.bool(true) ;
-  /// let fls = instance.bool(false) ;
-  /// let var_1 = instance.var( 7.into() ) ;
-  /// let n_var_1 = instance.op( Op::Not, vec![var_1] ) ;
   ///
+  /// let var_1 = instance.var( 7.into() ) ;
+  /// let n_var_1 = instance.op( Op::Not, vec![ var_1.clone() ] ) ;
   /// assert_eq!( var_1, Op::Not.simplify(instance, vec![ n_var_1 ]) ) ;
   ///
   /// let var_1 = instance.var( 7.into() ) ;
-  /// let n_var_1 = instance.op( Op::Not, vec![var_1] ) ;
+  /// let n_var_1 = instance.op( Op::Not, vec![ var_1.clone() ] ) ;
   /// assert_eq!( n_var_1, Op::Not.simplify(instance, vec![ var_1 ]) ) ;
   /// ```
   pub fn simplify(
