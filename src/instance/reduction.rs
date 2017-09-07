@@ -23,7 +23,7 @@ fn strategies() -> Vec< Box<RedStrat> > {
 
 
 /// Reduces an instance.
-pub fn work(instance: & mut Instance, profiler: & Profile) -> Res<()> {
+pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<()> {
   let mut strategies = strategies() ;
   let mut changed = true ;
   'all_strats_fp: while changed {
@@ -42,16 +42,16 @@ pub fn work(instance: & mut Instance, profiler: & Profile) -> Res<()> {
         this_changed = nu_pred_cnt + nu_clse_cnt > 0
       }
       profile!{
-        |profiler| format!("{} pred red", strat.name()) => add pred_cnt
+        |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
       }
       profile!{
-        |profiler| "predicates eliminated" => add pred_cnt
+        |_profiler| "predicates eliminated" => add pred_cnt
       }
       profile!{
-        |profiler| format!("{} clause red", strat.name()) => add clse_cnt
+        |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
       }
       profile!{
-        |profiler| "clauses eliminated" => add clse_cnt
+        |_profiler| "clauses eliminated" => add clse_cnt
       }
     }
   }
