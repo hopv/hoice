@@ -1367,14 +1367,6 @@ impl Instance {
                 },
               }
 
-              log_info!{ "    updated map {{" }
-              for (var, rep) in & var_map {
-                log_info!{
-                  "      {} -> {}",
-                  clause.vars()[* var], clause.vars()[* rep]
-                }
-              }
-              log_info!{ "    }}" }
             },
             _ => continue 'lhs_iter,
           },
@@ -1398,24 +1390,11 @@ impl Instance {
       ) ;
 
       for (var, rep) in & var_map {
-        if stable_var_map.contains_key(var) {
-          log_info!{ "  - skipping {}", clause.vars()[* var] }
-          continue
-        }
+        if stable_var_map.contains_key(var) { continue }
         cycle_set.clear() ;
         let (var, mut rep) = (* var, * rep) ;
 
         let _ = cycle_set.insert(var) ;
-        log_info!{ "  - {} -> {}", clause.vars()[var], clause.vars()[rep] }
-
-        log_info!{ "    map {{" }
-        for (var, rep) in & stable_var_map {
-          log_info!{
-            "      {} -> {}",
-            clause.vars()[* var], clause.vars()[ rep.var_idx().unwrap() ]
-          }
-        }
-        log_info!{ "    }}" }
 
         let rep_term = loop {
           log_info!{ "  -> {}", clause.vars()[rep] }
@@ -1438,7 +1417,6 @@ impl Instance {
             break self.factory.mk( RTerm::Var(rep) )
           }
         } ;
-        info!{ "  => {}", clause.vars()[rep_term.var_idx().unwrap()] }
 
         // Var might already be the representative when there ar cycles.
         if var == rep_term.var_idx().unwrap() {
@@ -1452,18 +1430,6 @@ impl Instance {
           debug_assert!( _prev.is_none() )
         }
       }
-
-      log_info!{ " \n  stabilized map {{" }
-      for (var, rep) in & stable_var_map {
-        log_info!{
-          "    {} -> {}",
-          clause.vars()[* var], clause.vars()[ rep.var_idx().unwrap() ]
-        }
-      }
-      log_info!{ "  }}" }
-
-      // println!("  performing {} map propagations", maps.len()) ;
-      log_info!{ "  replacing variables" }
 
       use mylib::coll::* ;
       for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
