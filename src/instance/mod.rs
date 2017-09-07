@@ -1295,7 +1295,11 @@ impl Instance {
   ///
   /// - currently kind of assumes equalities are binary, fix?
   pub fn simplify_clauses(& mut self) -> Res<()> {
+    // Used to detect cycles in variable equalities.
+    let mut cycle_set = VarSet::with_capacity( 29 ) ;
+
     for clause in & mut self.clauses {
+
       log_info!{ "working on a clause" }
       // println!(
       //   "looking at clause\n{}", clause.to_string_info(& self.preds) ?
@@ -1343,9 +1347,11 @@ impl Instance {
                 var_map.get(& rhs_var).map(|idx| * idx)
               ) {
                 ( Some(lhs_rep), Some(rhs_rep) ) => {
-                  let _ = var_map.insert(lhs_rep, rhs_rep) ;
-                  let _prev = var_map.insert(lhs_var, rhs_rep) ;
-                  debug_assert!( _prev.is_some() )
+                  if lhs_rep != rhs_rep {
+                    let _ = var_map.insert(lhs_rep, rhs_rep) ;
+                    let _prev = var_map.insert(lhs_var, rhs_rep) ;
+                    debug_assert!( _prev.is_some() )
+                  }
                 },
                 ( Some(lhs_rep), None ) => {
                   let _prev = var_map.insert(rhs_var, lhs_rep) ;
@@ -1392,23 +1398,59 @@ impl Instance {
       ) ;
 
       for (var, rep) in & var_map {
+        if stable_var_map.contains_key(var) {
+          log_info!{ "  - skipping {}", clause.vars()[* var] }
+          continue
+        }
+        cycle_set.clear() ;
         let (var, mut rep) = (* var, * rep) ;
+
+        let _ = cycle_set.insert(var) ;
         log_info!{ "  - {} -> {}", clause.vars()[var], clause.vars()[rep] }
 
-        loop {
-          rep = if let Some(rep) = stable_var_map.get(& rep) {
-            rep.var_idx().unwrap()
-          } else if let Some(rep) = var_map.get(& rep) {
-            * rep
-          } else {
-            break
+        log_info!{ "    map {{" }
+        for (var, rep) in & stable_var_map {
+          log_info!{
+            "      {} -> {}",
+            clause.vars()[* var], clause.vars()[ rep.var_idx().unwrap() ]
           }
         }
+        log_info!{ "    }}" }
 
-        let _prev = stable_var_map.insert(
-          var, self.factory.mk( RTerm::Var(rep) )
-        ) ;
-        debug_assert!( _prev.is_none() )
+        let rep_term = loop {
+          log_info!{ "  -> {}", clause.vars()[rep] }
+
+          if let Some(rep_term) = stable_var_map.get(& rep) {
+            // Bonafide representative.
+            break rep_term.clone()
+          } else if let Some(nu_rep) = var_map.get(& rep) {
+            cycle_set.insert(rep) ;
+            if cycle_set.contains(& nu_rep) {
+              // Cycle, we make `nu_rep` the representative and we done.
+              cycle_set.remove(nu_rep) ;
+              break self.factory.mk( RTerm::Var(* nu_rep) )
+            } else {
+              // Following equivalence relation.
+              rep = * nu_rep
+            }
+          } else {
+            // Reached the top-most representative.
+            break self.factory.mk( RTerm::Var(rep) )
+          }
+        } ;
+        info!{ "  => {}", clause.vars()[rep_term.var_idx().unwrap()] }
+
+        // Var might already be the representative when there ar cycles.
+        if var == rep_term.var_idx().unwrap() {
+          // If it's the case it means the cycle set contains only `var`.
+          debug_assert!( cycle_set.len() == 1 ) ;
+          continue
+        }
+
+        for var in cycle_set.drain() {
+          let _prev = stable_var_map.insert(var, rep_term.clone()) ;
+          debug_assert!( _prev.is_none() )
+        }
       }
 
       log_info!{ " \n  stabilized map {{" }

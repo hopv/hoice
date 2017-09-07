@@ -78,28 +78,28 @@ pub fn work() -> Res<()> {
     // log_info!{
     //   "instance:\n{}\n\n", instance.to_string_info(()) ?
     // }
-    log_info!{ "done loading, simplifying..." }
-
-    profile!{ |profiler| tick "loading", "simplify" }
-    instance.simplify_clauses() ? ;
-    profile!{ |profiler| mark "loading", "simplify" }
-    
-    log_info!{
-      "instance after simplification:\n{}\n\n",
-      instance.to_string_info(()) ?
-    }
-    log_info!{ "done simplifying, reducing" }
 
     if conf.pre_proc {
+
+      profile!{ |profiler| tick "loading", "simplify" }
+      instance.simplify_clauses() ? ;
+      profile!{ |profiler| mark "loading", "simplify" }
+      
+      // log_info!{
+      //   "instance after simplification:\n{}\n\n",
+      //   instance.to_string_info(()) ?
+      // }
+
+      log_info!{ "done simplifying, reducing" }
       profile!{ |profiler| tick "loading", "reducing" }
       ::instance::reduction::work(& mut instance, & profiler) ? ;
       profile!{ |profiler| mark "loading", "reducing" }
-    }
 
-    // log_info!{
-    //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    // }
-    log_info!{ "done reducing" }
+      // log_info!{
+      //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+      // }
+      log_info!{ "done reducing" }
+    }
 
     instance.finalize() ;
 
