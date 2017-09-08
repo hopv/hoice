@@ -1330,6 +1330,9 @@ impl Instance {
     // Terms to add the current clause's lhs.
     let mut terms_to_add = vec![] ;
 
+    let mut stable_var_map: VarHMap<Term> = VarHMap::with_capacity(29) ;
+    let mut last_stable_var_map = VarHMap::with_capacity(29) ;
+
     'clause_iter: for clause_index in ClsRange::zero_to( self.clauses.len() ) {
       let clause = & mut self.clauses[clause_index] ;
 
@@ -1462,9 +1465,8 @@ impl Instance {
 
       // log_info!{ " \n  stabilizing var_map" }
 
-      let mut stable_var_map: VarHMap<Term> = VarHMap::with_capacity(
-        var_map.len()
-      ) ;
+      stable_var_map.clear() ;
+      last_stable_var_map.clear() ;
 
       'stabilize: for (var, rep) in & var_map {
         if stable_var_map.contains_key(var) { continue }
@@ -1474,7 +1476,7 @@ impl Instance {
         let mut trm = var_term_map.remove(var) ;
 
         let (var, mut rep) = (* var, * rep) ;
-        // log_info!{ "  {}", clause.vars()[var] }
+        log_info!{ "  {}", clause.vars()[var] }
 
         let _ = cycle_set.insert(var) ;
 
@@ -1564,30 +1566,45 @@ impl Instance {
           // log_info!{ "  => {}", trm.to_string_info( clause.vars() ) ? }
           rep_term = trm.clone()
         } else if let Some(rep) = rep_term.var_idx() {
-          // Var might already be the representative when there are cycles.
-          if var == rep {
-            // If it's the case it means the cycle set contains only `var`.
-            debug_assert!( cycle_set.len() == 1 ) ;
-            continue 'stabilize
+          // Avoid cycles.
+          if cycle_set.contains(& rep) {
+            cycle_set.remove(& rep) ;
           }
         }
 
+        log_info!{ "  => {}", rep_term.to_string_info( clause.vars() ) ? }
+
         for var in cycle_set.drain() {
+          log_info!{
+            "    {} -> {}",
+            clause.vars()[var],
+            rep_term.to_string_info( clause.vars() ) ?
+          }
           let _prev = stable_var_map.insert(var, rep_term.clone()) ;
           debug_assert!( _prev.is_none() )
         }
       }
 
-      let mut last_stable_var_map = VarHMap::with_capacity(
-        stable_var_map.len() + var_term_map.len() + rep_cst_map.len()
-      ) ;
+      log_info!{ " \n  stabilized map {{" }
+      for (var, rep) in & stable_var_map {
+        log_info!{
+          "    {} -> {}",
+          clause.vars()[* var],
+          rep.to_string_info( clause.vars() ) ?
+        }
+      }
+      log_info!{ "  }}" }
+
       for (var, term) in & stable_var_map {
+        log_info!{ "1" }
         let term = self.factory.subst_fp(
           & var_term_map, & term
         ).0 ;
+        log_info!{ "2" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
+        log_info!{ "3" }
         let term = self.factory.subst_fp(
           & stable_var_map, & term
         ).0 ;
@@ -1597,15 +1614,19 @@ impl Instance {
         debug_assert!( _prev.is_none() )
       }
       for (var, term) in & var_term_map {
+        log_info!{ "4" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
+        log_info!{ "5" }
         let term = self.factory.subst_fp(
           & var_term_map, & term
         ).0 ;
+        log_info!{ "6" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
+        log_info!{ "7" }
         let term = self.factory.subst_fp(
           & stable_var_map, & term
         ).0 ;
