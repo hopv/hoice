@@ -263,6 +263,27 @@ impl RTerm {
     if let RTerm::Bool(b) = * self { Some(b) } else { None }
   }
 
+  /// The kids of this term, if any.
+  pub fn kids(& self) -> Option<& [Term]> {
+    if let RTerm::App{ ref args, .. } = * self {
+      Some(args)
+    } else {
+      None
+    }
+  }
+  /// Checks whether the term is a relation.
+  pub fn is_relation(& self) -> bool {
+    match * self {
+      RTerm::App { op: Op::Eql, .. } |
+      RTerm::App { op: Op::Gt, .. } |
+      RTerm::App { op: Op::Ge, .. } |
+      RTerm::App { op: Op::Lt, .. } |
+      RTerm::App { op: Op::Le, .. } => true,
+      RTerm::App { op: Op::Not, ref args } => args[0].is_relation(),
+      _ => false,
+    }
+  }
+
 
   /// Term evaluation.
   pub fn eval(& self, model: & VarMap<Val>) -> Res<Val> {
@@ -1297,17 +1318,31 @@ impl Instance {
   pub fn simplify_clauses(& mut self) -> Res<()> {
     // Used to detect cycles in variable equalities.
     let mut cycle_set = VarSet::with_capacity( 29 ) ;
+    // Stores equalities between variables.
+    let mut var_map = VarHMap::with_capacity( 29 ) ;
+    // Stores equalities between representatives and constants.
+    let mut rep_cst_map = VarHMap::with_capacity( 29 ) ;
+    // Stores equalities between variables and terms.
+    let mut var_term_map = VarHMap::with_capacity( 29 ) ;
 
-    for clause in & mut self.clauses {
+    // Clauses to remove at the end.
+    let mut clauses_to_rm = vec![] ;
+    // Terms to add the current clause's lhs.
+    let mut terms_to_add = vec![] ;
 
-      log_info!{ "working on a clause" }
+    'clause_iter: for clause_index in ClsRange::zero_to( self.clauses.len() ) {
+      let clause = & mut self.clauses[clause_index] ;
+
+      var_map.clear() ;
+      rep_cst_map.clear() ;
+      var_term_map.clear() ;
+
+      // log_info!{ "working on a clause" }
       // println!(
       //   "looking at clause\n{}", clause.to_string_info(& self.preds) ?
       // ) ;
 
-      let mut var_map = VarHMap::with_capacity( clause.vars().len() ) ;
-
-      log_info!{ "  iterating on lhs" }
+      // log_info!{ "  iterating on lhs" }
 
       // Find equalities and add to map.
       //
@@ -1322,49 +1357,91 @@ impl Instance {
           TTerm::T(ref term) => match * term.get() {
             RTerm::App { op: Op::Eql, ref args } => {
               debug_assert!( args.len() >= 2 ) ;
-              
-              // Are both the lhs and the rhs variables?
-              let lhs_var = if let Some(idx) = args[0].var_idx() {
-                idx
-              } else {
-                continue 'lhs_iter
-              } ;
-              let rhs_var = if let Some(idx) = args[1].var_idx() {
-                idx
-              } else {
-                continue 'lhs_iter
-              } ;
 
-              log_info!{
-                "\n  found (= {} {})",
-                clause.vars()[lhs_var],
-                clause.vars()[rhs_var],
-              }
-
-              // Look for representatives.
               match (
-                var_map.get(& lhs_var).map(|idx| * idx),
-                var_map.get(& rhs_var).map(|idx| * idx)
+                args[0].var_idx(), args[1].var_idx(),
+                args[0].int_val(), args[1].int_val(),
               ) {
-                ( Some(lhs_rep), Some(rhs_rep) ) => {
-                  if lhs_rep != rhs_rep {
-                    let _ = var_map.insert(lhs_rep, rhs_rep) ;
+
+                ( Some(lhs_var), Some(rhs_var), _, _ ) => match (
+                  var_map.get(& lhs_var).map(|idx| * idx),
+                  var_map.get(& rhs_var).map(|idx| * idx),
+                ) {
+                  ( Some(lhs_rep), Some(rhs_rep) ) => {
+                    if lhs_rep != rhs_rep {
+                      let _ = var_map.insert(lhs_rep, rhs_rep) ;
+                      let _prev = var_map.insert(lhs_var, rhs_rep) ;
+                      debug_assert!( _prev.is_some() )
+                    }
+                  },
+                  ( Some(lhs_rep), None ) => {
+                    let _prev = var_map.insert(rhs_var, lhs_rep) ;
+                    debug_assert!( _prev.is_none() )
+                  },
+                  ( None, Some(rhs_rep) ) => {
                     let _prev = var_map.insert(lhs_var, rhs_rep) ;
-                    debug_assert!( _prev.is_some() )
+                    debug_assert!( _prev.is_none() )
+                  },
+                  ( None, None ) => {
+                    let _prev = var_map.insert(lhs_var, rhs_var) ;
+                    debug_assert!( _prev.is_none() )
+                  },
+                },
+
+                ( Some(var), _, _, Some(int) ) |
+                ( _, Some(var), Some(int), _ ) => {
+                  let var = if let Some(rep) = var_map.get(& var) {
+                    * rep
+                  } else {
+                    var
+                  } ;
+                  let prev = rep_cst_map.insert(
+                    var, self.factory.mk( RTerm::Int(int.clone()) )
+                  ) ;
+                  if let Some(prev) = prev {
+                    if prev.int_val().unwrap() != int {
+                      clauses_to_rm.push(clause_index) ;
+                      continue 'clause_iter
+                    }
                   }
                 },
-                ( Some(lhs_rep), None ) => {
-                  let _prev = var_map.insert(rhs_var, lhs_rep) ;
-                  debug_assert!( _prev.is_none() )
+
+                ( Some(var), _, _, _ ) => {
+                  // log_info!{
+                  //   "{}", term.to_string_info( clause.vars() ) ?
+                  // }
+                  let term = args[1].clone() ;
+                  if let Some(prev) = var_term_map.insert(var, term) {
+                    if prev != args[1] {
+                      terms_to_add.push(
+                        TTerm::T(
+                          self.factory.mk(
+                            RTerm::App {
+                              op: Op::Eql, args: vec![ args[1].clone(), prev ]
+                            }
+                          )
+                        )
+                      )
+                    }
+                  }
                 },
-                ( None, Some(rhs_rep) ) => {
-                  let _prev = var_map.insert(lhs_var, rhs_rep) ;
-                  debug_assert!( _prev.is_none() )
+                ( _, Some(var), _, _ ) => {
+                  let term = args[0].clone() ;
+                  if let Some(prev) = var_term_map.insert(var, term) {
+                    if prev != args[0] {
+                      terms_to_add.push(
+                        TTerm::T(
+                          self.factory.mk(
+                            RTerm::App {
+                              op: Op::Eql, args: vec![ args[0].clone(), prev ]
+                            }
+                          )
+                        )
+                      )
+                    }
+                  }
                 },
-                ( None, None ) => {
-                  let _prev = var_map.insert(lhs_var, rhs_var) ;
-                  debug_assert!( _prev.is_none() )
-                },
+                _ => continue 'lhs_iter,
               }
 
             },
@@ -1375,29 +1452,64 @@ impl Instance {
 
         // Only reachable if the top term was an equality we're gonna
         // propagate.
-        // println!(
-        //   "  forgetting top term {}", clause.lhs[current]
-        // ) ;
         clause.lhs.swap_remove(current) ;
         cnt = current // <- we just swap removed, need to backtrack counter
         // * tterm = TTerm::T( self.factory.mk( RTerm::Bool(true) ) )
       }
 
-      log_info!{ " \n  stabilizing var_map" }
+      use std::iter::Extend ;
+      clause.lhs.extend( terms_to_add.drain(0..) ) ;
+
+      // log_info!{ " \n  stabilizing var_map" }
 
       let mut stable_var_map: VarHMap<Term> = VarHMap::with_capacity(
         var_map.len()
       ) ;
 
-      for (var, rep) in & var_map {
+      'stabilize: for (var, rep) in & var_map {
         if stable_var_map.contains_key(var) { continue }
         cycle_set.clear() ;
+
+        let mut cst = rep_cst_map.remove(var) ;
+        let mut trm = var_term_map.remove(var) ;
+
         let (var, mut rep) = (* var, * rep) ;
+        // log_info!{ "  {}", clause.vars()[var] }
 
         let _ = cycle_set.insert(var) ;
 
-        let rep_term = loop {
+        let mut rep_term = loop {
           log_info!{ "  -> {}", clause.vars()[rep] }
+          if let Some(nu_cst) = rep_cst_map.remove(& rep) {
+            if let Some(ref cst) = cst {
+              if cst != & nu_cst {
+                clauses_to_rm.push(clause_index) ;
+                continue 'clause_iter
+              }
+            } else {
+              cst = Some(nu_cst)
+            }
+          }
+
+          if let Some(nu_trm) = var_term_map.remove(& rep) {
+            if let Some(ref trm) = trm {
+              if * trm != nu_trm {
+                clause.lhs.push(
+                  TTerm::T(
+                    self.factory.mk(
+                      RTerm::App {
+                        op: Op::Eql, args: vec![
+                          nu_trm, trm.clone()
+                        ]
+                      }
+                    )
+                  )
+                )
+              }
+            } else {
+              trm = Some(nu_trm)
+            }
+          }
 
           if let Some(rep_term) = stable_var_map.get(& rep) {
             // Bonafide representative.
@@ -1418,11 +1530,46 @@ impl Instance {
           }
         } ;
 
-        // Var might already be the representative when there ar cycles.
-        if var == rep_term.var_idx().unwrap() {
-          // If it's the case it means the cycle set contains only `var`.
-          debug_assert!( cycle_set.len() == 1 ) ;
-          continue
+
+        if let Some(cst_term) = cst {
+          if let Some(trm) = trm {
+            clause.lhs.push(
+              TTerm::T(
+                self.factory.mk(
+                  RTerm::App {
+                    op: Op::Eql, args: vec![ cst_term.clone(), trm.clone() ]
+                  }
+                )
+              )
+            )
+          }
+          if let Some(rep) = rep_term.var_idx() {
+            for (_, other_rep) in stable_var_map.iter_mut() {
+              if * other_rep == rep_term {
+                * other_rep = cst_term.clone()
+              }
+            }
+            cycle_set.insert(rep) ;
+          }
+          rep_term = cst_term
+        } else if let Some(trm) = trm {
+          if let Some(rep) = rep_term.var_idx() {
+            for (_, other_rep) in stable_var_map.iter_mut() {
+              if * other_rep == rep_term {
+                * other_rep = trm.clone()
+              }
+            }
+            cycle_set.insert(rep) ;
+          }
+          // log_info!{ "  => {}", trm.to_string_info( clause.vars() ) ? }
+          rep_term = trm.clone()
+        } else if let Some(rep) = rep_term.var_idx() {
+          // Var might already be the representative when there are cycles.
+          if var == rep {
+            // If it's the case it means the cycle set contains only `var`.
+            debug_assert!( cycle_set.len() == 1 ) ;
+            continue 'stabilize
+          }
         }
 
         for var in cycle_set.drain() {
@@ -1431,11 +1578,63 @@ impl Instance {
         }
       }
 
+      let mut last_stable_var_map = VarHMap::with_capacity(
+        stable_var_map.len() + var_term_map.len() + rep_cst_map.len()
+      ) ;
+      for (var, term) in & stable_var_map {
+        let term = self.factory.subst_fp(
+          & var_term_map, & term
+        ).0 ;
+        let term = self.factory.subst_fp(
+          & rep_cst_map, & term
+        ).0 ;
+        let term = self.factory.subst_fp(
+          & stable_var_map, & term
+        ).0 ;
+        let _prev = last_stable_var_map.insert(
+          * var, term
+        ) ;
+        debug_assert!( _prev.is_none() )
+      }
+      for (var, term) in & var_term_map {
+        let term = self.factory.subst_fp(
+          & rep_cst_map, & term
+        ).0 ;
+        let term = self.factory.subst_fp(
+          & var_term_map, & term
+        ).0 ;
+        let term = self.factory.subst_fp(
+          & rep_cst_map, & term
+        ).0 ;
+        let term = self.factory.subst_fp(
+          & stable_var_map, & term
+        ).0 ;
+        let _prev = last_stable_var_map.insert(* var, term) ;
+        debug_assert!( _prev.is_none() )
+      }
+      for (var, int) in rep_cst_map.drain() {
+        let _prev = last_stable_var_map.insert(var, int) ;
+        debug_assert!( _prev.is_none() )
+      }
+
+      // log_info!{ " \n  stabilized map {{" }
+      // for (var, rep) in & last_stable_var_map {
+      //   log_info!{
+      //     "    {} -> {}",
+      //     clause.vars()[* var],
+      //     rep.to_string_info( clause.vars() ) ?
+      //   }
+      // }
+      // log_info!{ "  }}" }
+
       use mylib::coll::* ;
       for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
-        self.factory.tterm_subst(& stable_var_map, tterm)
+        self.factory.tterm_subst(& last_stable_var_map, tterm)
       }
     }
+
+    self.forget_clauses( clauses_to_rm ) ;
+
     Ok(())
   }
 
@@ -1537,12 +1736,25 @@ impl Instance {
             } else { term } ;
             let _ = quals.insert(term) ;
           }
+          // else if let Some(kids) = term.kids() {
+          //   for kid in kids {
+          //     if kid.is_relation() {
+          //       if let Some( (term, true) ) = self.subst_total(map, kid) {
+          //         log_info!("-> {}", term) ;
+          //         let term = if let Some(term) = term.rm_neg() {
+          //           term
+          //         } else { term } ;
+          //         let _ = quals.insert(term) ;
+          //       }
+          //     }
+          //   }
+          // }
         },
         _ => ()
       }
 
     }
-
+    info!{ "\n\n" }
     // println!("}}")
 
   }
@@ -1752,13 +1964,33 @@ impl Op {
       },
       Op::Not => {
         assert!( args.len() == 1 ) ;
-        match * args[0].get() {
+        match * args[0] {
           RTerm::App { op: Op::Not, ref args } => {
             return args[0].clone()
           },
           _ => (),
         }
         (self, args)
+      },
+      Op::Add => {
+        let mut cnt = 0 ;
+        let mut zero = None ;
+        'remove_zeros: while cnt < args.len() {
+          if let Some(int) = args[0].int_val() {
+            if int.is_zero() {
+              zero = Some( args.swap_remove(cnt) ) ;
+              continue 'remove_zeros
+            }
+          }
+          cnt += 1
+        }
+        if args.len() == 0 {
+          return zero.expect("trying to construct an empty application")
+        } else if args.len() == 1 {
+          return args.pop().unwrap()
+        } else {
+          (self, args)
+        }
       },
       // Op::Gt => if args.len() != 2 {
       //   panic!( "[bug] operator `>` applied to {} operands", args.len() )

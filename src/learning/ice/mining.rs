@@ -146,6 +146,18 @@ impl Qualifiers {
       let mut terms = HConMap::with_capacity(
         instance.consts().len() * 4
       ) ;
+      // for other_var in VarRange::zero_to( var_idx ) {
+      //   let other_var = instance.var(other_var) ;
+      //   let term = instance.ge(var.clone(), other_var.clone()) ;
+      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      //   let term = instance.le(var.clone(), other_var.clone()) ;
+      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      //   let term = instance.eq(var.clone(), other_var) ;
+      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      // }
       for cst in instance.consts() {
         let term = instance.ge(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;

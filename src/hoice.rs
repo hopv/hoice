@@ -84,7 +84,9 @@ pub fn work() -> Res<()> {
       profile!{ |profiler| tick "loading", "simplify" }
       instance.simplify_clauses() ? ;
       profile!{ |profiler| mark "loading", "simplify" }
-      
+
+      log_info!{ "done simplifying" }
+
       // log_info!{
       //   "instance after simplification:\n{}\n\n",
       //   instance.to_string_info(()) ?
