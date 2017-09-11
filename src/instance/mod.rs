@@ -250,17 +250,95 @@ impl RTerm {
     self.eval(model)?.to_bool()
   }
 
-  /// True if the term is the constant `true`.
+  /// True if the term has no variables and evaluates to true.
+  ///
+  /// ```
+  /// # use hoice_lib::instance::* ;
+  /// let instance = & Instance::mk(10, 10, 10) ;
+  ///
+  /// let term = instance.bool(true) ;
+  /// println!("true") ;
+  /// assert!( term.is_true() ) ;
+  /// let term = instance.bool(false) ;
+  /// println!("false") ;
+  /// assert!( ! term.is_true() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(7), instance.var(1.into())
+  /// ) ;
+  /// println!("7 = v_1") ;
+  /// assert!( ! term.is_true() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(9), instance.int(9)
+  /// ) ;
+  /// println!("9 = 9") ;
+  /// assert!( term.is_true() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(1), instance.int(9)
+  /// ) ;
+  /// println!("1 = 9") ;
+  /// assert!( ! term.is_true() ) ;
+  /// let term = instance.le(
+  ///   instance.op(
+  ///     Op::Add, vec![ instance.int(3), instance.int(4) ]
+  ///   ), instance.int(9)
+  /// ) ;
+  /// println!("3 + 4 = 9") ;
+  /// assert!( term.is_true() ) ;
+  /// ```
   pub fn is_true(& self) -> bool {
-    if let RTerm::Bool(b) = * self { b } else { false }
+    match self.bool_eval( & VarMap::with_capacity(0) ) {
+      Ok(Some(b)) => b,
+      _ => false,
+    }
   }
-  /// True if the term is the constant `false`.
+  
+  /// True if the term has no variables and evaluates to true.
+  ///
+  /// ```
+  /// # use hoice_lib::instance::* ;
+  /// let instance = & Instance::mk(10, 10, 10) ;
+  ///
+  /// let term = instance.bool(true) ;
+  /// println!("true") ;
+  /// assert!( ! term.is_false() ) ;
+  /// let term = instance.bool(false) ;
+  /// println!("false") ;
+  /// assert!( term.is_false() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(7), instance.var(1.into())
+  /// ) ;
+  /// println!("7 = v_1") ;
+  /// assert!( ! term.is_false() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(9), instance.int(9)
+  /// ) ;
+  /// println!("9 = 9") ;
+  /// assert!( ! term.is_false() ) ;
+  /// let term = instance.eq(
+  ///   instance.int(1), instance.int(9)
+  /// ) ;
+  /// println!("1 = 9") ;
+  /// assert!( term.is_false() ) ;
+  /// let term = instance.le(
+  ///   instance.int(9), instance.op(
+  ///     Op::Add, vec![ instance.int(3), instance.int(4) ]
+  ///   )
+  /// ) ;
+  /// println!("9 <= 3 + 4") ;
+  /// assert!( term.is_false() ) ;
+  /// ```
   pub fn is_false(& self) -> bool {
-    if let RTerm::Bool(b) = * self { ! b } else { false }
+    match self.bool_eval( & VarMap::with_capacity(0) ) {
+      Ok(Some(b)) => ! b,
+      _ => false,
+    }
   }
-  /// Boolean corresponding to the term if it's a bool constant.
+  /// Boolean a constant boolean term evaluates to.
   pub fn bool(& self) -> Option<bool> {
-    if let RTerm::Bool(b) = * self { Some(b) } else { None }
+    match self.bool_eval( & VarMap::with_capacity(0) ) {
+      Ok(Some(b)) => Some(b),
+      _ => None
+    }
   }
 
   /// The kids of this term, if any.
@@ -301,7 +379,11 @@ impl RTerm {
           continue 'eval
         },
         // Rest are leaves, going up.
-        Var(v) => model[v].clone(),
+        Var(v) => if v < model.len() {
+          model[v].clone()
+        } else {
+          bail!("model is too short")
+        },
         Int(ref i) => Val::I( i.clone() ),
         Bool(b) => Val::B(b),
       } ;
@@ -450,14 +532,14 @@ pub enum TTerm {
   T(Term),
 }
 impl TTerm {
-  /// True if the term is equivalent to `true`.
+  /// True if the top term is a term with no variables and evaluates to true.
   pub fn is_true(& self) -> bool {
     match * self {
       TTerm::T(ref t) => t.is_true(),
       _ => false,
     }
   }
-  /// True if the term is equivalent to `false`.
+  /// True if the top term is a term with no variables and evaluates to false.
   pub fn is_false(& self) -> bool {
     match * self {
       TTerm::T(ref t) => t.is_false(),
@@ -1476,12 +1558,12 @@ impl Instance {
         let mut trm = var_term_map.remove(var) ;
 
         let (var, mut rep) = (* var, * rep) ;
-        log_info!{ "  {}", clause.vars()[var] }
+        // log_info!{ "  {}", clause.vars()[var] }
 
         let _ = cycle_set.insert(var) ;
 
         let mut rep_term = loop {
-          log_info!{ "  -> {}", clause.vars()[rep] }
+          // log_info!{ "  -> {}", clause.vars()[rep] }
           if let Some(nu_cst) = rep_cst_map.remove(& rep) {
             if let Some(ref cst) = cst {
               if cst != & nu_cst {
@@ -1535,15 +1617,17 @@ impl Instance {
 
         if let Some(cst_term) = cst {
           if let Some(trm) = trm {
-            clause.lhs.push(
-              TTerm::T(
-                self.factory.mk(
-                  RTerm::App {
-                    op: Op::Eql, args: vec![ cst_term.clone(), trm.clone() ]
-                  }
+            if cst_term != trm {
+              clause.lhs.push(
+                TTerm::T(
+                  self.factory.mk(
+                    RTerm::App {
+                      op: Op::Eql, args: vec![ cst_term.clone(), trm.clone() ]
+                    }
+                  )
                 )
               )
-            )
+            }
           }
           if let Some(rep) = rep_term.var_idx() {
             for (_, other_rep) in stable_var_map.iter_mut() {
@@ -1572,39 +1656,39 @@ impl Instance {
           }
         }
 
-        log_info!{ "  => {}", rep_term.to_string_info( clause.vars() ) ? }
+        // log_info!{ "  => {}", rep_term.to_string_info( clause.vars() ) ? }
 
         for var in cycle_set.drain() {
-          log_info!{
-            "    {} -> {}",
-            clause.vars()[var],
-            rep_term.to_string_info( clause.vars() ) ?
-          }
+          // log_info!{
+          //   "    {} -> {}",
+          //   clause.vars()[var],
+          //   rep_term.to_string_info( clause.vars() ) ?
+          // }
           let _prev = stable_var_map.insert(var, rep_term.clone()) ;
           debug_assert!( _prev.is_none() )
         }
       }
 
-      log_info!{ " \n  stabilized map {{" }
-      for (var, rep) in & stable_var_map {
-        log_info!{
-          "    {} -> {}",
-          clause.vars()[* var],
-          rep.to_string_info( clause.vars() ) ?
-        }
-      }
-      log_info!{ "  }}" }
+      // log_info!{ " \n  stabilized map {{" }
+      // for (var, rep) in & stable_var_map {
+      //   log_info!{
+      //     "    {} -> {}",
+      //     clause.vars()[* var],
+      //     rep.to_string_info( clause.vars() ) ?
+      //   }
+      // }
+      // log_info!{ "  }}" }
 
       for (var, term) in & stable_var_map {
-        log_info!{ "1" }
+        // log_info!{ "1" }
         let term = self.factory.subst_fp(
           & var_term_map, & term
         ).0 ;
-        log_info!{ "2" }
+        // log_info!{ "2" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
-        log_info!{ "3" }
+        // log_info!{ "3" }
         let term = self.factory.subst_fp(
           & stable_var_map, & term
         ).0 ;
@@ -1614,19 +1698,19 @@ impl Instance {
         debug_assert!( _prev.is_none() )
       }
       for (var, term) in & var_term_map {
-        log_info!{ "4" }
+        // log_info!{ "4" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
-        log_info!{ "5" }
+        // log_info!{ "5" }
         let term = self.factory.subst_fp(
           & var_term_map, & term
         ).0 ;
-        log_info!{ "6" }
+        // log_info!{ "6" }
         let term = self.factory.subst_fp(
           & rep_cst_map, & term
         ).0 ;
-        log_info!{ "7" }
+        // log_info!{ "7" }
         let term = self.factory.subst_fp(
           & stable_var_map, & term
         ).0 ;
@@ -1652,6 +1736,38 @@ impl Instance {
       for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
         self.factory.tterm_subst(& last_stable_var_map, tterm)
       }
+
+      // Counter for swap remove in lhs.
+      let mut cnt = 0 ;
+      'lhs_subst: while cnt < clause.lhs.len() {
+        self.factory.tterm_subst(
+          & last_stable_var_map, & mut clause.lhs[cnt]
+        ) ;
+        match clause.lhs[cnt].bool() {
+          Some(true) => {
+            let _ = clause.lhs.swap_remove(cnt) ;
+            ()
+          },
+          Some(false) => {
+            clauses_to_rm.push(clause_index) ;
+            continue 'clause_iter
+          },
+          None => cnt += 1,
+        }
+      }
+
+      self.factory.tterm_subst(& last_stable_var_map, & mut clause.rhs) ;
+      match clause.rhs.bool() {
+        Some(true) => {
+          clauses_to_rm.push(clause_index) ;
+          continue 'clause_iter
+        },
+        Some(false) => clause.rhs = TTerm::T(
+          self.factory.mk( RTerm::Bool(false) )
+        ),
+        None => (),
+      }
+
     }
 
     self.forget_clauses( clauses_to_rm ) ;
@@ -1751,7 +1867,6 @@ impl Instance {
       match * tterm {
         TTerm::T(ref term) => for map in & maps {
           if let Some( (term, true) ) = self.subst_total(map, term) {
-            // println!("  - {}", term) ;
             let term = if let Some(term) = term.rm_neg() {
               term
             } else { term } ;
@@ -1775,7 +1890,6 @@ impl Instance {
       }
 
     }
-    info!{ "\n\n" }
     // println!("}}")
 
   }

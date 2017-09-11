@@ -252,17 +252,17 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   pub fn broadcast(& self) -> bool {
     profile!{ self tick "broadcast" }
     let mut one_alive = false ;
+    log_info!{ "broadcasting..." }
     for & (ref sender, ref name) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
         if let Err(_) = sender.send( self.data.clone() ) {
-          warn!(
-            "learner `{}` is dead...", name
-          )
+          warn!( "learner `{}` is dead...", name )
         } else {
           one_alive = true
         }
       }
     }
+    log_info!{ "done broadcasting..." }
     profile!{ self mark "broadcast" }
     one_alive
   }

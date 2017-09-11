@@ -23,8 +23,11 @@ fn strategies() -> Vec< Box<RedStrat> > {
 
 
 /// Reduces an instance.
-pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<()> {
+///
+/// Returns true if something was changed.
+pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<bool> {
   let mut strategies = strategies() ;
+  let mut did_something = false ;
   let mut changed = true ;
   'all_strats_fp: while changed {
     if instance.clauses.is_empty() { break 'all_strats_fp }
@@ -54,9 +57,10 @@ pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<()> {
         |_profiler| "clauses eliminated" => add clse_cnt
       }
     }
+    did_something = did_something || changed
   }
   log_info!("") ;
-  Ok(())
+  Ok(did_something)
 }
 
 
@@ -158,7 +162,7 @@ impl RedStrat for RhsOnlyToTrue {
 
 
 
-/// Simplies clauses of the form `true => p(v_1, ..., v_n)` where all the
+/// Simplifies clauses of the form `true => p(v_1, ..., v_n)` where all the
 /// `v_i`s are different. Unfolds `p` to `true`.
 pub struct TrueImplies {
   /// Predicates found to be equivalent to true, but not propagated yet.
@@ -348,6 +352,28 @@ impl SimpleOneRhs {
                   )
                 )
               }
+            } else if let Some(int) = arg.int_val() {
+              let fresh = fresh_var ;
+              fresh_var.inc() ;
+              var_map.push(fresh) ;
+              terms.push(
+                TTerm::T(
+                  instance.eq( instance.var(fresh), instance.int(int) )
+                )
+              )
+            } else if let Some(b) = arg.bool() {
+              let fresh = fresh_var ;
+              fresh_var.inc() ;
+              var_map.push(fresh) ;
+              terms.push(
+                if b {
+                  TTerm::T( instance.var(fresh) )
+                } else {
+                  TTerm::T(
+                    instance.op( Op::Not, vec![ instance.var(fresh) ] )
+                  )
+                }
+              )
             } else {
               continue 'pred_loop
             }
@@ -367,14 +393,6 @@ impl SimpleOneRhs {
         for lhs in clause.lhs() {
           let lhs_vars = lhs.vars() ;
           if lhs_vars.is_subset(& vars) {
-            // If this term is a predicate application we're already reducing,
-            // skip. Otherwise, we would create circular dependencies.
-            if let Some(lhs_pred) = lhs.pred() {
-              debug_assert!( pred != lhs_pred ) ;
-              if self.pred_map.contains_key(& lhs_pred) {
-                continue 'pred_loop
-              }
-            }
             terms.push( lhs.clone() )
           } else {
             continue 'pred_loop

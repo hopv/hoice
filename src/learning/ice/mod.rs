@@ -103,9 +103,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Res<Self> {
+    let _profiler = Profile::mk() ;
+    profile!{ |_profiler| tick "mining" }
     let qualifiers = Qualifiers::mk(& * instance).chain_err(
       || "while creating qualifier structure"
     ) ? ;
+    profile!{ |_profiler| mark "mining" }
+    // println!("done mining for qualifiers") ;
     // println!("") ;
     // println!("qualifiers:") ;
     // for qualifiers in qualifiers.qualifiers() {
@@ -124,7 +128,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
-        dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
+        dec_mem, candidate, actlit: 0, _profiler,
       }
     )
   }
@@ -269,14 +273,15 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
       if pos_len == 0 {
+        msg!( self => "legal_pred (1)" ) ;
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
-          // msg!(
-          //   self =>
-          //   "{} only has negative ({}) and unclassified ({}) data\n\
-          //   legal check ok, assuming everything negative",
-          //   self.instance[pred], neg_len, unc_len
-          // ) ;
+          msg!(
+            self =>
+            "{} only has negative ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything negative",
+            self.instance[pred], neg_len, unc_len
+          ) ;
           self.candidate[pred] = Some( self.instance.bool(false) ) ;
           profile!{ self tick "learning", "data" }
           self.data.pred_all_false(pred) ? ;
@@ -285,14 +290,15 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         }
       }
       if neg_len == 0 {
+        msg!( self => "legal_pred (2)" ) ;
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {
-          // msg!(
-          //   self =>
-          //   "{} only has positive ({}) and unclassified ({}) data\n\
-          //   legal check ok, assuming everything positive",
-          //   self.instance[pred], pos_len, unc_len
-          // ) ;
+          msg!(
+            self =>
+            "{} only has positive ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything positive",
+            self.instance[pred], pos_len, unc_len
+          ) ;
           self.candidate[pred] = Some( self.instance.bool(true) ) ;
           self.data.pred_all_true(pred) ? ;
           continue

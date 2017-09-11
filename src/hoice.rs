@@ -81,21 +81,28 @@ pub fn work() -> Res<()> {
 
     if conf.pre_proc {
 
-      profile!{ |profiler| tick "loading", "simplify" }
-      instance.simplify_clauses() ? ;
-      profile!{ |profiler| mark "loading", "simplify" }
+      let mut changed = true ;
+      'preproc: while changed {
 
-      log_info!{ "done simplifying" }
+        profile!{ |profiler| tick "loading", "simplify" }
+        instance.simplify_clauses() ? ;
+        profile!{ |profiler| mark "loading", "simplify" }
 
-      // log_info!{
-      //   "instance after simplification:\n{}\n\n",
-      //   instance.to_string_info(()) ?
-      // }
+        log_info!{ "done simplifying" }
 
-      log_info!{ "done simplifying, reducing" }
-      profile!{ |profiler| tick "loading", "reducing" }
-      ::instance::reduction::work(& mut instance, & profiler) ? ;
-      profile!{ |profiler| mark "loading", "reducing" }
+        log_info!{
+          "instance after simplification:\n{}\n\n",
+          instance.to_string_info(()) ?
+        }
+
+        log_info!{ "done simplifying, reducing" }
+        profile!{ |profiler| tick "loading", "reducing" }
+        changed = ::instance::reduction::work(
+          & mut instance, & profiler
+        ) ? ;
+        profile!{ |profiler| mark "loading", "reducing" }
+
+      }
 
       // log_info!{
       //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
@@ -106,6 +113,10 @@ pub fn work() -> Res<()> {
     instance.finalize() ;
 
     profile!{ |profiler| mark "loading" }
+
+    print_stats(profiler) ;
+
+    let profiler = Profile::mk() ;
 
     let mut model = None ;
 
