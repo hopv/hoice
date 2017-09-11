@@ -908,7 +908,7 @@ mod hash {
   impl HashU64 {
     /// Checks that a slice of bytes has the length of a `usize`. Only active
     /// in debug.
-    #[cfg(debug)]
+    #[cfg(debug_assertions)]
     #[inline(always)]
     fn test_bytes(bytes: & [u8]) {
       if bytes.len() != u64_bytes {
@@ -921,7 +921,7 @@ mod hash {
     }
     /// Checks that a slice of bytes has the length of a `usize`. Only active
     /// in debug.
-    #[cfg( not(debug) )]
+    #[cfg( not(debug_assertions) )]
     #[inline(always)]
     fn test_bytes(_: & [u8]) {}
   }

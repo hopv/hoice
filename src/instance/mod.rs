@@ -340,6 +340,13 @@ impl RTerm {
       _ => None
     }
   }
+  /// Integer a constant integer term evaluates to.
+  pub fn int(& self) -> Option<Int> {
+    match self.int_eval( & VarMap::with_capacity(0) ) {
+      Ok(Some(i)) => Some(i),
+      _ => None
+    }
+  }
 
   /// The kids of this term, if any.
   pub fn kids(& self) -> Option<& [Term]> {
@@ -553,11 +560,26 @@ impl TTerm {
       _ => None,
     }
   }
+  /// Boolean corresponding to the top term if it's an integer constant.
+  pub fn int(& self) -> Option<Int> {
+    match * self {
+      TTerm::T(ref t) => t.int(),
+      _ => None,
+    }
+  }
 
   /// The predicate a top term is an application of, if any.
   pub fn pred(& self) -> Option<PrdIdx> {
     match * self {
       TTerm::P { pred, .. } => Some(pred),
+      _ => None,
+    }
+  }
+
+  /// The arguments of a top term if it's a predicate application.
+  pub fn args(& self) -> Option<& VarMap<Term>> {
+    match * self {
+      TTerm::P { ref args, .. } => Some(args),
       _ => None,
     }
   }
@@ -981,6 +1003,72 @@ impl Instance {
     instance
   }
 
+  /// Checks that the instance has no inconsistencies.
+  ///
+  /// Only active in debug.
+  #[cfg(not(debug_assertions))]
+  #[inline(always)]
+  pub fn check(& self, _: & 'static str) -> Res<()> { Ok(()) }
+  #[cfg(debug_assertions)]
+  pub fn check(& self, s: & 'static str) -> Res<()> {
+    for (idx, clause) in self.clauses.index_iter() {
+      for lhs in clause.lhs() {
+        if let Some(pred) = lhs.pred() {
+          if ! self.pred_to_clauses[pred].0.contains(& idx) {
+            bail!(
+              "instance consistency check failed: {}\n\
+              predicate {} appears in lhs of clause {} \
+              but is not registered as such\n{}",
+              s, self[pred], idx,
+              self.clauses[idx].to_string_info(self.preds()) ?
+            )
+          }
+        }
+      }
+      if let Some(pred) = clause.rhs.pred() {
+        if ! self.pred_to_clauses[pred].1.contains(& idx) {
+          bail!(
+            "predicate {} appears in rhs of clause {} \
+            but is not registered as such\n{}\nlhs: {:?}\nrhs: {:?}",
+            self[pred], idx, self.clauses[idx].to_string_info(self.preds()) ?,
+            self.pred_to_clauses[pred].0, self.pred_to_clauses[pred].1
+          )
+        }
+      }
+    }
+    for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
+      'pred_clauses: for clause in lhs {
+        for tterm in & self.clauses[* clause].lhs {
+          if let Some(this_pred) = tterm.pred() {
+            if this_pred == pred {
+              continue 'pred_clauses
+            }
+          }
+        }
+        bail!(
+          "predicate {} is registered to appear in lhs of clause {} \
+          but it's not the case\n{}",
+          self[pred], clause,
+          self.clauses[* clause].to_string_info(self.preds()) ?
+        )
+      }
+      for clause in rhs {
+        if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
+          if this_pred == pred {
+            continue
+          }
+        }
+        bail!(
+          "predicate {} is registered to appear in rhs of clause {} \
+          but it's not the case\n{}",
+          self[pred], clause,
+          self.clauses[* clause].to_string_info(self.preds()) ?
+        )
+      }
+    }
+    Ok(())
+  }
+
   /// Returns the model corresponding to the input predicates and the forced
   /// predicates.
   ///
@@ -1277,21 +1365,22 @@ impl Instance {
   // }
 
   /// Forget some clauses.
-  fn forget_clauses(& mut self, mut clauses: Vec<ClsIdx>) {
+  fn forget_clauses(& mut self, mut clauses: Vec<ClsIdx>) -> Res<()> {
     // Forgetting is done by swap remove, so we sort in DESCENDING order so
     // that indices always make sense.
     clauses.sort_unstable_by(
       |c_1, c_2| c_2.cmp(c_1)
     ) ;
     for clause in clauses {
-      let _ = self.forget_clause(clause) ;
+      let _ = self.forget_clause(clause) ? ;
     }
+    Ok(())
   }
 
   /// Forget a clause. **Does not preserve the order of the clauses.**
   ///
   /// Also unlinks predicates from `pred_to_clauses`.
-  fn forget_clause(& mut self, clause: ClsIdx) -> Clause {
+  fn forget_clause(& mut self, clause: ClsIdx) -> Res<Clause> {
     // Remove all links from the clause's predicates to this clause.
     let mut _set = if_not_bench!{
       // This set remembers the predicates removed. The first `debug_assert`
@@ -1324,7 +1413,9 @@ impl Instance {
         "inconsistency in predicate and clause links"
       )
     }
-    self.clauses.swap_remove(clause)
+    let res = self.clauses.swap_remove(clause) ;
+    // self.check("forgetting clause") ? ;
+    Ok(res)
   }
 
   /// Pushes a new clause.
@@ -1770,7 +1861,7 @@ impl Instance {
 
     }
 
-    self.forget_clauses( clauses_to_rm ) ;
+    self.forget_clauses( clauses_to_rm ) ? ;
 
     Ok(())
   }

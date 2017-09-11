@@ -205,7 +205,7 @@ impl Data {
   /// Checks the state of the data. Does nothing in release.
   ///
   /// Checks that no positive / negative data is linked to some constraints.
-  #[cfg(debug)]
+  #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
     if ! self.pos_to_add.is_empty() {
       bail!("pos_to_add is not empty...")
@@ -215,7 +215,7 @@ impl Data {
     }
     for pred in self.instance.pred_indices() {
       for pos in & self.pos[pred] {
-        if let set = self.map[pred].get(pos) {
+        if let Some(set) = self.map[pred].get(pos) {
           bail!(
             "{}{} is positive but appears in constraint(s) {:?}",
             self.instance[pred], pos, set
@@ -223,7 +223,7 @@ impl Data {
         }
       }
       for neg in & self.neg[pred] {
-        if let set = self.map[pred].get(neg) {
+        if let Some(set) = self.map[pred].get(neg) {
           bail!(
             "{}{} is negative but appears in constraint(s) {:?}",
             self.instance[pred], neg, set
@@ -233,7 +233,7 @@ impl Data {
     }
     Ok(())
   }
-  #[cfg(not(debug))]
+  #[cfg(not(debug_assertions))]
   #[inline(always)]
   pub fn check(& self) -> Res<()> { Ok(()) }
 

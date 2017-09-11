@@ -84,11 +84,11 @@ pub fn work() -> Res<()> {
       let mut changed = true ;
       'preproc: while changed {
 
+        instance.check("before simplification") ? ;
         profile!{ |profiler| tick "loading", "simplify" }
         instance.simplify_clauses() ? ;
         profile!{ |profiler| mark "loading", "simplify" }
-
-        log_info!{ "done simplifying" }
+        instance.check("after simplification") ? ;
 
         log_info!{
           "instance after simplification:\n{}\n\n",
@@ -100,14 +100,18 @@ pub fn work() -> Res<()> {
         changed = ::instance::reduction::work(
           & mut instance, & profiler
         ) ? ;
+        instance.check("after reduction") ? ;
         profile!{ |profiler| mark "loading", "reducing" }
+
+        log_info!{ "done reducing" }
+
+        log_info!{
+          "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+        }
 
       }
 
-      // log_info!{
-      //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-      // }
-      log_info!{ "done reducing" }
+      log_info!{ "done with pre-processing" }
     }
 
     instance.finalize() ;

@@ -276,6 +276,13 @@ impl Qualifiers {
   /// Blacklists a qualifier.
   pub fn blacklist(& mut self, qual: & Term) {
     let is_new = self.blacklist.insert(qual.clone()) ;
+    if ! is_new {
+      println!("blacklist:") ;
+      for term in & self.blacklist {
+        println!("  {}", term)
+      }
+      println!("error: {}", qual)
+    }
     debug_assert!(is_new)
   }
 
