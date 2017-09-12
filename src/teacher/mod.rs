@@ -209,7 +209,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
     if conf.stats {
-      println!("; Done in {} guesses", self.count) ;
+      println!("; Done in {} guess(es)", self.count) ;
       println!("") ;
     }
     for & mut (ref mut sender, _) in self.learners.iter_mut() {

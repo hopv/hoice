@@ -1079,7 +1079,7 @@ impl Instance {
     res.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |tterm| (pred, vec![ TTerm::T(tterm) ])
+          |term| (pred, vec![ TTerm::T(term) ])
         )
       )
     ) ;

@@ -1292,8 +1292,8 @@ impl Profile {
       scope, & (ref should_be_none, ref time)
     ) in self.map.borrow().iter() {
       if should_be_none.is_some() {
-        println!(
-          "[Warning] Profile::extract_tree: \
+        warn!(
+          "Profile::extract_tree: \
           still have a live instant for {:?}", scope
         )
       }
