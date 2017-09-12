@@ -372,7 +372,6 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// is over.
   pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     profile!{ self tick "learning", "backtrack" }
-    msg!{ self => "backtracking..." } ;
     self.qualifiers.clear_blacklist() ;
     // Backtracking or exit loop.
     if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
@@ -383,10 +382,6 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // Update data, some previously unclassified data may be classified now.
       self.data.classify(pred, & mut nu_data) ;
       profile!{ self mark "learning", "backtrack" }
-      msg!{ self => "branch:" } ;
-      for & (ref term, b) in & nu_branch {
-        msg!{ self => "  {}: {}", term, b } ;
-      }
       Some( (nu_branch, nu_data) )
     } else {
       profile!{ self mark "learning", "backtrack" }
@@ -490,7 +485,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         pred, data, used_quals
       ) ? ;
       profile!{ self mark "learning", "qual" }
-      msg!{ self => "qual: {}", qual } ;
+      // msg!{ self => "qual: {}", qual } ;
       self.qualifiers.blacklist(& qual) ;
 
       // Remember the branch where qualifier is false.
@@ -684,25 +679,25 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Reachable only if none of our qualifiers can split the data.
 
-    if_verb!{
-      let mut msg = format!(
-        "\ncould not split remaining data for {}:\n", self.instance[pred]
-      ) ;
-      msg.push_str("pos (") ;
-      for pos in & data.pos {
-        msg.push_str( & format!("\n    {}", pos) )
-      }
-      msg.push_str("\n) neg (") ;
-      for neg in & data.neg {
-        msg.push_str( & format!("\n    {}", neg) )
-      }
-      msg.push_str("\n) unc (") ;
-      for unc in & data.unc {
-        msg.push_str( & format!("\n    {}", unc) )
-      }
-      msg.push_str("\n)") ;
-      msg!{ self => msg } ;
-    }
+    // if_verb!{
+    //   let mut msg = format!(
+    //     "\ncould not split remaining data for {}:\n", self.instance[pred]
+    //   ) ;
+    //   msg.push_str("pos (") ;
+    //   for pos in & data.pos {
+    //     msg.push_str( & format!("\n    {}", pos) )
+    //   }
+    //   msg.push_str("\n) neg (") ;
+    //   for neg in & data.neg {
+    //     msg.push_str( & format!("\n    {}", neg) )
+    //   }
+    //   msg.push_str("\n) unc (") ;
+    //   for unc in & data.unc {
+    //     msg.push_str( & format!("\n    {}", unc) )
+    //   }
+    //   msg.push_str("\n)") ;
+    //   msg!{ self => msg } ;
+    // }
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
