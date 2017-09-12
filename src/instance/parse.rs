@@ -499,10 +499,16 @@ impl<'a> Parser<'a> {
         self.txen(pos_1, 'm') ;
         None
       },
+      Some( (pos_1, 'd') ) => if self.tag_opt("iv") {
+        Some(Op::Div)
+      } else {
+        self.txen(pos_1, 'd') ;
+        None
+      },
       Some( (_, '+') ) => Some(Op::Add),
       Some( (_, '-') ) => Some(Op::Sub),
       Some( (_, '*') ) => Some(Op::Mul),
-      Some( (_, '/') ) => Some(Op::Div),
+      // Some( (_, '/') ) => Some(Op::Div),
       Some( (pos, char) ) => {
         self.txen(pos, char) ;
         None

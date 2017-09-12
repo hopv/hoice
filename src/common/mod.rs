@@ -1,5 +1,6 @@
 //! Base types and functions.
 
+use std::fmt ;
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
 pub use std::sync::{ Arc, RwLock } ;
@@ -22,7 +23,7 @@ pub use errors::* ;
 
 lazy_static!{
   #[doc = "Configuration from clap."]
-  pub static ref conf: Conf = Conf::clap() ;
+  pub static ref conf: Config = Config::clap() ;
 }
 
 
@@ -40,7 +41,7 @@ macro_rules! if_not_bench {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
     $($else)*
   ) ;
-  ($($blah:tt)*) => () ;
+  ($($blah:tt)*) => (()) ;
 }
 /// Does something if in verbose mode.
 #[macro_export]
@@ -85,6 +86,9 @@ macro_rules! log_debug {
 #[macro_export]
 #[cfg(not (feature = "bench") )]
 macro_rules! if_debug {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($then)*
+  ) ;
   ($($blah:tt)*) => (
     if conf.debug() {
       $($blah)*
@@ -94,6 +98,9 @@ macro_rules! if_debug {
 #[cfg(feature = "bench")]
 #[allow(unused_macros)]
 macro_rules! if_debug {
+  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($else)*
+  ) ;
   ($($blah:tt)*) => (()) ;
 }
 
@@ -151,7 +158,20 @@ wrap_usize!{
   #[doc = "Total map from variables to something."]
   map: VarMap with iter: VarMapIter
 }
-use std::fmt ;
+impl VarIdx {
+  /// Default way to write variables: `v_<idx>`.
+  pub fn default_write<W>(& self, w: & mut W) -> ::std::io::Result<()>
+  where W: Write {
+    write!(w, "v_{}", self)
+  }
+  /// Default string representation of a variable.
+  pub fn default_str(& self) -> String {
+    let mut s = vec![] ;
+    self.default_write(& mut s).unwrap() ;
+    ::std::str::from_utf8(& s).unwrap().into()
+  }
+}
+
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
   fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
     write!(fmt, "(") ? ;
@@ -165,20 +185,20 @@ impl<T: fmt::Display> fmt::Display for VarMap<T> {
   }
 }
 
-impl ::rsmt2::Sym2Smt<()> for VarIdx {
+impl<T> ::rsmt2::Sym2Smt<T> for VarIdx {
   fn sym_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
     smt_cast_io!{
       "while writing var index as symbol" =>
-      write!(w, "v_{}", self)
+      self.default_write(w)
     }
   }
 }
 
-impl ::rsmt2::Expr2Smt<()> for VarIdx {
+impl<T> ::rsmt2::Expr2Smt<T> for VarIdx {
   fn expr_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
     use ::rsmt2::Sym2Smt ;
     self.sym_to_smt2(w, & ())
@@ -210,9 +230,11 @@ wrap_usize!{
 }
 
 
-/// Maps predicates to terms.
-pub type Candidates = PrdMap< ::instance::Term > ;
+/// Maps predicates to optional terms.
+pub type Candidates = PrdMap< Option<::instance::Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
+/// Maps predicates to terms.
+pub type Model = Vec< (PrdIdx, Vec<::instance::TTerm>) > ;
 
 
 
@@ -359,7 +381,7 @@ impl Verb {
 
 
 /// Basic configuration.
-pub struct Conf {
+pub struct Config {
   pub file: Option<String>,
   pub check: Option<String>,
   pub check_eld: bool,
@@ -372,30 +394,32 @@ pub struct Conf {
   pub step: bool,
   pub decay: bool,
   pub max_decay: usize,
+  pub pre_proc: bool,
+  pub simple_red: bool,
   pub verb: Verb,
   pub stats: bool,
   styles: Styles,
 }
-impl ColorExt for Conf {
+impl ColorExt for Config {
   fn styles(& self) -> & Styles { & self.styles }
 }
-impl Conf {
-  /// Regular constructor.
-  pub fn mk(
-    file: Option<String>, check: Option<String>, check_eld: bool,
-    smt_log: bool, z3_cmd: String, out_dir: String,
-    step: bool, decay: bool, max_decay: usize,
-    smt_learn: bool, fpice_synth: bool,
-    gain_threads: usize,
-    verb: Verb, stats: bool, color: bool
-  ) -> Self {
-    Conf {
-      file, check, check_eld,
-      smt_log, out_dir, step, decay, max_decay, smt_learn,
-      fpice_synth,
-      gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
-    }
-  }
+impl Config {
+  // /// Regular constructor.
+  // pub fn mk(
+  //   file: Option<String>, check: Option<String>, check_eld: bool,
+  //   smt_log: bool, z3_cmd: String, out_dir: String,
+  //   step: bool, decay: bool, max_decay: usize, simple_red: bool,
+  //   smt_learn: bool, fpice_synth: bool,
+  //   gain_threads: usize,
+  //   verb: Verb, stats: bool, color: bool
+  // ) -> Self {
+  //   Config {
+  //     file, check, check_eld,
+  //     smt_log, out_dir, step, decay, max_decay, simple_red, smt_learn,
+  //     fpice_synth,
+  //     gain_threads, z3_cmd, verb, stats, styles: Styles::mk(color)
+  //   }
+  // }
 
   /// True iff verbose or debug.
   pub fn verbose(& self) -> bool {
@@ -516,6 +540,26 @@ impl Conf {
 
     ).arg(
 
+      Arg::with_name("simple_red").long("--simple_red").help(
+        "activates simple reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("pre_proc").long("--pre_proc").help(
+        "activates simple reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("decay").long("--decay").short("-d").help(
         "activates qualifier decay (forgetting unused qualifiers)"
       ).validator(
@@ -615,6 +659,7 @@ impl Conf {
     ).expect(
       "unreachable(color): default is provided and input validated in clap"
     ) ;
+    let styles = Styles::mk(color) ;
     let smt_learn = matches.value_of("smt_learn").and_then(
       |s| bool_of_str(& s)
     ).expect(
@@ -624,6 +669,17 @@ impl Conf {
       |s| bool_of_str(& s)
     ).expect(
       "unreachable(step): default is provided and input validated in clap"
+    ) ;
+    let pre_proc = matches.value_of("pre_proc").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(pre_proc): default is provided and input validated in clap"
+    ) ;
+    let simple_red = matches.value_of("simple_red").and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "unreachable(simple_red): \
+      default is provided and input validated in clap"
     ) ;
     let decay = matches.value_of("decay").and_then(
       |s| bool_of_str(& s)
@@ -637,10 +693,10 @@ impl Conf {
     ) ;
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
-    ) ;
+    ).to_string() ;
     let out_dir = matches.value_of("out_dir").expect(
       "unreachable(out_dir): default is provided"
-    ) ;
+    ).to_string() ;
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
@@ -685,11 +741,16 @@ impl Conf {
       verb.dec()
     }
 
-    Conf::mk(
-      file, check, check_eld, smt_log, z3_cmd.into(), out_dir.into(), step,
+    Config {
+      file, check, check_eld,
+      smt_log, z3_cmd, out_dir, step,
       decay, max_decay,
-      smt_learn, fpice_synth, gain_threads, verb, stats, color
-    )
+      pre_proc, simple_red,
+      smt_learn,
+      fpice_synth,
+      gain_threads,
+      verb, stats, styles
+    }
   }
 }
 
@@ -847,7 +908,7 @@ mod hash {
   impl HashU64 {
     /// Checks that a slice of bytes has the length of a `usize`. Only active
     /// in debug.
-    #[cfg(debug)]
+    #[cfg(debug_assertions)]
     #[inline(always)]
     fn test_bytes(bytes: & [u8]) {
       if bytes.len() != u64_bytes {
@@ -860,7 +921,7 @@ mod hash {
     }
     /// Checks that a slice of bytes has the length of a `usize`. Only active
     /// in debug.
-    #[cfg( not(debug) )]
+    #[cfg( not(debug_assertions) )]
     #[inline(always)]
     fn test_bytes(_: & [u8]) {}
   }
@@ -956,11 +1017,9 @@ impl ProfileTree {
     let mut current = self ;
     for scp in & scope {
       let tmp = current ;
-      current = (
-        tmp.branches.get_mut(scp).ok_or(
-          format!("trying to lift inexisting scope {:?}", scope).into()
-        ) as Res<_>
-      ) ?
+      current = if let Some(current) = tmp.branches.get_mut(scp) {
+        current
+      } else { return Ok(()) }
     }
     let mut sum = Duration::from_secs(0) ;
     for (_, branch) in & current.branches {
@@ -1052,7 +1111,7 @@ impl ProfileTree {
 
 
 /// Maps strings to counters.
-pub type Stats = HashMap<& 'static str, usize> ;
+pub type Stats = HashMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// Debug print (multi-line).
@@ -1158,10 +1217,11 @@ impl Profile {
 
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]
-  pub fn stat_do<F>(& self, stat: & 'static str, f: F)
-  where F: Fn(usize) -> usize {
+  pub fn stat_do<F, S>(& self, stat: S, f: F)
+  where F: Fn(usize) -> usize, S: Into<String> {
+    let stat = stat.into() ;
     let mut map = self.stats.borrow_mut() ;
-    let val = map.get(stat).map(|n| * n).unwrap_or(0) ;
+    let val = map.get(& stat).map(|n| * n).unwrap_or(0) ;
     let _ = map.insert(stat, f(val)) ;
     ()
   }
@@ -1244,8 +1304,30 @@ impl Profile {
 }
 
 
+/// Basic parsing helpers.
+pub mod parse {
+  use common::* ;
+  pub use nom::multispace ;
 
+  named!{
+    #[doc = "Comment parser."],
+    pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
+  }
 
+  named!{
+    #[doc = "Parses comments and spaces."],
+    pub spc_cmt<()>, map!(
+      many0!( alt_complete!(cmt | multispace) ), |_| ()
+    )
+  }
 
-
-
+  named!{
+    #[doc = "Integer parser."],
+    pub int<Int>, map!(
+      re_bytes_find!("^([1-9][0-9]*|0)"),
+      |bytes| Int::parse_bytes(bytes, 10).expect(
+        "[bug] problem in integer parsing"
+      )
+    )
+  }
+}

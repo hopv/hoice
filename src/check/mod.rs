@@ -12,7 +12,7 @@ use common::* ;
 
 pub mod parse ;
 
-use self::parse::{ parse_input, parse_output, parse_eld_output } ;
+use self::parse::InParser ;
 
 /// A predicate is just a string.
 pub type Pred = String ;
@@ -52,12 +52,14 @@ pub struct PredDef {
 pub struct Clause {
   /// Arguments.
   pub args: Args,
-  /// Let bindings.
-  pub lets: Vec< Vec<(Ident, String)> >,
-  /// LHS.
-  pub lhs: Vec<Term>,
-  /// RHS.
-  pub rhs: Term,
+  /// Body.
+  pub body: Term,
+  // /// Let bindings.
+  // pub lets: Vec< Vec<(Ident, String)> >,
+  // /// LHS.
+  // pub lhs: Vec<Term>,
+  // /// RHS.
+  // pub rhs: Term,
 }
 
 /// Data from the input file.
@@ -68,32 +70,18 @@ pub struct Input {
   pub clauses: Vec<Clause>,
 }
 impl Input {
-  /// Loads some input data from some bytes.
-  pub fn of_bytes(bytes: & [u8]) -> Res<Self> {
-    use nom::IResult ;
-    match parse_input(bytes) {
-      IResult::Done(_, input) => Ok(input),
-      IResult::Error(e) => bail!(
-        "parse error: {:?}", e
-      ),
-      IResult::Incomplete(_) => bail!(
-        "parse error: incomplete..."
-      ),
-    }
-  }
   /// Loads some input data from a file.
   pub fn of_file(file: & str) -> Res<Self> {
     use std::fs::OpenOptions ;
     info!{ "loading horn clause file {}...", conf.emph(file) }
-    let mut buff = Vec::new() ;
+    let mut buff = String::new() ;
     OpenOptions::new().read(true).open(file).chain_err(
       || format!( "while opening file {}", conf.emph(file) )
-    )?.read_to_end(& mut buff).chain_err(
+    )?.read_to_string(& mut buff).chain_err(
       || format!( "while reading file {}", conf.emph(file) )
     )? ;
-    Self::of_bytes(& buff).chain_err(
-      || format!( "while parsing file {}", conf.emph(file) )
-    )
+    let parser = InParser::mk(& buff) ;
+    parser.parse_input()
   }
 }
 
@@ -103,37 +91,18 @@ pub struct Output {
   pub pred_defs: Vec<PredDef>,
 }
 impl Output {
-  /// Loads some input data from some bytes.
-  pub fn of_bytes(bytes: & [u8]) -> Res<Self> {
-    use nom::IResult ;
-    match if conf.check_eld {
-      println!("eld...") ;
-      parse_eld_output(bytes)
-    } else {
-      parse_output(bytes)
-    } {
-      IResult::Done(_, input) => Ok(input),
-      IResult::Error(e) => bail!(
-        "parse error: {:?}", e
-      ),
-      IResult::Incomplete(_) => bail!(
-        "parse error: incomplete..."
-      ),
-    }
-  }
   /// Loads some input data from a file.
   pub fn of_file(file: & str) -> Res<Self> {
     use std::fs::OpenOptions ;
     info!{ "loading hoice output file {}...", conf.emph(file) }
-    let mut buff = Vec::new() ;
+    let mut buff = String::new() ;
     OpenOptions::new().read(true).open(file).chain_err(
       || format!( "while opening file {}", conf.emph(file) )
-    )?.read_to_end(& mut buff).chain_err(
+    )?.read_to_string(& mut buff).chain_err(
       || format!( "while reading file {}", conf.emph(file) )
     )? ;
-    Self::of_bytes(& buff).chain_err(
-      || format!( "while parsing file {}", conf.emph(file) )
-    )
+    let parser = InParser::mk(& buff) ;
+    parser.parse_output()
   }
 
   /// Checks the signature of the predicates match the declarations of an input
@@ -212,76 +181,51 @@ impl Data {
   pub fn check< 'kid, S: Solver<'kid, Parser> >(
     & self, mut solver: S
   ) -> Res<()> {
-    // Define all predicates.
-    for & PredDef { ref pred, ref args, ref body } in & self.output.pred_defs {
-      solver.define_fun(
-        pred, args, & "Bool".to_string(), body, & ()
-      ) ?
-    }
 
     let mut okay = true ;
     let mut count = 0 ;
 
     // Check all clauses one by one.
     for & Clause {
-      ref args, ref lets, ref lhs, ref rhs
+      ref args, ref body // ref lets, ref lhs, ref rhs
     } in & self.input.clauses {
       count += 1 ;
-      solver.push(1) ? ;
+      solver.reset() ? ;
+      // Define all predicates.
+      for & PredDef {
+        ref pred, ref args, ref body
+      } in & self.output.pred_defs {
+        solver.define_fun(
+          pred, args, & "Bool".to_string(), body, & ()
+        ) ?
+      }
 
       // Declare arguments.
       for & (ref ident, ref typ) in args {
         solver.declare_const(ident, typ, & ()) ?
       }
 
-      // Build term.
-      let term = {
-        let mut term = format!("(and (not {})", rhs) ;
-        for lhs in lhs {
-          term.push(' ') ;
-          term.push_str(lhs)
-        }
-        term.push_str(")") ;
-        term
-      } ;
-      let mut let_binding = String::new() ;
-      let mut term_end = String::new() ;
-      for letb in lets {
-        term_end.push(')') ;
-        let_binding.push_str("(let ( ") ;
-        for & (ref id, ref term) in letb {
-          let_binding.push('(') ;
-          let_binding.push_str(& id) ;
-          let_binding.push(' ') ;
-          let_binding.push_str(& term) ;
-          let_binding.push(')')
-        }
-        let_binding.push_str(" ) ") ;
-      }
-
-      let term = format!("{}{}{}", let_binding, term, term_end) ;
-
-      solver.assert(& term, & ()) ? ;
+      solver.assert( & format!("(not {})", body), & ()) ? ;
 
       if solver.check_sat() ? {
         okay = false ;
         let model = solver.get_model() ? ;
         println!("") ;
         println!("(error \"") ;
-        println!("  clause {}", count) ;
-        print!(  "   ") ;
-        for & (ref id, ref ty) in args {
-          print!(" ({} {})", id, ty)
-        }
-        println!("") ;
-        println!("    (=>") ;
-        println!("      (and") ;
-        for lhs in lhs {
-          println!("        {}", lhs)
-        }
-        println!("      ) {}", rhs) ;
-        println!("    )") ;
-        println!("  is falsifiable with {{") ;
+        println!("  clause {} is falsifiable with {{", count) ;
+        // print!(  "   ") ;
+        // for & (ref id, ref ty) in args {
+        //   print!(" ({} {})", id, ty)
+        // }
+        // println!("") ;
+        // println!("    (=>") ;
+        // println!("      (and") ;
+        // for lhs in lhs {
+        //   println!("        {}", lhs)
+        // }
+        // println!("      ) {}", rhs) ;
+        // println!("    )") ;
+        // println!("  is falsifiable with {{") ;
         for (ident, value) in model {
           println!("    {}: {},", ident, value)
         }
@@ -291,8 +235,6 @@ impl Data {
       } else {
         info!("clause {} is fine", count)
       }
-
-      solver.pop(1) ?
     }
 
     if ! okay {

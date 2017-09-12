@@ -1,7 +1,5 @@
 //! ICE learner.
 
-pub mod mining ;
-
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
@@ -9,197 +7,7 @@ use instance::{ Instance, Term, RTerm, Op, Typ, Val } ;
 use self::mining::* ;
 use self::smt::* ;
 
-
-
-/// Smt-related things.
-pub mod smt {
-  use common::* ;
-  use common::data::* ;
-
-  /// Wrapper around predicate / sample that forces smt printing.
-  pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for SWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      smt_cast_io!(
-        "writing sample as expression" => write!(
-          w, "|p_{} {}|", self.0, self.1.uid()
-        )
-      )
-    }
-  }
-  impl<'a> ::rsmt2::Sym2Smt<()> for SWrap<'a> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      use ::rsmt2::Expr2Smt ;
-      self.expr_to_smt2(w, & ())
-    }
-  }
-
-
-  /// Wrapper around constraints that forces smt printing consistent with
-  /// [`SWrap`](struct.SWrap.html).
-  pub struct CWrap<'a>(pub & 'a Constraint) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for CWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing constraint as expression" ;
-      smtry_io!( blah => write!(w, "(=> (and") ) ;
-      for lhs in & self.0.lhs {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, ") ") ) ;
-      if let Some(rhs) = self.0.rhs.as_ref() {
-        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
-      } else {
-        smtry_io!( blah => write!(w, "false") ) ;
-      }
-      smtry_io!( blah => write!(w, ")") ) ;
-      Ok(())
-    }
-  }
-
-  /// Wrapper for activation literals activating samples for some predicate.
-  ///
-  /// `Sym2Smt` implementation just yields the actlit, used to declare said
-  /// actlit. `Expr2Smt` is the actual activation expression
-  ///
-  /// ```bash
-  /// (=> <actlit> (and <samples>))
-  /// ```
-  pub struct ActWrap<Samples> {
-    /// Actlit counter.
-    pub actlit: usize,
-    /// Predicate.
-    pub pred: PrdIdx,
-    /// Samples.
-    pub unc: Samples,
-    /// Indicates whether we're assuming the samples positive or negative.
-    pub pos: bool,
-  }
-  impl<Samples> ActWrap<Samples> {
-    /// Identifier representation of the actlit.
-    pub fn as_ident(& self) -> String {
-      format!("act_{}", self.actlit)
-    }
-  }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
-      for unc in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, "))") ) ;
-      if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
-      }
-      Ok(())
-    }
-  }
-  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
-    & 'a HConMap<Args, T>
-  > {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
-      for (unc, _) in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
-      }
-      smtry_io!( blah => write!(w, "))") ) ;
-      if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
-      }
-      Ok(())
-    }
-  }
-  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      smt_cast_io!(
-        "writing actlit symbol" => write!(w, "act_{}", self.actlit)
-      )
-    }
-  }
-
-
-  /// Wrapper around some values and some coefficients, used by
-  /// [synthesize](../struct.IceLearner.html#method.synthesize) to assert the
-  /// constraints on its points.
-  ///
-  /// The expression it encodes is
-  ///
-  /// ```bash
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
-  /// ```
-  ///
-  /// where `[ v_1, ..., v_n ] = self.vals` and
-  /// `[ c_1, ..., c_n ] = self.coefs`.
-  pub struct ValCoefWrap<'a> {
-    /// Values.
-    pub vals: & 'a Vec<Int>,
-    /// Coefficients.
-    pub coefs: & 'a Vec<VarIdx>,
-    /// Constant.
-    pub cst: & 'static str,
-    /// Positivity of the values.
-    pub pos: bool,
-  }
-  impl<'a> ValCoefWrap<'a> {
-    /// Constructor.
-    pub fn mk(
-      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
-      cst: & 'static str, pos: bool
-    ) -> Self {
-      debug_assert!( vals.len() == coefs.len() ) ;
-      ValCoefWrap { vals, coefs, cst, pos }
-    }
-  }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
-    fn expr_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
-    ) -> SmtRes<()> where Writer: Write {
-      let blah = "while writing `ValCoefWrap` as expression" ;
-      smtry_io!(
-        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
-      ) ;
-      for (val, coef) in self.vals.iter().zip( self.coefs ) {
-        use ::rsmt2::Sym2Smt ;
-        smtry_io!(blah =>
-          write!(w, " (* {} ", val) ;
-          coef.sym_to_smt2(w, & ()) ;
-          write!(w, ")")
-        )
-      }
-      smtry_io!(
-        blah => write!(w, " {}) 0)", self.cst)
-      ) ;
-      Ok(())
-    }
-  }
-}
+pub mod mining ;
 
 
 
@@ -295,9 +103,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Res<Self> {
+    let _profiler = Profile::mk() ;
+    profile!{ |_profiler| tick "mining" }
     let qualifiers = Qualifiers::mk(& * instance).chain_err(
       || "while creating qualifier structure"
     ) ? ;
+    profile!{ |_profiler| mark "mining" }
+    // println!("done mining for qualifiers") ;
     // println!("") ;
     // println!("qualifiers:") ;
     // for qualifiers in qualifiers.qualifiers() {
@@ -316,7 +128,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
-        dec_mem, candidate, actlit: 0, _profiler: Profile::mk(),
+        dec_mem, candidate, actlit: 0, _profiler,
       }
     )
   }
@@ -442,7 +254,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let prd_count = self.instance.preds().len() ;
     debug_assert!{{
       let mut okay = true ;
-      for term_opt in self.candidate.iter_mut() {
+      for term_opt in & self.candidate {
         okay = okay && term_opt.is_none() ;
       }
       okay
@@ -454,29 +266,22 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if let Some(term) = self.instance.term_of(pred) {
-        self.candidate[pred] = Some( term.clone() ) ;
-        if term.is_true() {
-          profile!{ self tick "learning", "data" }
-          self.data.pred_all_true(pred) ? ;
-          profile!{ self mark "learning", "data" }
-        } else {
-          bail!("[unsupported] forced candidate is not the term `true`")
-        }
+      if self.instance.terms_of(pred).is_some() {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
       if pos_len == 0 {
+        msg!( self => "legal_pred (1)" ) ;
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
-          // msg!(
-          //   self =>
-          //   "{} only has negative ({}) and unclassified ({}) data\n\
-          //   legal check ok, assuming everything negative",
-          //   self.instance[pred], neg_len, unc_len
-          // ) ;
+          msg!(
+            self =>
+            "{} only has negative ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything negative",
+            self.instance[pred], neg_len, unc_len
+          ) ;
           self.candidate[pred] = Some( self.instance.bool(false) ) ;
           profile!{ self tick "learning", "data" }
           self.data.pred_all_false(pred) ? ;
@@ -485,14 +290,15 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         }
       }
       if neg_len == 0 {
+        msg!( self => "legal_pred (2)" ) ;
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {
-          // msg!(
-          //   self =>
-          //   "{} only has positive ({}) and unclassified ({}) data\n\
-          //   legal check ok, assuming everything positive",
-          //   self.instance[pred], pos_len, unc_len
-          // ) ;
+          msg!(
+            self =>
+            "{} only has positive ({}) and unclassified ({}) data\n\
+            legal check ok, assuming everything positive",
+            self.instance[pred], pos_len, unc_len
+          ) ;
           self.candidate[pred] = Some( self.instance.bool(true) ) ;
           self.data.pred_all_true(pred) ? ;
           continue
@@ -534,28 +340,16 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
                 self.instance[pred], _unc, _cla
       ) ;
       let data = self.data.data_of(pred) ;
-      if let Some(term) = self.instance.term_of(pred) {
-        self.candidate[pred] = Some( term.clone() ) ;
-        continue 'pred_iter
-      } // Should be an `else if`, but can't because of lexical lifetimes.
       if let Some(term) = self.pred_learn(pred, data, & mut used_quals) ? {
         self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
       }
     }
-    let mut candidates = PrdMap::with_capacity(prd_count) ;
-    for none_soon in self.candidate.iter_mut() {
-      let mut term_opt = None ;
-      ::std::mem::swap(none_soon, & mut term_opt) ;
-      if let Some(term) = term_opt {
-        candidates.push(term)
-      } else {
-        bail!(
-          "[bug] done generating candidates but some of them are still `None`"
-        )
-      }
-    }
+    let mut candidates: PrdMap<_> = vec![
+      None ; self.instance.preds().len()
+    ].into() ;
+    ::std::mem::swap(& mut candidates, & mut self.candidate) ;
     profile!{ self mark "learning" }
 
     if conf.decay {
@@ -578,11 +372,10 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// is over.
   pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     profile!{ self tick "learning", "backtrack" }
-    msg!{ self => "backtracking..." } ;
+    self.qualifiers.clear_blacklist() ;
     // Backtracking or exit loop.
     if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
       // Update blacklisted qualifiers.
-      self.qualifiers.clear_blacklist() ;
       for & (ref t, _) in & nu_branch {
         self.qualifiers.blacklist(t)
       }
@@ -605,7 +398,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     self.classifier.clear() ;
 
     msg!(
-      self => "  working on predicate {} (pos: {}, neg: {}, unc: {}",
+      self => "  working on predicate {} (pos: {}, neg: {}, unc: {})",
       self.instance[pred], data.pos.len(), data.neg.len(), data.unc.len()
     ) ;
 
@@ -687,10 +480,12 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
+      msg!{ self => "looking for qualifier..." } ;
       let (qual, q_data, nq_data) = self.get_qualifier(
         pred, data, used_quals
       ) ? ;
       profile!{ self mark "learning", "qual" }
+      // msg!{ self => "qual: {}", qual } ;
       self.qualifiers.blacklist(& qual) ;
 
       // Remember the branch where qualifier is false.
@@ -1702,7 +1497,7 @@ impl ::rsmt2::ParseSmt2 for Parser {
   fn parse_value<'a>(
     & self, bytes: & 'a [u8]
   ) -> ::nom::IResult<& 'a [u8], Int> {
-    use instance::build::{ int, spc_cmt } ;
+    use common::parse::* ;
     dbg_dmp!(bytes, alt_complete!(
       // bytes,
       int | do_parse!(
@@ -1729,3 +1524,195 @@ impl ::rsmt2::ParseSmt2 for Parser {
 }
 
 
+
+
+
+/// Smt-related things.
+pub mod smt {
+  use common::* ;
+  use common::data::* ;
+
+  /// Wrapper around predicate / sample that forces smt printing.
+  pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
+  impl<'a> ::rsmt2::Expr2Smt<()> for SWrap<'a> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      smt_cast_io!(
+        "writing sample as expression" => write!(
+          w, "|p_{} {}|", self.0, self.1.uid()
+        )
+      )
+    }
+  }
+  impl<'a> ::rsmt2::Sym2Smt<()> for SWrap<'a> {
+    fn sym_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      use ::rsmt2::Expr2Smt ;
+      self.expr_to_smt2(w, & ())
+    }
+  }
+
+
+  /// Wrapper around constraints that forces smt printing consistent with
+  /// [`SWrap`](struct.SWrap.html).
+  pub struct CWrap<'a>(pub & 'a Constraint) ;
+  impl<'a> ::rsmt2::Expr2Smt<()> for CWrap<'a> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing constraint as expression" ;
+      smtry_io!( blah => write!(w, "(=> (and") ) ;
+      for lhs in & self.0.lhs {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, ") ") ) ;
+      if let Some(rhs) = self.0.rhs.as_ref() {
+        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
+      } else {
+        smtry_io!( blah => write!(w, "false") ) ;
+      }
+      smtry_io!( blah => write!(w, ")") ) ;
+      Ok(())
+    }
+  }
+
+  /// Wrapper for activation literals activating samples for some predicate.
+  ///
+  /// `Sym2Smt` implementation just yields the actlit, used to declare said
+  /// actlit. `Expr2Smt` is the actual activation expression
+  ///
+  /// ```bash
+  /// (=> <actlit> (and <samples>))
+  /// ```
+  pub struct ActWrap<Samples> {
+    /// Actlit counter.
+    pub actlit: usize,
+    /// Predicate.
+    pub pred: PrdIdx,
+    /// Samples.
+    pub unc: Samples,
+    /// Indicates whether we're assuming the samples positive or negative.
+    pub pos: bool,
+  }
+  impl<Samples> ActWrap<Samples> {
+    /// Identifier representation of the actlit.
+    pub fn as_ident(& self) -> String {
+      format!("act_{}", self.actlit)
+    }
+  }
+  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing unclassified data activation as expression" ;
+      smtry_io!(
+        blah => write!(
+          w, "(=> act_{} ({}", self.actlit,
+          if self.pos { "and" } else { "not (or" }
+        )
+      ) ;
+      for unc in self.unc {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, "))") ) ;
+      if ! self.pos {
+        smtry_io!( blah => write!(w, ")") )
+      }
+      Ok(())
+    }
+  }
+  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
+    & 'a HConMap<Args, T>
+  > {
+    fn expr_to_smt2<Writer: Write>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> {
+      let blah = "writing unclassified data activation as expression" ;
+      smtry_io!(
+        blah => write!(
+          w, "(=> act_{} ({}", self.actlit,
+          if self.pos { "and" } else { "not (or" }
+        )
+      ) ;
+      for (unc, _) in self.unc {
+        smtry_io!( blah => write!(w, " ", ) ) ;
+        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+      }
+      smtry_io!( blah => write!(w, "))") ) ;
+      if ! self.pos {
+        smtry_io!( blah => write!(w, ")") )
+      }
+      Ok(())
+    }
+  }
+  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
+    fn sym_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      smt_cast_io!(
+        "writing actlit symbol" => write!(w, "act_{}", self.actlit)
+      )
+    }
+  }
+
+
+  /// Wrapper around some values and some coefficients, used by
+  /// [synthesize](../struct.IceLearner.html#method.synthesize) to assert the
+  /// constraints on its points.
+  ///
+  /// The expression it encodes is
+  ///
+  /// ```bash
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
+  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
+  /// ```
+  ///
+  /// where `[ v_1, ..., v_n ] = self.vals` and
+  /// `[ c_1, ..., c_n ] = self.coefs`.
+  pub struct ValCoefWrap<'a> {
+    /// Values.
+    pub vals: & 'a Vec<Int>,
+    /// Coefficients.
+    pub coefs: & 'a Vec<VarIdx>,
+    /// Constant.
+    pub cst: & 'static str,
+    /// Positivity of the values.
+    pub pos: bool,
+  }
+  impl<'a> ValCoefWrap<'a> {
+    /// Constructor.
+    pub fn mk(
+      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
+      cst: & 'static str, pos: bool
+    ) -> Self {
+      debug_assert!( vals.len() == coefs.len() ) ;
+      ValCoefWrap { vals, coefs, cst, pos }
+    }
+  }
+  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
+    fn expr_to_smt2<Writer>(
+      & self, w: & mut Writer, _: & ()
+    ) -> SmtRes<()> where Writer: Write {
+      let blah = "while writing `ValCoefWrap` as expression" ;
+      smtry_io!(
+        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
+      ) ;
+      for (val, coef) in self.vals.iter().zip( self.coefs ) {
+        use ::rsmt2::Sym2Smt ;
+        smtry_io!(blah =>
+          write!(w, " (* {} ", val) ;
+          coef.sym_to_smt2(w, & ()) ;
+          write!(w, ")")
+        )
+      }
+      smtry_io!(
+        blah => write!(w, " {}) 0)", self.cst)
+      ) ;
+      Ok(())
+    }
+  }
+}

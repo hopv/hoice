@@ -14,7 +14,7 @@ use nom::IResult ;
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Val } ;
+use instance::{ Instance, Val, TTerm, Typ, Term } ;
 
 
 
@@ -62,17 +62,21 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   teacher.add_learner( ::learning::ice::Launcher ) ? ;
 
   log_debug!{ "  performing initial check..." }
-  let cexs = teacher.initial_check() ? ;
+  let (cexs, cands) = teacher.initial_check() ? ;
+  if cexs.is_empty() {
+    teacher.finalize() ? ;
+    return Ok( Some(cands) )
+  }
   log_debug!{ "  generating data from initial cex..." }
   teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
-    log_info!{
-      "all learning data:\n{}", teacher.data.string_do(
-        & (), |s| s.to_string()
-      ) ?
-    }
+    // log_info!{
+    //   "all learning data:\n{}", teacher.data.string_do(
+    //     & (), |s| s.to_string()
+    //   ) ?
+    // }
 
     if conf.step {
       let mut dummy = String::new() ;
@@ -106,7 +110,9 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
           ) ;
           for _pred in teacher.instance.preds() {
             log_info!("{}:", _pred.name) ;
-            log_info!("  {}", candidates[_pred.idx])
+            if let Some(term) = candidates[_pred.idx].as_ref() {
+              log_info!("  {}", term)
+            }
           }
         }
         profile!{ teacher tick "cexs" }
@@ -118,21 +124,31 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
           return Ok( Some(candidates) )
         }
 
-        log_info!{
-          "\nlearning data before adding cex:\n{}",
-          teacher.data.string_do(
-            & (), |s| s.to_string()
-          ) ?
-        }
+        // log_info!{
+        //   "\nlearning data before adding cex:\n{}",
+        //   teacher.data.string_do(
+        //     & (), |s| s.to_string()
+        //   ) ?
+        // }
         profile!{ teacher tick "data", "registration" }
-        teacher.instance.cexs_to_data(& mut teacher.data, cexs) ? ;
-        profile!{ teacher mark "data", "registration" }
-        log_info!{
-          "\nlearning data before propagation:\n{}",
-          teacher.data.string_do(
-            & (), |s| s.to_string()
-          ) ?
+        if let Err(e) = teacher.instance.cexs_to_data(
+          & mut teacher.data, cexs
+        ) {
+          match e.kind() {
+            & ErrorKind::Unsat => {
+              teacher.finalize() ? ;
+              return Ok(None)
+            },
+            _ => bail!(e),
+          }
         }
+        profile!{ teacher mark "data", "registration" }
+        // log_info!{
+        //   "\nlearning data before propagation:\n{}",
+        //   teacher.data.string_do(
+        //     & (), |s| s.to_string()
+        //   ) ?
+        // }
         profile!{ teacher tick "data", "propagation" }
         teacher.data.propagate() ? ;
         profile!{ teacher mark "data", "propagation" }
@@ -236,17 +252,17 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   pub fn broadcast(& self) -> bool {
     profile!{ self tick "broadcast" }
     let mut one_alive = false ;
+    log_info!{ "broadcasting..." }
     for & (ref sender, ref name) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
         if let Err(_) = sender.send( self.data.clone() ) {
-          warn!(
-            "learner `{}` is dead...", name
-          )
+          warn!( "learner `{}` is dead...", name )
         } else {
           one_alive = true
         }
       }
     }
+    log_info!{ "done broadcasting..." }
     profile!{ self mark "broadcast" }
     one_alive
   }
@@ -312,30 +328,180 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Drops the copy of the `Sender` end of the channel used to communicate
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
-  pub fn initial_check(& mut self) -> Res< Cexs > {
+  pub fn initial_check(& mut self) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    for _ in 0..self.instance.preds().len() {
-      cands.push( self.instance.bool(true) )
+    for pred in self.instance.pred_indices() {
+      if self.instance.terms_of(pred).is_some() {
+        cands.push( None )
+      } else {
+        cands.push( Some(self.instance.bool(true)) )
+      }
     }
-    self.get_cexs(& cands)
+    self.get_cexs(& cands).map(|res| (res, cands))
   }
 
   /// Looks for falsifiable clauses given some candidates.
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
+    use std::iter::Extend ;
     self.count += 1 ;
+    self.solver.reset() ? ;
+
+    // These will be passed to clause printing to inline trivial predicates.
+    let (mut true_preds, mut false_preds) = ( PrdSet::new(), PrdSet::new() ) ;
+    // Clauses to ignore, because they are trivially true. (lhs is false or
+    // rhs is true).
+    let mut clauses_to_ignore = ClsSet::new() ;
+
+    // Define non-forced predicates that are not trivially true or false.
+    'define_non_forced: for (pred, cand) in cands.index_iter() {
+      if let Some(ref term) = * cand {
+        match term.bool() {
+          Some(true) => {
+            let _ = true_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).1
+            )
+          },
+          Some(false) => {
+            let _ = false_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).0
+            )
+          },
+          None => {
+            let pred = & self.instance[pred] ;
+            let sig: Vec<_> = pred.sig.index_iter().map(
+              |(var, typ)| (var, * typ)
+            ).collect() ;
+            self.solver.define_fun(
+              & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+            ) ?
+          },
+        }
+      }
+    }
+
+    // Define forced predicates in topological order.
+    'forced_preds: for pred in self.instance.sorted_forced_terms() {
+      let pred = * pred ;
+      let tterms = if let Some(tterms) = self.instance.terms_of(pred) {
+        tterms
+      } else {
+        bail!(
+          "inconsistency between forced predicates and \
+          sorted forced predicates"
+        )
+      } ;
+
+      // Skip if trivially true or false.
+      if tterms.len() == 1 {
+        match tterms[0].bool() {
+          Some(true)  => {
+            let _ = true_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).1
+            ) ;
+            continue 'forced_preds
+          },
+          Some(false) => {
+            let _ = false_preds.insert(pred) ;
+            clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).0
+            ) ;
+            continue 'forced_preds
+          },
+          None => (),
+        }
+      }
+
+      // Reachable only if preds is not `true` or `false`.
+      let pred = & self.instance[pred] ;
+      let sig: Vec<_> = pred.sig.index_iter().map(
+        |(var, typ)| (var, * typ)
+      ).collect() ;
+      self.solver.define_fun(
+        & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+        & ( & true_preds, & false_preds, self.instance.preds() )
+      ) ?
+
+    }
+
+    // // Define non-trivially true or false predicates.
+    // 'define_preds: for (pred, cand) in cands.index_iter() {
+    //   if let Some(term) = cand.as_ref() {
+    //     match term.bool() {
+    //       Some(true) => {
+    //         let _ =  true_preds.insert(pred) ;
+    //         clauses_to_ignore.extend(
+    //           self.instance.clauses_of(pred).1
+    //         )
+    //       },
+    //       Some(false) => {
+    //         let _ = false_preds.insert(pred) ;
+    //         clauses_to_ignore.extend(
+    //           self.instance.clauses_of(pred).0
+    //         )
+    //       },
+    //       None => {
+    //         let pred = & self.instance[pred] ;
+    //         let sig: Vec<_> = pred.sig.index_iter().map(
+    //           |(var, typ)| (var, * typ)
+    //         ).collect() ;
+    //         self.solver.define_fun(
+    //           & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+    //         ) ?
+    //       }
+    //     }
+    //   } else if let Some(tterms) = self.instance.terms_of(pred) {
+    //     if tterms.len() == 1 {
+    //       match tterms[0].bool() {
+    //         Some(true)  => {
+    //           let _ =  true_preds.insert(pred) ;
+    //           clauses_to_ignore.extend(
+    //             self.instance.clauses_of(pred).1
+    //           ) ;
+    //           continue 'define_preds
+    //         },
+    //         Some(false) => {
+    //           let _ = false_preds.insert(pred) ;
+    //           clauses_to_ignore.extend(
+    //             self.instance.clauses_of(pred).0
+    //           ) ;
+    //           continue 'define_preds
+    //         },
+    //         None => (),
+    //       }
+    //     }
+    //     let pred = & self.instance[pred] ;
+    //     let sig: Vec<_> = pred.sig.index_iter().map(
+    //       |(var, typ)| (var, * typ)
+    //     ).collect() ;
+    //     self.solver.define_fun(
+    //       & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
+    //       self.instance.preds()
+    //     ) ?
+    //   } else {
+    //     bail!("illegal incomplete candidates")
+    //   }
+    // }
+
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
     self.solver.comment("looking for counterexamples...") ? ;
     for clause in clauses {
-      log_debug!{ "  looking for a cex for clause {}", clause }
-      if let Some(cex) = self.get_cex(cands, clause).chain_err(
-        || format!("while getting counterexample for clause {}", clause)
-      ) ? {
-        let prev = map.insert(clause, cex) ;
-        debug_assert_eq!(prev, None)
+      if ! clauses_to_ignore.contains(& clause) {
+        // log_debug!{ "  looking for a cex for clause {}", clause }
+        if let Some(cex) = self.get_cex(
+          clause, & true_preds, & false_preds
+        ).chain_err(
+          || format!("while getting counterexample for clause {}", clause)
+        ) ? {
+          let prev = map.insert(clause, cex) ;
+          debug_assert_eq!(prev, None)
+        }
       }
     }
     Ok(map)
@@ -343,7 +509,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, cands: & Candidates, clause_idx: ClsIdx
+    & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
   ) -> SmtRes< Option<Cex> > {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
@@ -361,9 +527,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     }
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
-      self.solver.declare_const(var, & var.typ, & ()) ?
+      self.solver.declare_const(& var.idx, & var.typ, & ()) ?
     }
-    self.solver.assert( clause, cands ) ? ;
+    self.solver.assert(
+      clause, & (true_preds, false_preds, self.instance.preds())
+    ) ? ;
     profile!{ self mark "cexs", "prep" }
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
@@ -376,7 +544,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         |info| info.typ.default_val()
       ).collect() ;
       for (var,val) in model {
-        log_debug!{ "    - v_{} = {}", var, val }
+        log_debug!{ "    - {} = {}", var.default_str(), val }
         map[var] = val
       }
       log_debug!{ "    done constructing model" }
@@ -389,6 +557,95 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     res
   }
 }
+
+
+
+/// Wraps a vector of top terms to write as the body of a `define-fun`.
+///
+/// The vector is understood as a conjunction.
+///
+/// The info for smt2 printing is
+///
+/// - set of predicates defined as true
+/// - set of predicates defined as false
+/// - predicate info to print non-trivial predicates
+pub struct TTermsWrap<'a>( & 'a Vec<TTerm> ) ;
+impl<'a, 'b> ::rsmt2::Expr2Smt<
+  (& 'b PrdSet, & 'b PrdSet, & 'b PrdMap< ::instance::info::PrdInfo >)
+> for TTermsWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, info: & (
+      & 'b PrdSet, & 'b PrdSet, & 'b PrdMap<::instance::info::PrdInfo>
+    )
+  ) -> SmtRes<()> {
+    let (true_preds, false_preds, pred_info) = * info ;
+    
+    let msg = "writing tterms as smt2" ;
+    smt_cast_io!{
+      msg =>
+      if self.0.len() > 1 {
+        smtry_io!(msg => write!(w, "(and") ) ;
+        for tterm in self.0 {
+          smtry_io!(msg => write!(w, " ")) ;
+          smtry_io!(
+            msg => tterm.write(
+              w, |w, var| var.default_write(w),
+              |w, pred, args| if true_preds.contains(& pred) {
+                write!(w, "true")
+              } else if false_preds.contains(& pred) {
+                write!(w, "false")
+              } else {
+                write!(w, "({}", pred_info[pred]) ? ;
+                for arg in args {
+                  write!(w, " ") ? ;
+                  arg.write(w, |w, var| var.default_write(w)) ?
+                }
+                write!(w, ")")
+              }
+            )
+          ) ;
+        }
+        write!(w, ")")
+      } else if self.0.len() == 1 {
+        self.0[0].write(
+          w, |w, var| var.default_write(w),
+          |w, pred, args| if true_preds.contains(& pred) {
+            write!(w, "true")
+          } else if false_preds.contains(& pred) {
+            write!(w, "false")
+          } else {
+            write!(w, "({}", pred_info[pred]) ? ;
+            for arg in args {
+              write!(w, " ") ? ;
+              arg.write(w, |w, var| var.default_write(w)) ?
+            }
+            write!(w, ")")
+          }
+        )
+      } else {
+        bail!("predicate definition is empty")
+      }
+    }
+  }
+}
+
+
+
+/// Wraps a term to write as the body of a `define-fun`.
+pub struct TermWrap<'a>( & 'a Term ) ;
+impl<'a> ::rsmt2::Expr2Smt<()> for TermWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: & ()
+  ) -> SmtRes<()> {
+    let msg = "writing term as smt2" ;
+    smt_cast_io!{
+      msg => self.0.write(
+        w, |w, var| var.default_write(w),
+      )
+    }
+  }
+}
+
 
 
 
@@ -414,7 +671,7 @@ impl ParseSmt2 for Parser {
     use std::str::FromStr ;
     preceded!(
       bytes,
-      char!('v'),
+      tag!("v_"),
       map!(
         map_res!(
           map_res!(

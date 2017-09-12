@@ -12,6 +12,12 @@ before_script:
   - |
     pip install 'travis-cargo<0.2' --user &&
     export PATH=$HOME/.local/bin:$PATH
+  # - |
+  #   wget https://github.com/Z3Prover/z3/releases/download/z3-4.5.0/z3-4.5.0-x64-ubuntu-14.04.zip &&
+  #   mv z3-4.5.0-x64-ubuntu-14.04.zip z3_dir.zip
+  #   unzip z3_dir.zip &&
+  #   mv z3_dir/bin/z3 . &&
+  #   rm -rf z3_dir
 
 script:
   - travis-cargo build

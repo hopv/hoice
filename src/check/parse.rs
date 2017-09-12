@@ -39,37 +39,7 @@ named!{
 named!{
   #[doc = "Ident parser."],
   pub ident<String>, alt_complete!(
-    map!(sident, |s| format!("|{}|", s)) | map!(qident, |s| s.to_string())
-  )
-}
-
-named!{
-  #[doc = "Type parser."],
-  pub typ<Typ>, map!(
-    map_res!(
-      re_bytes_find!("^[A-Z][a-zA-Z]*"),
-      |bytes| ::std::str::from_utf8(bytes).chain_err(
-        || "could not convert bytes to utf8"
-      )
-    ), |s| s.to_string()
-  )
-}
-
-named!{
-  #[doc = "Parses a predicate declaration."],
-  pub pred_dec<PredDec>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("declare-fun") >>
-    spc_cmt >> pred: ident >>
-    spc_cmt >> char!('(') >>
-    spc_cmt >> sig: many0!(
-      terminated!(typ, spc_cmt)
-    ) >>
-    spc_cmt >> char!(')') >>
-    spc_cmt >> typ >>
-    spc_cmt >> char!(')') >> (
-      PredDec { pred, sig }
-    )
+    map!(sident, |s| format!("{}", s)) | map!(qident, |s| s.to_string())
   )
 }
 
@@ -106,253 +76,573 @@ named!{
   )
 }
 
-named!{
-  #[doc = "Parses some arguments."],
-  pub arguments<Args>, do_parse!(
-    char!('(') >>
-    spc_cmt >> args: many0!(
-      do_parse!(
-        char!('(') >>
-        spc_cmt >> id: ident >>
-        spc_cmt >> ty: typ >>
-        spc_cmt >> char!(')') >>
-        spc_cmt >> (
-          (id, ty)
-        )
-      )
-    ) >>
-    spc_cmt >> char!(')') >> (args)
-  )
-}
 
-named!{
-  #[doc = "Parses a predicate definition."],
-  pub pred_def<PredDef>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("define-fun") >>
-    spc_cmt >> pred: ident >>
-    spc_cmt >> args: arguments >>
-    spc_cmt >> typ >>
-    spc_cmt >> body: s_expr >>
-    spc_cmt >> char!(')') >> (
-      PredDef { pred, args, body }
-    )
-  )
+/// Parser.
+pub struct InParser<'a> {
+  /// Predicate definitions.
+  pub pred_defs: Vec<PredDef>,
+  /// Predicate declarations.
+  pub pred_decs: Vec<PredDec>,
+  /// Clauses.
+  pub clauses: Vec<Clause>,
+  /// Characters.
+  chars: ::std::str::Chars<'a>,
+  /// Buffer storing characters pushed back.
+  buf: Vec<char>,
 }
+impl<'a> InParser<'a> {
+  /// Constructor.
+  pub fn mk(s: & 'a str) -> Self {
+    InParser {
+      pred_defs: vec![], pred_decs: vec![], clauses: vec![],
+      chars: s.chars(), buf: vec![]
+    }
+  }
 
-named!{
-  #[doc = "Parses a conjunction."],
-  pub conjunction< Vec<Term> >, alt_complete!(
-    do_parse!(
-      char!('(') >>
-      spc_cmt >> tag!("and") >>
-      spc_cmt >> exprss: many0!(
-        terminated!(conjunction, spc_cmt)
-      ) >>
-      spc_cmt >> char!(')') >> ({
-        let mut iter = exprss.into_iter() ;
-        if let Some(mut exprs) = iter.next() {
-          for es in iter {
-            use std::iter::Extend ;
-            exprs.extend(es)
-          }
-          exprs
-        } else {
-          panic!("nullary `and` application")
+  /// Swaps input characters.
+  pub fn swap(& mut self, s: & 'a str) {
+    self.chars = s.chars() ;
+    assert!( self.buf.is_empty() )
+  }
+
+  /// True if there is a next character.
+  fn has_next(& mut self) -> bool {
+    if ! self.buf.is_empty() {
+      true
+    } else if let Some(c) = self.next() {
+      self.buf.push(c) ;
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Next character.
+  fn next(& mut self) -> Option<char> {
+    if let Some(c) = self.buf.pop() {
+      Some(c)
+    } else {
+      self.chars.next()
+    }
+  }
+
+  /// Pushes back a character.
+  fn txen(& mut self, c: char) {
+    self.buf.push(c)
+  }
+
+  /// Backtracks some characters.
+  fn backtrack(& mut self, mut mem: Vec<char>) {
+    use std::iter::Extend ;
+    mem.reverse() ;
+    self.buf.extend(mem) ;
+    // print!("done backtracking: `") ;
+    // for c in & self.buf {
+    //   print!("{}", c)
+    // }
+    // println!("`")
+  }
+
+  /// Parses a tag or fails.
+  fn tag(& mut self, tag: & str) -> Res<()> {
+    if ! self.tag_opt(tag) {
+      bail!("expected tag `{}`", conf.emph(tag))
+    } else {
+      Ok(())
+    }
+  }
+  /// Tries to parse a tag.
+  fn tag_opt(& mut self, tag: & str) -> bool {
+    // println!("  tag: {}", tag) ;
+    let mut mem = vec![] ;
+    for c in tag.chars() {
+      if let Some(next) = self.next() {
+        mem.push(next) ;
+        // println!("  - {}/{}", c, next) ;
+        if c != next {
+          self.backtrack(mem) ;
+          return false
         }
-      })
-    ) |
+      } else {
+        self.backtrack(mem) ;
+        return false
+      }
+    }
+    return true
+  }
 
-    map!(s_expr, |s| vec![s])
-  )
-}
+  /// Parses a character or fails.
+  fn char(& mut self, c: char) -> Res<()> {
+    if ! self.char_opt(c) {
+      bail!("expected character `{}`", conf.emph( & c.to_string() ))
+    } else {
+      Ok(())
+    }
+  }
+  /// Tries to parse a character.
+  fn char_opt(& mut self, c: char) -> bool {
+    if let Some(next) = self.next() {
+      if next == c {
+        true
+      } else {
+        self.txen(next) ;
+        false
+      }
+    } else {
+      false
+    }
+  }
 
-named!{
-  #[doc = "Parses a clause."],
-  pub clause<Clause>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("assert") >>
-    spc_cmt >> char!('(') >>
-    spc_cmt >> clause: alt_complete!(
+  /// Parses everything it can until (and excluding) some character.
+  fn not_char(& mut self, c: char) -> String {
+    let mut s = String::new() ;
+    while let Some(next) = self.next() {
+      if next == c { self.txen(next) ; break } else {
+        s.push(next)
+      }
+    }
+    s
+  }
 
-      do_parse!(
-        spc_cmt >> tag!("forall") >>
-        spc_cmt >> args: arguments >>
-        spc_cmt >> lets: many0!(
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> tag!("let") >>
-            spc_cmt >> char!('(') >>
-            spc_cmt >> bindings: many0!(
-              do_parse!(
-                char!('(') >>
-                spc_cmt >> id: ident >>
-                spc_cmt >> term: s_expr >>
-                spc_cmt >> char!(')') >>
-                spc_cmt >> (
-                  (id, term)
-                )
-              )
-            ) >>
-            spc_cmt >> char!(')') >>
-            spc_cmt >> (
-              bindings
-            )
-          )
-        ) >>
-        spc_cmt >> char!('(') >>
-        spc_cmt >> clause: alt_complete!(
-          do_parse!(
-            tag!("not") >>
-            spc_cmt >> char!('(') >>
-            spc_cmt >> tag!("or") >>
-            spc_cmt >> lhs: many0!(
-              terminated!(s_expr, spc_cmt)
-            ) >>
-            spc_cmt >> char!(')') >> (
-              Clause {
-                args: args.clone(), lets: lets.clone(),
-                lhs, rhs: "false".into()
-              }
-            )
-          ) |
-          do_parse!(
-            tag!("=>") >>
-            spc_cmt >> lhs: conjunction >>
-            spc_cmt >> rhs: s_expr >> (
-              Clause {
-                args: args.clone(), lets: lets.clone(),
-                lhs, rhs
-              }
-            )
-          )
-        ) >>
-        spc_cmt >> many0!(
-          terminated!(char!(')'), spc_cmt)
-        ) >> (
-          clause
-        )
-      ) |
+  /// Parses an sexpression.
+  fn sexpr(& mut self) -> Res<Term> {
+    if self.tag_opt("true") {
+      return Ok("true".into())
+    } else if self.tag_opt("false") {
+      return Ok("false".into())
+    } else if let Some(id) = self.ident_opt() ? {
+      return Ok(id)
+    }
+    let mut s = String::new() ;
+    let mut cnt = 0 ;
+    while let Some(next) = self.next() {
+      s.push(next) ;
+      if next == '(' {
+        cnt += 1 ;
+      } else if next == ')' {
+        cnt -= 1 ;
+        if cnt == 0 { break }
+      }
+    }
+    if cnt != 0 {
+      bail!("found eof while parsing sexpr")
+    }
+    // println!("sexpr {{") ;
+    // println!("{}", s) ;
+    // println!("}}") ;
+    Ok(s)
+  }
 
-      do_parse!(
-        spc_cmt >> tag!("not") >>
-        spc_cmt >> char!('(') >>
-        spc_cmt >> tag!("exists") >>
-        spc_cmt >> args: arguments >>
-        spc_cmt >> lets: many0!(
-          do_parse!(
-            char!('(') >>
-            spc_cmt >> tag!("let") >>
-            spc_cmt >> char!('(') >>
-            spc_cmt >> bindings: many0!(
-              do_parse!(
-                char!('(') >>
-                spc_cmt >> id: ident >>
-                spc_cmt >> term: s_expr >>
-                spc_cmt >> char!(')') >> (
-                  (id, term)
-                )
-              )
-            ) >>
-            spc_cmt >> char!(')') >> (
-              bindings
-            )
-          )
-        ) >>
-        spc_cmt >> lhs: conjunction >>
-        spc_cmt >> many0!(
-          terminated!(char!(')'), spc_cmt)
-        ) >> (
-          Clause { args, lets, lhs, rhs: "false".into() }
-        )
-      )
-    ) >> (
-      clause
+  // /// Parses everything until a whitespace.
+  // fn not_ws(& mut self) {
+  //   // let mut s = String::new() ;
+  //   while let Some(next) = self.next() {
+  //     if ! next.is_whitespace() { self.txen(next) ; break } else {
+  //       // next.push(next)
+  //     }
+  //   }
+  //   // s
+  // }
+
+  /// Reads whitespaces and comments.
+  fn ws_cmt(& mut self) {
+    'ws: while let Some(next) = self.next() {
+      if ! next.is_whitespace() {
+        if next == ';' {
+          'cmt: while let Some(next) = self.next() {
+            if next == '\n' { break 'cmt }
+          }
+        } else {
+          self.txen(next) ;
+          break 'ws
+        }
+      }
+    }
+  }
+
+  /// Unquoted identifier char.
+  fn ident_char(c: char) -> bool {
+    if c.is_alphanumeric() { true } else {
+      match c {
+        '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' | ':' |
+        '_' | '-' | '+' | '=' | '<' | '>' | '.' | '?' | '/' => true,
+        _ => false,
+      }
+    }
+  }
+
+  /// Identifier or fails.
+  fn ident(& mut self) -> Res<Ident> {
+    if let Some(id) = self.ident_opt() ? {
+      Ok(id)
+    } else {
+      bail!("expected identifier")
+    }
+  }
+  /// Identifier.
+  fn ident_opt(& mut self) -> Res< Option<Ident> > {
+    if let Some(next) = self.next() {
+      let id = if next == '|' {
+        let id = self.not_char('|') ;
+        self.char('|') ? ;
+        id
+      } else if Self::ident_char(next) && ! next.is_numeric() {
+        let mut id = String::new() ;
+        id.push(next) ;
+        while let Some(next) = self.next() {
+          if Self::ident_char(next) { id.push(next) } else {
+            self.txen(next) ;
+            break
+          }
+        }
+        id
+      } else {
+        self.txen(next) ;
+        return Ok(None)
+      } ;
+      Ok( Some( format!("|{}|", id) ) )
+    } else {
+      Ok(None)
+    }
+  }
+
+  /// Set-logic.
+  fn set_logic(& mut self) -> Res<bool> {
+    if ! self.tag_opt("set-logic") {
+      return Ok(false)
+    }
+    // println!("set-logic") ;
+    self.ws_cmt() ;
+    self.tag("HORN") ? ;
+    Ok(true)
+  }
+
+  /// Set-info.
+  fn set_info(& mut self) -> Res<bool> {
+    if ! self.tag_opt("set-info") {
+      return Ok(false)
+    }
+    // println!("set-info") ;
+    self.ws_cmt() ;
+    self.char(':') ? ;
+    self.ident() ? ;
+    self.ws_cmt() ;
+    if self.char_opt('|') {
+      self.not_char('|') ;
+      self.char('|') ?
+    } else if self.char_opt('"') {
+      let _blah = self.not_char('"') ;
+      // println!("{}", blah) ;
+      self.char('"') ?
+    } else {
+      let _blah = self.not_char(')') ;
+      // println!("{}", blah)
+    }
+    Ok(true)
+  }
+
+  /// Type or fails.
+  fn typ(& mut self) -> Res<Typ> {
+    if let Some(t) = self.typ_opt() {
+      Ok(t)
+    } else {
+      bail!("expected type")
+    }
+  }
+  /// Type.
+  fn typ_opt(& mut self) -> Option<Typ> {
+    if self.tag_opt("Bool") {
+      Some( "Bool".to_string() )
+    } else if self.tag_opt("Int") {
+      Some( "Int".to_string() )
+    } else {
+      None
+    }
+  }
+
+  /// Declare-fun.
+  fn declare_fun(& mut self) -> Res<bool> {
+    if ! self.tag_opt("declare-fun") {
+      return Ok(false)
+    }
+    // println!("declare-fun") ;
+    self.ws_cmt() ;
+    let pred = self.ident() ? ;
+    self.ws_cmt() ;
+    self.char('(') ? ;
+    self.ws_cmt() ;
+    let mut sig = vec![] ;
+    loop {
+      if let Some(t) = self.typ_opt() {
+        sig.push(t)
+      } else {
+        break
+      }
+      self.ws_cmt()
+    }
+    self.ws_cmt() ;
+    self.char(')') ? ;
+    self.ws_cmt() ;
+    self.tag("Bool") ? ;
+
+    self.pred_decs.push(
+      PredDec { pred, sig }
+    ) ;
+
+    Ok(true)
+  }
+
+  /// Arguments.
+  fn args(& mut self) -> Res<Args> {
+    self.char('(') ? ;
+    self.ws_cmt() ;
+    let mut args = vec![] ;
+    while self.char_opt('(') {
+      let id = self.ident() ? ;
+      self.ws_cmt() ;
+      let ty = self.typ() ? ;
+      self.ws_cmt() ;
+      self.char(')') ? ;
+      self.ws_cmt() ;
+      // println!("  {}: {}", id, ty) ;
+      args.push( (id, ty) )
+    }
+    self.char(')') ? ;
+    Ok(args)
+  }
+
+  /// Assert.
+  fn assert(& mut self) -> Res<bool> {
+    if ! self.tag_opt("assert") {
+      return Ok(false)
+    }
+    // println!("assert") ;
+    self.ws_cmt() ;
+    self.char('(') ? ;
+
+    let negated = if self.tag_opt("not") {
+      self.ws_cmt() ;
+      self.char('(') ? ;
+      true
+    } else {
+      false
+    } ;
+    
+    let mut cnt = 1 ;
+
+    let (args, body) = if self.tag_opt("forall") {
+      if negated {
+        bail!("negated forall in assertion")
+      }
+      self.ws_cmt() ;
+      use std::iter::Extend ;
+      let mut args = vec![] ;
+      loop {
+        let these_args = self.args().chain_err(
+          || "while parsing arguments"
+        ) ? ;
+        args.extend(these_args) ;
+        self.ws_cmt() ;
+        if self.char_opt('(') {
+          self.ws_cmt() ;
+          if self.tag_opt("forall") {
+            cnt += 1 ;
+            self.ws_cmt()
+          } else {
+            self.txen('(') ;
+            break
+          }
+        } else {
+          break
+        }
+      }
+      self.ws_cmt() ;
+      let body = self.sexpr().chain_err(|| "while parsing body") ? ;
+      (args, body)
+    } else if self.tag_opt("exists") {
+      self.ws_cmt() ;
+      let args = self.args().chain_err(|| "while parsing arguments") ? ;
+      self.ws_cmt() ;
+      let body = self.sexpr().chain_err(|| "while parsing body") ? ;
+      (args, body)
+    } else {
+      bail!("expected forall or exists")
+    } ;
+    self.ws_cmt() ;
+
+    let body = if negated { format!("(not {})", body) } else { body } ;
+
+    while cnt > 0 {
+      self.char(')').chain_err(|| "closing qualifier") ? ;
+      self.ws_cmt() ;
+      cnt -= 1
+    }
+    if negated {
+      self.char(')').chain_err(|| "closing negation") ? ;
+    }
+
+    self.clauses.push(
+      Clause { args, body }
+    ) ;
+
+    Ok(true)
+  }
+
+  /// Parses an `smt2` file.
+  pub fn parse_input(mut self) -> Res<Input> {
+    // println!("parsing") ;
+    self.ws_cmt() ;
+
+    while self.char_opt('(') {
+      self.ws_cmt() ;
+
+      if self.set_logic() ? {
+        ()
+      } else if self.set_info() ? {
+        ()
+      } else if self.declare_fun() ? {
+        ()
+      } else if self.assert() ? {
+        ()
+      } else if self.tag_opt("check-sat") {
+        ()
+      } else if self.tag_opt("get-model") {
+        ()
+      } else {
+        print!("> `") ;
+        while let Some(next) = self.next() {
+          if next != '\n' {
+            print!("{}", next)
+          } else {
+            break
+          }
+        }
+        println!("`") ;
+        bail!("expected item")
+      }
+
+      self.ws_cmt() ;
+      self.char(')').chain_err(|| "closing item") ? ;
+      self.ws_cmt()
+    }
+
+    if self.has_next() {
+      print!("> `") ;
+      while let Some(next) = self.next() {
+        if next != '\n' {
+          print!("{}", next)
+        } else {
+          break
+        }
+      }
+      println!("`") ;
+      bail!("could not parse the whole input file")
+    }
+
+    Ok(
+      Input { pred_decs: self.pred_decs, clauses: self.clauses }
     )
-  )
-}
+  }
 
-named!{
-  #[doc = "Parses the infer command."],
-  pub infer<()>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("check-sat") >>
-    spc_cmt >> char!(')') >> (())
-  )
-}
 
-named!{
-  #[doc = "Parses a `set-info`."],
-  pub set_info<()>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("set-info") >>
-    spc_cmt >> re_bytes_find!(r#"^:[a-zA-Z0-9\-]*"#) >>
-    spc_cmt >> alt_complete!(
-      re_bytes_find!(r#"^"[^"]*""#) |
-      re_bytes_find!(r#"^[^)]*"#)
-    ) >>
-    spc_cmt >> char!(')') >> (())
-  )
-}
+  /// Define-fun.
+  fn define_fun(& mut self) -> Res<bool> {
+    if ! self.tag_opt("define-fun") {
+      return Ok(false)
+    }
+    self.ws_cmt() ;
+    let pred = self.ident().chain_err(
+      || "while parsing predicate identifier"
+    ) ? ;
+    // println!("pred: {}", pred) ;
+    self.ws_cmt() ;
+    let args = self.args().chain_err(
+      || "while parsing arguments"
+    ) ? ;
+    self.ws_cmt() ;
+    self.tag("Bool") ? ;
+    self.ws_cmt() ;
+    let body = self.sexpr().chain_err(
+      || "while parsing body"
+    ) ? ;
+    self.ws_cmt() ;
+    self.pred_defs.push(
+      PredDef { pred, args, body }
+    ) ;
 
-named!{
-  #[doc = "Parses a `set-logic`."],
-  pub set_logic<()>, do_parse!(
-    char!('(') >>
-    spc_cmt >> tag!("set-logic") >>
-    spc_cmt >> tag!("HORN") >>
-    spc_cmt >> char!(')') >> (())
-  )
-}
+    Ok(true)
+  }
 
-named!{
-  #[doc = "Parses a `hc` file."],
-  pub parse_input<Input>, do_parse!(
-    spc_cmt >> many0!(
-      terminated!(
-        alt_complete!( set_info | set_logic ), spc_cmt
-      )
-    ) >>
-    spc_cmt >> pred_decs: many0!(
-      terminated!(pred_dec, spc_cmt)
-    ) >>
-    spc_cmt >> clauses: many0!(
-      terminated!(clause, spc_cmt)
-    ) >>
-    spc_cmt >> infer >>
-    spc_cmt >> (
-      Input { pred_decs, clauses }
+  /// Parses an `smt2` file.
+  pub fn parse_output(mut self) -> Res<Output> {
+    // println!("parsing") ;
+    if conf.check_eld {
+      self.ws_cmt() ;
+      self.tag("Warning: ignoring get-model") ?
+    }
+    self.ws_cmt() ;
+    self.tag("sat") ? ;
+    self.ws_cmt() ;
+
+    if ! conf.check_eld {
+      self.char('(') ? ;
+      self.ws_cmt() ;
+      self.tag("model") ? ;
+      self.ws_cmt()
+    }
+
+    while self.char_opt('(') {
+      self.ws_cmt() ;
+        // while let Some(next) = self.next() {
+        //   if next != '\n' {
+        //     print!("{}", next)
+        //   } else {
+        //     break
+        //   }
+        // }
+        // println!("`") ;
+
+      if self.define_fun().chain_err(
+        || "while parsing a define-fun"
+      ) ? {
+        ()
+      } else {
+        print!("> `") ;
+        while let Some(next) = self.next() {
+          if next != '\n' {
+            print!("{}", next)
+          } else {
+            break
+          }
+        }
+        println!("`") ;
+        bail!("expected define-fun")
+      }
+
+      self.ws_cmt() ;
+      self.char(')').chain_err(|| "closing define-fun") ? ;
+      self.ws_cmt()
+    }
+    if ! conf.check_eld {
+      self.char(')').chain_err(|| "closing model") ? ;
+      self.ws_cmt() ;
+    }
+
+    if self.has_next() {
+      print!("> `") ;
+      while let Some(next) = self.next() {
+        if next != '\n' {
+          print!("{}", next)
+        } else {
+          break
+        }
+      }
+      println!("`") ;
+      bail!("could not parse the whole output file")
+    }
+
+    Ok(
+      Output { pred_defs: self.pred_defs }
     )
-  )
-}
-
-
-named!{
-  #[doc = "Parses the output of a horn clause run."],
-  pub parse_output<Output>, do_parse!(
-    spc_cmt >> tag!("sat") >>
-    spc_cmt >> char!('(') >>
-    spc_cmt >> tag!("model") >>
-    spc_cmt >> pred_defs: many0!(
-      terminated!(pred_def, spc_cmt)
-    ) >>
-    spc_cmt >> char!(')') >>
-    spc_cmt >> (
-      Output { pred_defs }
-    )
-  )
-}
-
-
-named!{
-  #[doc = "Parses the output of an eldarica run."],
-  pub parse_eld_output<Output>, do_parse!(
-    spc_cmt >> tag!("sat") >>
-    spc_cmt >> pred_defs: many0!(
-      terminated!(pred_def, spc_cmt)
-    ) >>
-    spc_cmt >> (
-      Output { pred_defs }
-    )
-  )
+  }
 }

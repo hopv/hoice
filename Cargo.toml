@@ -3,8 +3,22 @@ name = "hoice"
 version = "0.1.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
 
+readme = "README.md"
+categories = ["science"]
+keywords = ["machine learning", "verification", "proof"]
+license = "MIT"
+
+[[bin]]
+name = "hoice"
+path = "src/bin/main.rs"
+doc = false
+
+[lib]
+name = "hoice_lib"
+path = "src/hoice.rs"
+
 [features]
-bench = []
+bench = [ ]
 
 [dependencies]
 lazy_static = "*"
