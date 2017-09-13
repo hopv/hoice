@@ -30,6 +30,7 @@ extern crate rayon ;
 pub mod errors ;
 #[macro_use]
 pub mod common ;
+pub mod term ;
 pub mod instance ;
 pub mod teacher ;
 pub mod learning ;
