@@ -21,7 +21,7 @@ use instance::{ Instance, TTerm, Typ, Term } ;
 
 /// Starts the teaching process.
 pub fn start_class(
-  instance: & Arc<Instance>, profiler: & Profile
+  instance: & Arc<Instance>, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   use rsmt2::solver ;
   let instance = instance.clone() ;
@@ -49,7 +49,7 @@ pub fn start_class(
 
 /// Teaching to the learners.
 fn teach< 'kid, S: Solver<'kid, Parser> >(
-  instance: Arc<Instance>, solver: S, profiler: & Profile
+  instance: Arc<Instance>, solver: S, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }
   let mut teacher = Teacher::mk(solver, instance, profiler) ;
@@ -179,14 +179,14 @@ pub struct Teacher<'a, S> {
   /// Learners sender and description.
   pub learners: LrnMap<( Option< Sender<Data> >, String )>,
   /// Profiler.
-  pub _profiler: & 'a Profile,
+  pub _profiler: & 'a Profiler,
   /// Number of guesses.
   count: usize,
 }
 impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Constructor.
   pub fn mk(
-    solver: S, instance: Arc<Instance>, profiler: & 'a Profile
+    solver: S, instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;

@@ -80,7 +80,7 @@ fn read_and_work<R: ::std::io::Read>(
 ) -> Res<()> {
   use instance::parse::ItemRead ;
   
-  let profiler = Profile::mk() ;
+  let profiler = Profiler::mk() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
   // String buffer.
@@ -229,10 +229,10 @@ fn read_and_work<R: ::std::io::Read>(
 
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg(feature = "bench")]
-fn print_stats(_: Profile) {}
+fn print_stats(_: Profiler) {}
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg( not(feature = "bench") )]
-fn print_stats(profiler: Profile) {
+fn print_stats(profiler: Profiler) {
   if conf.stats {
     println!("") ;
     let (tree, stats) = profiler.extract_tree() ;

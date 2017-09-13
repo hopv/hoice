@@ -94,7 +94,7 @@ pub struct IceLearner<'core, Slver> {
   /// Activation literal counter.
   actlit: usize,
   /// Profiler.
-  _profiler: Profile,
+  _profiler: Profiler,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
@@ -103,7 +103,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Res<Self> {
-    let _profiler = Profile::mk() ;
+    let _profiler = Profiler::mk() ;
     profile!{ |_profiler| tick "mining" }
     let qualifiers = Qualifiers::mk(& * instance).chain_err(
       || "while creating qualifier structure"
@@ -524,7 +524,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier_para<
     'a, I: ::rayon::iter::IntoParallelIterator<Item = & 'a mut QualValues>
   >(
-    _profiler: & Profile, all_data: & Data,
+    _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<RTerm>
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
@@ -588,7 +588,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier_seq<
     'a, I: IntoIterator<Item = & 'a mut QualValues>
   >(
-    _profiler: & Profile, all_data: & Data,
+    _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
@@ -616,7 +616,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier<
     'a, I: IntoIterator<Item = & 'a mut QualValues>
   >(
-    profiler: & Profile, all_data: & Data,
+    profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<RTerm>,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {

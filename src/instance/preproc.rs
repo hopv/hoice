@@ -11,7 +11,7 @@ use instance::* ;
 
 /// Runs pre-processing
 pub fn work(
-  instance: & mut Instance, profiler: & Profile
+  instance: & mut Instance, profiler: & Profiler
 ) -> Res<()> {
 
   profile!{ |profiler| tick "pre-proc" }
@@ -38,7 +38,7 @@ pub fn work(
 }
 
 pub fn run<'kid, S: Solver<'kid, Parser>>(
-  instance: & mut Instance, profiler: & Profile, solver: Option<S>
+  instance: & mut Instance, profiler: & Profiler, solver: Option<S>
 ) -> Res<()> {
   let mut reductor = Reductor::mk(solver) ;
 
@@ -100,7 +100,7 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
 
   /// Runs reduction.
   pub fn run(
-    & mut self, instance: & mut Instance, _profiler: & Profile
+    & mut self, instance: & mut Instance, _profiler: & Profiler
   ) -> Res<bool> {
     
     for strat in & mut self.strats {
@@ -201,7 +201,7 @@ fn trivial_impl<'kid, S: Solver<'kid, Parser>>(
 // /// Reduces an instance.
 // ///
 // /// Returns true if something was changed.
-// pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<bool> {
+// pub fn work(instance: & mut Instance, _profiler: & Profiler) -> Res<bool> {
 //   let mut strategies = strategies() ;
 //   let mut did_something = false ;
 //   let mut changed = true ;

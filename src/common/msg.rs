@@ -5,6 +5,7 @@ use std::sync::mpsc::channel ;
 use common::* ;
 use common::data::* ;
 
+use common::profiling::{ ProfileTree, Stats } ;
 
 wrap_usize!{
   #[doc = "Learner index."]
@@ -123,7 +124,7 @@ pub trait HasLearnerCore {
   /// Sends statistics.
   #[cfg( not(feature = "bench") )]
   fn stats(
-    & self, profile: Profile, lift: Vec< Vec<& 'static str> >
+    & self, profile: Profiler, lift: Vec< Vec<& 'static str> >
   ) -> bool {
     let (mut tree, stats) = profile.extract_tree() ;
     for lift in lift {
