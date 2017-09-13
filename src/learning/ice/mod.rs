@@ -3,7 +3,7 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Term, RTerm, Op, Typ, Val } ;
+use instance::{ Instance, Term, RTerm, Op, Typ } ;
 use self::mining::* ;
 use self::smt::* ;
 
@@ -266,7 +266,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if self.instance.terms_of(pred).is_some() {
+      if self.instance.forced_terms_of(pred).is_some() {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
@@ -1070,7 +1070,6 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     solver: & mut Slver, instance: & Instance,
     s_1: & HSample, pos: bool, s_2: & HSample
   ) -> Res<Term> {
-    use instance::Val ;
     debug_assert!( s_1.len() == s_2.len() ) ;
     let mut p_1 = Vec::with_capacity( s_1.len() ) ;
     let mut p_2 = p_1.clone() ;

@@ -515,7 +515,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       var_map.push( VarInfo { name: ident.into(), typ, idx } )
     }
     self.char(')') ? ;
-    var_map.shrink() ;
+    var_map.shrink_to_fit() ;
     hash_map.shrink_to_fit() ;
     Ok((var_map, hash_map))
   }
@@ -905,7 +905,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! lhs_is_false {
       instance.push_clause(
         Clause::mk(var_map, nu_lhs, rhs)
-      )
+      ) ?
     }
 
     Ok(true)

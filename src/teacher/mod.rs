@@ -14,7 +14,7 @@ use nom::IResult ;
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Val, TTerm, Typ, Term } ;
+use instance::{ Instance, TTerm, Typ, Term } ;
 
 
 
@@ -160,13 +160,6 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   }
 }
 
-
-
-
-/// Alias type for a counterexample for a clause.
-pub type Cex = VarMap<Val> ;
-/// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap<Cex> ;
 
 
 
@@ -334,7 +327,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
     for pred in self.instance.pred_indices() {
-      if self.instance.terms_of(pred).is_some() {
+      if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
       } else {
         cands.push( Some(self.instance.bool(true)) )
@@ -387,7 +380,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     // Define forced predicates in topological order.
     'forced_preds: for pred in self.instance.sorted_forced_terms() {
       let pred = * pred ;
-      let tterms = if let Some(tterms) = self.instance.terms_of(pred) {
+      let tterms = if let Some(tterms) = self.instance.forced_terms_of(pred) {
         tterms
       } else {
         bail!(
@@ -455,7 +448,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     //         ) ?
     //       }
     //     }
-    //   } else if let Some(tterms) = self.instance.terms_of(pred) {
+    //   } else if let Some(tterms) = self.instance.forced_terms_of(pred) {
     //     if tterms.len() == 1 {
     //       match tterms[0].bool() {
     //         Some(true)  => {

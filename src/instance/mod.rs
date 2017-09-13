@@ -10,7 +10,7 @@ use self::info::* ;
 pub mod info ;
 // pub mod build ;
 pub mod parse ;
-pub mod reduction ;
+pub mod preproc ;
 
 /// Types.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -58,124 +58,6 @@ impl_fmt!{
       Bool => fmt.write_str("Bool"),
     }
   }
-}
-
-
-/// Values.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Val {
-  /// Boolean value.
-  B(bool),
-  /// Integer value.
-  I(Int),
-  /// No value (context was incomplete).
-  N,
-}
-impl Val {
-  /// Extracts a boolean value.
-  pub fn to_bool(self) -> Res<Option<bool>> {
-    match self {
-      Val::B(b) => Ok( Some(b) ),
-      Val::I(_) => bail!("expected boolean value, found integer"),
-      Val::N => Ok(None),
-    }
-  }
-  /// Extracts an integer value.
-  pub fn to_int(self) -> Res<Option<Int>> {
-    match self {
-      Val::B(_) => bail!("expected integer value, found boolean"),
-      Val::I(i) => Ok( Some(i) ),
-      Val::N => Ok(None),
-    }
-  }
-  /// Value parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    use common::parse::* ;
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!( tag!("true"), |_| Val::B(true) ) |
-        map!( tag!("false"), |_| Val::B(false) ) |
-        map!( int, |i| Val::I(i) ) |
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> char!('-') >>
-          spc_cmt >> value: int >>
-          spc_cmt >> char!(')') >>
-          ( Val::I(- value) )
-        )
-      )
-    )
-  }
-}
-impl_fmt!{
-  Val(self, fmt) {
-    match * self {
-      Val::I(ref i) => if i.is_negative() {
-        write!(fmt, "(- {})", - i)
-      } else {
-        write!(fmt, "{}", i)
-      },
-      Val::B(b) => write!(fmt, "{}", b),
-      Val::N => fmt.write_str("?"),
-    }
-  }
-}
-impl From<bool> for Val {
-  fn from(b: bool) -> Val {
-    Val::B(b)
-  }
-}
-impl From<Int> for Val {
-  fn from(i: Int) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<usize> for Val {
-  fn from(i: usize) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<isize> for Val {
-  fn from(i: isize) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<u32> for Val {
-  fn from(i: u32) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<i32> for Val {
-  fn from(i: i32) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<u64> for Val {
-  fn from(i: u64) -> Val {
-    Val::I( i.into() )
-  }
-}
-impl From<i64> for Val {
-  fn from(i: i64) -> Val {
-    Val::I( i.into() )
-  }
-}
-macro_rules! try_val {
-  (int $e:expr) => (
-    if let Some(i) = $e.to_int()? { i } else {
-      return Ok( Val::N )
-    }
-  ) ;
-  (bool $e:expr) => (
-    if let Some(b) = $e.to_bool()? { b } else {
-      return Ok( Val::N )
-    }
-  ) ;
 }
 
 
@@ -689,32 +571,48 @@ impl Clause {
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
-    write!(w, "({}\n  (", ::common::consts::keywords::clause_def) ? ;
+    use common::consts::keywords ;
+
+    write!(w, "({} ({}\n  (", keywords::assert, keywords::forall) ? ;
     for var in & self.vars {
       write!(w, " ({} {})", var.name, var.typ) ?
     }
-    write!(w, " )\n  ") ? ;
-    for_first!{
-      self.lhs.iter() => {
-        |fst| {
-          write!(w, "( ") ? ;
-          fst.write(
-            w, |w, var| w.write_all( self.vars[var].as_bytes() ), & write_prd
-          ) ?
-        }, then |nxt| {
-          write!(w, "\n    ") ? ;
-          nxt.write(
-            w, |w, var| w.write_all( self.vars[var].as_bytes() ), & write_prd
-          ) ?
-        }, yild write!(w, "\n  )") ?
-      } else write!(w, "()") ?
-    }
+    write!(w, " )\n") ? ;
 
-    write!(w, "\n  ") ? ;
+    let (pref, suff) = if ! self.lhs.is_empty() {
+      write!(w, "  (=>") ? ;
+      let (pref, suff) = if self.lhs.len() > 1 {
+        write!(w, "\n    (and") ? ;
+        ("      ", Some("    )"))
+      } else {
+        ("    ", None)
+      } ;
+
+      for tterm in & self.lhs {
+        write!(w, "\n{}", pref) ? ;
+        tterm.write(
+          w, |w, var| w.write_all( self.vars[var].as_bytes() ), & write_prd
+        ) ?
+      }
+
+      write!(w, "\n") ? ;
+      if let Some(suff) = suff {
+        write!(w, "{}\n", suff) ?
+      }
+      ("    ", Some("  )"))
+    } else {
+      ("  ", None)
+    } ;
+
+    write!(w, "{}", pref) ? ;
     self.rhs.write(
       w, |w, var| w.write_all( self.vars[var].as_bytes() ), & write_prd
     ) ? ;
-    write!(w, "\n)")
+    write!(w, "\n") ? ;
+    if let Some(suff) = suff {
+      write!(w, "{}", suff) ?
+    }
+    write!(w, "\n))")
   }
 }
 impl ::std::ops::Index<VarIdx> for Clause {
@@ -978,6 +876,8 @@ pub struct Instance {
   /// Maps predicates to the clauses where they appear in the lhs and rhs
   /// respectively.
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
+  /// Maps clauses to the predicates appearing in them.
+  clause_to_preds: ClsMap< (PrdSet, Option<PrdIdx>) >,
 }
 impl Instance {
   /// Instance constructor.
@@ -995,78 +895,13 @@ impl Instance {
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clauses_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
+      clause_to_preds: ClsMap::with_capacity(clauses_capa),
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
     let (wan,too) = (instance.one(), instance.zero()) ;
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
-  }
-
-  /// Checks that the instance has no inconsistencies.
-  ///
-  /// Only active in debug.
-  #[cfg(not(debug_assertions))]
-  #[inline(always)]
-  pub fn check(& self, _: & 'static str) -> Res<()> { Ok(()) }
-  #[cfg(debug_assertions)]
-  pub fn check(& self, s: & 'static str) -> Res<()> {
-    for (idx, clause) in self.clauses.index_iter() {
-      for lhs in clause.lhs() {
-        if let Some(pred) = lhs.pred() {
-          if ! self.pred_to_clauses[pred].0.contains(& idx) {
-            bail!(
-              "instance consistency check failed: {}\n\
-              predicate {} appears in lhs of clause {} \
-              but is not registered as such\n{}",
-              s, self[pred], idx,
-              self.clauses[idx].to_string_info(self.preds()) ?
-            )
-          }
-        }
-      }
-      if let Some(pred) = clause.rhs.pred() {
-        if ! self.pred_to_clauses[pred].1.contains(& idx) {
-          bail!(
-            "predicate {} appears in rhs of clause {} \
-            but is not registered as such\n{}\nlhs: {:?}\nrhs: {:?}",
-            self[pred], idx, self.clauses[idx].to_string_info(self.preds()) ?,
-            self.pred_to_clauses[pred].0, self.pred_to_clauses[pred].1
-          )
-        }
-      }
-    }
-    for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
-      'pred_clauses: for clause in lhs {
-        for tterm in & self.clauses[* clause].lhs {
-          if let Some(this_pred) = tterm.pred() {
-            if this_pred == pred {
-              continue 'pred_clauses
-            }
-          }
-        }
-        bail!(
-          "predicate {} is registered to appear in lhs of clause {} \
-          but it's not the case\n{}",
-          self[pred], clause,
-          self.clauses[* clause].to_string_info(self.preds()) ?
-        )
-      }
-      for clause in rhs {
-        if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
-          if this_pred == pred {
-            continue
-          }
-        }
-        bail!(
-          "predicate {} is registered to appear in rhs of clause {} \
-          but it's not the case\n{}",
-          self[pred], clause,
-          self.clauses[* clause].to_string_info(self.preds()) ?
-        )
-      }
-    }
-    Ok(())
   }
 
   /// Returns the model corresponding to the input predicates and the forced
@@ -1134,9 +969,9 @@ impl Instance {
   /// - optimize sorting of forced preds by dependencies (low priority)
   pub fn finalize(& mut self) {
     self.consts.shrink_to_fit() ;
-    self.preds.shrink() ;
-    self.pred_terms.shrink() ;
-    self.clauses.shrink() ;
+    self.preds.shrink_to_fit() ;
+    self.pred_terms.shrink_to_fit() ;
+    self.clauses.shrink_to_fit() ;
 
     let mut tmp: Vec< (PrdIdx, PrdSet) > = Vec::with_capacity(
       self.preds.len()
@@ -1184,14 +1019,14 @@ impl Instance {
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn terms_of(& self, pred: PrdIdx) -> Option<& Vec<TTerm>> {
+  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& Vec<TTerm>> {
     self.pred_terms[pred].as_ref()
   }
 
   /// If the input predicate is forced to a constant boolean, returns its
   /// value.
   pub fn bool_value_of(& self, pred: PrdIdx) -> Option<bool> {
-    self.terms_of(pred).and_then(
+    self.forced_terms_of(pred).and_then(
       |terms| if terms.len() == 1 {
         if let TTerm::T(ref term) = terms[0] {
           term.bool()
@@ -1307,20 +1142,28 @@ impl Instance {
     Ok(())
   }
 
-  /// Unlinks a predicate from all the clauses it's linked to.
+  /// Unlinks a predicate from all the clauses it's linked to, and conversely.
   fn drain_unlink_pred(
     & mut self, pred: PrdIdx, lhs: & mut ClsSet, rhs: & mut ClsSet
   ) -> () {
     for clause in self.pred_to_clauses[pred].0.drain() {
+      let was_there = self.clause_to_preds[clause].0.remove(& pred) ;
+      debug_assert!( was_there ) ;
       let _ = lhs.insert(clause) ;
     }
     for clause in self.pred_to_clauses[pred].1.drain() {
+      debug_assert_eq!( self.clause_to_preds[clause].1, Some(pred) ) ;
+      self.clause_to_preds[clause].1 = None ;
       let _ = rhs.insert(clause) ;
     }
   }
 
   /// Goes trough the predicates in `from`, and updates `pred_to_clauses` so
   /// that they point to `to` instead.
+  ///
+  /// - swaps `clause_to_preds[from]` and `clause_to_preds[to]`
+  /// - only legal if `clause_to_preds[to].0.is_empty()` and
+  ///   `clause_to_preds[to].1.is_none()`
   fn relink_preds_to_clauses(
     & mut self, from: ClsIdx, to: ClsIdx
   ) -> Res<()> {
@@ -1330,6 +1173,13 @@ impl Instance {
       // once in the lhs. Hence the set.
       then { PrdSet::new() } else { () }
     } ;
+    if ! self.clause_to_preds[to].0.is_empty() {
+      bail!("illegal relinking, clause `{}` still has lhs links", to)
+    }
+    if self.clause_to_preds[to].1.is_some() {
+      bail!("illegal relinking, clause `{}` is still has an rhs link", to)
+    }
+    self.clause_to_preds.swap(from, to) ;
     for lhs in self.clauses[from].lhs() {
       if let TTerm::P { pred, .. } = * lhs {
         let _already_rmed = if_not_bench!{
@@ -1374,6 +1224,7 @@ impl Instance {
     for clause in clauses {
       let _ = self.forget_clause(clause) ? ;
     }
+    self.check("after `forget_clause`") ? ;
     Ok(())
   }
 
@@ -1396,6 +1247,10 @@ impl Instance {
         let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
         debug_assert!(
           was_there || _already_rmed || self.pred_terms[pred].is_some()
+        ) ;
+        let was_there = self.clause_to_preds[clause].0.remove(& pred) ;
+        debug_assert!(
+          was_there || _already_rmed || self.pred_terms[pred].is_some()
         )
       }
     }
@@ -1403,15 +1258,18 @@ impl Instance {
       let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
       debug_assert!(
         was_there || self.pred_terms[pred].is_some()
-      )
+      ) ;
+      debug_assert!(
+        self.clause_to_preds[clause].1 == Some(pred) ||
+        self.pred_terms[pred].is_some()
+      ) ;
+      self.clause_to_preds[clause].1 = None
     }
     // Relink the last clause as its index is going to be `clause`. Except if
     // `clause` is already the last one.
     let last_clause: ClsIdx = ( self.clauses.len() - 1 ).into() ;
     if clause != last_clause {
-      self.relink_preds_to_clauses(last_clause, clause).expect(
-        "inconsistency in predicate and clause links"
-      )
+      self.relink_preds_to_clauses(last_clause, clause) ?
     }
     let res = self.clauses.swap_remove(clause) ;
     // self.check("forgetting clause") ? ;
@@ -1419,17 +1277,23 @@ impl Instance {
   }
 
   /// Pushes a new clause.
-  fn push_clause(& mut self, clause: Clause) {
+  fn push_clause(& mut self, clause: Clause) -> Res<()> {
     let clause_index = self.clauses.next_index() ;
+    let mut lhs_preds = PrdSet::with_capacity( clause.lhs.len() ) ;
+    let mut rhs_pred = None ;
     for lhs in clause.lhs() {
-      if let TTerm::P { pred, .. } = * lhs {
+      if let Some(pred) = lhs.pred() {
         let _ = self.pred_to_clauses[pred].0.insert(clause_index) ;
+        let _ = lhs_preds.insert(pred) ;
       }
     }
-    if let TTerm::P { pred, .. } = * clause.rhs() {
+    if let Some(pred) = clause.rhs.pred() {
+      rhs_pred = Some(pred) ;
       let _ = self.pred_to_clauses[pred].1.insert(clause_index) ;
     }
-    self.clauses.push(clause)
+    self.clause_to_preds.push( (lhs_preds, rhs_pred) ) ;
+    self.clauses.push(clause) ;
+    self.check("after `push_clause`")
   }
 
   /// Creates a variable.
@@ -1987,7 +1851,7 @@ impl Instance {
 
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
-    & self, data: & mut ::common::data::Data, cexs: ::teacher::Cexs
+    & self, data: & mut ::common::data::Data, cexs: Cexs
   ) -> Res<()> {
 
     for (clause, cex) in cexs.into_iter() {
@@ -2058,6 +1922,221 @@ impl Instance {
       }
     }
 
+    Ok(())
+  }
+
+
+
+  /// Checks that the instance has no inconsistencies.
+  ///
+  /// Only active in debug.
+  #[cfg(not(debug_assertions))]
+  #[inline(always)]
+  pub fn check(& self, _: & 'static str) -> Res<()> { Ok(()) }
+
+  #[cfg(debug_assertions)]
+  pub fn check(& self, s: & 'static str) -> Res<()> {
+    self.check_pred_to_clauses().chain_err(
+      || format!("while checking `{}`", conf.sad("pred_to_clauses"))
+    ).chain_err(
+      || format!("instance consistency check failed: {}", conf.emph(s))
+    ) ? ;
+
+    self.check_clause_to_preds().chain_err(
+      || format!("while checking `{}`", conf.sad("clause_to_preds"))
+    ).chain_err(
+      || format!("instance consistency check failed: {}", conf.emph(s))
+    ) ? ;
+    Ok(())
+  }
+
+  /// Pretty printer for a set of predicates.
+  fn pretty_preds(& self, preds: & PrdSet) -> String {
+    let mut s = String::new() ;
+    s.push('{') ;
+    for pred in preds {
+      s.push(' ') ;
+      s.push_str(& self[* pred].name)
+    }
+    s.push(' ') ;
+    s.push('}') ;
+    s
+  }
+
+  /// Pretty printer for a predicate option.
+  fn pretty_pred_opt(& self, pred: & Option<PrdIdx>) -> String {
+    if let Some(pred) = * pred {
+      format!("{}", self[pred].name)
+    } else {
+      "none".into()
+    }
+  }
+
+  /// Pretty printer for a set of clauses.
+  fn pretty_clauses(& self, clauses: & ClsSet) -> String {
+    let mut s = String::new() ;
+    s.push('{') ;
+    for clause in clauses {
+      s.push(' ') ;
+      s.push_str(& format!("{}", clause))
+    }
+    s.push(' ') ;
+    s.push('}') ;
+    s
+  }
+
+  /// Checks the consistency of `pred_to_clauses`.
+  fn check_pred_to_clauses(& self) -> Res<()> {
+    for (cls_idx, clause) in self.clauses.index_iter() {
+      for lhs in clause.lhs() {
+        if let Some(pred) = lhs.pred() {
+          if ! self.pred_to_clauses[pred].0.contains(& cls_idx) {
+            bail!(
+              "predicate {} appears in lhs of clause {} \
+              but is not registered as such\n{}\nlhs: {}\nrhs: {}",
+              self[pred], cls_idx,
+              self.clauses[cls_idx].to_string_info(self.preds()) ?,
+              self.pretty_clauses(
+                & self.pred_to_clauses[pred].0
+              ), self.pretty_clauses(
+                & self.pred_to_clauses[pred].1
+              )
+            )
+          }
+        }
+      }
+      if let Some(pred) = clause.rhs.pred() {
+        if ! self.pred_to_clauses[pred].1.contains(& cls_idx) {
+          bail!(
+            "predicate {} appears in rhs of clause {} \
+            but is not registered as such\n{}\nlhs: {}\nrhs: {}",
+            self[pred], cls_idx,
+            self.clauses[cls_idx].to_string_info(self.preds()) ?,
+            self.pretty_clauses(
+              & self.pred_to_clauses[pred].0
+            ), self.pretty_clauses(
+              & self.pred_to_clauses[pred].1
+            )
+          )
+        }
+      }
+    }
+    for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
+      'pred_clauses: for clause in lhs {
+        for tterm in & self.clauses[* clause].lhs {
+          if let Some(this_pred) = tterm.pred() {
+            if this_pred == pred {
+              continue 'pred_clauses
+            }
+          }
+        }
+        bail!(
+          "predicate {} is registered as appearing in lhs of clause {} \
+          but it's not the case\n{}\nlhs: {}\nrhs: {}",
+          self[pred], clause,
+          self.clauses[* clause].to_string_info(self.preds()) ?,
+          self.pretty_clauses(
+            & self.pred_to_clauses[pred].0
+          ), self.pretty_clauses(
+            & self.pred_to_clauses[pred].1
+          )
+        )
+      }
+      for clause in rhs {
+        if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
+          if this_pred == pred {
+            continue
+          }
+        }
+        bail!(
+          "predicate {} is registered to appear in rhs of clause {} \
+          but it's not the case\n{}\nlhs: {}\nrhs: {}",
+          self[pred], clause,
+          self.clauses[* clause].to_string_info(self.preds()) ?,
+          self.pretty_clauses(
+            & self.pred_to_clauses[pred].0
+          ), self.pretty_clauses(
+            & self.pred_to_clauses[pred].1
+          )
+        )
+      }
+    }
+    Ok(())
+  }
+
+  /// Checks the consistency of `clause_to_preds`.
+  fn check_clause_to_preds(& self) -> Res<()> {
+    for (cls_idx, clause) in self.clauses.index_iter() {
+      for lhs in clause.lhs() {
+        if let Some(pred) = lhs.pred() {
+          if ! self.clause_to_preds[cls_idx].0.contains(& pred) {
+            bail!(
+              "predicate {} appears in lhs of clause {} \
+              but is not registered as such\n{}\nlhs: {}\nrhs: {}",
+              self[pred], cls_idx,
+              self.clauses[cls_idx].to_string_info(self.preds()) ?,
+              self.pretty_preds(
+                & self.clause_to_preds[cls_idx].0
+              ), self.pretty_pred_opt(
+                & self.clause_to_preds[cls_idx].1
+              )
+            )
+          }
+        }
+      }
+      if let Some(pred) = clause.rhs.pred() {
+        if self.clause_to_preds[cls_idx].1 != Some(pred) {
+          bail!(
+            "predicate {} appears in rhs of clause {} \
+            but is not registered as such\n{}\nlhs: {}\nrhs: {}",
+            self[pred], cls_idx,
+            self.clauses[cls_idx].to_string_info(self.preds()) ?,
+            self.pretty_preds(
+              & self.clause_to_preds[cls_idx].0
+            ), self.pretty_pred_opt(
+              & self.clause_to_preds[cls_idx].1
+            )
+          )
+        }
+      }
+    }
+    for (cls_idx, & (ref lhs, ref rhs)) in self.clause_to_preds.index_iter() {
+      'pred_clauses: for pred in lhs {
+        for tterm in & self.clauses[cls_idx].lhs {
+          if let Some(this_pred) = tterm.pred() {
+            if this_pred == * pred {
+              continue 'pred_clauses
+            }
+          }
+        }
+        bail!(
+          "predicate {} is registered to appear in lhs of clause {} \
+          but it's not the case\n{}\nlhs: {}\nrhs: {}",
+          self[* pred], cls_idx,
+          self.clauses[cls_idx].to_string_info(self.preds()) ?,
+          self.pretty_preds(
+            & self.clause_to_preds[cls_idx].0
+          ), self.pretty_pred_opt(
+            & self.clause_to_preds[cls_idx].1
+          )
+        )
+      }
+      if let Some(pred) = * rhs {
+        if self.clauses[cls_idx].rhs.pred() != Some(pred) {
+          bail!(
+            "predicate {} is registered to appear in rhs of clause {} \
+            but it's not the case\n{}\nlhs: {}\nrhs: {}",
+            self[pred], cls_idx,
+            self.clauses[cls_idx].to_string_info(self.preds()) ?,
+            self.pretty_preds(
+              & self.clause_to_preds[cls_idx].0
+            ), self.pretty_pred_opt(
+              & self.clause_to_preds[cls_idx].1
+            )
+          )
+        }
+      }
+    }
     Ok(())
   }
 }
@@ -2569,19 +2648,44 @@ impl<'a> PebcakFmt<'a> for Instance {
   fn pebcak_io_fmt<W: Write>(
     & self, w: & mut W, _: ()
   ) -> IoRes<()> {
-    for pred in & self.preds {
-      write!(
-        w, "({}\n  {} (", ::common::consts::keywords::prd_dec, pred.name
-      ) ? ;
-      for typ in & pred.sig {
-        write!(w, " {}", typ) ?
+    use common::consts::keywords ;
+
+    for (pred_idx, pred) in self.preds.index_iter() {
+      if self.pred_terms[pred_idx].is_none() {
+        write!(
+          w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
+        ) ? ;
+        for typ in & pred.sig {
+          write!(w, " {}", typ) ?
+        }
+        write!(w, " ) Bool\n)\n") ?
       }
-      write!(w, " )\n)\n ") ?
     }
+
+    for pred in & self.sorted_pred_terms {
+      write!(w, "({} {}\n  (", keywords::prd_dec, self[* pred]) ? ;
+      for (var, typ) in self[* pred].sig.index_iter() {
+        write!(w, " (v_{} {})", var, typ) ?
+      }
+      let tterms = self.pred_terms[* pred].as_ref().unwrap() ;
+      write!(w, " ) Bool") ? ;
+      if tterms.len() > 1 {
+        write!(w, "\n  (and") ?
+      }
+      for tterm in self.pred_terms[* pred].as_ref().unwrap() {
+        write!(w, "\n      {}", tterm) ?
+      }
+      if tterms.len() > 1 {
+        write!(w, "\n  )") ?
+      }
+      write!(w, "\n  )\n)\n") ?
+    }
+
     for clause in & self.clauses {
       write!(w, "\n") ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
+
     write!(w, "\npred to clauses:\n") ? ;
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       write!(w, "  {}: lhs {{", self[pred]) ? ;
@@ -2594,58 +2698,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
       write!(w, " }}\n") ?
     }
-    write!(w, "forced preds:\n") ? ;
-    if self.sorted_pred_terms.len() == self.pred_terms.len() {
-      for pred in & self.sorted_pred_terms {
-        write!(w, "  (define-fun {} (", self[* pred]) ? ;
-        for (var, typ) in self[* pred].sig.index_iter() {
-          write!(w, " (v_{} {})", var, typ) ?
-        }
-        let tterms = self.pred_terms[* pred].as_ref().unwrap() ;
-        write!(w, " )") ? ;
-        if tterms.len() > 1 {
-          write!(w, "\n    (and") ?
-        }
-        for tterm in self.pred_terms[* pred].as_ref().unwrap() {
-          write!(w, "\n      {}", tterm) ?
-        }
-        if tterms.len() > 1 {
-          write!(w, "\n    )") ?
-        }
-        write!(w, "\n    )\n  )\n") ?
-      }
-    } else {
-      for (pred, tterms) in self.pred_terms.index_iter() {
-        if let Some(ref tterms) = * tterms {
-          write!(w, "  (define-fun {} (", self[pred]) ? ;
-          for (var, typ) in self[pred].sig.index_iter() {
-            write!(w, " (v_{} {})", var, typ) ?
-          }
-          write!(w, " )") ? ;
-          if tterms.len() > 1 {
-            write!(w, "\n    (and") ?
-          }
-          for tterm in tterms {
-            write!(w, "\n      ") ? ;
-            tterm.write(
-              w, |w, var| var.default_write(w),
-              |w, pred, args| {
-                write!(w, "({}", self[pred]) ? ;
-                for arg in args {
-                  write!(w, " ") ? ;
-                  arg.write(w, |w, var| var.default_write(w)) ?
-                }
-                write!(w, ")")
-              }
-            ) ?
-          }
-          if tterms.len() > 1 {
-            write!(w, "\n    )") ?
-          }
-          write!(w, "\n    )\n  )\n") ?
-        }
-      }
-    }
+
     Ok(())
   }
 }

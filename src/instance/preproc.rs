@@ -8,60 +8,237 @@ use common::* ;
 use instance::* ;
 
 
-/// Returns the active strategies.
-fn strategies() -> Vec< Box<RedStrat> > {
-  let mut strats: Vec< Box<RedStrat> > = vec![
-    Box::new( Trivial {} ),
-    // Box::new( ForcedImplies::mk() ),
-  ] ;
-  if conf.simple_red {
-    strats.push( Box::new( SimpleOneRhs::mk() ) )
+
+/// Runs pre-processing
+pub fn work(
+  instance: & mut Instance, profiler: & Profile
+) -> Res<()> {
+
+  profile!{ |profiler| tick "pre-proc" }
+
+  let res = if conf.simple_red {
+    let mut kid = ::rsmt2::Kid::mk( conf.solver_conf() ).chain_err(
+      || ErrorKind::Z3SpawnError
+    ) ? ;
+    let solver = ::rsmt2::solver(& mut kid, Parser).chain_err(
+      || "while constructing the teacher's solver"
+    ) ? ;
+    if let Some(log) = conf.smt_log_file("preproc") ? {
+      run( instance, profiler, Some( solver.tee(log) ) )
+    } else {
+      run( instance, profiler, Some(solver) )
+    }
+  } else {
+    run(instance, profiler, None as Option<::rsmt2::PlainSolver<Parser>>)
+  } ;
+  profile!{ |profiler| tick "pre-proc" } ;
+  log_info!{ "done with pre-processing" }
+  res
+
+}
+
+pub fn run<'kid, S: Solver<'kid, Parser>>(
+  instance: & mut Instance, profiler: & Profile, solver: Option<S>
+) -> Res<()> {
+  let mut reductor = Reductor::mk(solver) ;
+
+  let mut changed = true ;
+  'preproc: while changed {
+
+    instance.check("before simplification") ? ;
+    profile!{ |profiler| tick "pre-proc", "simplify" }
+    instance.simplify_clauses() ? ;
+    profile!{ |profiler| mark "pre-proc", "simplify" }
+    instance.check("after simplification") ? ;
+
+    log_info!{
+      "instance after simplification:\n{}\n\n",
+      instance.to_string_info(()) ?
+    }
+
+    log_info!{ "done simplifying, reducing" }
+    profile!{ |profiler| tick "pre-proc", "reducing" }
+    changed = reductor.run(instance, & profiler) ? ;
+    instance.check("after reduction") ? ;
+    profile!{ |profiler| mark "pre-proc", "reducing" }
+
+    log_info!{ "done reducing" }
+
+    log_info!{
+      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+    }
+
   }
-  strats
+
+  Ok(())
 }
 
 
-/// Reduces an instance.
-///
-/// Returns true if something was changed.
-pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<bool> {
-  let mut strategies = strategies() ;
-  let mut did_something = false ;
-  let mut changed = true ;
-  'all_strats_fp: while changed {
-    if instance.clauses.is_empty() { break 'all_strats_fp }
-    changed = false ;
-    for strat in & mut strategies {
-      if instance.clauses.is_empty() { break 'all_strats_fp }
-      log_info!("\napplying {}", conf.emph( strat.name() )) ;
-      let (mut pred_cnt, mut clse_cnt) = strat.apply(instance) ? ;
+
+
+
+/// Reductor, stores the reduction strategies and a solver.
+pub struct Reductor<S> {
+  /// Strategies.
+  strats: Vec< Box<RedStrat> >,
+  /// Solver strats.
+  solver_strats: Option< (S, SimpleOneRhs) >,
+}
+impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
+  /// Constructor.
+  pub fn mk(solver: Option<S>) -> Self {
+    let strats: Vec< Box<RedStrat> > = vec![
+      Box::new( Trivial {} ),
+      // Box::new( ForcedImplies::mk() ),
+    ] ;
+    let solver_strats = solver.map(
+      |solver| (solver, SimpleOneRhs::mk())
+    ) ;
+
+    Reductor { strats, solver_strats }
+  }
+
+  /// Runs reduction.
+  pub fn run(
+    & mut self, instance: & mut Instance, _profiler: & Profile
+  ) -> Res<bool> {
+    
+    for strat in & mut self.strats {
+      log_info!("applying {}", conf.emph( strat.name() )) ;
+      let (pred_cnt, clse_cnt) = strat.apply(instance) ? ;
       instance.check("work") ? ;
-      let mut this_changed = pred_cnt + clse_cnt > 0 ;
-      changed = changed || this_changed ;
-      'strat_fp: while this_changed {
-        let (nu_pred_cnt, nu_clse_cnt) = strat.apply(instance) ? ;
-        pred_cnt += nu_pred_cnt ;
-        clse_cnt += nu_clse_cnt ;
-        this_changed = nu_pred_cnt + nu_clse_cnt > 0
-      }
-      profile!{
-        |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
-      }
-      profile!{
-        |_profiler| "predicates eliminated" => add pred_cnt
-      }
-      profile!{
-        |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
-      }
-      profile!{
-        |_profiler| "clauses eliminated" => add clse_cnt
+      if pred_cnt + clse_cnt > 0 {
+        profile!{
+          |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
+        }
+        profile!{
+          |_profiler| "predicates eliminated" => add pred_cnt
+        }
+        profile!{
+          |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
+        }
+        profile!{
+          |_profiler| "clauses eliminated" => add clse_cnt
+        }
+        return Ok(true)
       }
     }
-    did_something = did_something || changed
+
+    if let Some((ref mut solver, ref mut strat)) = self.solver_strats {
+      // for strat in strats {
+        log_info!("applying {}", conf.emph( strat.name() )) ;
+        let (pred_cnt, clse_cnt) = strat.apply(instance, solver) ? ;
+        instance.check("work") ? ;
+        if pred_cnt + clse_cnt > 0 {
+          profile!{
+            |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
+          }
+          profile!{
+            |_profiler| "predicates eliminated" => add pred_cnt
+          }
+          profile!{
+            |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
+          }
+          profile!{
+            |_profiler| "clauses eliminated" => add clse_cnt
+          }
+          return Ok(true)
+        }
+      // }
+    }
+
+    Ok(false)
   }
-  log_info!("") ;
-  Ok(did_something)
 }
+
+
+
+
+/// Wrapper around a negated implication for smt printing.
+struct NegImplWrap<'a> {
+  /// Lhs.
+  lhs: & 'a [ Term ],
+  /// Rhs.
+  rhs: & 'a Term,
+}
+impl<'a> ::rsmt2::Expr2Smt<()> for NegImplWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: & ()
+  ) -> SmtRes<()> {
+    let msg = "writing negated implication" ;
+    smtry_io!(msg => write!(w, "(not ")) ;
+    if self.lhs.is_empty() {
+      smtry_io!( msg => self.rhs.write(w, |w, var| var.default_write(w)) )
+    } else {
+      smtry_io!( msg => write!(w, "(=> (and") ) ;
+      for term in self.lhs {
+        smtry_io!( msg => write!(w, " ") ) ;
+        smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) )
+      }
+      smtry_io!( msg => write!(w, ") ") ) ;
+      smtry_io!( msg => self.rhs.write(w, |w, var| var.default_write(w)) ) ;
+      smtry_io!( msg => write!(w, ")") )
+    } ;
+    smtry_io!( msg => write!(w, ")") ) ;
+    Ok(())
+  }
+}
+/// True if an implication of terms is a tautology.
+fn trivial_impl<'kid, S: Solver<'kid, Parser>>(
+  solver: & mut S, vars: & VarMap<VarInfo>, lhs: & [Term], rhs: & Term
+) -> Res<bool> {
+  solver.push(1) ? ;
+  for var in vars {
+    solver.declare_const(& var.idx, & var.typ, & ()) ?
+  }
+  solver.assert( & NegImplWrap { lhs, rhs }, & () ) ? ;
+  let sat = solver.check_sat() ? ;
+  solver.pop(1) ? ;
+  Ok(! sat)
+}
+
+
+// /// Reduces an instance.
+// ///
+// /// Returns true if something was changed.
+// pub fn work(instance: & mut Instance, _profiler: & Profile) -> Res<bool> {
+//   let mut strategies = strategies() ;
+//   let mut did_something = false ;
+//   let mut changed = true ;
+//   'all_strats_fp: while changed {
+//     if instance.clauses.is_empty() { break 'all_strats_fp }
+//     changed = false ;
+//     for strat in & mut strategies {
+//       if instance.clauses.is_empty() { break 'all_strats_fp }
+//       log_info!("\napplying {}", conf.emph( strat.name() )) ;
+//       let (mut pred_cnt, mut clse_cnt) = strat.apply(instance) ? ;
+//       instance.check("work") ? ;
+//       let mut this_changed = pred_cnt + clse_cnt > 0 ;
+//       changed = changed || this_changed ;
+//       'strat_fp: while this_changed {
+//         let (nu_pred_cnt, nu_clse_cnt) = strat.apply(instance) ? ;
+//         pred_cnt += nu_pred_cnt ;
+//         clse_cnt += nu_clse_cnt ;
+//         this_changed = nu_pred_cnt + nu_clse_cnt > 0
+//       }
+//       profile!{
+//         |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
+//       }
+//       profile!{
+//         |_profiler| "predicates eliminated" => add pred_cnt
+//       }
+//       profile!{
+//         |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
+//       }
+//       profile!{
+//         |_profiler| "clauses eliminated" => add clse_cnt
+//       }
+//     }
+//     did_something = did_something || changed
+//   }
+//   log_info!("") ;
+//   Ok(did_something)
+// }
 
 
 
@@ -204,6 +381,7 @@ fn force_pred<Preds: IntoIterator<
                 None => {
                   if let Some(pred) = tterm.pred() {
                     instance.pred_to_clauses[pred].0.insert(clause) ;
+                    instance.clause_to_preds[clause].0.insert(pred) ;
                   }
                   terms_to_add.push(tterm)
                 },
@@ -257,6 +435,7 @@ fn force_pred<Preds: IntoIterator<
       if let Some(tterm) = tterms.next() {
         if let Some(pred) = tterm.pred() {
           instance.pred_to_clauses[pred].1.insert(clause) ;
+          instance.clause_to_preds[clause].1 = Some(pred) ;
         }
         instance.clauses[clause].rhs = tterm ;
         for tterm in tterms {
@@ -265,7 +444,7 @@ fn force_pred<Preds: IntoIterator<
             instance.clauses[clause].lhs.clone(),
             tterm
           ) ;
-          instance.push_clause(clause)
+          instance.push_clause(clause) ?
         }
       }
 
@@ -346,28 +525,34 @@ fn term_of_app<
 
 
 
+/// Has a name.
+pub trait HasName {
+  /// Name of the strategy.
+  fn name(& self) -> & 'static str ;
+}
+
 /// Reduction strategy trait.
 ///
 /// Function `apply` will be applied until fixed point (`false` is returned).
-pub trait RedStrat {
+pub trait RedStrat: HasName {
   /// Applies the reduction strategy. Returns the number of predicates reduced
   /// and the number of clauses forgotten.
   fn apply(& mut self, & mut Instance) -> Res<(usize, usize)> ;
-  /// Name of the strategy.
-  fn name(& self) -> & 'static str ;
 }
 
 
 /// Forces to false predicates appearing only in the lhs of the clauses.
 pub struct Trivial {}
-impl RedStrat for Trivial {
+impl HasName for Trivial {
   fn name(& self) -> & 'static str { "trivial" }
+}
+impl RedStrat for Trivial {
 
   fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
 
     let (mut fls_preds, mut tru_preds) = (vec![], vec![]) ;
     for pred in instance.pred_indices() {
-      if instance.terms_of(pred).is_some() { continue }
+      if instance.forced_terms_of(pred).is_some() { continue }
       if instance.pred_to_clauses[pred].1.is_empty() {
         fls_preds.push(pred)
       } else if instance.pred_to_clauses[pred].0.is_empty() {
@@ -532,6 +717,24 @@ impl RedStrat for Trivial {
 // }
 
 
+
+
+
+/// Reduction strategy trait for strategies requiring a solver.
+///
+/// Function `apply` will be applied until fixed point (`false` is returned).
+pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, Parser> >: HasName {
+  /// Applies the reduction strategy. Returns the number of predicates reduced
+  /// and the number of clauses forgotten.
+  fn apply(
+    & mut self, & mut Instance, & mut Slver
+  ) -> Res<(usize, usize)> ;
+}
+
+
+
+
+
 /// Unfolds predicates that appear as the rhs of a single clause, and for
 /// which the part of the lhs mentioning the variables used by the predicate
 /// are completely separated from the rest.
@@ -556,9 +759,14 @@ impl SimpleOneRhs {
     }
   }
 }
-impl RedStrat for SimpleOneRhs {
+impl HasName for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
-  fn apply(& mut self, instance: & mut Instance) -> Res<(usize, usize)> {
+}
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SimpleOneRhs
+where Slver: Solver<'kid, Parser> {
+  fn apply(
+    & mut self, instance: & mut Instance, solver: & mut Slver
+  ) -> Res<(usize, usize)> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
@@ -578,17 +786,28 @@ impl RedStrat for SimpleOneRhs {
             None => continue,
             Some(res) => (pred, res),
           }
-        } else { continue } ;
+        } else {
+          bail!("inconsistent instance state")
+        } ;
 
-        // println!(
-        //   "unfolding {} given {}",
-        //   instance[pred], instance[clause].to_string_info(instance.preds ()) ?
-        // ) ;
+        let Clause { lhs, vars, .. } = instance.forget_clause(clause) ? ;
+        clauses_rmed += 1 ;
 
-        let _ = instance.forget_clause(clause) ? ;
+        // Don't unfold if lhs is not satisfiable.
+        let lhs: Vec<Term> = lhs.into_iter().filter_map(
+          |tterm| match tterm {
+            TTerm::T(t) => Some(t),
+            _ => None,
+          }
+        ).collect() ;
+        if trivial_impl(
+          solver, & vars, & lhs, & instance.bool(false)
+        ) ? {
+          continue
+        }
+
         log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
         pred_count += 1 ;
-        clauses_rmed += 1 ;
         match res {
           Either::Rgt(true) => {
             log_info!("  => true") ;
@@ -614,3 +833,56 @@ impl RedStrat for SimpleOneRhs {
     Ok((pred_count, clauses_rmed))
   }
 }
+
+
+
+
+
+
+
+#[doc = r#"Unit type parsing the output of the SMT solver.
+
+Does not parse anything.
+"#]
+pub struct Parser ;
+impl ::rsmt2::ParseSmt2 for Parser {
+  type Ident = () ;
+  type Value = () ;
+  type Expr = () ;
+  type Proof = () ;
+  type I = () ;
+
+  fn parse_ident<'a>(
+    & self, _: & 'a [u8]
+  ) -> ::nom::IResult<& 'a [u8], ()> {
+    panic!(
+      "`parse_ident` of the reduction solver parser should never be called"
+    )
+  }
+
+  fn parse_value<'a>(
+    & self, _: & 'a [u8]
+  ) -> ::nom::IResult<& 'a [u8], ()> {
+    panic!(
+      "`parse_value` of the reduction solver parser should never be called"
+    )
+  }
+
+  fn parse_expr<'a>(
+    & self, _: & 'a [u8], _: & ()
+  ) -> ::nom::IResult<& 'a [u8], ()> {
+    panic!(
+      "`parse_expr` of the reduction solver parser should never be called"
+    )
+  }
+
+  fn parse_proof<'a>(
+    & self, _: & 'a [u8]
+  ) -> ::nom::IResult<& 'a [u8], ()> {
+    panic!(
+      "`parse_proof` of the reduction solver parser should never be called"
+    )
+  }
+}
+
+

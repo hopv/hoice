@@ -72,47 +72,7 @@ pub fn work() -> Res<()> {
 }
 
 
-fn pre_proc(
-  instance: & mut Instance, profiler: & Profile
-) -> Res<()> {
-  use instance::reduction ;
 
-  profile!{ |profiler| tick "pre-proc" }
-
-  let mut changed = true ;
-  'preproc: while changed {
-
-    instance.check("before simplification") ? ;
-    profile!{ |profiler| tick "pre-proc", "simplify" }
-    instance.simplify_clauses() ? ;
-    profile!{ |profiler| mark "pre-proc", "simplify" }
-    instance.check("after simplification") ? ;
-
-    log_info!{
-      "instance after simplification:\n{}\n\n",
-      instance.to_string_info(()) ?
-    }
-
-    log_info!{ "done simplifying, reducing" }
-    profile!{ |profiler| tick "pre-proc", "reducing" }
-    changed = reduction::work(instance, & profiler) ? ;
-    instance.check("after reduction") ? ;
-    profile!{ |profiler| mark "pre-proc", "reducing" }
-
-    log_info!{ "done reducing" }
-
-    log_info!{
-      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    }
-
-  }
-  
-  profile!{ |profiler| mark "pre-proc" }
-
-  log_info!{ "done with pre-processing" }
-
-  Ok(())
-}
 
 
 fn read_and_work<R: ::std::io::Read>(
@@ -168,7 +128,7 @@ fn read_and_work<R: ::std::io::Read>(
       Parsed::CheckSat => {
 
         if conf.pre_proc {
-          pre_proc(& mut instance, & profiler) ?
+          instance::preproc::work(& mut instance, & profiler) ?
         }
         instance.finalize() ;
 
