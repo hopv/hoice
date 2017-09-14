@@ -11,6 +11,14 @@ use instance::Instance ;
 #[macro_use]
 mod val ;
 
+
+
+// lazy_static!{
+//   /// Configuration from clap.
+//   pub static ref conf: Config = Config::clap() ;
+// }
+
+
 pub use self::val::Val ;
 
 /// A real term.

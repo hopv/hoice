@@ -60,34 +60,6 @@ pub trait Learner: Sync + Send {
 
 
 
-/// Messaging macro, compiled to nothing in `release`.
-#[macro_export]
-#[cfg( feature = "bench" )]
-macro_rules! msg {
-  ( $($tt:tt)* ) => (()) ;
-}
-#[cfg( not(feature = "bench") )]
-macro_rules! msg {
-  ( debug $slf:expr => $($tt:tt)* ) => (
-    if conf.debug() {
-      msg!( $slf => $($tt)* )
-    } else { true }
-  ) ;
-  ( $slf:expr => $e:expr ) => (
-    if conf.verbose() {
-      ::common::msg::HasLearnerCore::msg(
-        $slf, $e
-      )
-    } else { true }
-  ) ;
-  ( $slf:expr => $($tt:tt)* ) => (
-    if conf.verbose() {
-      msg!{ $slf => format!( $($tt)* ) }
-    } else { true }
-  ) ;
-}
-
-
 
 /// A learner can be launched given some info.
 pub struct LearnerCore {

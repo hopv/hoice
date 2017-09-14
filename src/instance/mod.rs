@@ -1918,40 +1918,6 @@ mod evaluation {
   // use common::* ;
   use instance::* ;
 
-  #[cfg(test)]
-  macro_rules! model {
-    ( $($values:expr),* ) => (
-      $crate::common::VarMap::of(
-        vec![ $( $values.into() ),* ]
-      )
-    ) ;
-  }
-
-  #[cfg(test)]
-  macro_rules! assert_eval {
-    ( int $model:expr => $expr:expr, $value:expr ) => ({
-      let res = $expr.eval(& $model).unwrap().to_int().unwrap().unwrap() ;
-      println!(
-        "{} evaluated with {} is {}, expecting {}", $expr, $model, res, $value
-      ) ;
-      assert_eq!( res, $value.into() )
-    }) ;
-    ( bool $model:expr => $expr:expr ) => ({
-      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
-      println!(
-        "{} evaluated with {} is {}, expecting true", $expr, $model, res
-      ) ;
-      assert!( res )
-    }) ;
-    ( bool not $model:expr => $expr:expr ) => ({
-      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
-      println!(
-        "{} evaluated with {} is {}, expecting false", $expr, $model, res
-      ) ;
-      assert!( ! res )
-    }) ;
-  }
-
   /// Just creates an instance.
   fn instance() -> Instance {
     Instance::new(100, 100, 100)
