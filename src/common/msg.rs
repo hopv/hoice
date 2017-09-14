@@ -5,6 +5,7 @@ use std::sync::mpsc::channel ;
 use common::* ;
 use common::data::* ;
 
+use common::profiling::{ ProfileTree, Stats } ;
 
 wrap_usize!{
   #[doc = "Learner index."]
@@ -59,32 +60,6 @@ pub trait Learner: Sync + Send {
 
 
 
-/// Messaging macro, compiled to nothing in `release`.
-#[macro_export]
-#[cfg( feature = "bench" )]
-macro_rules! msg {
-  ( $($tt:tt)* ) => (()) ;
-}
-#[cfg( not(feature = "bench") )]
-macro_rules! msg {
-  ( debug $slf:expr => $($tt:tt)* ) => (
-    if conf.verb == Verb::Debug {
-      msg!( $slf => $($tt)* )
-    } else { true }
-  ) ;
-  ( $slf:expr => $e:expr ) => (
-    ::common::msg::HasLearnerCore::msg(
-      $slf, $e
-    )
-  ) ;
-  ( $slf:expr => $($tt:tt)* ) => (
-    ::common::msg::HasLearnerCore::msg(
-      $slf, format!( $($tt)* )
-    )
-  ) ;
-}
-
-
 
 /// A learner can be launched given some info.
 pub struct LearnerCore {
@@ -97,7 +72,7 @@ pub struct LearnerCore {
 }
 impl LearnerCore {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     idx: LrnIdx,
     sender: Sender<(LrnIdx, FromLearners)>,
     recver: Receiver<Data>,
@@ -123,7 +98,7 @@ pub trait HasLearnerCore {
   /// Sends statistics.
   #[cfg( not(feature = "bench") )]
   fn stats(
-    & self, profile: Profile, lift: Vec< Vec<& 'static str> >
+    & self, profile: Profiler, lift: Vec< Vec<& 'static str> >
   ) -> bool {
     let (mut tree, stats) = profile.extract_tree() ;
     for lift in lift {
@@ -137,7 +112,7 @@ pub trait HasLearnerCore {
   }
   #[cfg(feature = "bench")]
   fn stats(
-    & self, _: Profile, _: Vec< Vec<& 'static str> >
+    & self, _: Profiler, _: Vec< Vec<& 'static str> >
   ) -> bool {
     true
   }

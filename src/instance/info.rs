@@ -13,8 +13,14 @@ pub struct VarInfo {
   pub typ: Typ,
   /// Variable's index.
   pub idx: VarIdx,
+  /// Is the variable active?
+  pub active: bool,
 }
 impl VarInfo {
+  /// Constructor.
+  pub fn new(name: String, typ: Typ, idx: VarIdx) -> Self {
+    VarInfo { name, typ, idx, active: true }
+  }
   /// Name of the variable as bytes.
   pub fn as_bytes(& self) -> & [u8] {
     self.name.as_bytes()

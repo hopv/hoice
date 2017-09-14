@@ -92,7 +92,7 @@ pub struct InParser<'a> {
 }
 impl<'a> InParser<'a> {
   /// Constructor.
-  pub fn mk(s: & 'a str) -> Self {
+  pub fn new(s: & 'a str) -> Self {
     InParser {
       pred_defs: vec![], pred_decs: vec![], clauses: vec![],
       chars: s.chars(), buf: vec![]
@@ -174,7 +174,17 @@ impl<'a> InParser<'a> {
   /// Parses a character or fails.
   fn char(& mut self, c: char) -> Res<()> {
     if ! self.char_opt(c) {
-      bail!("expected character `{}`", conf.emph( & c.to_string() ))
+      bail!(
+        "expected character `{}`, got `{}`",
+        conf.emph( & c.to_string() ),
+        conf.sad(
+          if let Some(c) = self.next() {
+            format!("{}", c)
+          } else {
+            format!("<eof>")
+          }
+        )
+      )
     } else {
       Ok(())
     }
@@ -578,16 +588,19 @@ impl<'a> InParser<'a> {
     // println!("parsing") ;
     if conf.check_eld {
       self.ws_cmt() ;
-      self.tag("Warning: ignoring get-model") ?
+      self.tag_opt("Warning: ignoring get-model") ;
     }
     self.ws_cmt() ;
-    self.tag("sat") ? ;
-    self.ws_cmt() ;
+    if self.tag_opt("sat") {
+      self.ws_cmt() ;
+    }
+
+    let error = "expected `(model (define-fun ...))`" ;
 
     if ! conf.check_eld {
-      self.char('(') ? ;
+      self.char('(').chain_err(|| error) ? ;
       self.ws_cmt() ;
-      self.tag("model") ? ;
+      self.tag("model").chain_err(|| error) ? ;
       self.ws_cmt()
     }
 

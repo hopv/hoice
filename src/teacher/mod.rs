@@ -14,26 +14,25 @@ use nom::IResult ;
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Val, TTerm, Typ, Term } ;
 
 
 
 
 /// Starts the teaching process.
 pub fn start_class(
-  instance: & Arc<Instance>, profiler: & Profile
+  instance: & Arc<Instance>, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   use rsmt2::solver ;
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
     || ErrorKind::Z3SpawnError
   ) ? ;
   let res = {
     let solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("teacher") ? {
+    if let Some(log) = conf.solver.log_file("teacher") ? {
       teach( instance, solver.tee(log), profiler )
     } else {
       teach( instance, solver, profiler )
@@ -49,10 +48,10 @@ pub fn start_class(
 
 /// Teaching to the learners.
 fn teach< 'kid, S: Solver<'kid, Parser> >(
-  instance: Arc<Instance>, solver: S, profiler: & Profile
+  instance: Arc<Instance>, solver: S, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }
-  let mut teacher = Teacher::mk(solver, instance, profiler) ;
+  let mut teacher = Teacher::new(solver, instance, profiler) ;
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
@@ -78,7 +77,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
     //   ) ?
     // }
 
-    if conf.step {
+    if conf.teacher.step {
       let mut dummy = String::new() ;
       println!("") ;
       println!( "; {} to broadcast data...", conf.emph("press return") ) ;
@@ -163,13 +162,6 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
 
 
-/// Alias type for a counterexample for a clause.
-pub type Cex = VarMap<Val> ;
-/// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap<Cex> ;
-
-
-
 
 /// The teacher, stores a solver.
 pub struct Teacher<'a, S> {
@@ -186,18 +178,18 @@ pub struct Teacher<'a, S> {
   /// Learners sender and description.
   pub learners: LrnMap<( Option< Sender<Data> >, String )>,
   /// Profiler.
-  pub _profiler: & 'a Profile,
+  pub _profiler: & 'a Profiler,
   /// Number of guesses.
   count: usize,
 }
 impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Constructor.
-  pub fn mk(
-    solver: S, instance: Arc<Instance>, profiler: & 'a Profile
+  pub fn new(
+    solver: S, instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
-    let data = Data::mk( instance.clone() ) ;
+    let data = Data::new( instance.clone() ) ;
     Teacher {
       solver, instance, data, from_learners,
       to_teacher: Some(to_teacher), learners,
@@ -209,7 +201,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
     if conf.stats {
-      println!("; Done in {} guesses", self.count) ;
+      println!("; Done in {} guess(es)", self.count) ;
       println!("") ;
     }
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
@@ -234,7 +226,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       let (to_learner, learner_recv) = new_to_learner() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
-          LearnerCore::mk(index, to_teacher.clone(), learner_recv),
+          LearnerCore::new(index, to_teacher.clone(), learner_recv),
           instance, data
         )
       ).chain_err(
@@ -280,7 +272,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match self.from_learners.recv() {
         Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
           for _line in _s.lines() {
-            log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+            log_info!(
+              "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
+            )
           }
         },
         Ok( (idx, FromLearners::Err(e)) ) => {
@@ -334,10 +328,10 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
     for pred in self.instance.pred_indices() {
-      if self.instance.terms_of(pred).is_some() {
+      if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
       } else {
-        cands.push( Some(self.instance.bool(true)) )
+        cands.push( Some(term::tru()) )
       }
     }
     self.get_cexs(& cands).map(|res| (res, cands))
@@ -387,7 +381,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     // Define forced predicates in topological order.
     'forced_preds: for pred in self.instance.sorted_forced_terms() {
       let pred = * pred ;
-      let tterms = if let Some(tterms) = self.instance.terms_of(pred) {
+      let tterms = if let Some(tterms) = self.instance.forced_terms_of(pred) {
         tterms
       } else {
         bail!(
@@ -455,7 +449,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     //         ) ?
     //       }
     //     }
-    //   } else if let Some(tterms) = self.instance.terms_of(pred) {
+    //   } else if let Some(tterms) = self.instance.forced_terms_of(pred) {
     //     if tterms.len() == 1 {
     //       match tterms[0].bool() {
     //         Some(true)  => {
@@ -514,7 +508,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
-      if conf.smt_log {
+      if conf.solver.log {
         for lhs in clause.lhs() {
           self.solver.comment(
             & format!("{}\n", lhs)
@@ -527,7 +521,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     }
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
-      self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+      if var.active {
+        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+      }
     }
     self.solver.assert(
       clause, & (true_preds, false_preds, self.instance.preds())

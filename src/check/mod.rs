@@ -80,7 +80,7 @@ impl Input {
     )?.read_to_string(& mut buff).chain_err(
       || format!( "while reading file {}", conf.emph(file) )
     )? ;
-    let parser = InParser::mk(& buff) ;
+    let parser = InParser::new(& buff) ;
     parser.parse_input()
   }
 }
@@ -101,7 +101,7 @@ impl Output {
     )?.read_to_string(& mut buff).chain_err(
       || format!( "while reading file {}", conf.emph(file) )
     )? ;
-    let parser = InParser::mk(& buff) ;
+    let parser = InParser::new(& buff) ;
     parser.parse_output()
   }
 
@@ -166,7 +166,7 @@ pub struct Data {
 }
 impl Data {
   /// Direct contructor.
-  pub fn mk(input: Input, mut output: Output) -> Res<Self> {
+  pub fn new(input: Input, mut output: Output) -> Res<Self> {
     output.check_consistency(& input) ? ;
     Ok( Data { input, output } )
   }
@@ -174,7 +174,7 @@ impl Data {
   pub fn of_files(input_file: & str, output_file: & str) -> Res<Self> {
     let input = Input::of_file(input_file) ? ;
     let output = Output::of_file(output_file) ? ;
-    Self::mk(input, output)
+    Self::new(input, output)
   }
 
   /// Checks the output data works with the input data using an SMT solver.
@@ -254,14 +254,14 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
   let data = Data::of_files(input_file, output_file) ? ;
 
-  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
     || ErrorKind::Z3SpawnError
   ) ? ;
   {
     let solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the checkers solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("check") ? {
+    if let Some(log) = conf.solver.log_file("check") ? {
       data.check(solver.tee(log)) ?
     } else {
       data.check(solver) ?

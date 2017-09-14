@@ -30,7 +30,7 @@ pub struct Sample {
 }
 impl Sample {
   /// Constructor.
-  pub fn mk(pred: PrdIdx, args: HSample) -> Self {
+  pub fn new(pred: PrdIdx, args: HSample) -> Self {
     Sample { pred, args }
   }
 
@@ -175,7 +175,7 @@ pub struct Data {
 }
 impl Data {
   /// Constructor.
-  pub fn mk(instance: Arc<Instance>) -> Self {
+  pub fn new(instance: Arc<Instance>) -> Self {
     let pred_count = instance.preds().len() ;
     let (
       mut map, mut pos, mut neg
@@ -919,7 +919,7 @@ pub struct LearningData {
 }
 impl LearningData {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     pos: Vec<Sample>, neg: Vec<Sample>, cstr: Vec<Constraint>
   ) -> Self {
     LearningData { pos, neg, cstr }

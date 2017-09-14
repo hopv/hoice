@@ -18,16 +18,14 @@ fn format(log: & ::log::LogRecord) -> String {
       let mut s = String::new() ;
       s.push_str(
         & format!(
-          "({}\n\"",
+          "({} \"\n",
           conf.bad("error")
         )
       ) ;
-      let mut pref = "" ;
       for line in format!( "{}", log.args() ).lines() {
-        s.push_str( & format!("{}{}", pref, line) ) ;
-        pref = "\n"
+        s.push_str( & format!("  {}\n", line) ) ;
       }
-      s.push_str(& format!("\"\n)") ) ;
+      s.push_str(& format!("\")") ) ;
       s
     },
     Warn => {
@@ -103,7 +101,7 @@ fn main() {
         "could not spawn z3 using command `{}`\n\
         make sure the z3 binary has that name and is in your path,\n\
         or specify a different z3 command with option `{}`",
-        conf.emph( & conf.z3_cmd ),
+        conf.emph( & conf.solver.conf().get_cmd() ),
         conf.emph( "--z3" )
       ).into(),
       _ => errs

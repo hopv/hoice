@@ -10,45 +10,132 @@ pub enum Parsed {
   CheckSat,
   /// Get-model.
   GetModel,
-  /// Nothing.
-  None,
+  /// Exit.
+  Exit,
+  /// Only parsed some item(s), no query.
+  Items,
+  /// End of file.
+  Eof,
 }
-impl Parsed {
-  /// True if `None`.
-  pub fn is_none(& self) -> bool {
-    self == & Parsed::None
+
+
+
+/// Extends `BufRead` with SMT-LIB 2 item parsing.
+pub trait ItemRead {
+  /// Reads the next item.
+  ///
+  /// - returns the **number of lines** read, not the number of bytes read
+  /// - returns `None` once it finds `eof` and no item prior
+  fn read_item(& mut self, buf: & mut String) -> Res<usize> ;
+}
+impl<T: ::std::io::BufRead> ItemRead for T {
+  fn read_item(& mut self, buf: & mut String) -> Res<usize> {
+    let mut line_count = 0 ;
+    let mut start = buf.len() ;
+    let mut char_override: Option<char> = None ;
+    let mut opn_parens = 0 ;
+    let mut cls_parens = 0 ;
+
+    fn search_char(
+      char: char, chars: & mut ::std::str::Chars
+    ) -> Option<char> {
+      while let Some(c) = chars.next() {
+        if char == c {
+          return None
+        }
+      }
+      Some(char)
+    }
+
+    'read_lines: while self.read_line( buf ) ? != 0 {
+      line_count += 1 ;
+      debug_assert!( opn_parens >= cls_parens ) ;
+      let mut chars = buf[start..].chars() ;
+      
+      if let Some(char) = char_override {
+        char_override = search_char(char, & mut chars)
+      }
+
+      'inspect_chars: while let Some(c) = chars.next() {
+        debug_assert!( opn_parens >= cls_parens ) ;
+        
+        match c {
+          '(' => opn_parens += 1,
+          ')' => cls_parens += 1,
+          '|' => {
+            debug_assert!( char_override.is_none() ) ;
+            char_override = search_char('|', & mut chars)
+          },
+          '"' => {
+            debug_assert!( char_override.is_none() ) ;
+            char_override = search_char('"', & mut chars)
+          },
+          ';' => break 'inspect_chars,
+          _ => (),
+        }
+      }
+
+      if opn_parens > 0 && opn_parens == cls_parens {
+        break 'read_lines
+      }
+
+      start = buf.len()
+    }
+
+    Ok(line_count)
   }
 }
 
-/// Parser structure.
-pub struct Parser<'a> {
+
+
+/// Parser context.
+pub struct ParserCxt {
   /// Term stack to avoid recursion.
   term_stack: Vec< (Op, Vec<Term>) >,
-  /// Characters being read.
-  chars: ::std::str::CharIndices<'a>,
-  /// Text being parsed.
-  string: & 'a str,
   /// Buffer used when backtracking.
   buff: Vec<(usize, char)>,
   /// Memory when parsing tags.
   mem: Vec<(usize, char)>,
   /// Map from predicate names to predicate indices.
-  pred_name_map: HashMap<& 'a str, PrdIdx>,
+  pred_name_map: HashMap<String, PrdIdx>,
 }
-
-
-impl<'a> Parser<'a> {
+impl ParserCxt {
   /// Constructor.
-  pub fn mk(string: & 'a str) -> Self {
-    Parser {
+  pub fn new() -> Self {
+    ParserCxt {
       term_stack: Vec::with_capacity(17),
-      chars: string.char_indices(),
-      string,
       buff: Vec::with_capacity(17),
       mem: Vec::with_capacity(17),
       pred_name_map: HashMap::with_capacity(42),
     }
   }
+  /// Generates a parser from itself.
+  pub fn parser<'cxt, 's>(
+    & 'cxt mut self, string: & 's str, line_off: usize
+  ) -> Parser<'cxt, 's> {
+    Parser {
+      cxt: self, chars: string.char_indices(), string, line_off
+    }
+  }
+}
+
+
+
+
+/// Parser structure. Generated from a `ParserCxt`.
+pub struct Parser<'cxt, 's> {
+  /// Parsing context.
+  cxt: & 'cxt mut ParserCxt,
+  /// Characters being read.
+  chars: ::std::str::CharIndices<'s>,
+  /// Text being read (for errors).
+  string: & 's str,
+  /// Line offset (for errors).
+  line_off: usize,
+}
+
+
+impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Generates a parse error at the current position.
   fn error_here<S: Into<String>>(& mut self, msg: S) -> ErrorKind {
@@ -64,7 +151,7 @@ impl<'a> Parser<'a> {
     & self, mut char_pos: usize, msg: S
   ) -> ErrorKind {
     let msg = msg.into() ;
-    let mut line_count = 0 ;
+    let mut line_count = self.line_off ;
     let (mut pref, mut token, mut suff) = (
       "".to_string(), "<eof>".to_string(), "".to_string()
     ) ;
@@ -95,9 +182,9 @@ impl<'a> Parser<'a> {
 
   /// Returns `true` if there's still things to parse.
   fn has_next(& mut self) -> bool {
-    if ! self.buff.is_empty() { true } else {
+    if ! self.cxt.buff.is_empty() { true } else {
       if let Some(next) = self.chars.next() {
-        self.buff.push(next) ;
+        self.cxt.buff.push(next) ;
         true
       } else {
         false
@@ -106,7 +193,7 @@ impl<'a> Parser<'a> {
   }
   /// The next character.
   fn next(& mut self) -> Option<(usize, char)> {
-    if let Some(res) = self.buff.pop() {
+    if let Some(res) = self.cxt.buff.pop() {
       Some(res)
     } else {
       self.chars.next()
@@ -114,24 +201,24 @@ impl<'a> Parser<'a> {
   }
   /// Opposite of `next`, pushes a character back.
   fn txen(& mut self, pos: usize, c: char) {
-    self.buff.push( (pos, c) )
+    self.cxt.buff.push( (pos, c) )
   }
 
   /// Pushes something on the memory.
   fn mem(& mut self, pos: usize, char: char) {
-    self.mem.push((pos, char))
+    self.cxt.mem.push((pos, char))
   }
 
   /// Backtracks whatever's in the memory.
   fn backtrack_mem(& mut self) {
-    self.mem.reverse() ;
-    for elem in self.mem.drain(0..) {
-      self.buff.push(elem)
+    self.cxt.mem.reverse() ;
+    for elem in self.cxt.mem.drain(0..) {
+      self.cxt.buff.push(elem)
     }
   }
   /// Clears the memory.
   fn clear_mem(& mut self) {
-    self.mem.clear()
+    self.cxt.mem.clear()
   }
 
 
@@ -185,7 +272,7 @@ impl<'a> Parser<'a> {
   }
 
   /// Parses an ident of fails.
-  fn ident(& mut self) -> Res<(usize, & 'a str)> {
+  fn ident(& mut self) -> Res<(usize, & 's str)> {
     if let Some(id) = self.ident_opt() {
       Ok(id)
     } else {
@@ -195,7 +282,7 @@ impl<'a> Parser<'a> {
     }
   }
   /// Tries to parse an ident.
-  fn ident_opt(& mut self) -> Option<(usize, & 'a str)> {
+  fn ident_opt(& mut self) -> Option<(usize, & 's str)> {
     if let Some( (start_pos, char) ) = self.next() {
       if char == '|' {
         'quoted: while let Some((pos, char)) = self.next() {
@@ -285,6 +372,16 @@ impl<'a> Parser<'a> {
     }
   }
 
+  /// Returns all the characters until some character.
+  fn get_until(& mut self, char: char) -> String {
+    let mut s = String::new() ;
+    while let Some((_, c)) = self.next() {
+      if c == char { break }
+      s.push(c)
+    }
+    s
+  }
+
   /// Parses a set-info.
   fn set_info(& mut self) -> Res<bool> {
     if ! self.tag_opt("set-info") {
@@ -298,6 +395,17 @@ impl<'a> Parser<'a> {
       self.eat_until('"')
     }
     Ok(true)
+  }
+
+  /// Parses an echo.
+  fn echo(& mut self) -> Res< Option<String> > {
+    if ! self.tag_opt("echo") {
+      return Ok(None)
+    }
+    self.ws_cmt() ;
+    self.char('"') ? ;
+    let blah = self.get_until('"') ;
+    Ok( Some(blah) )
   }
 
   /// Parses a set-logic.
@@ -360,7 +468,7 @@ impl<'a> Parser<'a> {
     let pred_index = instance.push_pred(
       ident.into(), VarMap::of(typs)
     ) ;
-    let prev = self.pred_name_map.insert(ident, pred_index) ;
+    let prev = self.cxt.pred_name_map.insert(ident.into(), pred_index) ;
     if let Some(prev) = prev {
       bail!(
         self.error(
@@ -378,7 +486,7 @@ impl<'a> Parser<'a> {
 
   /// Parses some arguments `( (<id> <ty>) ... )`.
   fn args(& mut self) -> Res<
-    (VarMap<VarInfo>, HashMap<& 'a str, VarIdx>)
+    (VarMap<VarInfo>, HashMap<& 's str, VarIdx>)
   > {
     let (mut var_map, mut hash_map) = (
       VarMap::with_capacity(11), HashMap::with_capacity(11)
@@ -404,10 +512,10 @@ impl<'a> Parser<'a> {
           )
         )
       }
-      var_map.push( VarInfo { name: ident.into(), typ, idx } )
+      var_map.push( VarInfo::new(ident.into(), typ, idx) )
     }
     self.char(')') ? ;
-    var_map.shrink() ;
+    var_map.shrink_to_fit() ;
     hash_map.shrink_to_fit() ;
     Ok((var_map, hash_map))
   }
@@ -519,9 +627,9 @@ impl<'a> Parser<'a> {
 
   /// Parses a sequence of terms.
   fn term_seq(
-    & mut self, map: & HashMap<& 'a str, VarIdx>, instance: & Instance
+    & mut self, map: & HashMap<& 's str, VarIdx>
   ) -> Res< Vec<Term> > {
-    debug_assert!( self.term_stack.is_empty() ) ;
+    debug_assert!( self.cxt.term_stack.is_empty() ) ;
     let mut seq = Vec::with_capacity(11) ;
 
     'read_kids: loop {
@@ -530,15 +638,15 @@ impl<'a> Parser<'a> {
         self.ws_cmt() ;
         let op = self.op() ? ;
         let kids = Vec::with_capacity(11) ;
-        self.term_stack.push( (op, kids) ) ;
+        self.cxt.term_stack.push( (op, kids) ) ;
         continue 'read_kids
       } else if let Some(int) = self.int() {
-        instance.int(int)
+        term::int(int)
       } else if let Some(b) = self.bool() {
-        instance.bool(b)
+        term::bool(b)
       } else if let Some((pos, id)) = self.ident_opt() {
         if let Some(idx) = map.get(id) {
-          instance.var(* idx)
+          term::var(* idx)
         } else {
           bail!(
             self.error(
@@ -547,7 +655,7 @@ impl<'a> Parser<'a> {
           )
         }
       } else {
-        if self.term_stack.is_empty() {
+        if self.cxt.term_stack.is_empty() {
           break 'read_kids
         } else {
           bail!( self.error_here("expected term") )
@@ -556,21 +664,21 @@ impl<'a> Parser<'a> {
 
       'go_up: while let Some(
         (op, mut kids)
-      ) = self.term_stack.pop() {
+      ) = self.cxt.term_stack.pop() {
         kids.push(term) ;
         self.ws_cmt() ;
         if self.char_opt(')') {
-          term = instance.op(op, kids) ;
+          term = term::app(op, kids) ;
           continue 'go_up
         } else {
-          self.term_stack.push( (op, kids) ) ;
+          self.cxt.term_stack.push( (op, kids) ) ;
           continue 'read_kids
         }
       }
 
       seq.push(term)
     }
-    debug_assert!( self.term_stack.is_empty() ) ;
+    debug_assert!( self.cxt.term_stack.is_empty() ) ;
 
     seq.shrink_to_fit() ;
     Ok(seq)
@@ -579,7 +687,7 @@ impl<'a> Parser<'a> {
 
   /// Parses a top term or fails.
   fn top_term(
-    & mut self, map: & HashMap<& 'a str, VarIdx>, instance: & Instance
+    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res<TTerm> {
     if let Some(term) = self.top_term_opt(map, instance) ? {
       Ok(term)
@@ -589,24 +697,24 @@ impl<'a> Parser<'a> {
   }
   /// Tries to parse a term.
   fn top_term_opt(
-    & mut self, map: & HashMap<& 'a str, VarIdx>, instance: & Instance
+    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Option<TTerm> > {
     let res = if self.char_opt('(') {
       self.ws_cmt() ;
       if let Some(op) = self.op_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
+        let args = self.term_seq(map) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
         Ok( Some(
-          TTerm::T( instance.op(op, args) )
+          TTerm::T( term::app(op, args) )
         ) )
       } else if let Some((pos,ident)) = self.ident_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
+        let args = self.term_seq(map) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
-        let pred = if let Some(idx) = self.pred_name_map.get(ident) {
+        let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
           * idx
         } else {
           bail!(
@@ -616,6 +724,19 @@ impl<'a> Parser<'a> {
             )
           )
         } ;
+        if instance[pred].sig.len() != args.len() {
+          bail!(
+            self.error(
+              pos, format!(
+                "illegal application of predicate `{}` to {} arguments, \
+                expected {} arguments",
+                conf.bad(ident),
+                conf.emph(& format!("{}", args.len())),
+                conf.emph(& format!("{}", instance[pred].sig.len())),
+              )
+            )
+          )
+        }
         Ok( Some(
           TTerm::P { pred, args: args.into() }
         ) )
@@ -625,12 +746,12 @@ impl<'a> Parser<'a> {
         )
       }
     } else if let Some(b) = self.bool() {
-      Ok( Some( TTerm::T( instance.bool(b) ) ) )
+      Ok( Some( TTerm::T( term::bool(b) ) ) )
     } else if let Some(int) = self.int() {
-      Ok( Some( TTerm::T( instance.int(int) ) ) )
+      Ok( Some( TTerm::T( term::int(int) ) ) )
     } else if let Some((pos,id)) = self.ident_opt() {
       if let Some(idx) = map.get(id) {
-        Ok( Some( TTerm::T( instance.var(* idx) ) ) )
+        Ok( Some( TTerm::T( term::var(* idx) ) ) )
       } else {
         bail!(
           self.error(
@@ -655,7 +776,7 @@ impl<'a> Parser<'a> {
   //         self.fail("expected operator or identifier")
   //       )
   //     } ;
-  //     let pred = if let Some(idx) = self.pred_name_map.get(ident) {
+  //     let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
   //       * idx
   //     } else {
   //       bail!(//         "unknown predicate `{}`", pos, conf.bad(ident) //       )
@@ -679,7 +800,7 @@ impl<'a> Parser<'a> {
 
   /// Parses a conjunction.
   fn conjunction(
-    & mut self, var_map: & HashMap<& 'a str, VarIdx>, instance: & Instance
+    & mut self, var_map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Vec<TTerm> > {
     if self.char_opt('(') {
       self.ws_cmt() ;
@@ -743,7 +864,7 @@ impl<'a> Parser<'a> {
     self.ws_cmt() ;
     self.char(')') ? ;
     Ok(
-      Some( (var_map, lhs, TTerm::T(instance.bool(false))) )
+      Some( (var_map, lhs, TTerm::T(term::bool(false))) )
     )
   }
 
@@ -783,8 +904,8 @@ impl<'a> Parser<'a> {
     }
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::mk(var_map, nu_lhs, rhs)
-      )
+        Clause::new(var_map, nu_lhs, rhs)
+      ) ?
     }
 
     Ok(true)
@@ -808,28 +929,43 @@ impl<'a> Parser<'a> {
     }
   }
 
+  /// Parses an exit command.
+  fn exit(& mut self) -> bool {
+    if self.tag_opt("exit") {
+      true
+    } else {
+      false
+    }
+  }
+
   /// Parses items, returns true if it found a check-sat.
   pub fn parse(
-    & mut self, instance: & mut Instance
+    mut self, instance: & mut Instance
   ) -> Res<Parsed> {
     self.ws_cmt() ;
+    let mut res = Parsed::Eof ;
 
     while self.has_next() {
       self.char('(') ? ;
       self.ws_cmt() ;
 
-      let res = if self.set_info() ? {
-        Parsed::None
+      res = if self.set_info() ? {
+        Parsed::Items
       } else if self.set_logic() ? {
-        Parsed::None
+        Parsed::Items
       } else if self.pred_dec(instance) ? {
-        Parsed::None
+        Parsed::Items
       } else if self.assert(instance) ? {
-        Parsed::None
+        Parsed::Items
       } else if self.check_sat() {
         Parsed::CheckSat
       } else if self.get_model() {
         Parsed::GetModel
+      } else if self.exit() {
+        Parsed::Exit
+      } else if let Some(blah) = self.echo() ? {
+        println!("{}", blah) ;
+        Parsed::Items
       } else {
         bail!(
           self.error_here("expected top-level item")
@@ -840,10 +976,21 @@ impl<'a> Parser<'a> {
       self.char(')') ? ;
       self.ws_cmt() ;
 
-      if ! res.is_none() {
+      debug_assert!( self.cxt.term_stack.is_empty() ) ;
+      debug_assert!( self.cxt.buff.is_empty() ) ;
+      debug_assert!( self.cxt.mem.is_empty() ) ;
+      debug_assert!( self.chars.next().is_none() ) ;
+
+      if res != Parsed::Items {
         return Ok(res)
       }
     }
-    Ok(Parsed::None)
+
+    debug_assert!( self.cxt.term_stack.is_empty() ) ;
+    debug_assert!( self.cxt.buff.is_empty() ) ;
+    debug_assert!( self.cxt.mem.is_empty() ) ;
+    debug_assert!( self.chars.next().is_none() ) ;
+
+    Ok(res)
   }
 }

@@ -3,7 +3,6 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Term, RTerm, Op, Typ, Val } ;
 use self::mining::* ;
 use self::smt::* ;
 
@@ -22,30 +21,30 @@ impl Launcher {
     core: & LearnerCore, instance: Arc<Instance>, data: Data
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+    let mut kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    let mut synth_kid = Kid::mk( conf.solver_conf() ).chain_err(
+    let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's synthesis solver"
     ) ? ;
     let synth_solver = solver(& mut synth_kid, Parser).chain_err(
       || "while constructing the teacher's synthesis solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("ice_learner") ? {
-      let synth_log = conf.smt_log_file("ice_learner_synthesizer")?.expect(
+    if let Some(log) = conf.solver.log_file("ice_learner") ? {
+      let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
         "[unreachable] log mod is active"
       ) ;
-      IceLearner::mk(
+      IceLearner::new(
         & core, instance, data,
         conflict_solver.tee(log), synth_solver.tee(synth_log)
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
-      IceLearner::mk(
+      IceLearner::new(
         & core, instance, data, conflict_solver, synth_solver
       ).chain_err(
         || "while creating ice learner"
@@ -94,18 +93,18 @@ pub struct IceLearner<'core, Slver> {
   /// Activation literal counter.
   actlit: usize,
   /// Profiler.
-  _profiler: Profile,
+  _profiler: Profiler,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
-  pub fn mk(
+  pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Res<Self> {
-    let _profiler = Profile::mk() ;
+    let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
-    let qualifiers = Qualifiers::mk(& * instance).chain_err(
+    let qualifiers = Qualifiers::new(& * instance).chain_err(
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |_profiler| mark "mining" }
@@ -266,7 +265,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if self.instance.terms_of(pred).is_some() {
+      if self.instance.forced_terms_of(pred).is_some() {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
@@ -282,7 +281,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             legal check ok, assuming everything negative",
             self.instance[pred], neg_len, unc_len
           ) ;
-          self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          self.candidate[pred] = Some( term::fls() ) ;
           profile!{ self tick "learning", "data" }
           self.data.pred_all_false(pred) ? ;
           profile!{ self mark "learning", "data" }
@@ -299,7 +298,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             legal check ok, assuming everything positive",
             self.instance[pred], pos_len, unc_len
           ) ;
-          self.candidate[pred] = Some( self.instance.bool(true) ) ;
+          self.candidate[pred] = Some( term::tru() ) ;
           self.data.pred_all_true(pred) ? ;
           continue
         }
@@ -352,9 +351,11 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     ::std::mem::swap(& mut candidates, & mut self.candidate) ;
     profile!{ self mark "learning" }
 
-    if conf.decay {
+    if conf.ice.decay {
       profile!{ self tick "decay" }
-      let _brushed = self.qualifiers.brush_quals(used_quals, conf.max_decay) ;
+      let _brushed = self.qualifiers.brush_quals(
+        used_quals, conf.ice.max_decay
+      ) ;
       profile!{ self "brushed qualifiers" => add _brushed }
       profile!{ self mark "decay" }
     }
@@ -430,7 +431,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
           return Ok(
-            Some( self.instance.bool(true) )
+            Some( term::tru() )
           )
         } else {
           self.finished.push(branch) ;
@@ -464,7 +465,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
           return Ok(
-            Some( self.instance.bool(false) )
+            Some( term::fls() )
           )
         }
         if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
@@ -509,14 +510,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         if pos {
           and_args.push(term)
         } else {
-          and_args.push( self.instance.op(Op::Not, vec![term]) )
+          and_args.push( term::app(Op::Not, vec![term]) )
         }
       }
-      or_args.push( self.instance.op(Op::And, and_args) )
+      or_args.push( term::app(Op::And, and_args) )
     }
     profile!{ self mark "learning", "pred finalize" }
     Ok(
-      Some( self.instance.op(Op::Or, or_args) )
+      Some( term::app(Op::Or, or_args) )
     )
   }
 
@@ -524,7 +525,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier_para<
     'a, I: ::rayon::iter::IntoParallelIterator<Item = & 'a mut QualValues>
   >(
-    _profiler: & Profile, all_data: & Data,
+    _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<RTerm>
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
@@ -569,7 +570,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let res = if let Some(res) = gains.pop() { res } else {
       bail!("[bug] empty QualIter")
     } ;
-    if conf.decay {
+    if conf.ice.decay {
       if let & Ok( Some( (best_gain, ref qual) ) ) = & res {
         let _ = used_quals.insert( qual.qual.clone() ) ;
         while let Some( Ok( Some( (gain, qual) ) ) ) = gains.pop() {
@@ -588,7 +589,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier_seq<
     'a, I: IntoIterator<Item = & 'a mut QualValues>
   >(
-    _profiler: & Profile, all_data: & Data,
+    _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
@@ -616,11 +617,11 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   pub fn get_best_qualifier<
     'a, I: IntoIterator<Item = & 'a mut QualValues>
   >(
-    profiler: & Profile, all_data: & Data,
+    profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<RTerm>,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
-    if conf.gain_threads == 1 {
+    if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
         profiler, all_data, pred, data, quals.into_iter()
       ) {
@@ -701,43 +702,39 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    let mut new_quals: Vec<QualValues> = if conf.fpice_synth {
+    let mut new_quals: Vec<QualValues> = if conf.ice.fpice_synth {
       let mut quals = HConSet::new() ;
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
       for sample in & data.pos {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
       for sample in & data.neg {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
       for sample in & data.unc {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
 
       profile!{ self "qualifier synthesized" => add quals.len() }
 
-      quals.into_iter().map(QualValues::mk).collect()
+      quals.into_iter().map(QualValues::new).collect()
     } else {
       let qual = match (
         data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
       ) {
         (false, false, _) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.pos[0], true, & data.neg[0]
+          & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
         ) ?,
         (false, _, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.pos[0], true, & data.unc[0]
+          & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
         ) ?,
         (true, false, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.neg[0], false, & data.unc[0]
+          & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
         ) ?,
         (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.unc[0], true, & data.unc[1]
+          & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
         ) ?,
         _ => bail!(
           "[unreachable] illegal status reached on predicate {}:\n\
@@ -749,7 +746,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         ),
       } ;
       profile!{ self "qualifier synthesized" => add 1 }
-      vec![ QualValues::mk(qual) ]
+      vec![ QualValues::new(qual) ]
     } ;
     profile!{ self mark "learning", "qual", "synthesis" }
 
@@ -987,48 +984,48 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    instance: & Instance, sample: & HSample, set: & mut HConSet<RTerm>
+    sample: & HSample, set: & mut HConSet<RTerm>
   ) -> () {
     let mut previous: Vec<(Term, _)> = Vec::with_capacity(
       sample.len()
     ) ;
 
     for (var, val) in sample.index_iter() {
-      let var = instance.var(var) ;
+      let var = term::var(var) ;
       let val = match * val {
         Val::B(_) => continue,
         Val::I(ref i) => i,
         Val::N => continue,
       } ;
 
-      let val_term = instance.int( val.clone() ) ;
+      let val_term = term::int( val.clone() ) ;
       let _ = set.insert(
-        instance.op( Op::Ge, vec![ var.clone(), val_term.clone() ] )
+        term::app( Op::Ge, vec![ var.clone(), val_term.clone() ] )
       ) ;
       let _ = set.insert(
-        instance.op( Op::Le, vec![ var.clone(), val_term ] )
+        term::app( Op::Le, vec![ var.clone(), val_term ] )
       ) ;
 
       for & (ref pre_var, pre_val) in & previous {
-        let add = instance.op(
+        let add = term::app(
           Op::Add, vec![ pre_var.clone(), var.clone() ]
         ) ;
-        let add_val = instance.int( pre_val + val ) ;
+        let add_val = term::int( pre_val + val ) ;
         let _ = set.insert(
-          instance.op( Op::Ge, vec![ add.clone(), add_val.clone() ] )
+          term::app( Op::Ge, vec![ add.clone(), add_val.clone() ] )
         ) ;
         let _ = set.insert(
-          instance.op( Op::Le, vec![ add, add_val ] )
+          term::app( Op::Le, vec![ add, add_val ] )
         ) ;
-        let sub = instance.op(
+        let sub = term::app(
           Op::Sub, vec![ pre_var.clone(), var.clone() ]
         ) ;
-        let sub_val = instance.int( pre_val - val ) ;
+        let sub_val = term::int( pre_val - val ) ;
         let _ = set.insert(
-          instance.op( Op::Ge, vec![ sub.clone(), sub_val.clone() ] )
+          term::app( Op::Ge, vec![ sub.clone(), sub_val.clone() ] )
         ) ;
         let _ = set.insert(
-          instance.op( Op::Le, vec![ sub, sub_val ] )
+          term::app( Op::Le, vec![ sub, sub_val ] )
         ) ;
       }
 
@@ -1067,10 +1064,8 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// - package the `synth_solver` with an instance and define `synthesize` on
   ///   that structure to avoid this ugly function (check no deadlock occurs)
   pub fn smt_synthesize(
-    solver: & mut Slver, instance: & Instance,
-    s_1: & HSample, pos: bool, s_2: & HSample
+    solver: & mut Slver, s_1: & HSample, pos: bool, s_2: & HSample
   ) -> Res<Term> {
-    use instance::Val ;
     debug_assert!( s_1.len() == s_2.len() ) ;
     let mut p_1 = Vec::with_capacity( s_1.len() ) ;
     let mut p_2 = p_1.clone() ;
@@ -1100,8 +1095,8 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     let cst = "v" ;
 
-    let constraint_1 = ValCoefWrap::mk(& p_1, & coefs, cst, pos) ;
-    let constraint_2 = ValCoefWrap::mk(& p_2, & coefs, cst, ! pos) ;
+    let constraint_1 = ValCoefWrap::new(& p_1, & coefs, cst, pos) ;
+    let constraint_2 = ValCoefWrap::new(& p_2, & coefs, cst, ! pos) ;
 
     solver.reset() ? ;
     // Declare coefs and constant.
@@ -1122,21 +1117,21 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     for (var_opt, val) in model {
       use num::Zero ;
       if ! val.is_zero() {
-        let val = instance.int(val) ;
+        let val = term::int(val) ;
         if let Some(var) = var_opt {
-          let var = instance.var(var) ;
+          let var = term::var(var) ;
           sum.push(
-            instance.op( Op::Mul, vec![val, var] )
+            term::app( Op::Mul, vec![val, var] )
           )
         } else {
           sum.push(val)
         }
       }
     }
-    let lhs = instance.op( Op::Add, sum ) ;
-    let rhs = instance.zero() ;
+    let lhs = term::app( Op::Add, sum ) ;
+    let rhs = term::zero() ;
 
-    let term = instance.ge(lhs, rhs) ;
+    let term = term::ge(lhs, rhs) ;
     // println!("synthesis: {}", term) ;
 
     Ok(term)
@@ -1227,7 +1222,7 @@ impl CData {
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
-    let mut proba = EntropyBuilder::mk() ;
+    let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
     for unc in & self.unc {
@@ -1245,7 +1240,7 @@ impl CData {
       self.pos.len() + self.neg.len() + self.unc.len()
     ) as f64 ;
     let (mut q_ent, mut nq_ent) = (
-      EntropyBuilder::mk(), EntropyBuilder::mk()
+      EntropyBuilder::new(), EntropyBuilder::new()
     ) ;
     let (
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
@@ -1368,7 +1363,7 @@ impl CData {
 pub struct EntropyBuilder { num: f64, den: usize }
 impl EntropyBuilder {
   /// Constructor.
-  pub fn mk() -> Self {
+  pub fn new() -> Self {
     EntropyBuilder { num: 0., den: 0 }
   }
 
@@ -1685,7 +1680,7 @@ pub mod smt {
   }
   impl<'a> ValCoefWrap<'a> {
     /// Constructor.
-    pub fn mk(
+    pub fn new(
       vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
       cst: & 'static str, pos: bool
     ) -> Self {

@@ -5,7 +5,7 @@ dependencies = [
  "ansi_term 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "error-chain 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hashconsing 0.6.0 (git+https://github.com/AdrienChampion/hashconsing)",
  "lazy_static 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -59,7 +59,7 @@ name = "backtrace-sys"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gcc 0.3.53 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gcc 0.3.54 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.30 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "error-chain"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "backtrace 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -154,13 +154,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "gcc"
-version = "0.3.53"
+version = "0.3.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "hashconsing"
 version = "0.6.0"
-source = "git+https://github.com/AdrienChampion/hashconsing#c0585df50ead8a4cf7daaf7b3cd2c87fc195a3b3"
+source = "git+https://github.com/AdrienChampion/hashconsing#8448ecd0b03fb936318c20db04af7bb3d5aec016"
 
 [[package]]
 name = "kernel32-sys"
@@ -214,7 +214,7 @@ dependencies = [
 [[package]]
 name = "mylib"
 version = "0.1.0"
-source = "git+https://github.com/AdrienChampion/mylib#bab995e9943f678002f12b5fe2d772558928dee1"
+source = "git+https://github.com/AdrienChampion/mylib#00da1dac9bab2f274f674d9ce49f89b267f5d01a"
 dependencies = [
  "ansi_term 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -352,9 +352,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rsmt2"
 version = "0.6.0"
-source = "git+https://github.com/kino-mc/rsmt2#47d39aca2328c39e7d64731cb9607d42180aaf7f"
+source = "git+https://github.com/kino-mc/rsmt2#8062ef8182e611cd02b418f19501e7819777a50e"
 dependencies = [
- "error-chain 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 3.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -465,9 +465,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum dbghelp-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "97590ba53bcb8ac28279161ca943a924d1fd4a8fb3fa63302591647c4fc5b850"
 "checksum either 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
 "checksum env_logger 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3ddf21e73e016298f5cb37d6ef8e8da8e39f91f9ec8b0df44b7deb16a9f8cd5b"
-"checksum error-chain 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d9435d864e017c3c6afeac1654189b06cdb491cf2ff73dbf0d73b0f292f42ff8"
+"checksum error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ff511d5dc435d703f4971bc399647c9bc38e20cb41452e3b9feb4765419ed3f3"
 "checksum futures 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)" = "a82bdc62350ca9d7974c760e9665102fc9d740992a528c2254aa930e53b783c4"
-"checksum gcc 0.3.53 (registry+https://github.com/rust-lang/crates.io-index)" = "e8310f7e9c890398b0e80e301c4f474e9918d2b27fca8f48486ca775fa9ffc5a"
+"checksum gcc 0.3.54 (registry+https://github.com/rust-lang/crates.io-index)" = "5e33ec290da0d127825013597dbdfc28bee4964690c7ce1166cbc2a7bd08b1bb"
 "checksum hashconsing 0.6.0 (git+https://github.com/AdrienChampion/hashconsing)" = "<none>"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
 "checksum lazy_static 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)" = "3b37545ab726dd833ec6420aaba8231c5b320814b9029ad585555d2a03e94fbf"
