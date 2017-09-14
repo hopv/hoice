@@ -103,7 +103,7 @@ fn main() {
         "could not spawn z3 using command `{}`\n\
         make sure the z3 binary has that name and is in your path,\n\
         or specify a different z3 command with option `{}`",
-        conf.emph( & conf.z3_cmd ),
+        conf.emph( & conf.solver.conf().get_cmd() ),
         conf.emph( "--z3" )
       ).into(),
       _ => errs

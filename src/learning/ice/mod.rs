@@ -22,20 +22,20 @@ impl Launcher {
     core: & LearnerCore, instance: Arc<Instance>, data: Data
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+    let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    let mut synth_kid = Kid::mk( conf.solver_conf() ).chain_err(
+    let mut synth_kid = Kid::mk( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's synthesis solver"
     ) ? ;
     let synth_solver = solver(& mut synth_kid, Parser).chain_err(
       || "while constructing the teacher's synthesis solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("ice_learner") ? {
-      let synth_log = conf.smt_log_file("ice_learner_synthesizer")?.expect(
+    if let Some(log) = conf.solver.log_file("ice_learner") ? {
+      let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
         "[unreachable] log mod is active"
       ) ;
       IceLearner::mk(
@@ -352,9 +352,11 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     ::std::mem::swap(& mut candidates, & mut self.candidate) ;
     profile!{ self mark "learning" }
 
-    if conf.decay {
+    if conf.ice.decay {
       profile!{ self tick "decay" }
-      let _brushed = self.qualifiers.brush_quals(used_quals, conf.max_decay) ;
+      let _brushed = self.qualifiers.brush_quals(
+        used_quals, conf.ice.max_decay
+      ) ;
       profile!{ self "brushed qualifiers" => add _brushed }
       profile!{ self mark "decay" }
     }
@@ -569,7 +571,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     let res = if let Some(res) = gains.pop() { res } else {
       bail!("[bug] empty QualIter")
     } ;
-    if conf.decay {
+    if conf.ice.decay {
       if let & Ok( Some( (best_gain, ref qual) ) ) = & res {
         let _ = used_quals.insert( qual.qual.clone() ) ;
         while let Some( Ok( Some( (gain, qual) ) ) ) = gains.pop() {
@@ -620,7 +622,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<RTerm>,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
-    if conf.gain_threads == 1 {
+    if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
         profiler, all_data, pred, data, quals.into_iter()
       ) {
@@ -701,7 +703,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    let mut new_quals: Vec<QualValues> = if conf.fpice_synth {
+    let mut new_quals: Vec<QualValues> = if conf.ice.fpice_synth {
       let mut quals = HConSet::new() ;
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")

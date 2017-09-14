@@ -254,14 +254,14 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
   let data = Data::of_files(input_file, output_file) ? ;
 
-  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+  let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
     || ErrorKind::Z3SpawnError
   ) ? ;
   {
     let solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the checkers solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("check") ? {
+    if let Some(log) = conf.solver.log_file("check") ? {
       data.check(solver.tee(log)) ?
     } else {
       data.check(solver) ?

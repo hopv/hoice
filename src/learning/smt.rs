@@ -19,13 +19,13 @@ impl Launcher {
     core: & LearnerCore, instance: Arc<Instance>
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+    let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("smt_learner") ? {
+    if let Some(log) = conf.solver.log_file("smt_learner") ? {
       (
         SmtLearner::mk(& core, instance, solver.tee(log)) ?
       ).run()

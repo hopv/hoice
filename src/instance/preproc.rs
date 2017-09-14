@@ -16,14 +16,14 @@ pub fn work(
 
   profile!{ |profiler| tick "pre-proc" }
 
-  let res = if conf.simple_red {
-    let mut kid = ::rsmt2::Kid::mk( conf.solver_conf() ).chain_err(
+  let res = if conf.preproc.simple_red {
+    let mut kid = ::rsmt2::Kid::mk( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
     let solver = ::rsmt2::solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("preproc") ? {
+    if let Some(log) = conf.solver.log_file("preproc") ? {
       run( instance, profiler, Some( solver.tee(log) ) )
     } else {
       run( instance, profiler, Some(solver) )

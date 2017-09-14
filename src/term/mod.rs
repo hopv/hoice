@@ -8,6 +8,11 @@ use hashconsing::* ;
 use common::* ;
 use instance::Instance ;
 
+#[macro_use]
+mod val ;
+
+pub use self::val::Val ;
+
 /// A real term.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {

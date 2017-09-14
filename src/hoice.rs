@@ -47,11 +47,11 @@ pub fn work() -> Res<()> {
   conf.init() ? ;
 
   // Reading from file?
-  if let Some(file_path) = conf.file.as_ref() {
+  if let Some(file_path) = conf.in_file() {
     use std::fs::{ OpenOptions } ;
 
     // Are we in check mode?
-    if let Some(output_file) = conf.check.as_ref() {
+    if let Some(output_file) = conf.check_file() {
       return ::check::do_it(file_path, output_file)
     }
 
@@ -128,7 +128,7 @@ fn read_and_work<R: ::std::io::Read>(
       // Check-sat, start class.
       Parsed::CheckSat => {
 
-        if conf.pre_proc {
+        if conf.preproc.active {
           instance::preproc::work(& mut instance, & profiler) ?
         }
         instance.finalize() ;

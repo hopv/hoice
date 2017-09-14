@@ -153,7 +153,8 @@ impl CanPrint for Stats {
     for (stat, count) in self {
       let stat_len = ::std::cmp::min( 30, stat.len() ) ;
       println!(
-        ";   {0: >1$}{2}: {3: >5}", "", 30 - stat_len, conf.emph(stat), count
+        ";   {0: >1$}{2}: {3: >5}",
+        "", 30 - stat_len, conf.emph(stat), count
       )
     }
   }

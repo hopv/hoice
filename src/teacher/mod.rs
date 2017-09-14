@@ -26,14 +26,14 @@ pub fn start_class(
   use rsmt2::solver ;
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::mk( conf.solver_conf() ).chain_err(
+  let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
     || ErrorKind::Z3SpawnError
   ) ? ;
   let res = {
     let solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    if let Some(log) = conf.smt_log_file("teacher") ? {
+    if let Some(log) = conf.solver.log_file("teacher") ? {
       teach( instance, solver.tee(log), profiler )
     } else {
       teach( instance, solver, profiler )
@@ -78,7 +78,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
     //   ) ?
     // }
 
-    if conf.step {
+    if conf.teacher.step {
       let mut dummy = String::new() ;
       println!("") ;
       println!( "; {} to broadcast data...", conf.emph("press return") ) ;
@@ -273,7 +273,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match self.from_learners.recv() {
         Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
           for _line in _s.lines() {
-            log_info!("{} > {}", conf.emph( & self.learners[_idx].1 ), _line)
+            log_info!(
+              "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
+            )
           }
         },
         Ok( (idx, FromLearners::Err(e)) ) => {
@@ -507,7 +509,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
-      if conf.smt_log {
+      if conf.solver.log {
         for lhs in clause.lhs() {
           self.solver.comment(
             & format!("{}\n", lhs)
