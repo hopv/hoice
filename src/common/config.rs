@@ -362,7 +362,7 @@ impl Config {
 
     // Colors.
     let color = bool_of_matches(& matches, "color") ;
-    let styles = Styles::mk(color) ;
+    let styles = Styles::new(color) ;
 
     // Output directory.
     let out_dir = matches.value_of("out_dir").expect(
@@ -453,7 +453,7 @@ impl Config {
     app.arg(
 
       Arg::with_name("check").long("--check").help(
-        "checks the output of a previous run (does not run inference)"
+        "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
       ).takes_value(true).number_of_values(1)
@@ -604,14 +604,14 @@ pub struct Styles {
   bad: Style,
 }
 impl Default for Styles {
-  fn default() -> Self { Styles::mk(true) }
+  fn default() -> Self { Styles::new(true) }
 }
 impl ColorExt for Styles {
   fn styles(& self) -> & Styles { self }
 }
 impl Styles {
   /// Creates some styles.
-  pub fn mk(colored: bool) -> Self {
+  pub fn new(colored: bool) -> Self {
     Styles {
       emph: if colored {
         Style::new().bold()
@@ -666,7 +666,7 @@ pub trait ColorExt {
 
 
 /// Format for booleans.
-pub static bool_format: & str = "on|true|off|false" ;
+pub static bool_format: & str = "on|off" ;
 
 /// Boolean of a string.
 pub fn bool_of_str(s: & str) -> Option<bool> {

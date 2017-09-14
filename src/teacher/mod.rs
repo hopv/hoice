@@ -25,7 +25,7 @@ pub fn start_class(
   use rsmt2::solver ;
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
+  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
     || ErrorKind::Z3SpawnError
   ) ? ;
   let res = {
@@ -51,7 +51,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   instance: Arc<Instance>, solver: S, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }
-  let mut teacher = Teacher::mk(solver, instance, profiler) ;
+  let mut teacher = Teacher::new(solver, instance, profiler) ;
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
@@ -184,12 +184,12 @@ pub struct Teacher<'a, S> {
 }
 impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     solver: S, instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Self {
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = from_learners() ;
-    let data = Data::mk( instance.clone() ) ;
+    let data = Data::new( instance.clone() ) ;
     Teacher {
       solver, instance, data, from_learners,
       to_teacher: Some(to_teacher), learners,
@@ -226,7 +226,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       let (to_learner, learner_recv) = new_to_learner() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
-          LearnerCore::mk(index, to_teacher.clone(), learner_recv),
+          LearnerCore::new(index, to_teacher.clone(), learner_recv),
           instance, data
         )
       ).chain_err(

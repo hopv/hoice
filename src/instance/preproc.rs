@@ -17,7 +17,7 @@ pub fn work(
   profile!{ |profiler| tick "pre-proc" }
 
   let res = if conf.preproc.simple_red {
-    let mut kid = ::rsmt2::Kid::mk( conf.solver.conf() ).chain_err(
+    let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
     let solver = ::rsmt2::solver(& mut kid, Parser).chain_err(
@@ -40,7 +40,7 @@ pub fn work(
 pub fn run<'kid, S: Solver<'kid, Parser>>(
   instance: & mut Instance, profiler: & Profiler, solver: Option<S>
 ) -> Res<()> {
-  let mut reductor = Reductor::mk(solver) ;
+  let mut reductor = Reductor::new(solver) ;
 
   let mut changed = true ;
   'preproc: while changed {
@@ -86,13 +86,13 @@ pub struct Reductor<S> {
 }
 impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
   /// Constructor.
-  pub fn mk(solver: Option<S>) -> Self {
+  pub fn new(solver: Option<S>) -> Self {
     let strats: Vec< Box<RedStrat> > = vec![
       Box::new( Trivial {} ),
-      // Box::new( ForcedImplies::mk() ),
+      // Box::new( ForcedImplies::new() ),
     ] ;
     let solver_strats = solver.map(
-      |solver| (solver, SimpleOneRhs::mk())
+      |solver| (solver, SimpleOneRhs::new())
     ) ;
 
     Reductor { strats, solver_strats }
@@ -441,7 +441,7 @@ fn force_pred<Preds: IntoIterator<
         }
         instance.clauses[clause].rhs = tterm ;
         for tterm in tterms {
-          let clause = Clause::mk(
+          let clause = Clause::new(
             instance.clauses[clause].vars.clone(),
             instance.clauses[clause].lhs.clone(),
             tterm
@@ -587,7 +587,7 @@ impl RedStrat for Trivial {
 // }
 // impl ForcedImplies {
 //   /// Constructor.
-//   fn mk() -> Self {
+//   fn new() -> Self {
 //     ForcedImplies {
 //       true_preds: PrdSet::with_capacity(7),
 //       false_preds: PrdSet::with_capacity(7),
@@ -632,7 +632,7 @@ impl RedStrat for Trivial {
 //                 }
 //                 for tterm in & tterms {
 //                   instance.push_clause(
-//                     Clause::mk( args.clone(), vec![], tterm.clone() )
+//                     Clause::new( args.clone(), vec![], tterm.clone() )
 //                   )
 //                 }
 //                 let prev = self.preds.insert(pred, tterms) ;
@@ -753,7 +753,7 @@ pub struct SimpleOneRhs {
 }
 impl SimpleOneRhs {
   /// Constructor.
-  fn mk() -> Self {
+  fn new() -> Self {
     SimpleOneRhs {
       true_preds: PrdSet::with_capacity(7),
       false_preds: PrdSet::with_capacity(7),

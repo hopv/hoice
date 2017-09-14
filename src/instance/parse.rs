@@ -101,7 +101,7 @@ pub struct ParserCxt {
 }
 impl ParserCxt {
   /// Constructor.
-  pub fn mk() -> Self {
+  pub fn new() -> Self {
     ParserCxt {
       term_stack: Vec::with_capacity(17),
       buff: Vec::with_capacity(17),
@@ -904,7 +904,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::mk(var_map, nu_lhs, rhs)
+        Clause::new(var_map, nu_lhs, rhs)
       ) ?
     }
 

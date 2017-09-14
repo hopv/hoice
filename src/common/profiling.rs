@@ -4,7 +4,9 @@ In `bench` mode, `Profiler` is a unit structure. Also, all macros are
 deactivated, so all profiling is completely removed.
 "#]
 
-use std::time::{ Duration, Instant } ;
+#[warn(unused_imports)]
+use std::time::Instant ;
+use std::time::Duration ;
 
 use common::* ;
 
@@ -208,7 +210,7 @@ pub struct Profiler ;
 impl Profiler {
   /// Constructor.
   #[cfg( not(feature = "bench") )]
-  pub fn mk() -> Self {
+  pub fn new() -> Self {
     use std::cell::RefCell ;
     Profiler {
       map: RefCell::new( HashMap::new() ),
@@ -217,7 +219,7 @@ impl Profiler {
     }
   }
   #[cfg(feature = "bench")]
-  pub fn mk() -> Self { Profiler }
+  pub fn new() -> Self { Profiler }
 
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]

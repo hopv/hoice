@@ -21,13 +21,13 @@ impl Launcher {
     core: & LearnerCore, instance: Arc<Instance>, data: Data
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
+    let mut kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    let mut synth_kid = Kid::mk( conf.solver.conf() ).chain_err(
+    let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's synthesis solver"
     ) ? ;
     let synth_solver = solver(& mut synth_kid, Parser).chain_err(
@@ -37,14 +37,14 @@ impl Launcher {
       let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
         "[unreachable] log mod is active"
       ) ;
-      IceLearner::mk(
+      IceLearner::new(
         & core, instance, data,
         conflict_solver.tee(log), synth_solver.tee(synth_log)
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
-      IceLearner::mk(
+      IceLearner::new(
         & core, instance, data, conflict_solver, synth_solver
       ).chain_err(
         || "while creating ice learner"
@@ -98,13 +98,13 @@ pub struct IceLearner<'core, Slver> {
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// Ice learner constructor.
-  pub fn mk(
+  pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
     solver: Slver, synth_solver: Slver
   ) -> Res<Self> {
-    let _profiler = Profiler::mk() ;
+    let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
-    let qualifiers = Qualifiers::mk(& * instance).chain_err(
+    let qualifiers = Qualifiers::new(& * instance).chain_err(
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |_profiler| mark "mining" }
@@ -719,7 +719,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
       profile!{ self "qualifier synthesized" => add quals.len() }
 
-      quals.into_iter().map(QualValues::mk).collect()
+      quals.into_iter().map(QualValues::new).collect()
     } else {
       let qual = match (
         data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
@@ -746,7 +746,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         ),
       } ;
       profile!{ self "qualifier synthesized" => add 1 }
-      vec![ QualValues::mk(qual) ]
+      vec![ QualValues::new(qual) ]
     } ;
     profile!{ self mark "learning", "qual", "synthesis" }
 
@@ -1095,8 +1095,8 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
     let cst = "v" ;
 
-    let constraint_1 = ValCoefWrap::mk(& p_1, & coefs, cst, pos) ;
-    let constraint_2 = ValCoefWrap::mk(& p_2, & coefs, cst, ! pos) ;
+    let constraint_1 = ValCoefWrap::new(& p_1, & coefs, cst, pos) ;
+    let constraint_2 = ValCoefWrap::new(& p_2, & coefs, cst, ! pos) ;
 
     solver.reset() ? ;
     // Declare coefs and constant.
@@ -1222,7 +1222,7 @@ impl CData {
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
-    let mut proba = EntropyBuilder::mk() ;
+    let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
     for unc in & self.unc {
@@ -1240,7 +1240,7 @@ impl CData {
       self.pos.len() + self.neg.len() + self.unc.len()
     ) as f64 ;
     let (mut q_ent, mut nq_ent) = (
-      EntropyBuilder::mk(), EntropyBuilder::mk()
+      EntropyBuilder::new(), EntropyBuilder::new()
     ) ;
     let (
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
@@ -1363,7 +1363,7 @@ impl CData {
 pub struct EntropyBuilder { num: f64, den: usize }
 impl EntropyBuilder {
   /// Constructor.
-  pub fn mk() -> Self {
+  pub fn new() -> Self {
     EntropyBuilder { num: 0., den: 0 }
   }
 
@@ -1680,7 +1680,7 @@ pub mod smt {
   }
   impl<'a> ValCoefWrap<'a> {
     /// Constructor.
-    pub fn mk(
+    pub fn new(
       vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
       cst: & 'static str, pos: bool
     ) -> Self {

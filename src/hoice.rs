@@ -81,13 +81,13 @@ fn read_and_work<R: ::std::io::Read>(
 ) -> Res<()> {
   use instance::parse::ItemRead ;
   
-  let profiler = Profiler::mk() ;
+  let profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
   // String buffer.
   let buf = & mut String::with_capacity(2000) ;
   // Parser context.
-  let mut parser_cxt = ::instance::parse::ParserCxt::mk() ;
+  let mut parser_cxt = ::instance::parse::ParserCxt::new() ;
   // Line offset of the parser.
   let mut line_off = 0 ;
   // Instance.

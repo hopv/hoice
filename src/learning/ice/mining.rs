@@ -34,7 +34,7 @@ pub struct QualValues {
 }
 impl QualValues {
   /// Constructor.
-  pub fn mk(qual: Term) -> Self {
+  pub fn new(qual: Term) -> Self {
     QualValues {
       qual,
       true_set: HConSet::with_capacity(1003),
@@ -83,7 +83,7 @@ impl QualValuesExt for QualValues {
 // #[cfg( not(debug) )]
 // impl QualValues {
 //   /// Constructor.
-//   pub fn mk() -> Self {
+//   pub fn new() -> Self {
 //     QualValues { true_set: HConSet::with_capacity(1003) }
 //   }
 // }
@@ -133,7 +133,7 @@ pub struct Qualifiers {
 }
 impl Qualifiers {
   /// Constructor.
-  pub fn mk(instance: & Instance) -> Res<Self> {
+  pub fn new(instance: & Instance) -> Res<Self> {
     let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
@@ -149,24 +149,24 @@ impl Qualifiers {
       //   let other_var = term::var(other_var) ;
       //   let term = instance.ge(var.clone(), other_var.clone()) ;
       //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
       //   let term = instance.le(var.clone(), other_var.clone()) ;
       //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
       //   let term = instance.eq(var.clone(), other_var) ;
       //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
       // }
       for cst in instance.consts() {
         let term = term::ge(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
         let term = term::le(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
         let term = term::eq(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
+        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
         // for other_var in VarRange::zero_to( var_idx ) {
         //   use instance::Op ;
         //   let other_var = term::var(other_var) ;
@@ -267,7 +267,7 @@ impl Qualifiers {
     //     println!("")
     //   }
     // }
-    QualIter::mk(
+    QualIter::new(
       & mut self.arity_map, & self.blacklist, self.pred_to_arity[pred]
     )
   }
@@ -313,7 +313,7 @@ impl Qualifiers {
     & 'a mut self, quals: Terms
   ) -> Res<()> {
     self.add_qual_values(
-      quals.into_iter().map( |qual| QualValues::mk(qual) )
+      quals.into_iter().map( |qual| QualValues::new(qual) )
     )
   }
 
@@ -377,7 +377,7 @@ impl Qualifiers {
   //   //       }
   //   //     }
   //   //     values
-  //   //   }, QualValues::mk( qual.clone() )
+  //   //   }, QualValues::new( qual.clone() )
   //   // ) ;
   //   debug_assert!({
   //     for values in self.arity_map[arity].iter() {
@@ -385,7 +385,7 @@ impl Qualifiers {
   //     }
   //     true
   //   }) ;
-  //   let values = QualValues::mk( qual ) ;
+  //   let values = QualValues::new( qual ) ;
     
   //   // The two operations below make sense iff `arity_map` is not shared.
   //   self.arity_map[arity].push( values ) ;
@@ -421,7 +421,7 @@ pub struct QualIter<'a> {
 }
 impl<'a> QualIter<'a> {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     map: & 'a mut ArityMap< HConMap<RTerm, QualValues> >,
     blacklist: & 'a HConSet<RTerm>, pred_arity: Arity
   ) -> Self {

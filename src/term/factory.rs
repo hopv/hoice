@@ -57,6 +57,8 @@ pub fn fls() -> Term {
 }
 
 /// Creates an operator application.
+///
+/// Runs [`simplify`](fn.simplify.html) and returns its result.
 #[inline(always)]
 pub fn app(op: Op, args: Vec<Term>) -> Term {
   simplify(op, args)

@@ -18,16 +18,14 @@ fn format(log: & ::log::LogRecord) -> String {
       let mut s = String::new() ;
       s.push_str(
         & format!(
-          "({}\n\"",
+          "({} \"\n",
           conf.bad("error")
         )
       ) ;
-      let mut pref = "" ;
       for line in format!( "{}", log.args() ).lines() {
-        s.push_str( & format!("{}{}", pref, line) ) ;
-        pref = "\n"
+        s.push_str( & format!("  {}\n", line) ) ;
       }
-      s.push_str(& format!("\"\n)") ) ;
+      s.push_str(& format!("\")") ) ;
       s
     },
     Warn => {

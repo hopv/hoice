@@ -19,7 +19,7 @@ impl Launcher {
     core: & LearnerCore, instance: Arc<Instance>
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::mk( conf.solver.conf() ).chain_err(
+    let mut kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
     let solver = solver(& mut kid, Parser).chain_err(
@@ -27,11 +27,11 @@ impl Launcher {
     ) ? ;
     if let Some(log) = conf.solver.log_file("smt_learner") ? {
       (
-        SmtLearner::mk(& core, instance, solver.tee(log)) ?
+        SmtLearner::new(& core, instance, solver.tee(log)) ?
       ).run()
     } else {
       (
-        SmtLearner::mk(& core, instance, solver) ?
+        SmtLearner::new(& core, instance, solver) ?
       ).run()
     }
   }
@@ -69,7 +69,7 @@ impl<'core, Solv> HasLearnerCore for SmtLearner<'core, Solv> {
 }
 impl<'core, 'kid, Solv: Solver<'kid, Parser>> SmtLearner<'core, Solv> {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, mut solver: Solv,
   ) -> Res<Self> {
 

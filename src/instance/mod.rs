@@ -8,10 +8,6 @@ pub mod info ;
 pub mod parse ;
 pub mod preproc ;
 
-use term::* ;
-
-
-
 
 /// A clause.
 ///
@@ -28,7 +24,7 @@ pub struct Clause {
 }
 impl Clause {
   /// Creates a clause.
-  pub fn mk(
+  pub fn new(
     vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
   ) -> Self {
     Clause { vars, lhs, rhs }
@@ -36,7 +32,7 @@ impl Clause {
 
   /// Checks a quest is well-formed.
   #[cfg(debug_assertions)]
-  pub fn check(& self) -> Res<()> {
+  pub fn check(& self, blah: & 'static str) -> Res<()> {
     use std::iter::Extend ;
     let mut vars = VarSet::with_capacity( self.vars.len() ) ;
     for tterm in & self.lhs {
@@ -46,8 +42,9 @@ impl Clause {
     for var in vars {
       if ! self.vars[var].active {
         bail!(
-          "ill-formed clause, \
-          variable {} appears in the clause but is not active"
+          "ill-formed clause: {}, \
+          variable {} appears in the clause but is not active",
+          blah, self[var]
         )
       }
     }
@@ -55,7 +52,7 @@ impl Clause {
   }
   #[cfg(not(debug_assertions))]
   #[inline(always)]
-  pub fn check(& self) -> Res<()> {
+  pub fn check(& self, _: & 'static str) -> Res<()> {
     Ok(())
   }
 
@@ -63,7 +60,7 @@ impl Clause {
   pub fn deactivate(& mut self, var: VarIdx) -> Res<()> {
     debug_assert!( self.vars[var].active ) ;
     self.vars[var].active = false ;
-    self.check()
+    self.check( "after `deactivate`" )
   }
 
   /// LHS accessor.
@@ -93,10 +90,19 @@ impl Clause {
     use common::consts::keywords ;
 
     write!(w, "({} ({}\n  (", keywords::assert, keywords::forall) ? ;
+    let mut inactive = 0 ;
     for var in & self.vars {
-      write!(w, " ({} {})", var.name, var.typ) ?
+      if var.active {
+        write!(w, " ({} {})", var.name, var.typ) ?
+      } else {
+        inactive += 1 ;
+      }
     }
-    write!(w, " )\n") ? ;
+    write!(w, " )") ? ;
+    if inactive > 0 {
+      write!(w, " ; {} inactive variable(s)", inactive) ?
+    }
+    write!(w, "\n") ? ;
 
     let (pref, suff) = if ! self.lhs.is_empty() {
       write!(w, "  (=>") ? ;
@@ -801,7 +807,6 @@ impl Instance {
         // propagate.
         clause.lhs.swap_remove(current) ;
         cnt = current // <- we just swap removed, need to backtrack counter
-        // * tterm = TTerm::T( self.factory.mk( RTerm::Bool(true) ) )
       }
 
       use std::iter::Extend ;
@@ -1016,9 +1021,16 @@ impl Instance {
         None => (),
       }
 
+      // Deactivate the variables we just removed.
+      for (var, _) in last_stable_var_map.drain() {
+        clause.vars[var].active = false
+      }
+      clause.check("during simplification") ? ;
+
     }
 
     self.forget_clauses( clauses_to_rm ) ? ;
+    self.check("after simplification") ? ;
 
     Ok(())
   }
@@ -1244,6 +1256,7 @@ impl Instance {
   }
 
   /// Pretty printer for a set of predicates.
+  #[cfg(debug_assertions)]
   fn pretty_preds(& self, preds: & PrdSet) -> String {
     let mut s = String::new() ;
     s.push('{') ;
@@ -1257,6 +1270,7 @@ impl Instance {
   }
 
   /// Pretty printer for a predicate option.
+  #[cfg(debug_assertions)]
   fn pretty_pred_opt(& self, pred: & Option<PrdIdx>) -> String {
     if let Some(pred) = * pred {
       format!("{}", self[pred].name)
@@ -1266,6 +1280,7 @@ impl Instance {
   }
 
   /// Pretty printer for a set of clauses.
+  #[cfg(debug_assertions)]
   fn pretty_clauses(& self, clauses: & ClsSet) -> String {
     let mut s = String::new() ;
     s.push('{') ;
@@ -1279,6 +1294,7 @@ impl Instance {
   }
 
   /// Checks the consistency of `pred_to_clauses`.
+  #[cfg(debug_assertions)]
   fn check_pred_to_clauses(& self) -> Res<()> {
     for (cls_idx, clause) in self.clauses.index_iter() {
       for lhs in clause.lhs() {
@@ -1358,6 +1374,7 @@ impl Instance {
   }
 
   /// Checks the consistency of `clause_to_preds`.
+  #[cfg(debug_assertions)]
   fn check_clause_to_preds(& self) -> Res<()> {
     for (cls_idx, clause) in self.clauses.index_iter() {
       for lhs in clause.lhs() {

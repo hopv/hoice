@@ -72,7 +72,7 @@ pub struct LearnerCore {
 }
 impl LearnerCore {
   /// Constructor.
-  pub fn mk(
+  pub fn new(
     idx: LrnIdx,
     sender: Sender<(LrnIdx, FromLearners)>,
     recver: Receiver<Data>,

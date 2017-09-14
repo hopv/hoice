@@ -1,7 +1,55 @@
-#![doc = r#"Hashconsed terms.
-
-The factory is a `static_ref` for easy creation.
-"#]
+//! Hashconsed terms.
+//!
+//! # Terms
+//!
+//! The factory is a `static_ref` for easy creation. The `R`eal term structure
+//! is [`RTerm`](enum.RTerm.html) which is hashconsed into
+//! [`Term`](type.Term.html). The factory
+//! ([`HashConsign`](https://crates.io/crates/hashconsing)) is not directly
+//! accessible. Terms are created *via* the functions in this module, such as
+//! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
+//!
+//! ```
+//! # use hoice_lib::term ;
+//! # use hoice_lib::term::{ Op, RTerm } ;
+//! let some_term = term::eq(
+//!   term::int(11), term::app(
+//!     Op::Mul, vec![ term::int(2), term::var(5) ]
+//!   )
+//! ) ;
+//! // A `Term` dereferences to an `RTerm`:
+//! match * some_term {
+//!   RTerm::App { op: Op::Eql, ref args } => {
+//!     assert_eq!( args.len(), 2 ) ;
+//!     assert_eq!( term::int(11), args[0] ) ;
+//!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
+//!       assert_eq!( term::int(2), args[0] ) ;
+//!       assert_eq!( term::var(5), args[1] )
+//!     } else { panic!("not a multiplication") }
+//!   },
+//!   _ => panic!("not an equality"),
+//! }
+//! ```
+//!
+//! Terms are not typed at all. A predicate application is **not** a term, only
+//! operator applications are.
+//!
+//! # Top-level terms
+//!
+//! A [`TTerm`](enum.tterm.html) is either a term or a predicate application to
+//! some terms. Top-level terms are not hashconsed as they are shallow.
+//!
+//! # Variables
+//!
+//! A variable is a `usize` wrapped in a zero-cost
+//! [`VarIdx`](../common/struct.VarIdx.html) for safety. It has no semantics at
+//! all by itself. Variables are given meaning by
+//!
+//! - the `sig` field of a [`PrdInfo`](../instance/info/struct.PrdInfo.html),
+//!   which gives them types;
+//! - the [`VarInfo`s](../instance/info/struct.VarInfo.html) stored in a
+//!   [`Clause`](../instance/struct.Clause.html), which give them a name and a
+//!   type.
 
 use hashconsing::* ;
 
