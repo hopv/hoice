@@ -627,7 +627,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a sequence of terms.
   fn term_seq(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
+    & mut self, map: & HashMap<& 's str, VarIdx>
   ) -> Res< Vec<Term> > {
     debug_assert!( self.cxt.term_stack.is_empty() ) ;
     let mut seq = Vec::with_capacity(11) ;
@@ -641,12 +641,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.cxt.term_stack.push( (op, kids) ) ;
         continue 'read_kids
       } else if let Some(int) = self.int() {
-        instance.int(int)
+        term::int(int)
       } else if let Some(b) = self.bool() {
-        instance.bool(b)
+        term::bool(b)
       } else if let Some((pos, id)) = self.ident_opt() {
         if let Some(idx) = map.get(id) {
-          instance.var(* idx)
+          term::var(* idx)
         } else {
           bail!(
             self.error(
@@ -668,7 +668,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         kids.push(term) ;
         self.ws_cmt() ;
         if self.char_opt(')') {
-          term = instance.op(op, kids) ;
+          term = term::app(op, kids) ;
           continue 'go_up
         } else {
           self.cxt.term_stack.push( (op, kids) ) ;
@@ -703,15 +703,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       if let Some(op) = self.op_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
+        let args = self.term_seq(map) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
         Ok( Some(
-          TTerm::T( instance.op(op, args) )
+          TTerm::T( term::app(op, args) )
         ) )
       } else if let Some((pos,ident)) = self.ident_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
+        let args = self.term_seq(map) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
         let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
@@ -746,12 +746,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         )
       }
     } else if let Some(b) = self.bool() {
-      Ok( Some( TTerm::T( instance.bool(b) ) ) )
+      Ok( Some( TTerm::T( term::bool(b) ) ) )
     } else if let Some(int) = self.int() {
-      Ok( Some( TTerm::T( instance.int(int) ) ) )
+      Ok( Some( TTerm::T( term::int(int) ) ) )
     } else if let Some((pos,id)) = self.ident_opt() {
       if let Some(idx) = map.get(id) {
-        Ok( Some( TTerm::T( instance.var(* idx) ) ) )
+        Ok( Some( TTerm::T( term::var(* idx) ) ) )
       } else {
         bail!(
           self.error(
@@ -864,7 +864,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     self.char(')') ? ;
     Ok(
-      Some( (var_map, lhs, TTerm::T(instance.bool(false))) )
+      Some( (var_map, lhs, TTerm::T(term::bool(false))) )
     )
   }
 

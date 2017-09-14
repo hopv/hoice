@@ -6,20 +6,67 @@ The factory is a `static_ref` for easy creation.
 use hashconsing::* ;
 
 use common::* ;
-use instance::Instance ;
 
 #[macro_use]
+mod factory ;
 mod val ;
+#[cfg(test)]
+mod test ;
 
-
-
-// lazy_static!{
-//   /// Configuration from clap.
-//   pub static ref conf: Config = Config::clap() ;
-// }
-
-
+pub use self::factory::* ;
 pub use self::val::Val ;
+
+
+
+
+/// Types.
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Typ {
+  /// Integers.
+  Int,
+  /// Booleans.
+  Bool,
+}
+impl Typ {
+  /// Type parser.
+  #[allow(unused_variables)]
+  pub fn parse(
+    bytes: & [u8]
+  ) -> ::nom::IResult<& [u8], Self, Error> {
+    fix_error!(
+      bytes,
+      Error,
+      alt_complete!(
+        map!(tag!("Int"),  |_| Typ::Int)  |
+        map!(tag!("Bool"), |_| Typ::Bool)
+      )
+    )
+  }
+  /// Default value of a type.
+  pub fn default_val(& self) -> Val {
+    match * self {
+      Typ::Int => Val::I( Int::zero() ),
+      Typ::Bool => Val::B( true ),
+    }
+  }
+}
+impl ::rsmt2::Sort2Smt for Typ {
+  fn sort_to_smt2<Writer>(
+    & self, w: &mut Writer
+  ) -> SmtRes<()> where Writer: Write {
+    smt_cast_io!( "while writing type as smt2" => write!(w, "{}", self) )
+  }
+}
+impl_fmt!{
+  Typ(self, fmt) {
+    match * self {
+      Typ::Int => fmt.write_str("Int"),
+      Typ::Bool => fmt.write_str("Bool"),
+    }
+  }
+}
+
+
 
 /// A real term.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -94,34 +141,34 @@ impl RTerm {
   /// True if the term has no variables and evaluates to true.
   ///
   /// ```
-  /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::new(10, 10, 10) ;
+  /// use hoice_lib::term ;
+  /// use hoice_lib::term::Op ;
   ///
-  /// let term = instance.bool(true) ;
+  /// let term = term::tru() ;
   /// println!("true") ;
   /// assert!( term.is_true() ) ;
-  /// let term = instance.bool(false) ;
+  /// let term = term::fls() ;
   /// println!("false") ;
   /// assert!( ! term.is_true() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(7), instance.var(1.into())
+  /// let term = term::eq(
+  ///   term::int(7), term::var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_true() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(9), instance.int(9)
+  /// let term = term::eq(
+  ///   term::int(9), term::int(9)
   /// ) ;
   /// println!("9 = 9") ;
   /// assert!( term.is_true() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(1), instance.int(9)
+  /// let term = term::eq(
+  ///   term::int(1), term::int(9)
   /// ) ;
   /// println!("1 = 9") ;
   /// assert!( ! term.is_true() ) ;
-  /// let term = instance.le(
-  ///   instance.op(
-  ///     Op::Add, vec![ instance.int(3), instance.int(4) ]
-  ///   ), instance.int(9)
+  /// let term = term::le(
+  ///   term::app(
+  ///     Op::Add, vec![ term::int(3), term::int(4) ]
+  ///   ), term::int(9)
   /// ) ;
   /// println!("3 + 4 = 9") ;
   /// assert!( term.is_true() ) ;
@@ -136,33 +183,33 @@ impl RTerm {
   /// True if the term has no variables and evaluates to true.
   ///
   /// ```
-  /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::new(10, 10, 10) ;
+  /// use hoice_lib::term ;
+  /// use hoice_lib::term::Op ;
   ///
-  /// let term = instance.bool(true) ;
+  /// let term = term::tru() ;
   /// println!("true") ;
   /// assert!( ! term.is_false() ) ;
-  /// let term = instance.bool(false) ;
+  /// let term = term::fls() ;
   /// println!("false") ;
   /// assert!( term.is_false() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(7), instance.var(1.into())
+  /// let term = term::eq(
+  ///   term::int(7), term::var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_false() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(9), instance.int(9)
+  /// let term = term::eq(
+  ///   term::int(9), term::int(9)
   /// ) ;
   /// println!("9 = 9") ;
   /// assert!( ! term.is_false() ) ;
-  /// let term = instance.eq(
-  ///   instance.int(1), instance.int(9)
+  /// let term = term::eq(
+  ///   term::int(1), term::int(9)
   /// ) ;
   /// println!("1 = 9") ;
   /// assert!( term.is_false() ) ;
-  /// let term = instance.le(
-  ///   instance.int(9), instance.op(
-  ///     Op::Add, vec![ instance.int(3), instance.int(4) ]
+  /// let term = term::le(
+  ///   term::int(9), term::app(
+  ///     Op::Add, vec![ term::int(3), term::int(4) ]
   ///   )
   /// ) ;
   /// println!("9 <= 3 + 4") ;
@@ -433,6 +480,27 @@ impl TTerm {
     }
   }
 
+  /// In-place variable substitution for top terms.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// Used for substitutions in the same clause / predicate scope.
+  pub fn subst(
+    & mut self, map: & VarHMap<Term>
+  ) {
+    match * self {
+      TTerm::T(ref mut term) => {
+        * term = term::subst(map, term).0
+      },
+      TTerm::P { ref mut args, .. } => {
+        for arg in args.iter_mut() {
+          * arg = term::subst(map, arg).0
+        }
+      },
+    }
+  }
+
   /// Writes a top term using special functions for writing predicates and
   /// variables.
   pub fn write<W, WriteVar, WritePrd>(
@@ -513,145 +581,12 @@ pub enum Op {
 impl Op {
   /// String representation.
   pub fn as_str(& self) -> & str {
-    use instance::Op::* ;
+    use self::Op::* ;
     match * self {
       Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>",
     }
-  }
-
-  /// Tries to simplify an operator application.
-  ///
-  /// # Nullary / unary applications of `And` and `Or`
-  ///
-  /// ```
-  /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::new(10, 10, 10) ;
-  ///
-  /// let tru = instance.bool(true) ;
-  /// let fls = instance.bool(false) ;
-  /// let var_1 = instance.var( 7.into() ) ;
-  /// let var_2 = instance.var( 2.into() ) ;
-  ///
-  /// assert_eq!( fls, Op::And.simplify(instance, vec![]) ) ;
-  /// assert_eq!( tru, Op::Or.simplify(instance, vec![]) ) ;
-  /// assert_eq!( var_2, Op::And.simplify(instance, vec![ var_2.clone() ]) ) ;
-  /// assert_eq!( var_1, Op::Or.simplify(instance, vec![ var_1.clone() ]) ) ;
-  ///
-  /// let and = instance.op(Op::And, vec![ var_2.clone(), var_1.clone() ]) ;
-  /// assert_eq!(
-  ///   and, Op::And.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
-  /// ) ;
-  /// let or = instance.op(Op::Or, vec![ var_2.clone(), var_1.clone() ]) ;
-  /// assert_eq!(
-  ///   or, Op::Or.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
-  /// ) ;
-  /// ```
-  ///
-  /// # Double negations
-  ///
-  /// ```
-  /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::new(10, 10, 10) ;
-  ///
-  /// let var_1 = instance.var( 7.into() ) ;
-  /// let n_var_1 = instance.op( Op::Not, vec![ var_1.clone() ] ) ;
-  /// assert_eq!( var_1, Op::Not.simplify(instance, vec![ n_var_1 ]) ) ;
-  ///
-  /// let var_1 = instance.var( 7.into() ) ;
-  /// let n_var_1 = instance.op( Op::Not, vec![ var_1.clone() ] ) ;
-  /// assert_eq!( n_var_1, Op::Not.simplify(instance, vec![ var_1 ]) ) ;
-  /// ```
-  pub fn simplify(
-    self, instance: & Instance, mut args: Vec<Term>
-  ) -> Term {
-    let (op, args) = match self {
-      Op::And => if args.is_empty() {
-        return instance.bool(false)
-      } else if args.len() == 1 {
-        return args.pop().unwrap()
-      } else {
-        (self, args)
-      },
-      Op::Or => if args.is_empty() {
-        return instance.bool(true)
-      } else if args.len() == 1 {
-        return args.pop().unwrap()
-      } else {
-        (self, args)
-      },
-      Op::Not => {
-        assert!( args.len() == 1 ) ;
-        match * args[0] {
-          RTerm::App { op: Op::Not, ref args } => {
-            return args[0].clone()
-          },
-          _ => (),
-        }
-        (self, args)
-      },
-      Op::Add => {
-        let mut cnt = 0 ;
-        let mut zero = None ;
-        'remove_zeros: while cnt < args.len() {
-          if let Some(int) = args[0].int_val() {
-            if int.is_zero() {
-              zero = Some( args.swap_remove(cnt) ) ;
-              continue 'remove_zeros
-            }
-          }
-          cnt += 1
-        }
-        if args.len() == 0 {
-          return zero.expect("trying to construct an empty application")
-        } else if args.len() == 1 {
-          return args.pop().unwrap()
-        } else {
-          (self, args)
-        }
-      },
-      // Op::Gt => if args.len() != 2 {
-      //   panic!( "[bug] operator `>` applied to {} operands", args.len() )
-      // } else {
-      //   if let Some( i ) = args[0].int_val() {
-      //     // Checks whether it's zero before decreasing.
-      //     if i.is_zero() {
-      //       // Args is unchanged, term is equivalent to false anyway.
-      //       (Op::Ge, args)
-      //     } else {
-      //       args[0] = instance.int(i - Int::one()) ;
-      //       (Op::Ge, args)
-      //     }
-      //   } else if let Some( i ) = args[1].int_val() {
-      //     args[1] = instance.int(i + Int::one()) ;
-      //     (Op::Ge, args)
-      //   } else {
-      //     (self, args)
-      //   }
-      // },
-      // Op::Lt => if args.len() != 2 {
-      //   panic!( "[bug] operator `<` applied to {} operands", args.len() )
-      // } else {
-      //   if let Some( i ) = args[0].int_val() {
-      //     args[0] = instance.int(i + Int::one()) ;
-      //     (Op::Le, args)
-      //   } else if let Some( i ) = args[1].int_val() {
-      //     // Checks whether it's zero before decreasing.
-      //     if i.is_zero() {
-      //       // Args is unchanged, term is equivalent to false anyway.
-      //       (Op::Le, args)
-      //     } else {
-      //       args[1] = instance.int(i - Int::one()) ;
-      //       (Op::Le, args)
-      //     }
-      //   } else {
-      //     (self, args)
-      //   }
-      // },
-      _ => (self, args),
-    } ;
-    instance.mk( RTerm::App { op, args } )
   }
 
   /// Operator parser.
@@ -684,7 +619,7 @@ impl Op {
 
   /// Evaluation.
   pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
-    use instance::Op::* ;
+    use term::Op::* ;
     if args.is_empty() {
       bail!("evaluating operator on 0 elements")
     }

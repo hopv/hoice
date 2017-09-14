@@ -160,7 +160,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "hashconsing"
 version = "0.6.0"
-source = "git+https://github.com/AdrienChampion/hashconsing#c0585df50ead8a4cf7daaf7b3cd2c87fc195a3b3"
+source = "git+https://github.com/AdrienChampion/hashconsing#8448ecd0b03fb936318c20db04af7bb3d5aec016"
 
 [[package]]
 name = "kernel32-sys"

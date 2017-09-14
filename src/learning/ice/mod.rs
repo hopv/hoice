@@ -3,7 +3,6 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, Term, RTerm, Op, Typ } ;
 use self::mining::* ;
 use self::smt::* ;
 
@@ -282,7 +281,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             legal check ok, assuming everything negative",
             self.instance[pred], neg_len, unc_len
           ) ;
-          self.candidate[pred] = Some( self.instance.bool(false) ) ;
+          self.candidate[pred] = Some( term::fls() ) ;
           profile!{ self tick "learning", "data" }
           self.data.pred_all_false(pred) ? ;
           profile!{ self mark "learning", "data" }
@@ -299,7 +298,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
             legal check ok, assuming everything positive",
             self.instance[pred], pos_len, unc_len
           ) ;
-          self.candidate[pred] = Some( self.instance.bool(true) ) ;
+          self.candidate[pred] = Some( term::tru() ) ;
           self.data.pred_all_true(pred) ? ;
           continue
         }
@@ -432,7 +431,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
           return Ok(
-            Some( self.instance.bool(true) )
+            Some( term::tru() )
           )
         } else {
           self.finished.push(branch) ;
@@ -466,7 +465,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
           return Ok(
-            Some( self.instance.bool(false) )
+            Some( term::fls() )
           )
         }
         if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
@@ -511,14 +510,14 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         if pos {
           and_args.push(term)
         } else {
-          and_args.push( self.instance.op(Op::Not, vec![term]) )
+          and_args.push( term::app(Op::Not, vec![term]) )
         }
       }
-      or_args.push( self.instance.op(Op::And, and_args) )
+      or_args.push( term::app(Op::And, and_args) )
     }
     profile!{ self mark "learning", "pred finalize" }
     Ok(
-      Some( self.instance.op(Op::Or, or_args) )
+      Some( term::app(Op::Or, or_args) )
     )
   }
 
@@ -709,13 +708,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
       for sample in & data.pos {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
       for sample in & data.neg {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
       for sample in & data.unc {
-        Self::synthesize(& * self.instance, sample, & mut quals)
+        Self::synthesize(sample, & mut quals)
       }
 
       profile!{ self "qualifier synthesized" => add quals.len() }
@@ -726,20 +725,16 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
         data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
       ) {
         (false, false, _) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.pos[0], true, & data.neg[0]
+          & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
         ) ?,
         (false, _, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.pos[0], true, & data.unc[0]
+          & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
         ) ?,
         (true, false, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.neg[0], false, & data.unc[0]
+          & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
         ) ?,
         (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
-          & mut self.synth_solver, & * self.instance,
-          & data.unc[0], true, & data.unc[1]
+          & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
         ) ?,
         _ => bail!(
           "[unreachable] illegal status reached on predicate {}:\n\
@@ -989,48 +984,48 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    instance: & Instance, sample: & HSample, set: & mut HConSet<RTerm>
+    sample: & HSample, set: & mut HConSet<RTerm>
   ) -> () {
     let mut previous: Vec<(Term, _)> = Vec::with_capacity(
       sample.len()
     ) ;
 
     for (var, val) in sample.index_iter() {
-      let var = instance.var(var) ;
+      let var = term::var(var) ;
       let val = match * val {
         Val::B(_) => continue,
         Val::I(ref i) => i,
         Val::N => continue,
       } ;
 
-      let val_term = instance.int( val.clone() ) ;
+      let val_term = term::int( val.clone() ) ;
       let _ = set.insert(
-        instance.op( Op::Ge, vec![ var.clone(), val_term.clone() ] )
+        term::app( Op::Ge, vec![ var.clone(), val_term.clone() ] )
       ) ;
       let _ = set.insert(
-        instance.op( Op::Le, vec![ var.clone(), val_term ] )
+        term::app( Op::Le, vec![ var.clone(), val_term ] )
       ) ;
 
       for & (ref pre_var, pre_val) in & previous {
-        let add = instance.op(
+        let add = term::app(
           Op::Add, vec![ pre_var.clone(), var.clone() ]
         ) ;
-        let add_val = instance.int( pre_val + val ) ;
+        let add_val = term::int( pre_val + val ) ;
         let _ = set.insert(
-          instance.op( Op::Ge, vec![ add.clone(), add_val.clone() ] )
+          term::app( Op::Ge, vec![ add.clone(), add_val.clone() ] )
         ) ;
         let _ = set.insert(
-          instance.op( Op::Le, vec![ add, add_val ] )
+          term::app( Op::Le, vec![ add, add_val ] )
         ) ;
-        let sub = instance.op(
+        let sub = term::app(
           Op::Sub, vec![ pre_var.clone(), var.clone() ]
         ) ;
-        let sub_val = instance.int( pre_val - val ) ;
+        let sub_val = term::int( pre_val - val ) ;
         let _ = set.insert(
-          instance.op( Op::Ge, vec![ sub.clone(), sub_val.clone() ] )
+          term::app( Op::Ge, vec![ sub.clone(), sub_val.clone() ] )
         ) ;
         let _ = set.insert(
-          instance.op( Op::Le, vec![ sub, sub_val ] )
+          term::app( Op::Le, vec![ sub, sub_val ] )
         ) ;
       }
 
@@ -1069,8 +1064,7 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   /// - package the `synth_solver` with an instance and define `synthesize` on
   ///   that structure to avoid this ugly function (check no deadlock occurs)
   pub fn smt_synthesize(
-    solver: & mut Slver, instance: & Instance,
-    s_1: & HSample, pos: bool, s_2: & HSample
+    solver: & mut Slver, s_1: & HSample, pos: bool, s_2: & HSample
   ) -> Res<Term> {
     debug_assert!( s_1.len() == s_2.len() ) ;
     let mut p_1 = Vec::with_capacity( s_1.len() ) ;
@@ -1123,21 +1117,21 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     for (var_opt, val) in model {
       use num::Zero ;
       if ! val.is_zero() {
-        let val = instance.int(val) ;
+        let val = term::int(val) ;
         if let Some(var) = var_opt {
-          let var = instance.var(var) ;
+          let var = term::var(var) ;
           sum.push(
-            instance.op( Op::Mul, vec![val, var] )
+            term::app( Op::Mul, vec![val, var] )
           )
         } else {
           sum.push(val)
         }
       }
     }
-    let lhs = instance.op( Op::Add, sum ) ;
-    let rhs = instance.zero() ;
+    let lhs = term::app( Op::Add, sum ) ;
+    let rhs = term::zero() ;
 
-    let term = instance.ge(lhs, rhs) ;
+    let term = term::ge(lhs, rhs) ;
     // println!("synthesis: {}", term) ;
 
     Ok(term)

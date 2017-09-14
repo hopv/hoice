@@ -14,7 +14,6 @@ use nom::IResult ;
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use instance::{ Instance, TTerm, Typ, Term } ;
 
 
 
@@ -332,7 +331,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
       } else {
-        cands.push( Some(self.instance.bool(true)) )
+        cands.push( Some(term::tru()) )
       }
     }
     self.get_cexs(& cands).map(|res| (res, cands))

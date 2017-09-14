@@ -1,7 +1,6 @@
 //! Mines an instance for qualifiers.
 
 use common::* ;
-use instance::* ;
 use common::data::HSample ;
 
 
@@ -142,12 +141,12 @@ impl Qualifiers {
     arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let arity = arity_map.next_index() ;
-      let var = instance.var(var_idx) ;
+      let var = term::var(var_idx) ;
       let mut terms = HConMap::with_capacity(
         instance.consts().len() * 4
       ) ;
       // for other_var in VarRange::zero_to( var_idx ) {
-      //   let other_var = instance.var(other_var) ;
+      //   let other_var = term::var(other_var) ;
       //   let term = instance.ge(var.clone(), other_var.clone()) ;
       //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
       //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
@@ -159,18 +158,18 @@ impl Qualifiers {
       //   let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
       // }
       for cst in instance.consts() {
-        let term = instance.ge(var.clone(), cst.clone()) ;
+        let term = term::ge(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
         let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
-        let term = instance.le(var.clone(), cst.clone()) ;
+        let term = term::le(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
         let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
-        let term = instance.eq(var.clone(), cst.clone()) ;
+        let term = term::eq(var.clone(), cst.clone()) ;
         let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
         let _ = terms.insert( term.clone(), QualValues::mk(term) ) ;
         // for other_var in VarRange::zero_to( var_idx ) {
         //   use instance::Op ;
-        //   let other_var = instance.var(other_var) ;
+        //   let other_var = term::var(other_var) ;
         //   let add = instance.op(
         //     Op::Add, vec![ var.clone(), other_var.clone() ]
         //   ) ;

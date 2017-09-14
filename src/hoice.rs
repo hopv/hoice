@@ -91,7 +91,7 @@ fn read_and_work<R: ::std::io::Read>(
   // Line offset of the parser.
   let mut line_off = 0 ;
   // Instance.
-  let mut instance = Instance::new(3_000, 42, 42) ;
+  let mut instance = Instance::new() ;
   // Current model.
   let mut model = None ;
 
@@ -179,7 +179,7 @@ fn read_and_work<R: ::std::io::Read>(
             println!("  (define-fun {}", pred_info.name) ;
             print!(  "    (") ;
             for (var, typ) in pred_info.sig.index_iter() {
-              print!(" ({} {})", instance.var(var), typ)
+              print!(" ({} {})", term::var(var), typ)
             }
             println!(" ) Bool") ;
             if tterms.len() > 1 {

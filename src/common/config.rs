@@ -25,7 +25,7 @@ pub struct InstanceConf {
   /// Initial capacity of the term factory.
   pub term_capa: usize,
   /// Initial capacity of the clause vector.
-  pub clauses_capa: usize,
+  pub clause_capa: usize,
   /// Initial capacity of the predicate vector.
   pub pred_capa: usize,
 }
@@ -37,7 +37,7 @@ impl InstanceConf {
   pub fn new(_: & Matches) -> Self {
     InstanceConf {
       term_capa: 3_000,
-      clauses_capa: 42,
+      clause_capa: 42,
       pred_capa: 42,
     }
   }

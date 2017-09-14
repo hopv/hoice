@@ -1,8 +1,4 @@
-//! Terms structure and factory.
-
-use std::sync::RwLock ;
-
-use hashconsing::HConser ;
+//! The instance stores the predicates, the clauses, and a lot of information.
 
 use common::* ;
 use self::info::* ;
@@ -12,56 +8,7 @@ pub mod info ;
 pub mod parse ;
 pub mod preproc ;
 
-pub use term::* ;
-
-/// Types.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub enum Typ {
-  /// Integers.
-  Int,
-  /// Booleans.
-  Bool,
-}
-impl Typ {
-  /// Type parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!(tag!("Int"),  |_| Typ::Int)  |
-        map!(tag!("Bool"), |_| Typ::Bool)
-      )
-    )
-  }
-  /// Default value of a type.
-  pub fn default_val(& self) -> Val {
-    match * self {
-      Typ::Int => Val::I( Int::zero() ),
-      Typ::Bool => Val::B( true ),
-    }
-  }
-}
-impl ::rsmt2::Sort2Smt for Typ {
-  fn sort_to_smt2<Writer>(
-    & self, w: &mut Writer
-  ) -> SmtRes<()> where Writer: Write {
-    smt_cast_io!( "while writing type as smt2" => write!(w, "{}", self) )
-  }
-}
-impl_fmt!{
-  Typ(self, fmt) {
-    use instance::Typ::* ;
-    match * self {
-      Int => fmt.write_str("Int"),
-      Bool => fmt.write_str("Bool"),
-    }
-  }
-}
-
+use term::* ;
 
 
 
@@ -263,156 +210,6 @@ impl<'a> ::rsmt2::Expr2Smt<
 }
 
 
-/// Type of the underlying factory.
-type Factory = RwLock< HashConsign<RTerm> > ;
-
-
-
-/// Performs variable substitution over terms.
-pub trait SubstExt {
-  /// Variable substitution.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
-  /// Used for substitutions in the same clause / predicate scope.
-  fn subst(
-    & self, map: & VarHMap<Term>, term: & Term
-  ) -> (Term, bool) {
-    self.subst_custom(map, term, false).expect("total substitution can't fail")
-  }
-  /// In-place variable substitution for top terms.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
-  /// Used for substitutions in the same clause / predicate scope.
-  fn tterm_subst(
-    & self, map: & VarHMap<Term>, term: & mut TTerm
-  ) {
-    match * term {
-      TTerm::T(ref mut term) => {
-        * term = self.subst(map, term).0
-      },
-      TTerm::P { ref mut args, .. } => {
-        for arg in args.iter_mut() {
-          * arg = self.subst(map, arg).0
-        }
-      },
-    }
-  }
-
-  /// Fixed-point variable substitution.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  fn subst_fp(& self, map: & VarHMap<Term>, term: & Term) -> (Term, bool) {
-    let (mut term, mut changed) = self.subst(map, term) ;
-    while changed {
-      let (new_term, new_changed) = self.subst(map, & term) ;
-      term = new_term ;
-      changed = new_changed
-    }
-    (term, changed)
-  }
-
-  /// Total variable substition, returns `None` if there was a variable in the
-  /// term that was not in the map.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
-  /// Used for substitutions between different same clause / predicate scopes.
-  fn subst_total(
-    & self, map: & VarHMap<Term>, term: & Term
-  ) -> Option< (Term, bool) > {
-    self.subst_custom(map, term, true)
-  }
-
-  /// Variable substitution.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
-  /// The substitution *fails* by returning `None` if
-  ///
-  /// - `total` and the term contains a variable that's not in the map
-  ///
-  /// Used by qualifier extraction.
-  fn subst_custom(
-    & self, map: & VarHMap<Term>, term: & Term, total: bool
-  ) -> Option<(Term, bool)> ;
-}
-
-impl SubstExt for Factory {
-  fn subst_custom(
-    & self, map: & VarHMap<Term>, term: & Term, total: bool
-  ) -> Option<(Term, bool)> {
-    let mut current = term ;
-    // Stack for traversal.
-    let mut stack = vec![] ;
-    // Number of substitutions performed.
-    let mut subst_count = 0 ;
-
-    'go_down: loop {
-
-      // Go down.
-      let mut term = match * current.get() {
-        RTerm::Var(var) => if let Some(term) = map.get(& var) {
-          subst_count += 1 ;
-          term.clone()
-        } else if total {
-          return None
-        } else {
-          current.clone()
-        },
-        RTerm::App { op, ref args } => {
-          current = & args[0] ;
-          stack.push(
-            (op, & args[1..], Vec::with_capacity( args.len() ))
-          ) ;
-          continue 'go_down
-        },
-        _ => current.clone(),
-      } ;
-
-      // Go up.
-      'go_up: while let Some(
-        (op, args, mut new_args)
-      ) = stack.pop() {
-        new_args.push( term ) ;
-        
-        if args.is_empty() {
-          term = self.mk( RTerm::App { op, args: new_args } ) ;
-          continue 'go_up // Just for readability
-        } else {
-          current = & args[0] ;
-          stack.push( (op, & args[1..], new_args) ) ;
-          continue 'go_down
-        }
-      }
-
-      // Only way to get here is if the stack is empty, meaning we're done.
-      return Some( (term, subst_count > 0) )
-    }
-  }
-}
-
-
-
-
-
-impl SubstExt for Instance {
-  fn subst_custom(
-    & self, map: & VarHMap<Term>, term: & Term, total: bool
-  ) -> Option<(Term, bool)> {
-    self.factory.subst_custom(map, term, total)
-  }
-}
-
-
-
-
 
 
 /// Stores the instance: the clauses, the factory and so on.
@@ -429,8 +226,6 @@ impl SubstExt for Instance {
 ///
 /// - tests for `pred_to_clauses` consistency
 pub struct Instance {
-  /// Term factory.
-  factory: Factory,
   /// Constants constructed so far.
   consts: HConSet<RTerm>,
   /// Predicates.
@@ -453,24 +248,21 @@ pub struct Instance {
 }
 impl Instance {
   /// Instance constructor.
-  pub fn new(
-    term_capa: usize, clauses_capa: usize, pred_capa: usize
-  ) -> Instance {
+  pub fn new() -> Instance {
+    let pred_capa = conf.instance.pred_capa ;
+    let clause_capa = conf.instance.clause_capa ;
     let mut instance = Instance {
-      factory: RwLock::new(
-        HashConsign::with_capacity(term_capa)
-      ),
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
-      clauses: ClsMap::with_capacity(clauses_capa),
+      clauses: ClsMap::with_capacity(clause_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
-      clause_to_preds: ClsMap::with_capacity(clauses_capa),
+      clause_to_preds: ClsMap::with_capacity(clause_capa),
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
-    let (wan,too) = (instance.one(), instance.zero()) ;
+    let (wan,too) = (term::one(), term::zero()) ;
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
@@ -868,60 +660,6 @@ impl Instance {
     self.check("after `push_clause`")
   }
 
-  /// Hashconses a term.
-  pub fn mk(& self, term: RTerm) -> Term {
-    self.factory.mk(term)
-  }
-
-  /// Creates a variable.
-  pub fn var(& self, v: VarIdx) -> Term {
-    self.factory.mk( RTerm::Var(v) )
-  }
-  /// Creates a constant.
-  pub fn int<I: Into<Int>>(& self, i: I) -> Term {
-    self.factory.mk(
-      RTerm::Int( i.into() )
-    )
-  }
-  /// Creates the constant `0`.
-  pub fn zero(& self) -> Term {
-    self.int( Int::zero() )
-  }
-  /// Creates the constant `1`.
-  pub fn one(& self) -> Term {
-    self.int( Int::one() )
-  }
-  /// Creates a boolean.
-  pub fn bool(& self, b: bool) -> Term {
-    self.factory.mk( RTerm::Bool(b) )
-  }
-  /// Creates an operator application.
-  pub fn op(& self, op: Op, args: Vec<Term>) -> Term {
-    op.simplify(self, args)
-  }
-
-  /// Creates a less than or equal to.
-  pub fn le(& self, lhs: Term, rhs: Term) -> Term {
-    self.op(Op::Le, vec![lhs, rhs])
-  }
-  /// Creates a less than.
-  pub fn lt(& self, lhs: Term, rhs: Term) -> Term {
-    self.op(Op::Lt, vec![lhs, rhs])
-  }
-  /// Creates a greater than.
-  pub fn gt(& self, lhs: Term, rhs: Term) -> Term {
-    self.op(Op::Gt, vec![lhs, rhs])
-  }
-  /// Creates a greater than or equal to.
-  pub fn ge(& self, lhs: Term, rhs: Term) -> Term {
-    self.op(Op::Ge, vec![lhs, rhs])
-  }
-
-  /// Creates an equality.
-  pub fn eq(& self, lhs: Term, rhs: Term) -> Term {
-    self.op(Op::Eql, vec![lhs, rhs])
-  }
-
   /// Simplifies the clauses.
   ///
   /// - propagates variable equalities in clauses' lhs
@@ -1013,7 +751,7 @@ impl Instance {
                     var
                   } ;
                   let prev = rep_cst_map.insert(
-                    var, self.factory.mk( RTerm::Int(int.clone()) )
+                    var, term::int( int.clone() )
                   ) ;
                   if let Some(prev) = prev {
                     if prev.int_val().unwrap() != int {
@@ -1032,11 +770,7 @@ impl Instance {
                     if prev != args[1] {
                       terms_to_add.push(
                         TTerm::T(
-                          self.factory.mk(
-                            RTerm::App {
-                              op: Op::Eql, args: vec![ args[1].clone(), prev ]
-                            }
-                          )
+                          term::app(Op::Eql, vec![ args[1].clone(), prev ])
                         )
                       )
                     }
@@ -1048,11 +782,7 @@ impl Instance {
                     if prev != args[0] {
                       terms_to_add.push(
                         TTerm::T(
-                          self.factory.mk(
-                            RTerm::App {
-                              op: Op::Eql, args: vec![ args[0].clone(), prev ]
-                            }
-                          )
+                          term::app(Op::Eql, vec![ args[0].clone(), prev ])
                         )
                       )
                     }
@@ -1112,13 +842,7 @@ impl Instance {
               if * trm != nu_trm {
                 clause.lhs.push(
                   TTerm::T(
-                    self.factory.mk(
-                      RTerm::App {
-                        op: Op::Eql, args: vec![
-                          nu_trm, trm.clone()
-                        ]
-                      }
-                    )
+                    term::app(Op::Eql, vec![ nu_trm, trm.clone() ])
                   )
                 )
               }
@@ -1135,14 +859,14 @@ impl Instance {
             if cycle_set.contains(& nu_rep) {
               // Cycle, we make `nu_rep` the representative and we done.
               cycle_set.remove(nu_rep) ;
-              break self.factory.mk( RTerm::Var(* nu_rep) )
+              break term::var(* nu_rep)
             } else {
               // Following equivalence relation.
               rep = * nu_rep
             }
           } else {
             // Reached the top-most representative.
-            break self.factory.mk( RTerm::Var(rep) )
+            break term::var(rep)
           }
         } ;
 
@@ -1152,11 +876,7 @@ impl Instance {
             if cst_term != trm {
               clause.lhs.push(
                 TTerm::T(
-                  self.factory.mk(
-                    RTerm::App {
-                      op: Op::Eql, args: vec![ cst_term.clone(), trm.clone() ]
-                    }
-                  )
+                  term::app(Op::Eql, vec![ cst_term.clone(), trm.clone() ])
                 )
               )
             }
@@ -1213,15 +933,15 @@ impl Instance {
 
       for (var, term) in & stable_var_map {
         // log_info!{ "1" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & var_term_map, & term
         ).0 ;
         // log_info!{ "2" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & rep_cst_map, & term
         ).0 ;
         // log_info!{ "3" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & stable_var_map, & term
         ).0 ;
         let _prev = last_stable_var_map.insert(
@@ -1231,19 +951,19 @@ impl Instance {
       }
       for (var, term) in & var_term_map {
         // log_info!{ "4" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & rep_cst_map, & term
         ).0 ;
         // log_info!{ "5" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & var_term_map, & term
         ).0 ;
         // log_info!{ "6" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & rep_cst_map, & term
         ).0 ;
         // log_info!{ "7" }
-        let term = self.factory.subst_fp(
+        let term = term::subst_fp(
           & stable_var_map, & term
         ).0 ;
         let _prev = last_stable_var_map.insert(* var, term) ;
@@ -1266,15 +986,13 @@ impl Instance {
 
       use mylib::coll::* ;
       for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
-        self.factory.tterm_subst(& last_stable_var_map, tterm)
+        tterm.subst(& last_stable_var_map)
       }
 
       // Counter for swap remove in lhs.
       let mut cnt = 0 ;
       'lhs_subst: while cnt < clause.lhs.len() {
-        self.factory.tterm_subst(
-          & last_stable_var_map, & mut clause.lhs[cnt]
-        ) ;
+        clause.lhs[cnt].subst(& last_stable_var_map) ;
         match clause.lhs[cnt].bool() {
           Some(true) => {
             let _ = clause.lhs.swap_remove(cnt) ;
@@ -1288,15 +1006,13 @@ impl Instance {
         }
       }
 
-      self.factory.tterm_subst(& last_stable_var_map, & mut clause.rhs) ;
+      clause.rhs.subst(& last_stable_var_map) ;
       match clause.rhs.bool() {
         Some(true) => {
           clauses_to_rm.push(clause_index) ;
           continue 'clause_iter
         },
-        Some(false) => clause.rhs = TTerm::T(
-          self.factory.mk( RTerm::Bool(false) )
-        ),
+        Some(false) => clause.rhs = TTerm::T( term::fls() ),
         None => (),
       }
 
@@ -1355,14 +1071,14 @@ impl Instance {
                   // later.
                   let mut map = map.clone() ;
                   let _ = map.insert(
-                    clause_var_index, self.var(pred_var_index)
+                    clause_var_index, term::var(pred_var_index)
                   ) ;
                   to_add.push(map)
                 } else {
                   // Current clause variable not bound in this map, just add
                   // the new binding.
                   let _ = map.insert(
-                    clause_var_index, self.var(pred_var_index)
+                    clause_var_index, term::var(pred_var_index)
                   ) ;
                 }
               }
@@ -1398,7 +1114,7 @@ impl Instance {
 
       match * tterm {
         TTerm::T(ref term) => for map in & maps {
-          if let Some( (term, true) ) = self.subst_total(map, term) {
+          if let Some( (term, true) ) = term::subst_total(map, term) {
             let term = if let Some(term) = term.rm_neg() {
               term
             } else { term } ;
@@ -1877,506 +1593,5 @@ impl<'a> PebcakFmt<'a> for Instance {
     }
 
     Ok(())
-  }
-}
-
-
-
-
-
-
-
-
-#[test]
-fn simplify() {
-  let instance = & Instance::new(10, 10, 10) ;
-  let tru = instance.bool(true) ;
-  let fls = instance.bool(false) ;
-  let var_1 = instance.var( 7.into() ) ;
-  let var_2 = instance.var( 2.into() ) ;
-
-  assert_eq!( fls, Op::And.simplify(instance, vec![]) ) ;
-  assert_eq!( tru, Op::Or.simplify(instance, vec![]) ) ;
-  assert_eq!( var_2, Op::And.simplify(instance, vec![ var_2.clone() ]) ) ;
-  assert_eq!( var_1, Op::Or.simplify(instance, vec![ var_1.clone() ]) ) ;
-  let and = instance.op(Op::And, vec![ var_2.clone(), var_1.clone() ]) ;
-  assert_eq!(
-    and, Op::And.simplify(instance, vec![ var_2.clone(), var_1.clone() ])
-  ) ;
-  let or = instance.op(Op::Or, vec![ var_2.clone(), and.clone() ]) ;
-  assert_eq!(
-    or, Op::Or.simplify(instance, vec![ var_2.clone(), and.clone() ])
-  ) ;
-}
-
-
-
-
-
-#[cfg(test)]
-mod evaluation {
-  // use common::* ;
-  use instance::* ;
-
-  /// Just creates an instance.
-  fn instance() -> Instance {
-    Instance::new(100, 100, 100)
-  }
-
-  #[test]
-  fn cst_add() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let sum = instance.op( Op::Add, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => sum, 10
-    )
-  }
-
-  #[test]
-  fn cst_sub_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let sub = instance.op( Op::Sub, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => sub, 4
-    )
-  }
-
-  #[test]
-  fn cst_sub_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let sub = instance.op( Op::Sub, vec![ c_1 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => sub, (-7)
-    )
-  }
-
-  #[test]
-  fn cst_mul() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let mul = instance.op( Op::Mul, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => mul, 21
-    )
-  }
-
-  #[test]
-  fn cst_div() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let div = instance.op( Op::Div, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => div, 2
-    )
-  }
-
-  #[test]
-  fn cst_mod() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let m0d = instance.op( Op::Mod, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      int model => m0d, 1
-    )
-  }
-
-  #[test]
-  fn cst_gt_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => gt
-    )
-  }
-
-  #[test]
-  fn cst_gt_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(7) ;
-    let gt = instance.op( Op::Gt, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => gt
-    )
-  }
-
-  #[test]
-  fn cst_ge_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => ge
-    )
-  }
-
-  #[test]
-  fn cst_ge_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(7) ;
-    let ge = instance.op( Op::Ge, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => ge
-    )
-  }
-
-  #[test]
-  fn cst_le_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => le
-    )
-  }
-
-  #[test]
-  fn cst_le_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(7) ;
-    let le = instance.op( Op::Le, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => le
-    )
-  }
-
-  #[test]
-  fn cst_lt_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => lt
-    )
-  }
-
-  #[test]
-  fn cst_lt_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(7) ;
-    let lt = instance.op( Op::Lt, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => lt
-    )
-  }
-
-  #[test]
-  fn cst_eq_1() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(7) ;
-    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => eq
-    )
-  }
-
-  #[test]
-  fn cst_eq_2() {
-    let instance = instance() ;
-    let c_1 = instance.int(7) ;
-    let c_2 = instance.int(3) ;
-    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => eq
-    )
-  }
-
-  #[test]
-  fn cst_eq_3() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => eq
-    )
-  }
-
-  #[test]
-  fn cst_eq_4() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(true) ;
-    let eq = instance.op( Op::Eql, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => eq
-    )
-  }
-
-  #[test]
-  fn cst_impl_1() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(false) ;
-    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => imp
-    )
-  }
-
-  #[test]
-  fn cst_impl_2() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(false) ;
-    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => imp
-    )
-  }
-
-  #[test]
-  fn cst_impl_3() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(true) ;
-    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => imp
-    )
-  }
-
-  #[test]
-  fn cst_impl_4() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let imp = instance.op( Op::Impl, vec![ c_1, c_2 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => imp
-    )
-  }
-
-  #[test]
-  fn cst_not_1() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let not = instance.op( Op::Not, vec![ c_1 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => not
-    )
-  }
-
-  #[test]
-  fn cst_not_2() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let not = instance.op( Op::Not, vec![ c_1 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => not
-    )
-  }
-
-  #[test]
-  fn cst_and_1() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(true) ;
-    let c_4 = instance.bool(true) ;
-    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => and
-    )
-  }
-
-  #[test]
-  fn cst_and_2() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(false) ;
-    let c_4 = instance.bool(true) ;
-    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => and
-    )
-  }
-
-  #[test]
-  fn cst_and_3() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(true) ;
-    let c_4 = instance.bool(true) ;
-    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => and
-    )
-  }
-
-  #[test]
-  fn cst_and_4() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(false) ;
-    let c_3 = instance.bool(false) ;
-    let c_4 = instance.bool(true) ;
-    let and = instance.op( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => and
-    )
-  }
-
-  #[test]
-  fn cst_or_1() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(true) ;
-    let c_4 = instance.bool(true) ;
-    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => or
-    )
-  }
-
-  #[test]
-  fn cst_or_2() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(false) ;
-    let c_4 = instance.bool(true) ;
-    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => or
-    )
-  }
-
-  #[test]
-  fn cst_or_3() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(true) ;
-    let c_3 = instance.bool(true) ;
-    let c_4 = instance.bool(true) ;
-    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => or
-    )
-  }
-
-  #[test]
-  fn cst_or_4() {
-    let instance = instance() ;
-    let c_1 = instance.bool(true) ;
-    let c_2 = instance.bool(false) ;
-    let c_3 = instance.bool(false) ;
-    let c_4 = instance.bool(true) ;
-    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool model => or
-    )
-  }
-
-  #[test]
-  fn cst_or_5() {
-    let instance = instance() ;
-    let c_1 = instance.bool(false) ;
-    let c_2 = instance.bool(false) ;
-    let c_3 = instance.bool(false) ;
-    let c_4 = instance.bool(false) ;
-    let or = instance.op( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-    let model = model!() ;
-    assert_eval!(
-      bool not model => or
-    )
-  }
-
-  #[test]
-  fn models() {
-    let instance = instance() ;
-    let v_1 = instance.var( 0.into() ) ;
-    let v_2 = instance.var( 1.into() ) ;
-    let v_3 = instance.var( 2.into() ) ;
-
-
-    let model_1 = model!( true, 2, 3 ) ;
-    let model_2 = model!( true, 7, 0 ) ;
-
-    // (7 - v_2) + (v_2 * 2) + (- v_3)
-    let lhs = instance.op(
-      Op::Add, vec![
-        instance.op( Op::Sub, vec![ instance.int(7), v_2.clone() ] ),
-        instance.op( Op::Mul, vec![ v_2.clone(), instance.int(2) ] ),
-        instance.op( Op::Sub, vec![ v_3.clone() ] ),
-      ]
-    ) ;
-    assert_eval!(int model_1 => lhs, 6) ;
-    assert_eval!(int model_2 => lhs, 14) ;
-
-    // v_3 * 3
-    let rhs = instance.op(
-      Op::Mul, vec![ v_3.clone(), instance.int(3) ]
-    ) ;
-    assert_eval!(int model_1 => rhs, 9) ;
-    assert_eval!(int model_2 => rhs, 0) ;
-
-    // 7 + v_2 + (- v_3) > v_3 * 3
-    let gt = instance.op(
-      Op::Gt, vec![ lhs.clone(), rhs.clone() ]
-    ) ;
-    assert_eval!(bool not model_1 => gt) ;
-    assert_eval!(bool     model_2 => gt) ;
-
-    // v_1 && (7 + v_2 + (- v_3) > v_3 * 3)
-    let and = instance.op(
-      Op::And, vec![ v_1.clone(), gt.clone() ]
-    ) ;
-    assert_eval!(bool not model_1 => and) ;
-    assert_eval!(bool     model_2 => and) ;
-
-    ()
   }
 }

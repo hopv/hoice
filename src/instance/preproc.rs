@@ -250,7 +250,7 @@ fn force_false<Preds: IntoIterator<Item = PrdIdx>>(
 ) -> Res<usize> {
   let mut clauses_dropped = 0 ;
   let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
-  let fls = TTerm::T( instance.bool(false) ) ;
+  let fls = TTerm::T( term::fls() ) ;
   for pred in preds.into_iter() {
     debug_assert!( clause_lhs.is_empty() ) ;
     debug_assert!( clause_rhs.is_empty() ) ;
@@ -275,7 +275,7 @@ fn force_true<Preds: IntoIterator<Item = PrdIdx>>(
 ) -> Res<usize> {
   let mut clauses_dropped = 0 ;
   let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
-  let tru = TTerm::T( instance.bool(true) ) ;
+  let tru = TTerm::T( term::tru() ) ;
   
   for pred in preds.into_iter() {
     debug_assert!( clause_lhs.is_empty() ) ;
@@ -310,13 +310,13 @@ fn force_true<Preds: IntoIterator<Item = PrdIdx>>(
 
 /// Applies a substitution to a top term.
 fn tterm_subst(
-  factory: & Factory, subst: & VarHMap<Term>, tterm: & TTerm
+  subst: & VarHMap<Term>, tterm: & TTerm
 ) -> Res<TTerm> {
   match * tterm {
     TTerm::P { pred, ref args } => {
       let mut new_args = VarMap::with_capacity( args.len() ) ;
       for term in args {
-        if let Some((term, _)) = factory.subst_total(
+        if let Some((term, _)) = term::subst_total(
           subst, term
         ) {
           new_args.push(term)
@@ -326,7 +326,7 @@ fn tterm_subst(
       }
       Ok( TTerm::P { pred, args: new_args } )
     },
-    TTerm::T(ref term) => if let Some((term, _)) = factory.subst_total(
+    TTerm::T(ref term) => if let Some((term, _)) = term::subst_total(
       subst, term
     ) {
       Ok( TTerm::T(term) )
@@ -373,7 +373,7 @@ fn force_pred<Preds: IntoIterator<
             ).collect() ;
 
             for tterm in & tterms {
-              let tterm = tterm_subst(& instance.factory, & args, tterm) ? ;
+              let tterm = tterm_subst(& args, tterm) ? ;
               match tterm.bool() {
                 Some(true) => (),
                 Some(false) => {
@@ -415,7 +415,7 @@ fn force_pred<Preds: IntoIterator<
         ).collect() ;
 
         for tterm in & tterms {
-          let tterm = tterm_subst(& instance.factory, & args, tterm) ? ;
+          let tterm = tterm_subst(& args, tterm) ? ;
           match tterm.bool() {
             Some(true) => {
               clauses_to_rm.insert(clause) ;
@@ -423,7 +423,7 @@ fn force_pred<Preds: IntoIterator<
             },
             Some(false) => {
               terms_to_add.clear() ;
-              terms_to_add.push( TTerm::T( instance.bool(false) ) ) ;
+              terms_to_add.push( TTerm::T( term::fls() ) ) ;
               break 'clause_iter_rhs
             },
             None => terms_to_add.push(tterm),
@@ -480,21 +480,21 @@ fn term_of_app<
   for (index, arg) in args.into_index_iter() {
     if let Some(var) = arg.var_idx() {
       let _ = app_vars.insert(var) ;
-      if let Some(pre) = map.insert(var, instance.var(index)) {
+      if let Some(pre) = map.insert(var, term::var(index)) {
         tterms.push(
-          TTerm::T( instance.eq( instance.var(index), pre ) )
+          TTerm::T( term::eq( term::var(index), pre ) )
         )
       }
     } else if let Some(b) = arg.bool() {
-      let var = instance.var(index) ;
+      let var = term::var(index) ;
       tterms.push(
         TTerm::T(
-          if b { var } else { instance.op(Op::Not, vec![var]) }
+          if b { var } else { term::app(Op::Not, vec![var]) }
         )
       )
     } else if let Some(i) = arg.int() {
       tterms.push(
-        TTerm::T( instance.eq( instance.var(index), instance.int(i) ) )
+        TTerm::T( term::eq( term::var(index), term::int(i) ) )
       )
     } else {
       return Ok(None)
@@ -509,7 +509,7 @@ fn term_of_app<
     }
     let tterm_vars = tterm.vars() ;
     if tterm_vars.is_subset( & app_vars ) {
-      let tterm = tterm_subst(& instance.factory, & map, & tterm) ? ;
+      let tterm = tterm_subst(& map, & tterm) ? ;
       tterms.push(tterm)
     } else if tterm_vars.is_disjoint(& app_vars) {
       ()
@@ -672,9 +672,9 @@ impl RedStrat for Trivial {
 //                     } else if self.false_preds.contains(& pred) {
 //                       ()
 //                     } else {
-//                       let term = instance.op(
+//                       let term = term::app(
 //                         Op::Not, vec![
-//                           instance.op(
+//                           term::app(
 //                             Op::And, tterms.into_iter().map(
 //                               |tterm| if let TTerm::T(term) = tterm {
 //                                 term
@@ -803,7 +803,7 @@ where Slver: Solver<'kid, Parser> {
           }
         ).collect() ;
         if trivial_impl(
-          solver, & vars, & lhs, & instance.bool(false)
+          solver, & vars, & lhs, & term::fls()
         ) ? {
           continue
         }

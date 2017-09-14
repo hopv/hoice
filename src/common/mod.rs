@@ -15,8 +15,9 @@ pub use rsmt2::errors::Res as SmtRes ;
 pub use num::{ Zero, One, Signed } ;
 
 pub use errors::* ;
-pub use self::wrappers::* ;
-pub use term::Val ;
+pub use term ;
+pub use term::{ RTerm, Term, TTerm, Val, Op, Typ } ;
+pub use instance::Instance ;
 
 mod wrappers ;
 pub mod config ;
@@ -30,7 +31,8 @@ pub mod consts ;
 pub mod profiling ;
 
 pub use self::config::* ;
-pub use profiling::{ Profiler, CanPrint } ;
+pub use self::profiling::{ Profiler, CanPrint } ;
+pub use self::wrappers::* ;
 
 
 lazy_static!{
@@ -60,10 +62,10 @@ pub enum Either<L, R> {
 pub type Int = ::num::BigInt ;
 
 /// Maps predicates to optional terms.
-pub type Candidates = PrdMap< Option<::instance::Term> > ;
+pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Maps predicates to terms.
-pub type Model = Vec< (PrdIdx, Vec<::instance::TTerm>) > ;
+pub type Model = Vec< (PrdIdx, Vec<TTerm>) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
