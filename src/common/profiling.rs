@@ -4,7 +4,7 @@ In `bench` mode, `Profiler` is a unit structure. Also, all macros are
 deactivated, so all profiling is completely removed.
 "#]
 
-#[warn(unused_imports)]
+#[allow(unused_imports)]
 use std::time::{ Instant, Duration } ;
 
 use common::* ;
