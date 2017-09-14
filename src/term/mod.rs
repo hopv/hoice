@@ -419,6 +419,110 @@ impl RTerm {
       _ => None,
     }
   }
+
+
+  /// Turns a real term in a hashconsed one.
+  #[inline]
+  pub fn to_hcons(& self) -> Term {
+    term( self.clone() )
+  }
+
+
+
+  /// Variable substitution.
+  ///
+  /// The `total` flag causes substitution to fail if a variable that's not in
+  /// `map`.
+  ///
+  /// The boolean returned is true if at least on substitution occured.
+  pub fn subst_custom(
+    & self, map: & VarHMap<Term>, total: bool
+  ) -> Option<(Term, bool)> {
+    let mut current = & self.to_hcons() ;
+    // Stack for traversal.
+    let mut stack = vec![] ;
+    // Number of substitutions performed.
+    let mut subst_count = 0 ;
+
+    'go_down: loop {
+
+      // Go down.
+      let mut term = match * current.get() {
+        RTerm::Var(var) => if let Some(term) = map.get(& var) {
+          subst_count += 1 ;
+          term.clone()
+        } else if total {
+          return None
+        } else {
+          current.clone()
+        },
+        RTerm::App { op, ref args } => {
+          current = & args[0] ;
+          stack.push(
+            (op, & args[1..], Vec::with_capacity( args.len() ))
+          ) ;
+          continue 'go_down
+        },
+        _ => current.clone(),
+      } ;
+
+      // Go up.
+      'go_up: while let Some(
+        (op, args, mut new_args)
+      ) = stack.pop() {
+        new_args.push( term ) ;
+        
+        if args.is_empty() {
+          term = app(op, new_args) ;
+          continue 'go_up // Just for readability
+        } else {
+          current = & args[0] ;
+          stack.push( (op, & args[1..], new_args) ) ;
+          continue 'go_down
+        }
+      }
+
+      // Only way to get here is if the stack is empty, meaning we're done.
+      return Some( (term, subst_count > 0) )
+    }
+  }
+
+  /// Variable substitution.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  ///
+  /// Used for substitutions in the same clause / predicate scope.
+  pub fn subst(& self, map: & VarHMap<Term>) -> (Term, bool) {
+    self.subst_custom(map, false).expect("total substitution can't fail")
+  }
+
+  /// Fixed-point (partial) variable substitution.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occured.
+  pub fn subst_fp(& self, map: & VarHMap<Term>) -> (Term, bool) {
+    let (mut term, mut changed) = self.subst(map) ;
+    while changed {
+      let (new_term, new_changed) = self.subst(map) ;
+      term = new_term ;
+      changed = new_changed
+    }
+    (term, changed)
+  }
+
+  /// Total variable substition, returns `None` if there was a variable in the
+  /// term that was not in the map.
+  ///
+  /// Returns the new term and a boolean indicating whether any substitution
+  /// occsured.
+  ///
+  /// Used for substitutions between different same clause / predicate scopes.
+  pub fn subst_total(& self, map: & VarHMap<Term>) -> Option< (Term, bool) > {
+    self.subst_custom(map, true)
+  }
+
+
 }
 impl_fmt!{
   RTerm(self, fmt) {
@@ -430,6 +534,19 @@ impl_fmt!{
       "fatal error during real term pretty printing"
     ) ;
     write!(fmt, "{}", s)
+  }
+}
+impl<'a> PebcakFmt<'a> for RTerm {
+  type Info = & 'a VarMap< ::instance::info::VarInfo > ;
+  fn pebcak_err(& self) -> ErrorKind {
+    "during term pebcak formatting".into()
+  }
+  fn pebcak_io_fmt<W: Write>(
+    & self, w: & mut W, vars: & 'a VarMap< ::instance::info::VarInfo >
+  ) -> IoRes<()> {
+    self.write(
+      w, |w, var| w.write_all( vars[var].as_bytes() )
+    )
   }
 }
 
@@ -530,21 +647,44 @@ impl TTerm {
 
   /// In-place variable substitution for top terms.
   ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
   /// Used for substitutions in the same clause / predicate scope.
   pub fn subst(
     & mut self, map: & VarHMap<Term>
   ) {
     match * self {
       TTerm::T(ref mut term) => {
-        * term = term::subst(map, term).0
+        * term = term.subst(map).0
       },
       TTerm::P { ref mut args, .. } => {
         for arg in args.iter_mut() {
-          * arg = term::subst(map, arg).0
+          * arg = arg.subst(map).0
         }
+      },
+    }
+  }
+
+  /// Total variable substitution for top terms.
+  ///
+  /// Used for substitutions in different clause / predicate scope.
+  pub fn subst_total(
+    & self, map: & VarHMap<Term>
+  ) -> Res<TTerm> {
+    match * self {
+      TTerm::P { pred, ref args } => {
+        let mut new_args = VarMap::with_capacity( args.len() ) ;
+        for term in args {
+          if let Some((term, _)) = term.subst_total(map) {
+            new_args.push(term)
+          } else {
+            bail!("total substitution failed")
+          }
+        }
+        Ok( TTerm::P { pred, args: new_args } )
+      },
+      TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
+        Ok( TTerm::T(term) )
+      } else {
+        bail!("total substitution failed")
       },
     }
   }

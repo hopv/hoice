@@ -15,6 +15,11 @@ lazy_static!{
   ) ;
 }
 
+/// Creates a term.
+#[inline(always)]
+pub fn term(t: RTerm) -> Term {
+  factory.mk(t)
+}
 
 /// Creates a variable.
 #[inline(always)]
@@ -94,66 +99,6 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
 
 
 
-
-
-#[doc = r#"Variable substitution.
-
-The `total` flag causes substitution to fail if a variable that's not in
-`map`.
-
-The boolean returned is true if at least on substitution occured.
-"#]
-pub fn subst_custom(
-  map: & VarHMap<Term>, term: & Term, total: bool
-) -> Option<(Term, bool)> {
-  let mut current = term ;
-  // Stack for traversal.
-  let mut stack = vec![] ;
-  // Number of substitutions performed.
-  let mut subst_count = 0 ;
-
-  'go_down: loop {
-
-    // Go down.
-    let mut term = match * current.get() {
-      RTerm::Var(var) => if let Some(term) = map.get(& var) {
-        subst_count += 1 ;
-        term.clone()
-      } else if total {
-        return None
-      } else {
-        current.clone()
-      },
-      RTerm::App { op, ref args } => {
-        current = & args[0] ;
-        stack.push(
-          (op, & args[1..], Vec::with_capacity( args.len() ))
-        ) ;
-        continue 'go_down
-      },
-      _ => current.clone(),
-    } ;
-
-    // Go up.
-    'go_up: while let Some(
-      (op, args, mut new_args)
-    ) = stack.pop() {
-      new_args.push( term ) ;
-      
-      if args.is_empty() {
-        term = app(op, new_args) ;
-        continue 'go_up // Just for readability
-      } else {
-        current = & args[0] ;
-        stack.push( (op, & args[1..], new_args) ) ;
-        continue 'go_down
-      }
-    }
-
-    // Only way to get here is if the stack is empty, meaning we're done.
-    return Some( (term, subst_count > 0) )
-  }
-}
 
 
 
@@ -290,55 +235,4 @@ pub fn simplify(
     _ => (op, args),
   } ;
   factory.mk( RTerm::App { op, args } )
-}
-
-
-
-
-
-
-
-
-
-
-
-/// Variable substitution.
-///
-/// Returns the new term and a boolean indicating whether any substitution
-/// occured.
-///
-/// Used for substitutions in the same clause / predicate scope.
-pub fn subst(
-  map: & VarHMap<Term>, term: & Term
-) -> (Term, bool) {
-  subst_custom(map, term, false).expect("total substitution can't fail")
-}
-
-
-
-/// Fixed-point variable substitution.
-///
-/// Returns the new term and a boolean indicating whether any substitution
-/// occured.
-pub fn subst_fp(map: & VarHMap<Term>, term: & Term) -> (Term, bool) {
-  let (mut term, mut changed) = subst(map, term) ;
-  while changed {
-    let (new_term, new_changed) = subst(map, & term) ;
-    term = new_term ;
-    changed = new_changed
-  }
-  (term, changed)
-}
-
-/// Total variable substition, returns `None` if there was a variable in the
-/// term that was not in the map.
-///
-/// Returns the new term and a boolean indicating whether any substitution
-/// occured.
-///
-/// Used for substitutions between different same clause / predicate scopes.
-pub fn subst_total(
-  map: & VarHMap<Term>, term: & Term
-) -> Option< (Term, bool) > {
-  subst_custom(map, term, true)
 }
