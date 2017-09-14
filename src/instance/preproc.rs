@@ -189,7 +189,9 @@ fn trivial_impl<'kid, S: Solver<'kid, Parser>>(
 ) -> Res<bool> {
   solver.push(1) ? ;
   for var in vars {
-    solver.declare_const(& var.idx, & var.typ, & ()) ?
+    if var.active {
+      solver.declare_const(& var.idx, & var.typ, & ()) ?
+    }
   }
   solver.assert( & NegImplWrap { lhs, rhs }, & () ) ? ;
   let sat = solver.check_sat() ? ;

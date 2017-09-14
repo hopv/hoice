@@ -67,9 +67,16 @@ impl_fmt!{
 
 
 /// A clause.
+///
+/// # Invariants
+///
+/// - if `! vars[var].active`, then `var` does not appear in `lhs` or `rhs`
 pub struct Clause {
+  /// Variables of the clause.
   vars: VarMap<VarInfo>,
+  /// Terms of the left-hand side, understood as a conjunction.
   lhs: Vec<TTerm>,
+  /// Single term right-hand side.
   rhs: TTerm,
 }
 impl Clause {
@@ -78,6 +85,38 @@ impl Clause {
     vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
   ) -> Self {
     Clause { vars, lhs, rhs }
+  }
+
+  /// Checks a quest is well-formed.
+  #[cfg(debug_assertions)]
+  pub fn check(& self) -> Res<()> {
+    use std::iter::Extend ;
+    let mut vars = VarSet::with_capacity( self.vars.len() ) ;
+    for tterm in & self.lhs {
+      vars.extend( tterm.vars() )
+    }
+    vars.extend( self.rhs.vars() ) ;
+    for var in vars {
+      if ! self.vars[var].active {
+        bail!(
+          "ill-formed clause, \
+          variable {} appears in the clause but is not active"
+        )
+      }
+    }
+    Ok(())
+  }
+  #[cfg(not(debug_assertions))]
+  #[inline(always)]
+  pub fn check(& self) -> Res<()> {
+    Ok(())
+  }
+
+  /// Deactivates a variable.
+  pub fn deactivate(& mut self, var: VarIdx) -> Res<()> {
+    debug_assert!( self.vars[var].active ) ;
+    self.vars[var].active = false ;
+    self.check()
   }
 
   /// LHS accessor.
@@ -414,7 +453,7 @@ pub struct Instance {
 }
 impl Instance {
   /// Instance constructor.
-  pub fn mk(
+  pub fn new(
     term_capa: usize, clauses_capa: usize, pred_capa: usize
   ) -> Instance {
     let mut instance = Instance {
@@ -827,6 +866,11 @@ impl Instance {
     self.clause_to_preds.push( (lhs_preds, rhs_pred) ) ;
     self.clauses.push(clause) ;
     self.check("after `push_clause`")
+  }
+
+  /// Hashconses a term.
+  pub fn mk(& self, term: RTerm) -> Term {
+    self.factory.mk(term)
   }
 
   /// Creates a variable.
@@ -1814,6 +1858,24 @@ impl<'a> PebcakFmt<'a> for Instance {
       write!(w, " }}\n") ?
     }
 
+    write!(w, "\nclause to preds:\n") ? ;
+    for (clause, & (ref lhs, ref rhs)) in self.clause_to_preds.index_iter() {
+      write!(w, "  {}: lhs {{", clause) ? ;
+      if ! lhs.is_empty() {
+        write!(w, "\n   ") ? ;
+        for pred in lhs {
+          write!(w, " {}", self[* pred]) ?
+        }
+        write!(w, "\n") ?
+      }
+      write!(w, "  }}, rhs ") ? ;
+      if let Some(pred) = * rhs {
+        write!(w, "{}\n", self[pred])
+      } else {
+        write!(w, "none\n")
+      } ?
+    }
+
     Ok(())
   }
 }
@@ -1827,7 +1889,7 @@ impl<'a> PebcakFmt<'a> for Instance {
 
 #[test]
 fn simplify() {
-  let instance = & Instance::mk(10, 10, 10) ;
+  let instance = & Instance::new(10, 10, 10) ;
   let tru = instance.bool(true) ;
   let fls = instance.bool(false) ;
   let var_1 = instance.var( 7.into() ) ;
@@ -1892,7 +1954,7 @@ mod evaluation {
 
   /// Just creates an instance.
   fn instance() -> Instance {
-    Instance::mk(100, 100, 100)
+    Instance::new(100, 100, 100)
   }
 
   #[test]

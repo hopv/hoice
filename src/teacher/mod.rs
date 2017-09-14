@@ -520,7 +520,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     }
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
-      self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+      if var.active {
+        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+      }
     }
     self.solver.assert(
       clause, & (true_preds, false_preds, self.instance.preds())

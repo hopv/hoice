@@ -138,7 +138,7 @@ pub trait HasLearnerCore {
   }
   #[cfg(feature = "bench")]
   fn stats(
-    & self, _: Profile, _: Vec< Vec<& 'static str> >
+    & self, _: Profiler, _: Vec< Vec<& 'static str> >
   ) -> bool {
     true
   }

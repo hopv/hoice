@@ -91,7 +91,7 @@ fn read_and_work<R: ::std::io::Read>(
   // Line offset of the parser.
   let mut line_off = 0 ;
   // Instance.
-  let mut instance = Instance::mk(3_000, 42, 42) ;
+  let mut instance = Instance::new(3_000, 42, 42) ;
   // Current model.
   let mut model = None ;
 

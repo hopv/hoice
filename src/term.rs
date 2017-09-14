@@ -82,7 +82,7 @@ impl RTerm {
   ///
   /// ```
   /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let instance = & Instance::new(10, 10, 10) ;
   ///
   /// let term = instance.bool(true) ;
   /// println!("true") ;
@@ -124,7 +124,7 @@ impl RTerm {
   ///
   /// ```
   /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let instance = & Instance::new(10, 10, 10) ;
   ///
   /// let term = instance.bool(true) ;
   /// println!("true") ;
@@ -514,7 +514,7 @@ impl Op {
   ///
   /// ```
   /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let instance = & Instance::new(10, 10, 10) ;
   ///
   /// let tru = instance.bool(true) ;
   /// let fls = instance.bool(false) ;
@@ -540,7 +540,7 @@ impl Op {
   ///
   /// ```
   /// # use hoice_lib::instance::* ;
-  /// let instance = & Instance::mk(10, 10, 10) ;
+  /// let instance = & Instance::new(10, 10, 10) ;
   ///
   /// let var_1 = instance.var( 7.into() ) ;
   /// let n_var_1 = instance.op( Op::Not, vec![ var_1.clone() ] ) ;
@@ -638,7 +638,7 @@ impl Op {
       // },
       _ => (self, args),
     } ;
-    instance.op(op, args)
+    instance.mk( RTerm::App { op, args } )
   }
 
   /// Operator parser.

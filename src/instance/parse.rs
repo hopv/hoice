@@ -512,7 +512,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
         )
       }
-      var_map.push( VarInfo { name: ident.into(), typ, idx } )
+      var_map.push( VarInfo::new(ident.into(), typ, idx) )
     }
     self.char(')') ? ;
     var_map.shrink_to_fit() ;
@@ -943,12 +943,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     mut self, instance: & mut Instance
   ) -> Res<Parsed> {
     self.ws_cmt() ;
+    let mut res = Parsed::Eof ;
 
     while self.has_next() {
       self.char('(') ? ;
       self.ws_cmt() ;
 
-      let res = if self.set_info() ? {
+      res = if self.set_info() ? {
         Parsed::Items
       } else if self.set_logic() ? {
         Parsed::Items
@@ -990,6 +991,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     debug_assert!( self.cxt.mem.is_empty() ) ;
     debug_assert!( self.chars.next().is_none() ) ;
 
-    Ok(Parsed::Eof)
+    Ok(res)
   }
 }
