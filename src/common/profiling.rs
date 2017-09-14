@@ -5,8 +5,7 @@ deactivated, so all profiling is completely removed.
 "#]
 
 #[warn(unused_imports)]
-use std::time::Instant ;
-use std::time::Duration ;
+use std::time::{ Instant, Duration } ;
 
 use common::* ;
 
