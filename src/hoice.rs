@@ -127,11 +127,12 @@ fn read_and_work<R: ::std::io::Read>(
 
       // Check-sat, start class.
       Parsed::CheckSat => {
-
         if conf.preproc.active {
           instance::preproc::work(& mut instance, & profiler) ?
         }
         instance.finalize() ;
+
+        if ! conf.infer { continue 'parse_work }
 
         model = if let Some(model) = instance.is_trivial() ? {
           // Pre-processing already decided satisfiability.
@@ -168,6 +169,8 @@ fn read_and_work<R: ::std::io::Read>(
         }
 
       },
+
+      Parsed::GetModel if ! conf.infer => (),
 
       // Print model if available.
       Parsed::GetModel => if let Some(ref model) = model {

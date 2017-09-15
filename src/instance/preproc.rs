@@ -15,6 +15,7 @@ pub fn work(
 ) -> Res<()> {
 
   profile!{ |profiler| tick "pre-proc" }
+  log_info!{ "starting pre-processing" }
 
   let res = if conf.preproc.simple_red {
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
@@ -31,8 +32,11 @@ pub fn work(
   } else {
     run(instance, profiler, None as Option<::rsmt2::PlainSolver<Parser>>)
   } ;
-  profile!{ |profiler| tick "pre-proc" } ;
+  profile!{ |profiler| mark "pre-proc" } ;
   log_info!{ "done with pre-processing" }
+  log_info!{
+    "done with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+  }
   res
 
 }
@@ -42,31 +46,29 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
 ) -> Res<()> {
   let mut reductor = Reductor::new(solver) ;
 
+  log_info!{ "running simplification" }
+  instance.check("before simplification") ? ;
+  profile!{ |profiler| tick "pre-proc", "simplify" }
+  instance.simplify_clauses() ? ;
+  profile!{ |profiler| mark "pre-proc", "simplify" }
+  // log_info!{
+  //   "instance after simplification:\n{}\n\n",
+  //   instance.to_string_info(()) ?
+  // }
+
   let mut changed = true ;
   'preproc: while changed {
 
-    instance.check("before simplification") ? ;
-    profile!{ |profiler| tick "pre-proc", "simplify" }
-    instance.simplify_clauses() ? ;
-    profile!{ |profiler| mark "pre-proc", "simplify" }
-    instance.check("after simplification") ? ;
-
-    log_info!{
-      "instance after simplification:\n{}\n\n",
-      instance.to_string_info(()) ?
-    }
-
-    log_info!{ "done simplifying, reducing" }
+    log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
     changed = reductor.run(instance, & profiler) ? ;
     instance.check("after reduction") ? ;
     profile!{ |profiler| mark "pre-proc", "reducing" }
-
     log_info!{ "done reducing" }
 
-    log_info!{
-      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_info!{
+    //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+    // }
 
   }
 
@@ -102,49 +104,57 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
   pub fn run(
     & mut self, instance: & mut Instance, _profiler: & Profiler
   ) -> Res<bool> {
+    let (mut _preds, mut _clauses) = (0, 0) ;
     
     for strat in & mut self.strats {
       log_info!("applying {}", conf.emph( strat.name() )) ;
-      let (pred_cnt, clse_cnt) = strat.apply(instance) ? ;
-      instance.check("work") ? ;
-      if pred_cnt + clse_cnt > 0 {
-        profile!{
-          |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
-        }
-        profile!{
-          |_profiler| "predicates eliminated" => add pred_cnt
-        }
-        profile!{
-          |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
-        }
-        profile!{
-          |_profiler| "clauses eliminated" => add clse_cnt
-        }
-        return Ok(true)
-      }
-    }
-
-    if let Some((ref mut solver, ref mut strat)) = self.solver_strats {
-      // for strat in strats {
-        log_info!("applying {}", conf.emph( strat.name() )) ;
-        let (pred_cnt, clse_cnt) = strat.apply(instance, solver) ? ;
-        instance.check("work") ? ;
-        if pred_cnt + clse_cnt > 0 {
+      profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+      let mut changed = true ;
+      while changed {
+        let (pred_cnt, clse_cnt) = strat.apply(instance) ? ;
+        changed = pred_cnt + clse_cnt > 0 ;
+        if_not_bench!{
+          _preds += pred_cnt ;
+          _clauses += clse_cnt ;
           profile!{
             |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
           }
           profile!{
-            |_profiler| "predicates eliminated" => add pred_cnt
+            |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
+          }
+        }
+      }
+      profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+      instance.check( strat.name() ) ?
+    }
+
+    if let Some((ref mut solver, ref mut strat)) = self.solver_strats {
+      log_info!("applying {}", conf.emph( strat.name() )) ;
+      profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+      let mut changed = true ;
+      while changed {
+        let (pred_cnt, clse_cnt) = strat.apply(instance, solver) ? ;
+        changed = pred_cnt + clse_cnt > 0 ;
+        if_not_bench!{
+          _preds += pred_cnt ;
+          _clauses += clse_cnt ;
+          profile!{
+            |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
           }
           profile!{
             |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
           }
-          profile!{
-            |_profiler| "clauses eliminated" => add clse_cnt
-          }
-          return Ok(true)
         }
-      // }
+      }
+      profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+      instance.check( strat.name() ) ?
+    }
+
+    profile!{
+      |_profiler| "predicates eliminated" => add _preds
+    }
+    profile!{
+      |_profiler| "clauses eliminated" => add _clauses
     }
 
     Ok(false)
@@ -203,9 +213,10 @@ fn trivial_impl<'kid, S: Solver<'kid, Parser>>(
 
 /// Returns the strongest term such that `/\ lhs => (pred args)`.
 fn term_of_app<
-  Lhs: IntoIterator<Item = TTerm>,
+  'a, 'kid, S: Solver<'kid, Parser>, Lhs: IntoIterator<Item = & 'a TTerm>
 >(
-  instance: & Instance, lhs: Lhs, pred: PrdIdx, args: VarMap<Term>,
+  instance: & Instance, solver: & mut S,
+  lhs: Lhs, pred: PrdIdx, args: VarMap<Term>, var_info: & VarMap<VarInfo>
 ) -> Res<
   Option<
     Either< Vec<TTerm>, bool >
@@ -214,8 +225,12 @@ fn term_of_app<
   let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
   let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
   let mut tterms = Vec::with_capacity( 7 ) ;
+  let mut discarded_terms = Vec::with_capacity( 7 ) ;
 
+  log_debug!{ "  term of app:" }
+  log_debug!{ "    looking at application" }
   for (index, arg) in args.into_index_iter() {
+    log_debug!{ "      v_{} -> {}", index, arg }
     if let Some(var) = arg.var_idx() {
       let _ = app_vars.insert(var) ;
       if let Some(pre) = map.insert(var, term::var(index)) {
@@ -239,7 +254,7 @@ fn term_of_app<
     }
   }
 
-  for tterm in lhs {
+  for tterm in lhs.into_iter() {
     if let Some(b) = tterm.bool() {
       if b { continue } else {
         return Ok( Some( Either::Rgt(false) ) )
@@ -248,11 +263,22 @@ fn term_of_app<
     let tterm_vars = tterm.vars() ;
     if tterm_vars.is_subset( & app_vars ) {
       let tterm = tterm.subst_total(& map) ? ;
-      tterms.push(tterm)
+      tterms.push( tterm.clone() )
     } else if tterm_vars.is_disjoint(& app_vars) {
-      ()
+      match * tterm {
+        TTerm::P { .. } => return Ok( None ),
+        TTerm::T(ref term) => discarded_terms.push( term.clone() ),
+      }
     } else {
       return Ok( None )
+    }
+  }
+
+  // Terms mentioning other variables might be unsat.
+  if ! discarded_terms.is_empty() {
+    // Do the terms discarded imply false?
+    if trivial_impl(solver, var_info, & discarded_terms, & term::fls()) ? {
+      return Ok( Some( Either::Rgt(false) ) )
     }
   }
 
@@ -517,11 +543,20 @@ where Slver: Solver<'kid, Parser> {
       if instance.clauses_of_pred(pred).1.len() == 1 {
         let clause =
           * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
+        log_debug!{
+          "trying to unfold {}",
+          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+        }
+        if instance.clauses_of_pred(pred).0.contains(& clause) {
+          continue
+        }
         let (pred, res) = if let TTerm::P {
           pred, ref args
         } = instance[clause].rhs {
           match term_of_app(
-            instance, instance[clause].lhs.clone(), pred, args.clone()
+            instance, solver,
+            & instance[clause].lhs, pred, args.clone(),
+            instance[clause].vars()
           ) ? {
             None => continue,
             Some(res) => (pred, res),
@@ -540,9 +575,7 @@ where Slver: Solver<'kid, Parser> {
             _ => None,
           }
         ).collect() ;
-        if trivial_impl(
-          solver, & vars, & lhs, & term::fls()
-        ) ? {
+        if trivial_impl( solver, & vars, & lhs, & term::fls() ) ? {
           continue
         }
 
@@ -564,10 +597,16 @@ where Slver: Solver<'kid, Parser> {
                 log_info!("  => {}", tterm)
               }
             }
-            clauses_rmed += instance.force_preds(Some((pred, tterms))) ? ;
+            clauses_rmed += instance.force_preds(
+              Some((pred, tterms))
+            ) ? ;
           },
         }
       }
+    }
+
+    if pred_count > 1 {
+      instance.simplify_clauses() ?
     }
 
     Ok((pred_count, clauses_rmed))

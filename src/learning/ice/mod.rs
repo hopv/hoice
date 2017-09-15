@@ -171,8 +171,9 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
   #[cfg( not(feature = "bench") )]
   pub fn finalize(self) -> Res<()> {
     profile!{ self "qualifiers once done" => add self.qualifiers.count() }
+
     let success = self.core.stats(
-      self._profiler, vec![ vec!["learning", "smt"] ]
+      self._profiler, vec![ vec!["learning", "smt", "data"] ]
     ) ;
     if success {
       Ok(())

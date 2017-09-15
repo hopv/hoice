@@ -59,7 +59,7 @@ macro_rules! log_debug {
 
 /// Does something if in debug mode.
 #[macro_export]
-#[cfg(debug_assertions)]
+#[cfg( not(feature = "bench") )]
 macro_rules! if_debug {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
     $($then)*
@@ -70,7 +70,7 @@ macro_rules! if_debug {
     }
   ) ;
 }
-#[cfg(debug_assertions)]
+#[cfg(feature = "bench")]
 #[allow(unused_macros)]
 macro_rules! if_debug {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
@@ -141,8 +141,8 @@ macro_rules! msg {
 `return`s `Ok(Val::N)`.
 
 ```
-use hoice_lib::term::Val ;
-use hoice_lib::errors ;
+use hoice::term::Val ;
+use hoice::errors ;
 
 fn int(val: Val) -> Res<Val> {
   Ok( try_val!{ int val } )

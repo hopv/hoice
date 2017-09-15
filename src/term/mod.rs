@@ -10,8 +10,8 @@
 //! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
 //!
 //! ```
-//! # use hoice_lib::term ;
-//! # use hoice_lib::term::{ Op, RTerm } ;
+//! # use hoice::term ;
+//! # use hoice::term::{ Op, RTerm } ;
 //! let some_term = term::eq(
 //!   term::int(11), term::app(
 //!     Op::Mul, vec![ term::int(2), term::var(5) ]
@@ -134,6 +134,13 @@ pub enum RTerm {
   },
 }
 impl RTerm {
+  /// The operator and the kids of a term.
+  pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
+    match * self {
+      RTerm::App { op, ref args } => Some((op, args)),
+      _ => None,
+    }
+  }
 
   /// Write a real term using a special function to write variables.
   pub fn write<W, WriteVar>(
@@ -189,8 +196,8 @@ impl RTerm {
   /// True if the term has no variables and evaluates to true.
   ///
   /// ```
-  /// use hoice_lib::term ;
-  /// use hoice_lib::term::Op ;
+  /// use hoice::term ;
+  /// use hoice::term::Op ;
   ///
   /// let term = term::tru() ;
   /// println!("true") ;
@@ -231,8 +238,8 @@ impl RTerm {
   /// True if the term has no variables and evaluates to true.
   ///
   /// ```
-  /// use hoice_lib::term ;
-  /// use hoice_lib::term::Op ;
+  /// use hoice::term ;
+  /// use hoice::term::Op ;
   ///
   /// let term = term::tru() ;
   /// println!("true") ;
@@ -493,6 +500,7 @@ impl RTerm {
   /// occured.
   ///
   /// Used for substitutions in the same clause / predicate scope.
+  #[inline]
   pub fn subst(& self, map: & VarHMap<Term>) -> (Term, bool) {
     self.subst_custom(map, false).expect("total substitution can't fail")
   }
@@ -504,7 +512,7 @@ impl RTerm {
   pub fn subst_fp(& self, map: & VarHMap<Term>) -> (Term, bool) {
     let (mut term, mut changed) = self.subst(map) ;
     while changed {
-      let (new_term, new_changed) = self.subst(map) ;
+      let (new_term, new_changed) = term.subst(map) ;
       term = new_term ;
       changed = new_changed
     }
@@ -610,6 +618,13 @@ impl TTerm {
   pub fn int(& self) -> Option<Int> {
     match * self {
       TTerm::T(ref t) => t.int(),
+      _ => None,
+    }
+  }
+  /// The operator and the kids of a top term, if it's an operator application.
+  pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
+    match * self {
+      TTerm::T(ref t) => t.app_inspect(),
       _ => None,
     }
   }

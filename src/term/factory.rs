@@ -108,8 +108,8 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
 # Nullary / unary applications of `And` and `Or`
 
 ```
-use hoice_lib::term ;
-use hoice_lib::term::Op::* ;
+use hoice::term ;
+use hoice::term::Op::* ;
 
 let tru = term::bool(true) ;
 let fls = term::bool(false) ;
@@ -134,8 +134,8 @@ assert_eq!(
 # Double negations
 
 ```
-use hoice_lib::term ;
-use hoice_lib::term::Op::* ;
+use hoice::term ;
+use hoice::term::Op::* ;
 
 let var_1 = term::var(7) ;
 let n_var_1 = term::app( Not, vec![ var_1.clone() ] ) ;
