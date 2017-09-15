@@ -317,6 +317,12 @@ impl Instance {
   pub fn clauses_of_pred(& self, pred: PrdIdx) -> ( & ClsSet, & ClsSet ) {
     ( & self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1 )
   }
+  /// Clauses a predicate appears in. Lhs and rhs.
+  pub fn preds_of_clause(
+    & self, clause: ClsIdx
+  ) -> ( & PrdSet, Option<PrdIdx> ) {
+    (& self.clause_to_preds[clause].0, self.clause_to_preds[clause].1)
+  }
 
 
   /// Prints a top term as a term in a model.
@@ -478,6 +484,10 @@ impl Instance {
   /// Range over the predicate indices.
   pub fn pred_indices(& self) -> PrdRange {
     PrdRange::zero_to( self.preds.len() )
+  }
+  /// Range over the clause indices.
+  pub fn clause_indices(& self) -> ClsRange {
+    ClsRange::zero_to( self.clauses.len() )
   }
 
   /// Predicate accessor.
