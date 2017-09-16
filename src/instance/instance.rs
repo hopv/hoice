@@ -499,6 +499,46 @@ impl Instance {
     & self.clauses
   }
 
+
+  /// Strengthens some predicate by some terms in the clauses lhs where the
+  /// predicate appears.
+  pub fn strengthen_in_lhs(
+    & mut self, pred: PrdIdx, tterms: Vec<TTerm>
+  ) -> Res<()> {
+    let mut terms_to_add = Vec::with_capacity( 2 * tterms.len() ) ;
+    let mut subst = VarHMap::with_capacity( self[pred].sig.len() ) ;
+    for clause_idx in & self.pred_to_clauses[pred].0 {
+      debug_assert!( terms_to_add.is_empty() ) ;
+      let clause = & mut self.clauses[* clause_idx] ;
+      for tterm in & clause.lhs {
+        match * tterm {
+          TTerm::P { pred: this_pred, ref args} if this_pred == pred => {
+            subst.clear() ;
+            for (var, arg) in args.index_iter() {
+              let _prev = subst.insert(var, arg.clone()) ;
+              debug_assert!( _prev.is_none() ) ;
+            }
+            for tterm in & tterms {
+              if let Ok(tterm) = tterm.subst_total(& subst) {
+                terms_to_add.push(tterm)
+              } else {
+                bail!("
+                  Instance::replace: \
+                  illegal terms for predicate {} total substitution failed",
+                  conf.bad(& self.preds[pred].name)
+                )
+              }
+            }
+          },
+          _ => (),
+        }
+      }
+      use std::iter::Extend ;
+      clause.lhs.extend( terms_to_add.drain(0..) )
+    }
+    Ok(())
+  }
+
   /// Pushes a new predicate and returns its index.
   pub fn push_pred(
     & mut self, name: String, sig: VarMap<Typ>

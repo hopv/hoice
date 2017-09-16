@@ -147,7 +147,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true).number_of_values(1)
 
     )
   }

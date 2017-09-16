@@ -97,7 +97,7 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<'kid, S> {
     ] ;
     let solver_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
       Box::new( SimpleOneRhs::new() ),
-      Box::new( MonoPredClause::new() ),
+      // Box::new( MonoPredClause::new() ),
     ] ;
     let solver_strats = solver.map(
       |solver| (solver, solver_strats)
@@ -674,6 +674,12 @@ where Slver: Solver<'kid, Parser> {
 
 
 
+
+
+
+
+
+
 /// Mono pred clause strengthening.
 pub struct MonoPredClause {
   // /// Predicates found to be equivalent to true, but not propagated yet.
@@ -704,20 +710,21 @@ where Slver: Solver<'kid, Parser> {
     let mut clauses_to_rm = Vec::with_capacity(10) ;
     let mut true_preds = PrdSet::with_capacity(10) ;
 
-    for (clause_idx, clause) in instance.clauses().index_iter() {
+    for clause in instance.clause_indices() {
       let (lhs_len, rhs_is_some) = {
-        let (lhs, rhs) = instance.preds_of_clause(clause_idx) ;
+        let (lhs, rhs) = instance.preds_of_clause(clause) ;
         (lhs.len(), rhs.is_some())
       } ;
 
       if lhs_len == 0 && rhs_is_some {
         let (pred, res) = if let TTerm::P {
           pred, ref args
-        } = * clause.rhs() {
+        } = * instance.clauses()[clause].rhs() {
           (
             pred, term_of_app(
               instance, solver,
-              & clause.lhs, pred, args.clone(), clause.vars()
+              & instance.clauses()[clause].lhs, pred, args.clone(),
+              instance.clauses()[clause].vars()
             ) ?
           )
         } else {
@@ -727,14 +734,17 @@ where Slver: Solver<'kid, Parser> {
         match res {
           ExtractRes::Failed => continue,
           ExtractRes::Success(_tterms) => {
-            // println!("yay: {}", instance[pred]) ;
-            // for tterm in _tterms {
-            //   println!("  {}", tterm)
+            // log_info!{
+            //   "  strengthening {} with {} terms", instance[pred], _tterms.len()
             // }
-          },
-          ExtractRes::Trivial => clauses_to_rm.push(clause_idx),
+            // instance.strengthen_in_lhs(
+            //   pred, _tterms
+            // ) ?
+          }
+          ExtractRes::Trivial => clauses_to_rm.push(clause),
           ExtractRes::SuccessTrue => {
             true_preds.insert(pred) ;
+            clauses_to_rm.push(clause)
           },
           // `term_of_app` cannot return false.
           ExtractRes::SuccessFalse => unreachable!(),
