@@ -147,7 +147,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true).number_of_values(1)
 
     )
   }
@@ -289,6 +289,8 @@ pub struct Config {
   pub verb: Verb,
   /// Statistics flag.
   pub stats: bool,
+  /// Inference flag.
+  pub infer: bool,
   /// Output directory.
   out_dir: String,
   /// Styles, for coloring.
@@ -372,6 +374,9 @@ impl Config {
     // Profiling.
     let stats = bool_of_matches(& matches, "stats") ;
 
+    // Inference flag.
+    let infer = bool_of_matches(& matches, "infer") ;
+
     // Result checking.
     let check = matches.value_of("check").map(
       |s| s.to_string()
@@ -389,7 +394,7 @@ impl Config {
     let teacher = TeacherConf::new(& matches) ;
 
     Config {
-      file, verb, stats, out_dir, styles,
+      file, verb, stats, infer, out_dir, styles,
       check, check_eld,
       instance, preproc, solver, ice, teacher
     }
@@ -444,6 +449,16 @@ impl Config {
       ).value_name(
         bool_format
       ).default_value("off").takes_value(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("infer").long("--infer").help(
+        "if `off`, ignore `check-sat` and `get-model` queries"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).number_of_values(1)
 
     )
   }
@@ -516,7 +531,7 @@ impl Config {
 #[doc = r#"Verbose level.
 
 ```
-# use hoice_lib::common::Verb ;
+# use hoice::common::Verb ;
 let mut verb = Verb::Quiet ;
 assert!( ! verb.verbose() ) ;
 assert!( ! verb.debug() ) ;

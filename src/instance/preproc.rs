@@ -15,6 +15,7 @@ pub fn work(
 ) -> Res<()> {
 
   profile!{ |profiler| tick "pre-proc" }
+  log_info!{ "starting pre-processing" }
 
   let res = if conf.preproc.simple_red {
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
@@ -31,8 +32,11 @@ pub fn work(
   } else {
     run(instance, profiler, None as Option<::rsmt2::PlainSolver<Parser>>)
   } ;
-  profile!{ |profiler| tick "pre-proc" } ;
+  profile!{ |profiler| mark "pre-proc" } ;
   log_info!{ "done with pre-processing" }
+  log_info!{
+    "done with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+  }
   res
 
 }
@@ -42,31 +46,29 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
 ) -> Res<()> {
   let mut reductor = Reductor::new(solver) ;
 
+  log_info!{ "running simplification" }
+  instance.check("before simplification") ? ;
+  profile!{ |profiler| tick "pre-proc", "simplify" }
+  instance.simplify_clauses() ? ;
+  profile!{ |profiler| mark "pre-proc", "simplify" }
+  // log_info!{
+  //   "instance after simplification:\n{}\n\n",
+  //   instance.to_string_info(()) ?
+  // }
+
   let mut changed = true ;
   'preproc: while changed {
 
-    instance.check("before simplification") ? ;
-    profile!{ |profiler| tick "pre-proc", "simplify" }
-    instance.simplify_clauses() ? ;
-    profile!{ |profiler| mark "pre-proc", "simplify" }
-    instance.check("after simplification") ? ;
-
-    log_info!{
-      "instance after simplification:\n{}\n\n",
-      instance.to_string_info(()) ?
-    }
-
-    log_info!{ "done simplifying, reducing" }
+    log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
     changed = reductor.run(instance, & profiler) ? ;
     instance.check("after reduction") ? ;
     profile!{ |profiler| mark "pre-proc", "reducing" }
-
     log_info!{ "done reducing" }
 
-    log_info!{
-      "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_info!{
+    //   "instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+    // }
 
   }
 
@@ -78,21 +80,27 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
 
 
 /// Reductor, stores the reduction strategies and a solver.
-pub struct Reductor<S> {
+pub struct Reductor<'kid, S: Solver<'kid, Parser>> {
   /// Strategies.
   strats: Vec< Box<RedStrat> >,
   /// Solver strats.
-  solver_strats: Option< (S, SimpleOneRhs) >,
+  solver_strats: Option< (
+    S, Vec< Box<SolverRedStrat<'kid, S>> >
+  ) >,
 }
-impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
+impl<'kid, S: Solver<'kid, Parser>> Reductor<'kid, S> {
   /// Constructor.
   pub fn new(solver: Option<S>) -> Self {
     let strats: Vec< Box<RedStrat> > = vec![
       Box::new( Trivial {} ),
       // Box::new( ForcedImplies::new() ),
     ] ;
+    let solver_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
+      Box::new( SimpleOneRhs::new() ),
+      // Box::new( MonoPredClause::new() ),
+    ] ;
     let solver_strats = solver.map(
-      |solver| (solver, SimpleOneRhs::new())
+      |solver| (solver, solver_strats)
     ) ;
 
     Reductor { strats, solver_strats }
@@ -102,49 +110,61 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
   pub fn run(
     & mut self, instance: & mut Instance, _profiler: & Profiler
   ) -> Res<bool> {
+    let (mut _preds, mut _clauses) = (0, 0) ;
     
     for strat in & mut self.strats {
       log_info!("applying {}", conf.emph( strat.name() )) ;
-      let (pred_cnt, clse_cnt) = strat.apply(instance) ? ;
-      instance.check("work") ? ;
-      if pred_cnt + clse_cnt > 0 {
-        profile!{
-          |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
-        }
-        profile!{
-          |_profiler| "predicates eliminated" => add pred_cnt
-        }
-        profile!{
-          |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
-        }
-        profile!{
-          |_profiler| "clauses eliminated" => add clse_cnt
-        }
-        return Ok(true)
-      }
-    }
-
-    if let Some((ref mut solver, ref mut strat)) = self.solver_strats {
-      // for strat in strats {
-        log_info!("applying {}", conf.emph( strat.name() )) ;
-        let (pred_cnt, clse_cnt) = strat.apply(instance, solver) ? ;
-        instance.check("work") ? ;
-        if pred_cnt + clse_cnt > 0 {
+      profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+      let mut changed = true ;
+      while changed {
+        let (pred_cnt, clse_cnt) = strat.apply(instance) ? ;
+        changed = pred_cnt + clse_cnt > 0 ;
+        if_not_bench!{
+          _preds += pred_cnt ;
+          _clauses += clse_cnt ;
           profile!{
             |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
           }
           profile!{
-            |_profiler| "predicates eliminated" => add pred_cnt
-          }
-          profile!{
             |_profiler| format!("{} clause red", strat.name()) => add clse_cnt
           }
-          profile!{
-            |_profiler| "clauses eliminated" => add clse_cnt
-          }
-          return Ok(true)
         }
-      // }
+      }
+      profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+      instance.check( strat.name() ) ?
+    }
+
+    if let Some((ref mut solver, ref mut strats)) = self.solver_strats {
+      for strat in strats {
+        log_info!("applying {}", conf.emph( strat.name() )) ;
+        profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+        let mut changed = true ;
+        while changed {
+          let (pred_cnt, clse_cnt) = strat.apply(instance, solver) ? ;
+          changed = pred_cnt + clse_cnt > 0 ;
+          if_not_bench!{
+            _preds += pred_cnt ;
+            _clauses += clse_cnt ;
+            profile!{
+              |_profiler| format!("{} pred red", strat.name()) => add pred_cnt
+            }
+            profile!{
+              |_profiler| format!(
+                "{} clause red", strat.name()
+              ) => add clse_cnt
+            }
+          }
+        }
+        profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+        instance.check( strat.name() ) ?
+      }
+    }
+
+    profile!{
+      |_profiler| "predicates eliminated" => add _preds
+    }
+    profile!{
+      |_profiler| "clauses eliminated" => add _clauses
     }
 
     Ok(false)
@@ -155,23 +175,31 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<S> {
 
 
 /// Wrapper around a negated implication for smt printing.
-struct NegImplWrap<'a> {
+struct NegImplWrap<'a, Terms> {
   /// Lhs.
-  lhs: & 'a [ Term ],
+  lhs: ::std::cell::RefCell<Terms>,
   /// Rhs.
   rhs: & 'a Term,
 }
-impl<'a> ::rsmt2::Expr2Smt<()> for NegImplWrap<'a> {
+impl<'a, Terms> NegImplWrap<'a, Terms> {
+  /// Constructor.
+  pub fn new(lhs: Terms, rhs: & 'a Term) -> Self {
+    NegImplWrap { lhs: ::std::cell::RefCell::new(lhs), rhs }
+  }
+}
+impl<'a, Terms> ::rsmt2::Expr2Smt<()> for NegImplWrap<'a, Terms>
+where Terms: Iterator<Item = & 'a Term> + ExactSizeIterator {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
+    let mut lhs = self.lhs.borrow_mut() ;
     let msg = "writing negated implication" ;
     smtry_io!(msg => write!(w, "(not ")) ;
-    if self.lhs.is_empty() {
+    if lhs.len() == 0 {
       smtry_io!( msg => self.rhs.write(w, |w, var| var.default_write(w)) )
     } else {
       smtry_io!( msg => write!(w, "(=> (and") ) ;
-      for term in self.lhs {
+      while let Some(term) = lhs.next() {
         smtry_io!( msg => write!(w, " ") ) ;
         smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) )
       }
@@ -184,38 +212,65 @@ impl<'a> ::rsmt2::Expr2Smt<()> for NegImplWrap<'a> {
   }
 }
 /// True if an implication of terms is a tautology.
-fn trivial_impl<'kid, S: Solver<'kid, Parser>>(
-  solver: & mut S, vars: & VarMap<VarInfo>, lhs: & [Term], rhs: & Term
-) -> Res<bool> {
+fn trivial_impl<'a, 'kid, S: Solver<'kid, Parser>, Terms>(
+  solver: & mut S, vars: & VarMap<VarInfo>, lhs: Terms, rhs: & 'a Term
+) -> Res<bool>
+where Terms: Iterator<Item = & 'a Term> + ExactSizeIterator {
   solver.push(1) ? ;
   for var in vars {
     if var.active {
       solver.declare_const(& var.idx, & var.typ, & ()) ?
     }
   }
-  solver.assert( & NegImplWrap { lhs, rhs }, & () ) ? ;
+  solver.assert( & NegImplWrap::new(lhs, rhs), & () ) ? ;
   let sat = solver.check_sat() ? ;
   solver.pop(1) ? ;
   Ok(! sat)
 }
 
 
+/// Result of extracting the terms for a predicate application in a clause.
+#[derive(Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+enum ExtractRes {
+  /// The clause was found to be trivially true.
+  Trivial,
+  /// Terms could not be extracted.
+  ///
+  /// Returned when the variables appearing in the application and the other
+  /// variables `others` of the clause are related, or if there is a predicate
+  /// application mentioning variables from `others`.
+  Failed,
+  /// Success, predicate is equivalent to true.
+  SuccessTrue,
+  /// Success, predicate is equivalent to false.
+  SuccessFalse,
+  /// Success, predicate is equivalent to some top terms.
+  Success(Vec<TTerm>),
+}
+impl ExtractRes {
+  /// True if failed.
+  pub fn is_failed(& self) -> bool{ * self == ExtractRes::Failed }
+}
+
+
 
 /// Returns the strongest term such that `/\ lhs => (pred args)`.
 fn term_of_app<
-  Lhs: IntoIterator<Item = TTerm>,
+  'a, 'kid, S: Solver<'kid, Parser>, Lhs: IntoIterator<Item = & 'a TTerm>
 >(
-  instance: & Instance, lhs: Lhs, pred: PrdIdx, args: VarMap<Term>,
-) -> Res<
-  Option<
-    Either< Vec<TTerm>, bool >
-  >
-> {
+  instance: & Instance, solver: & mut S,
+  lhs: Lhs, pred: PrdIdx, args: VarMap<Term>, var_info: & VarMap<VarInfo>
+) -> Res<ExtractRes> {
   let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
   let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
   let mut tterms = Vec::with_capacity( 7 ) ;
+  let mut not_pred_apps = Vec::with_capacity( 7 ) ;
 
+  log_debug!{ "  term of app:" }
+  log_debug!{ "    looking at application" }
   for (index, arg) in args.into_index_iter() {
+    log_debug!{ "      v_{} -> {}", index, arg }
     if let Some(var) = arg.var_idx() {
       let _ = app_vars.insert(var) ;
       if let Some(pre) = map.insert(var, term::var(index)) {
@@ -235,31 +290,47 @@ fn term_of_app<
         TTerm::T( term::eq( term::var(index), term::int(i) ) )
       )
     } else {
-      return Ok(None)
+      return Ok(ExtractRes::Failed)
     }
   }
 
-  for tterm in lhs {
+  for tterm in lhs.into_iter() {
     if let Some(b) = tterm.bool() {
       if b { continue } else {
-        return Ok( Some( Either::Rgt(false) ) )
+        return Ok(ExtractRes::Trivial)
       }
     }
     let tterm_vars = tterm.vars() ;
     if tterm_vars.is_subset( & app_vars ) {
+      if let TTerm::T(ref term) = * tterm {
+        not_pred_apps.push( term )
+      }
       let tterm = tterm.subst_total(& map) ? ;
-      tterms.push(tterm)
+      tterms.push( tterm.clone() )
     } else if tterm_vars.is_disjoint(& app_vars) {
-      ()
+      match * tterm {
+        TTerm::P { .. } => return Ok(ExtractRes::Failed),
+        TTerm::T(ref term) => not_pred_apps.push( term ),
+      }
     } else {
-      return Ok( None )
+      return Ok(ExtractRes::Failed)
+    }
+  }
+
+  // Terms mentioning other variables might be unsat.
+  if ! not_pred_apps.is_empty() {
+    // Do the terms discarded imply false?
+    if trivial_impl(
+      solver, var_info, not_pred_apps.into_iter(), & term::fls()
+    ) ? {
+      return Ok(ExtractRes::Trivial)
     }
   }
 
   if tterms.is_empty() {
-    Ok( Some( Either::Rgt(true) ) )
+    Ok(ExtractRes::SuccessTrue)
   } else {
-    Ok( Some( Either::Lft(tterms) ) )
+    Ok( ExtractRes::Success(tterms) )
   }
 }
 
@@ -475,12 +546,32 @@ pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, Parser> >: HasName {
 
 
 
-/// Unfolds predicates that appear as the rhs of a single clause, and for
-/// which the part of the lhs mentioning the variables used by the predicate
-/// are completely separated from the rest.
+
+/// Works on predicates that appear in only one rhs.
 ///
-/// Actually, currently this version will replace the term iff the lhs
-/// mentions nothing but the variables used in the predicate application (rhs).
+/// # Restrictions
+///
+/// Unfolds a predicate `P` iff
+///
+/// - it appears in exactly one clause rhs, say in clause `C`
+/// - `P` does not appear in the lhs of `C`
+/// - the lhs of `C` has no top term relating the variables `vars` appearing in
+///   the application of `P` and the other variables `other_vars` of the clause
+/// - the predicate applications in the lhs of `C` do not mention `other_vars`
+///
+/// | This reduction does not run on:        |                           |
+/// |:---------------------------------------|:--------------------------|
+/// | `(p ...)    and ... => (p ...)`        | `p` appears in lhs        |
+/// | `(v'' > v)  and ... => (p v (v' + 1))` | `v''` and `v` are related |
+/// | `(p' v'' v) and ... => (p v (v' + 1))` | `p'` mentions `v''`       |
+///
+/// | But it runs on:                    | `p v_0 v_1 =`               |
+/// |:-----------------------------------|:----------------------------|
+/// | `(v > v'  + 2)        => (p v v')` | `(v_0 > v_1 + 2)`           |
+/// | `(v > 0)              => (p 7 v )` | `(v_0 = 7) and (v_1 > 0)`   |
+/// | `(v > 0)              => (p 7 v')` | `(v_0 = 7)`                 |
+/// | `(v > 0)              => (p v v )` | `(v_0 = v_1) and (v_0 > 0)` |
+/// | `(v > 0) and (v <= 0) => (p 7 v')` | `false` (by check-sat)      |
 pub struct SimpleOneRhs {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -517,60 +608,160 @@ where Slver: Solver<'kid, Parser> {
       if instance.clauses_of_pred(pred).1.len() == 1 {
         let clause =
           * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
-        let (pred, res) = if let TTerm::P {
-          pred, ref args
+        log_debug!{
+          "trying to unfold {}",
+          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+        }
+        if instance.clauses_of_pred(pred).0.contains(& clause) {
+          continue
+        }
+
+        let res = if let TTerm::P {
+          pred: _this_pred, ref args
         } = instance[clause].rhs {
-          match term_of_app(
-            instance, instance[clause].lhs.clone(), pred, args.clone()
-          ) ? {
-            None => continue,
-            Some(res) => (pred, res),
-          }
+          debug_assert_eq!( pred, _this_pred ) ;
+          term_of_app(
+            instance, solver,
+            & instance[clause].lhs, pred, args.clone(),
+            instance[clause].vars()
+          ) ?
         } else {
           bail!("inconsistent instance state")
         } ;
 
-        let Clause { lhs, vars, .. } = instance.forget_clause(clause) ? ;
-        clauses_rmed += 1 ;
+        if res.is_failed() { continue }
 
-        // Don't unfold if lhs is not satisfiable.
-        let lhs: Vec<Term> = lhs.into_iter().filter_map(
-          |tterm| match tterm {
-            TTerm::T(t) => Some(t),
-            _ => None,
-          }
-        ).collect() ;
-        if trivial_impl(
-          solver, & vars, & lhs, & term::fls()
-        ) ? {
-          continue
-        }
+        instance.forget_clause(clause) ? ;
+        clauses_rmed += 1 ;
 
         log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
         pred_count += 1 ;
+        use self::ExtractRes::* ;
         match res {
-          Either::Rgt(true) => {
+          Trivial => {
+            log_info!("  => false") ;
+            clauses_rmed += instance.force_false(Some(pred)) ?
+          },
+          SuccessTrue => {
             log_info!("  => true") ;
             clauses_rmed += instance.force_true(Some(pred)) ? ;
           },
-          Either::Rgt(false) => {
-            log_info!("  => false") ;
-            clauses_rmed += instance.force_false(Some(pred)) ? ;
-          },
-
-          Either::Lft(tterms) => {
+          Success(tterms) => {
             if_not_bench!{
               for tterm in & tterms {
                 log_info!("  => {}", tterm)
               }
             }
-            clauses_rmed += instance.force_preds(Some((pred, tterms))) ? ;
+            clauses_rmed += instance.force_preds(
+              Some((pred, tterms))
+            ) ? ;
           },
+          // Failed is caught before this match, and false is not possible for
+          // the function generating `res`.
+          Failed | SuccessFalse => unreachable!(),
         }
       }
     }
 
+    if pred_count > 1 {
+      instance.simplify_clauses() ?
+    }
+
     Ok((pred_count, clauses_rmed))
+  }
+}
+
+
+
+
+
+
+
+
+
+
+/// Mono pred clause strengthening.
+pub struct MonoPredClause {
+  // /// Predicates found to be equivalent to true, but not propagated yet.
+  // true_preds: PrdSet,
+  // /// Predicates found to be equivalent to false, but not propagated yet.
+  // false_preds: PrdSet,
+  // /// Predicates to propagate.
+  // preds: PrdHMap< Vec<TTerm> >,
+}
+impl MonoPredClause {
+  /// Constructor.
+  pub fn new() -> Self {
+    MonoPredClause {
+      // true_preds: PrdSet::with_capacity(7),
+      // false_preds: PrdSet::with_capacity(7),
+      // preds: PrdHMap::with_capacity(7),
+    }
+  }
+}
+impl HasName for MonoPredClause {
+  fn name(& self) -> & 'static str { "mono pred clause" }
+}
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for MonoPredClause
+where Slver: Solver<'kid, Parser> {
+  fn apply(
+    & mut self, instance: & mut Instance, solver: & mut Slver
+  ) -> Res<(usize, usize)> {
+    let mut clauses_to_rm = Vec::with_capacity(10) ;
+    let mut true_preds = PrdSet::with_capacity(10) ;
+
+    for clause in instance.clause_indices() {
+      let (lhs_len, rhs_is_some) = {
+        let (lhs, rhs) = instance.preds_of_clause(clause) ;
+        (lhs.len(), rhs.is_some())
+      } ;
+
+      if lhs_len == 0 && rhs_is_some {
+        let (pred, res) = if let TTerm::P {
+          pred, ref args
+        } = * instance.clauses()[clause].rhs() {
+          (
+            pred, term_of_app(
+              instance, solver,
+              & instance.clauses()[clause].lhs, pred, args.clone(),
+              instance.clauses()[clause].vars()
+            ) ?
+          )
+        } else {
+          bail!("inconsistent instance state")
+        } ;
+
+        match res {
+          ExtractRes::Failed => continue,
+          ExtractRes::Success(_tterms) => {
+            // log_info!{
+            //   "  strengthening {} with {} terms", instance[pred], _tterms.len()
+            // }
+            // instance.strengthen_in_lhs(
+            //   pred, _tterms
+            // ) ?
+          }
+          ExtractRes::Trivial => clauses_to_rm.push(clause),
+          ExtractRes::SuccessTrue => {
+            true_preds.insert(pred) ;
+            clauses_to_rm.push(clause)
+          },
+          // `term_of_app` cannot return false.
+          ExtractRes::SuccessFalse => unreachable!(),
+        }
+
+      } else if lhs_len == 1 && ! rhs_is_some {
+
+
+      }
+    }
+
+    let mut clauses = clauses_to_rm.len() ;
+    let preds = true_preds.len() ;
+    instance.forget_clauses( clauses_to_rm ) ? ;
+    clauses += instance.force_true(true_preds) ? ;
+
+    Ok((preds, clauses))
   }
 }
 

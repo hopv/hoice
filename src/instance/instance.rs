@@ -251,6 +251,8 @@ pub struct Instance {
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
   /// Maps clauses to the predicates appearing in them.
   clause_to_preds: ClsMap< (PrdSet, Option<PrdIdx>) >,
+  /// Clause simplifier.
+  simplifier: ClauseSimplifier,
 }
 impl Instance {
   /// Instance constructor.
@@ -266,6 +268,7 @@ impl Instance {
       clauses: ClsMap::with_capacity(clause_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       clause_to_preds: ClsMap::with_capacity(clause_capa),
+      simplifier: ClauseSimplifier::new(),
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
     let (wan,too) = (term::one(), term::zero()) ;
@@ -313,6 +316,12 @@ impl Instance {
   /// Clauses a predicate appears in. Lhs and rhs.
   pub fn clauses_of_pred(& self, pred: PrdIdx) -> ( & ClsSet, & ClsSet ) {
     ( & self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1 )
+  }
+  /// Clauses a predicate appears in. Lhs and rhs.
+  pub fn preds_of_clause(
+    & self, clause: ClsIdx
+  ) -> ( & PrdSet, Option<PrdIdx> ) {
+    (& self.clause_to_preds[clause].0, self.clause_to_preds[clause].1)
   }
 
 
@@ -476,6 +485,10 @@ impl Instance {
   pub fn pred_indices(& self) -> PrdRange {
     PrdRange::zero_to( self.preds.len() )
   }
+  /// Range over the clause indices.
+  pub fn clause_indices(& self) -> ClsRange {
+    ClsRange::zero_to( self.clauses.len() )
+  }
 
   /// Predicate accessor.
   pub fn preds(& self) -> & PrdMap<PrdInfo> {
@@ -484,6 +497,46 @@ impl Instance {
   /// Clause accessor.
   pub fn clauses(& self) -> & ClsMap<Clause> {
     & self.clauses
+  }
+
+
+  /// Strengthens some predicate by some terms in the clauses lhs where the
+  /// predicate appears.
+  pub fn strengthen_in_lhs(
+    & mut self, pred: PrdIdx, tterms: Vec<TTerm>
+  ) -> Res<()> {
+    let mut terms_to_add = Vec::with_capacity( 2 * tterms.len() ) ;
+    let mut subst = VarHMap::with_capacity( self[pred].sig.len() ) ;
+    for clause_idx in & self.pred_to_clauses[pred].0 {
+      debug_assert!( terms_to_add.is_empty() ) ;
+      let clause = & mut self.clauses[* clause_idx] ;
+      for tterm in & clause.lhs {
+        match * tterm {
+          TTerm::P { pred: this_pred, ref args} if this_pred == pred => {
+            subst.clear() ;
+            for (var, arg) in args.index_iter() {
+              let _prev = subst.insert(var, arg.clone()) ;
+              debug_assert!( _prev.is_none() ) ;
+            }
+            for tterm in & tterms {
+              if let Ok(tterm) = tterm.subst_total(& subst) {
+                terms_to_add.push(tterm)
+              } else {
+                bail!("
+                  Instance::replace: \
+                  illegal terms for predicate {} total substitution failed",
+                  conf.bad(& self.preds[pred].name)
+                )
+              }
+            }
+          },
+          _ => (),
+        }
+      }
+      use std::iter::Extend ;
+      clause.lhs.extend( terms_to_add.drain(0..) )
+    }
+    Ok(())
   }
 
   /// Pushes a new predicate and returns its index.
@@ -648,6 +701,11 @@ impl Instance {
       self.relink_preds_to_clauses(last_clause, clause) ?
     }
     let res = self.clauses.swap_remove(clause) ;
+    let (_lhs, _rhs) = self.clause_to_preds.pop().expect(
+      "empty clause_to_preds, illegal internal state"
+    ) ;
+    debug_assert!( _lhs.is_empty() ) ;
+    debug_assert_eq!( _rhs, None ) ;
     // self.check("forgetting clause") ? ;
     Ok(res)
   }
@@ -672,6 +730,26 @@ impl Instance {
     self.check("after `push_clause`")
   }
 
+
+  /// Simplifies a cause. Returns `true` if the clause was (swap) removed.
+  pub fn simplify_clause(& mut self, clause: ClsIdx) -> Res<bool> {
+    let remove = self.simplifier.clause_propagate(
+      & mut self.clauses[clause]
+    ).chain_err(
+      || format!(
+        "on clause {}",
+        self.clauses[clause].to_string_info(& self.preds).unwrap()
+      )
+    ) ? ;
+    log_debug!{ "{}", self.clauses[clause].to_string_info(& self.preds) ? }
+    if remove {
+      self.clauses.swap_remove(clause) ;
+    }
+    Ok(remove)
+  }
+
+
+
   /// Simplifies the clauses.
   ///
   /// - propagates variable equalities in clauses' lhs
@@ -680,349 +758,11 @@ impl Instance {
   ///
   /// - currently kind of assumes equalities are binary, fix?
   pub fn simplify_clauses(& mut self) -> Res<()> {
-    // Used to detect cycles in variable equalities.
-    let mut cycle_set = VarSet::with_capacity( 29 ) ;
-    // Stores equalities between variables.
-    let mut var_map = VarHMap::with_capacity( 29 ) ;
-    // Stores equalities between representatives and constants.
-    let mut rep_cst_map = VarHMap::with_capacity( 29 ) ;
-    // Stores equalities between variables and terms.
-    let mut var_term_map = VarHMap::with_capacity( 29 ) ;
-
-    // Clauses to remove at the end.
-    let mut clauses_to_rm = vec![] ;
-    // Terms to add the current clause's lhs.
-    let mut terms_to_add = vec![] ;
-
-    let mut stable_var_map: VarHMap<Term> = VarHMap::with_capacity(29) ;
-    let mut last_stable_var_map = VarHMap::with_capacity(29) ;
-
-    'clause_iter: for clause_index in ClsRange::zero_to( self.clauses.len() ) {
-      let clause = & mut self.clauses[clause_index] ;
-
-      var_map.clear() ;
-      rep_cst_map.clear() ;
-      var_term_map.clear() ;
-
-      // log_info!{ "working on a clause" }
-      // println!(
-      //   "looking at clause\n{}", clause.to_string_info(& self.preds) ?
-      // ) ;
-
-      // log_info!{ "  iterating on lhs" }
-
-      // Find equalities and add to map.
-      //
-      // Iterating with a counter so that we can remove terms on the fly with
-      // `swap_remove`.
-      let mut cnt = 0 ;
-      'lhs_iter: while cnt < clause.lhs.len() {
-        let current = cnt ;
-        cnt += 1 ; // Incrementing because moving on is done via `continue`.
-
-        match clause.lhs[current] {
-          TTerm::T(ref term) => match * term.get() {
-            RTerm::App { op: Op::Eql, ref args } => {
-              debug_assert!( args.len() >= 2 ) ;
-
-              match (
-                args[0].var_idx(), args[1].var_idx(),
-                args[0].int_val(), args[1].int_val(),
-              ) {
-
-                ( Some(lhs_var), Some(rhs_var), _, _ ) => match (
-                  var_map.get(& lhs_var).map(|idx| * idx),
-                  var_map.get(& rhs_var).map(|idx| * idx),
-                ) {
-                  ( Some(lhs_rep), Some(rhs_rep) ) => {
-                    if lhs_rep != rhs_rep {
-                      let _ = var_map.insert(lhs_rep, rhs_rep) ;
-                      let _prev = var_map.insert(lhs_var, rhs_rep) ;
-                      debug_assert!( _prev.is_some() )
-                    }
-                  },
-                  ( Some(lhs_rep), None ) => {
-                    let _prev = var_map.insert(rhs_var, lhs_rep) ;
-                    debug_assert!( _prev.is_none() )
-                  },
-                  ( None, Some(rhs_rep) ) => {
-                    let _prev = var_map.insert(lhs_var, rhs_rep) ;
-                    debug_assert!( _prev.is_none() )
-                  },
-                  ( None, None ) => {
-                    let _prev = var_map.insert(lhs_var, rhs_var) ;
-                    debug_assert!( _prev.is_none() )
-                  },
-                },
-
-                ( Some(var), _, _, Some(int) ) |
-                ( _, Some(var), Some(int), _ ) => {
-                  let var = if let Some(rep) = var_map.get(& var) {
-                    * rep
-                  } else {
-                    var
-                  } ;
-                  let prev = rep_cst_map.insert(
-                    var, term::int( int.clone() )
-                  ) ;
-                  if let Some(prev) = prev {
-                    if prev.int_val().unwrap() != int {
-                      clauses_to_rm.push(clause_index) ;
-                      continue 'clause_iter
-                    }
-                  }
-                },
-
-                ( Some(var), _, _, _ ) => {
-                  // log_info!{
-                  //   "{}", term.to_string_info( clause.vars() ) ?
-                  // }
-                  let term = args[1].clone() ;
-                  if let Some(prev) = var_term_map.insert(var, term) {
-                    if prev != args[1] {
-                      terms_to_add.push(
-                        TTerm::T(
-                          term::app(Op::Eql, vec![ args[1].clone(), prev ])
-                        )
-                      )
-                    }
-                  }
-                },
-                ( _, Some(var), _, _ ) => {
-                  let term = args[0].clone() ;
-                  if let Some(prev) = var_term_map.insert(var, term) {
-                    if prev != args[0] {
-                      terms_to_add.push(
-                        TTerm::T(
-                          term::app(Op::Eql, vec![ args[0].clone(), prev ])
-                        )
-                      )
-                    }
-                  }
-                },
-                _ => continue 'lhs_iter,
-              }
-
-            },
-            _ => continue 'lhs_iter,
-          },
-          _ => continue 'lhs_iter,
-        }
-
-        // Only reachable if the top term was an equality we're gonna
-        // propagate.
-        clause.lhs.swap_remove(current) ;
-        cnt = current // <- we just swap removed, need to backtrack counter
-      }
-
-      use std::iter::Extend ;
-      clause.lhs.extend( terms_to_add.drain(0..) ) ;
-
-      // log_info!{ " \n  stabilizing var_map" }
-
-      stable_var_map.clear() ;
-      last_stable_var_map.clear() ;
-
-      'stabilize: for (var, rep) in & var_map {
-        if stable_var_map.contains_key(var) { continue }
-        cycle_set.clear() ;
-
-        let mut cst = rep_cst_map.remove(var) ;
-        let mut trm = var_term_map.remove(var) ;
-
-        let (var, mut rep) = (* var, * rep) ;
-        // log_info!{ "  {}", clause.vars()[var] }
-
-        let _ = cycle_set.insert(var) ;
-
-        let mut rep_term = loop {
-          // log_info!{ "  -> {}", clause.vars()[rep] }
-          if let Some(nu_cst) = rep_cst_map.remove(& rep) {
-            if let Some(ref cst) = cst {
-              if cst != & nu_cst {
-                clauses_to_rm.push(clause_index) ;
-                continue 'clause_iter
-              }
-            } else {
-              cst = Some(nu_cst)
-            }
-          }
-
-          if let Some(nu_trm) = var_term_map.remove(& rep) {
-            if let Some(ref trm) = trm {
-              if * trm != nu_trm {
-                clause.lhs.push(
-                  TTerm::T(
-                    term::app(Op::Eql, vec![ nu_trm, trm.clone() ])
-                  )
-                )
-              }
-            } else {
-              trm = Some(nu_trm)
-            }
-          }
-
-          if let Some(rep_term) = stable_var_map.get(& rep) {
-            // Bonafide representative.
-            break rep_term.clone()
-          } else if let Some(nu_rep) = var_map.get(& rep) {
-            cycle_set.insert(rep) ;
-            if cycle_set.contains(& nu_rep) {
-              // Cycle, we make `nu_rep` the representative and we done.
-              cycle_set.remove(nu_rep) ;
-              break term::var(* nu_rep)
-            } else {
-              // Following equivalence relation.
-              rep = * nu_rep
-            }
-          } else {
-            // Reached the top-most representative.
-            break term::var(rep)
-          }
-        } ;
-
-
-        if let Some(cst_term) = cst {
-          if let Some(trm) = trm {
-            if cst_term != trm {
-              clause.lhs.push(
-                TTerm::T(
-                  term::app(Op::Eql, vec![ cst_term.clone(), trm.clone() ])
-                )
-              )
-            }
-          }
-          if let Some(rep) = rep_term.var_idx() {
-            for (_, other_rep) in stable_var_map.iter_mut() {
-              if * other_rep == rep_term {
-                * other_rep = cst_term.clone()
-              }
-            }
-            cycle_set.insert(rep) ;
-          }
-          rep_term = cst_term
-        } else if let Some(trm) = trm {
-          if let Some(rep) = rep_term.var_idx() {
-            for (_, other_rep) in stable_var_map.iter_mut() {
-              if * other_rep == rep_term {
-                * other_rep = trm.clone()
-              }
-            }
-            cycle_set.insert(rep) ;
-          }
-          // log_info!{ "  => {}", trm.to_string_info( clause.vars() ) ? }
-          rep_term = trm.clone()
-        } else if let Some(rep) = rep_term.var_idx() {
-          // Avoid cycles.
-          if cycle_set.contains(& rep) {
-            cycle_set.remove(& rep) ;
-          }
-        }
-
-        // log_info!{ "  => {}", rep_term.to_string_info( clause.vars() ) ? }
-
-        for var in cycle_set.drain() {
-          // log_info!{
-          //   "    {} -> {}",
-          //   clause.vars()[var],
-          //   rep_term.to_string_info( clause.vars() ) ?
-          // }
-          let _prev = stable_var_map.insert(var, rep_term.clone()) ;
-          debug_assert!( _prev.is_none() )
-        }
-      }
-
-      // log_info!{ " \n  stabilized map {{" }
-      // for (var, rep) in & stable_var_map {
-      //   log_info!{
-      //     "    {} -> {}",
-      //     clause.vars()[* var],
-      //     rep.to_string_info( clause.vars() ) ?
-      //   }
-      // }
-      // log_info!{ "  }}" }
-
-      for (var, term) in & stable_var_map {
-        // log_info!{ "1" }
-        let term = term.subst_fp(& var_term_map).0 ;
-        // log_info!{ "2" }
-        let term = term.subst_fp(& rep_cst_map).0 ;
-        // log_info!{ "3" }
-        let term = term.subst_fp(& stable_var_map).0 ;
-        let _prev = last_stable_var_map.insert(
-          * var, term
-        ) ;
-        debug_assert!( _prev.is_none() )
-      }
-      for (var, term) in & var_term_map {
-        // log_info!{ "4" }
-        let term = term.subst_fp(& rep_cst_map).0 ;
-        // log_info!{ "5" }
-        let term = term.subst_fp(& var_term_map).0 ;
-        // log_info!{ "6" }
-        let term = term.subst_fp(& rep_cst_map).0 ;
-        // log_info!{ "7" }
-        let term = term.subst_fp(& stable_var_map).0 ;
-        let _prev = last_stable_var_map.insert(* var, term) ;
-        debug_assert!( _prev.is_none() )
-      }
-      for (var, int) in rep_cst_map.drain() {
-        let _prev = last_stable_var_map.insert(var, int) ;
-        debug_assert!( _prev.is_none() )
-      }
-
-      // log_info!{ " \n  stabilized map {{" }
-      // for (var, rep) in & last_stable_var_map {
-      //   log_info!{
-      //     "    {} -> {}",
-      //     clause.vars()[* var],
-      //     rep.to_string_info( clause.vars() ) ?
-      //   }
-      // }
-      // log_info!{ "  }}" }
-
-      use mylib::coll::* ;
-      for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
-        tterm.subst(& last_stable_var_map)
-      }
-
-      // Counter for swap remove in lhs.
-      let mut cnt = 0 ;
-      'lhs_subst: while cnt < clause.lhs.len() {
-        clause.lhs[cnt].subst(& last_stable_var_map) ;
-        match clause.lhs[cnt].bool() {
-          Some(true) => {
-            let _ = clause.lhs.swap_remove(cnt) ;
-            ()
-          },
-          Some(false) => {
-            clauses_to_rm.push(clause_index) ;
-            continue 'clause_iter
-          },
-          None => cnt += 1,
-        }
-      }
-
-      clause.rhs.subst(& last_stable_var_map) ;
-      match clause.rhs.bool() {
-        Some(true) => {
-          clauses_to_rm.push(clause_index) ;
-          continue 'clause_iter
-        },
-        Some(false) => clause.rhs = TTerm::T( term::fls() ),
-        None => (),
-      }
-
-      // Deactivate the variables we just removed.
-      for (var, _) in last_stable_var_map.drain() {
-        clause.vars[var].active = false
-      }
-      clause.check("during simplification") ? ;
-
+    let mut clause: ClsIdx = 0.into() ;
+    while clause < self.clauses.len() {
+      let removed = self.simplify_clause(clause) ? ;
+      if ! removed { clause.inc() }
     }
-
-    self.forget_clauses( clauses_to_rm ) ? ;
-    self.check("after simplification") ? ;
 
     Ok(())
   }
@@ -1322,6 +1062,7 @@ impl Instance {
         }
       }
     }
+
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       'pred_clauses: for clause in lhs {
         for tterm in & self.clauses[* clause].lhs {
@@ -1730,8 +1471,8 @@ impl<'a> PebcakFmt<'a> for Instance {
       write!(w, "\n  )\n)\n") ?
     }
 
-    for clause in & self.clauses {
-      write!(w, "\n") ? ;
+    for (idx, clause) in self.clauses.index_iter() {
+      write!(w, "\n; Clause #{}\n", idx) ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
 
@@ -1767,5 +1508,366 @@ impl<'a> PebcakFmt<'a> for Instance {
     }
 
     Ok(())
+  }
+}
+
+
+
+
+
+
+/// Simplifies clauses.
+///
+/// The goal of this type is to avoid reallocation and compartment the clause
+/// simplification process.
+struct ClauseSimplifier {
+  /// Maps variables to their representative.
+  var_to_rep: VarHMap<VarIdx>,
+  /// Maps variables to their representative as a term.
+  var_to_rep_term: VarHMap<Term>,
+  /// Maps representatives to their equivalence set.
+  rep_to_vars: VarHMap<VarSet>,
+  /// Maps representatives to a term they're equal to according to an equality
+  /// in the clause's lhs.
+  rep_to_term: VarHMap<Term>,
+  /// Mpas representatives to the final term they're equal to.
+  rep_to_stable_term: VarHMap<Term>,
+  /// Terms to add to the clause.
+  terms_to_add: Vec<TTerm>,
+}
+impl ClauseSimplifier {
+  /// Constructor.
+  pub fn new() -> Self {
+    ClauseSimplifier {
+      var_to_rep: VarHMap::with_capacity(29),
+      var_to_rep_term: VarHMap::with_capacity(29),
+      rep_to_vars: VarHMap::with_capacity(29),
+      rep_to_term: VarHMap::with_capacity(29),
+      rep_to_stable_term: VarHMap::with_capacity(29),
+      terms_to_add: Vec::with_capacity(29),
+    }
+  }
+
+  /// Prints its state.
+  #[cfg( not(feature = "bench") )]
+  #[allow(dead_code)]
+  fn print_state(& self, pref: & str) {
+    if ! self.var_to_rep.is_empty() {
+      log_debug!{ "{}var_to_rep {{", pref }
+      for (var, rep) in & self.var_to_rep {
+        log_debug!{ "{}  {} -> {}", pref, var, rep }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+    if ! self.var_to_rep_term.is_empty() {
+      log_debug!{ "{}var_to_rep_term {{", pref }
+      for (var, rep) in & self.var_to_rep_term {
+        log_debug!{ "{}  {} -> {}", pref, var, rep }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+    if ! self.rep_to_vars.is_empty() {
+      log_debug!{ "{}rep_to_vars {{", pref }
+      for (rep, set) in & self.rep_to_vars {
+        log_debug!{ "{}  {} -> {}", pref, rep, Self::pretty_varset(set) }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+    if ! self.rep_to_term.is_empty() {
+      log_debug!{ "{}rep_to_term {{", pref }
+      for (rep, term) in & self.rep_to_term {
+        log_debug!{ "{}  {} -> {}", pref, rep, term }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+    if ! self.rep_to_stable_term.is_empty() {
+      log_debug!{ "{}rep_to_stable_term {{", pref }
+      for (rep, term) in & self.rep_to_stable_term {
+        log_debug!{ "{}  {} -> {}", pref, rep, term }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+    if ! self.terms_to_add.is_empty() {
+      log_debug!{ "{}terms_to_add {{", pref }
+      for term in & self.terms_to_add {
+        log_debug!{ "{}  {}", pref, term }
+      }
+      log_debug!{ "{}}}", pref }
+    }
+  }
+
+  /// Pretty printer set of variables.
+  #[cfg( not(feature = "bench") )]
+  #[allow(dead_code)]
+  fn pretty_varset(set: & VarSet) -> String {
+    let mut s = String::new() ;
+    s.push('{') ;
+    for var in set {
+      s.push_str( & format!(" {}", var) )
+    }
+    s.push(' ') ;
+    s.push('}') ;
+    s
+  }
+
+  /// Checks internal consistency.
+  #[cfg(debug_assertions)]
+  fn check(& self, vars: & VarMap<VarInfo>) -> Res<()> {
+    // Representatives can only be mapped to themselves.
+    for (var, rep) in & self.var_to_rep {
+      if var != rep {
+        for (_, rep) in & self.var_to_rep {
+          if var == rep {
+            bail!(
+              "representative {} is mapped to representative {}",
+              vars[* var], vars[* rep]
+            )
+          }
+        }
+      }
+    }
+    // Make sure `var_to_rep` and `rep_to_vars` are consistent.
+    for (var, rep) in & self.var_to_rep {
+      if var != rep {
+        if ! self.rep_to_vars.get(rep).map(
+          |set| set.contains(var)
+        ).unwrap_or(false) {
+          bail!{
+            "{} is mapped to representative {}, \
+            but does not appear in its equivalence class",
+            vars[* var], vars[* rep]
+          }
+        }
+      }
+    }
+    for (rep, set) in & self.rep_to_vars {
+      for var in set {
+        if self.var_to_rep.get(var) != Some(rep) {
+          bail!{
+            "{} is in the equivalence class of {} but is not mapped to it",
+            vars[* var], vars[* rep]
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+  #[cfg( not(debug_assertions) )]
+  #[inline(always)]
+  fn check(& self, _: & VarMap<VarInfo>) -> Res<()> {
+    Ok(())
+  }
+
+  /// Propagates equalities in a clause.
+  ///
+  /// Returns `true` if the clause should_be_removed.
+  ///
+  /// Assumes equalities have arity `2`.
+  pub fn clause_propagate(& mut self, clause: & mut Clause) -> Res<bool> {
+    self.var_to_rep.clear() ;
+    self.var_to_rep_term.clear() ;
+    self.rep_to_vars.clear() ;
+    self.rep_to_term.clear() ;
+    self.rep_to_stable_term.clear() ;
+    self.terms_to_add.clear() ;
+
+    // Find equalities in `lhs`.
+    let mut cnt = 0 ;
+    let mut remove ;
+    'find_eqs: while cnt < clause.lhs.len() {
+      remove = false ;
+
+      log_debug!{ "looking at {}", clause.lhs[cnt] }
+
+      // Equality between variables.
+      if let Some((Op::Eql, args)) = clause.lhs[cnt].app_inspect() {
+        remove = true ;
+        if args.len() != 2 {
+          bail!(
+            "simplification for equality over more \
+            than 2 terms is unimplemented"
+          )
+        }
+        if_debug!{
+          self.print_state("  ")
+        }
+
+        match (args[0].var_idx(), args[1].var_idx()) {
+
+          (Some(v_1), Some(v_2)) if v_1 == v_2 => (),
+
+          (Some(v_1), Some(v_2)) => match (
+            self.var_to_rep.get(& v_1).map(|rep| * rep),
+            self.var_to_rep.get(& v_2).map(|rep| * rep)
+          ) {
+
+            // Both already have same rep.
+            (Some(rep_1), Some(rep_2)) if rep_1 == rep_2 => (),
+            // Different rep.
+            (Some(rep_1), Some(rep_2)) => {
+              // We keep `rep_1`.
+              let set_2 = if let Some(set) = self.rep_to_vars.remove(& rep_2) {
+                set
+              } else { bail!("simplification error (1)") } ;
+              let mut set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                set
+              } else { bail!("simplification error (2)") } ;
+              // Drain `set_2`: update `var_to_rep` and `set_1`.
+              use mylib::coll::* ;
+              for var in set_2.into_iter().chain_one(rep_2) {
+                let _prev = self.var_to_rep.insert(var, rep_1) ;
+                debug_assert_eq!( _prev, Some(rep_2) ) ;
+                let _is_new = set_1.insert(var) ;
+                debug_assert!( _is_new )
+              }
+            },
+            // Only `v_1` has a rep.
+            (Some(rep_1), None) => {
+              let mut set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                set
+              } else { panic!("simplification error (3)") } ;
+              let _is_new = set_1.insert(v_2) ;
+              debug_assert!( _is_new ) ;
+              let _prev = self.var_to_rep.insert(v_2, rep_1) ;
+              debug_assert!( _prev.is_none() )
+            },
+            // Only `v_2` has a rep.
+            (None, Some(rep_2)) => {
+              let mut set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
+                set
+              } else { bail!("simplification error (4)") } ;
+              let _is_new = set_2.insert(v_1) ;
+              debug_assert!( _is_new ) ;
+              let _prev = self.var_to_rep.insert(v_1, rep_2) ;
+              debug_assert!( _prev.is_none() )
+            },
+            // No rep, we use `v_1` as the rep.
+            (None, None) => {
+              let mut set = VarSet::with_capacity(4) ;
+              set.insert(v_2) ;
+              let _prev = self.rep_to_vars.insert(v_1, set) ;
+              debug_assert!( _prev.is_none() ) ;
+              let _prev = self.var_to_rep.insert(v_1, v_1) ;
+              debug_assert!( _prev.is_none() ) ;
+              let _prev = self.var_to_rep.insert(v_2, v_1) ;
+              debug_assert!( _prev.is_none() ) ;
+            },
+
+          },
+
+          // A variable and a term.
+          (Some(var), None) | (None, Some(var)) => {
+            let term = if args[0].var_idx().is_some() {
+              args[1].clone()
+            } else { args[0].clone() } ;
+            let rep = if let Some(rep) = self.var_to_rep.get(& var).map(
+              |rep| * rep
+            ) { rep } else {
+              let _prev = self.var_to_rep.insert(var, var) ;
+              debug_assert!( _prev.is_none() ) ;
+              let _prev = self.rep_to_vars.insert(var, VarSet::with_capacity(4)) ;
+              debug_assert!( _prev.is_none() ) ;
+              var
+            } ;
+            let prev = self.rep_to_term.insert(rep, term.clone()) ;
+            if let Some(prev) = prev {
+              let eq = term::eq(prev, term) ;
+              match eq.eval( & VarMap::with_capacity(0) ) {
+                Ok(Val::B(true)) => (),
+                Ok(Val::B(false)) => return Ok(true),
+                Ok(Val::I(_)) => bail!("equality evaluation yielded integer"),
+                _ => self.terms_to_add.push( TTerm::T(eq) ),
+              }
+            }
+          },
+
+          (None, None) => remove = false,
+
+        }
+      }
+
+      if remove {
+        log_debug!{ "  removing..." }
+        clause.lhs.swap_remove(cnt) ;
+      } else {
+        log_debug!{ "  skipping..." }
+        cnt += 1
+      }
+    }
+
+    self.check( clause.vars() ) ? ;
+
+    log_debug!{ "  generating `var_to_rep_term`" }
+    self.var_to_rep_term = VarHMap::with_capacity( self.var_to_rep.len() ) ;
+    for (rep, set) in & self.rep_to_vars {
+      for var in set {
+        if var != rep {
+          let _prev = self.var_to_rep_term.insert(* var, term::var(* rep)) ;
+          debug_assert!( _prev.is_none() )
+        }
+      }
+    }
+    if_debug!{
+      for (var, rep) in & self.var_to_rep {
+        log_debug!{ "    {} -> {}", var, rep }
+      }
+    }
+
+    log_debug!{ "  stabilizing `rep_to_term` (first step)" }
+    for (_, term) in & mut self.rep_to_term {
+      let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
+      if changed { * term = nu_term }
+    }
+    if_debug!{
+      for (rep, term) in & self.rep_to_term {
+        log_debug!{ "    {} -> {}", rep, term }
+      }
+    }
+
+    log_debug!{ "  stabilizing `rep_to_term` (second step)" }
+    self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
+    for (rep, term) in & self.rep_to_term {
+      let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
+      let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
+      debug_assert!( _prev.is_none() )
+    }
+    if_debug!{
+      for (rep, term) in & self.rep_to_stable_term {
+        log_debug!{ "    {} -> {}", rep, term }
+      }
+    }
+
+    // Note that clause variable de-activation is done in this loop.
+    log_debug!{ "  completing substitution" }
+    for (rep, vars) in self.rep_to_vars.drain() {
+      let term = if let Some(term) = self.rep_to_stable_term.get(& rep) {
+        clause.vars[rep].active = false ;
+        term.clone()
+      } else {
+        debug_assert!( clause.vars[rep].active ) ;
+        term::var(rep)
+      } ;
+      for var in vars {
+        clause.vars[var].active = false ;
+        let _prev = self.rep_to_stable_term.insert(var, term.clone()) ;
+        debug_assert_eq!( _prev, None )
+      }
+    }
+    if_debug!{
+      for (rep, term) in & self.rep_to_stable_term {
+        log_debug!{ "    {} -> {}", rep, term }
+      }
+    }
+
+    use std::iter::Extend ;
+    clause.lhs.extend( self.terms_to_add.drain(0..) ) ;
+
+    log_debug!{ "  updating clause's terms" }
+    use mylib::coll::* ;
+    for tterm in clause.lhs.iter_mut().chain_one(& mut clause.rhs) {
+      tterm.subst(& self.rep_to_stable_term)
+    }
+
+    Ok(false)
   }
 }
