@@ -16,7 +16,7 @@ pub use num::{ Zero, One, Signed } ;
 
 pub use errors::* ;
 pub use term ;
-pub use term::{ RTerm, Term, TTerm, Val, Op, Typ } ;
+pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
 pub use instance::Instance ;
 
 mod wrappers ;
@@ -61,11 +61,26 @@ pub enum Either<L, R> {
 /// Integers.
 pub type Int = ::num::BigInt ;
 
+/// Some predicate applications.
+pub type PredApps = PrdHMap< HashSet< VarMap<Term> > > ;
+/// Predicate application alias type extension.
+pub trait PredAppsExt {
+  /// Insert a predicate application. Returns true if the application is new.
+  fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
+}
+impl PredAppsExt for PredApps {
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
+    self.entry(pred).or_insert_with(
+      || HashSet::with_capacity(4)
+    ).insert(args)
+  }
+}
+
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Maps predicates to terms.
-pub type Model = Vec< (PrdIdx, Vec<TTerm>) > ;
+pub type Model = Vec< (PrdIdx, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -157,6 +172,24 @@ pub trait PebcakFmt<'a> {
   /// Formatted string.
   fn to_string_info(& self, i: Self::Info) -> Res<String> {
     self.string_do(i, |s| s.to_string())
+  }
+}
+
+
+/// Indexed by `VarIdx`.
+pub trait VarIndexed<T> {
+  /// Gets the value associated with a variable.
+  #[inline(always)]
+  fn var_get(& self, var: VarIdx) -> Option<& T> ;
+}
+impl<T> VarIndexed<T> for VarMap<T> {
+  fn var_get(& self, var: VarIdx) -> Option<& T> {
+    Some(& self[var])
+  }
+}
+impl<T> VarIndexed<T> for VarHMap<T> {
+  fn var_get(& self, var: VarIdx) -> Option<& T> {
+    self.get(& var)
   }
 }
 

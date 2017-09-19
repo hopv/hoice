@@ -22,7 +22,7 @@ bench = [ ]
 
 [dependencies]
 lazy_static = "*"
-clap = "*"
+clap = "2.26.0"
 regex = "*"
 hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
 error-chain = "*"

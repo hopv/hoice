@@ -8,7 +8,8 @@ It does so using an SMT solver, and performing string substitution (roughly)
 to rewrite the problem as a pure SMT query. In particular, there is no real
 notion of term here."#]
 
-use common::* ;
+use errors::* ;
+use common::{ conf, ColorExt, Solver, HashMap, Read } ;
 
 pub mod parse ;
 

@@ -208,7 +208,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       * sender = None
     }
     while self.get_candidates()?.is_some() {}
-
     Ok(())
   }
   /// Finalizes the run, does nothing in bench mode.
@@ -390,36 +389,24 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         )
       } ;
 
-      // Skip if trivially true or false.
-      if tterms.len() == 1 {
-        match tterms[0].bool() {
-          Some(true)  => {
-            let _ = true_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).1
-            ) ;
-            continue 'forced_preds
-          },
-          Some(false) => {
-            let _ = false_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).0
-            ) ;
-            continue 'forced_preds
-          },
-          None => (),
-        }
+      match * tterms {
+        TTerms::True => {
+          true_preds.insert(pred) ;
+        },
+        TTerms::False => {
+          false_preds.insert(pred) ;
+        },
+        _ => {
+          let pred = & self.instance[pred] ;
+          let sig: Vec<_> = pred.sig.index_iter().map(
+            |(var, typ)| (var, * typ)
+          ).collect() ;
+          self.solver.define_fun(
+            & pred.name, & sig, & Typ::Bool, tterms,
+            & ( & true_preds, & false_preds, self.instance.preds() )
+          ) ?
+        },
       }
-
-      // Reachable only if preds is not `true` or `false`.
-      let pred = & self.instance[pred] ;
-      let sig: Vec<_> = pred.sig.index_iter().map(
-        |(var, typ)| (var, * typ)
-      ).collect() ;
-      self.solver.define_fun(
-        & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
-        & ( & true_preds, & false_preds, self.instance.preds() )
-      ) ?
 
     }
 
@@ -509,13 +496,32 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
       if conf.solver.log {
-        for lhs in clause.lhs() {
+        self.solver.comment(& format!("clause variables:\n")) ? ;
+        for info in clause.vars() {
           self.solver.comment(
-            & format!("{}\n", lhs)
+            & format!("  v_{} ({})\n", info.idx, info.active)
           ) ?
         }
+        self.solver.comment(& format!("lhs terms:\n")) ? ;
+        for lhs in clause.lhs_terms() {
+          self.solver.comment(
+            & format!("  {}\n", lhs)
+          ) ?
+        }
+        self.solver.comment(& format!("lhs pred applications:\n")) ? ;
+        for (pred, argss) in clause.lhs_preds() {
+          for args in argss {
+            let mut s = format!("  ({}", & self.instance[* pred]) ;
+            for arg in args {
+              s = format!("{} {}", s, arg)
+            }
+            s.push(')') ;
+            self.solver.comment(& s) ?
+          }
+        }
+        self.solver.comment(& format!("rhs:\n")) ? ;
         self.solver.comment(
-          & format!("=> {}", clause.rhs())
+          & format!("  {}", clause.rhs())
         ) ?
       }
     }
@@ -551,77 +557,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     } ;
     self.solver.pop(1) ? ;
     res
-  }
-}
-
-
-
-/// Wraps a vector of top terms to write as the body of a `define-fun`.
-///
-/// The vector is understood as a conjunction.
-///
-/// The info for smt2 printing is
-///
-/// - set of predicates defined as true
-/// - set of predicates defined as false
-/// - predicate info to print non-trivial predicates
-pub struct TTermsWrap<'a>( & 'a Vec<TTerm> ) ;
-impl<'a, 'b> ::rsmt2::Expr2Smt<
-  (& 'b PrdSet, & 'b PrdSet, & 'b PrdMap< ::instance::info::PrdInfo >)
-> for TTermsWrap<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, info: & (
-      & 'b PrdSet, & 'b PrdSet, & 'b PrdMap<::instance::info::PrdInfo>
-    )
-  ) -> SmtRes<()> {
-    let (true_preds, false_preds, pred_info) = * info ;
-    
-    let msg = "writing tterms as smt2" ;
-    smt_cast_io!{
-      msg =>
-      if self.0.len() > 1 {
-        smtry_io!(msg => write!(w, "(and") ) ;
-        for tterm in self.0 {
-          smtry_io!(msg => write!(w, " ")) ;
-          smtry_io!(
-            msg => tterm.write(
-              w, |w, var| var.default_write(w),
-              |w, pred, args| if true_preds.contains(& pred) {
-                write!(w, "true")
-              } else if false_preds.contains(& pred) {
-                write!(w, "false")
-              } else {
-                write!(w, "({}", pred_info[pred]) ? ;
-                for arg in args {
-                  write!(w, " ") ? ;
-                  arg.write(w, |w, var| var.default_write(w)) ?
-                }
-                write!(w, ")")
-              }
-            )
-          ) ;
-        }
-        write!(w, ")")
-      } else if self.0.len() == 1 {
-        self.0[0].write(
-          w, |w, var| var.default_write(w),
-          |w, pred, args| if true_preds.contains(& pred) {
-            write!(w, "true")
-          } else if false_preds.contains(& pred) {
-            write!(w, "false")
-          } else {
-            write!(w, "({}", pred_info[pred]) ? ;
-            for arg in args {
-              write!(w, " ") ? ;
-              arg.write(w, |w, var| var.default_write(w)) ?
-            }
-            write!(w, ")")
-          }
-        )
-      } else {
-        bail!("predicate definition is empty")
-      }
-    }
   }
 }
 

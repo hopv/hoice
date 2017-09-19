@@ -80,7 +80,7 @@ fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool
 ) -> Res<()> {
   use instance::parse::ItemRead ;
-  
+
   let profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
@@ -177,34 +177,18 @@ fn read_and_work<R: ::std::io::Read>(
         let stdout = & mut ::std::io::stdout() ;
         println!("(model") ;
         for & (ref pred, ref tterms) in model {
-          if ! tterms.is_empty() {
-            let pred_info = & instance[* pred] ;
-            println!("  (define-fun {}", pred_info.name) ;
-            print!(  "    (") ;
-            for (var, typ) in pred_info.sig.index_iter() {
-              print!(" ({} {})", term::var(var), typ)
-            }
-            println!(" ) Bool") ;
-            if tterms.len() > 1 {
-              print!("    (and\n") ;
-              for tterm in tterms {
-                print!("      ") ;
-                instance.print_tterm_as_model(stdout, tterm) ? ;
-                println!("")
-              }
-              println!("    )")
-            } else if tterms.len() == 1 {
-              print!("    ") ;
-              instance.print_tterm_as_model(stdout, & tterms[0]) ? ;
-              println!("")
-            } else {
-              bail!(
-                "model for predicate {} is empty",
-                conf.sad( & pred_info.name )
-              )
-            }
-            println!("  )")
+          let pred_info = & instance[* pred] ;
+          println!(
+            "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
+          ) ;
+          print!(  "    (") ;
+          for (var, typ) in pred_info.sig.index_iter() {
+            print!(" ({} {})", term::var(var), typ)
           }
+          println!(" ) {}", Typ::Bool) ;
+          print!(  "    ") ;
+          instance.print_tterms_as_model(stdout, tterms) ? ;
+          println!("\n  )")
         }
         println!(")")
       } else {

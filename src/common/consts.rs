@@ -4,6 +4,8 @@
 pub mod keywords {
   /// Predicate declaration keyword.
   pub static prd_dec: & 'static str = "declare-fun" ;
+  /// Predicate declaration keyword.
+  pub static prd_def: & 'static str = "define-fun" ;
   /// Assertion keyword.
   pub static assert: & 'static str = "assert" ;
   /// Forall keyword.

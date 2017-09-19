@@ -85,7 +85,7 @@ impl SolverConf {
 
       Arg::with_name("z3_cmd").long("--z3").help(
         "sets the command used to call z3"
-      ).default_value("z3").takes_value(true).number_of_values(1)
+      ).default_value("z3").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -95,7 +95,7 @@ impl SolverConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -137,7 +137,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -147,7 +147,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -190,7 +190,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("1").takes_value(true).number_of_values(1)
+      ).default_value("1").takes_value(true)// .number_of_values(1)
 
     // ).arg(
 
@@ -200,7 +200,7 @@ impl IceConf {
     //     bool_validator
     //   ).value_name(
     //     bool_format
-    //   ).default_value("on").takes_value(true).number_of_values(1)
+    //   ).default_value("on").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -210,7 +210,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -220,7 +220,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("50").takes_value(true).number_of_values(1)
+      ).default_value("50").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -265,7 +265,7 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -430,7 +430,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -438,7 +438,7 @@ impl Config {
         "sets the output directory (used only by smt logging currently)"
       ).value_name(
         "DIR"
-      ).default_value(".").takes_value(true).number_of_values(1)
+      ).default_value(".").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -448,7 +448,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -458,7 +458,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)//.number_of_values(1)
 
     )
   }
@@ -471,7 +471,7 @@ impl Config {
         "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
-      ).takes_value(true).number_of_values(1)
+      ).takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -481,7 +481,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
