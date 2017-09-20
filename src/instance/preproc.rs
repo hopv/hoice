@@ -39,9 +39,8 @@ pub fn work(
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
-  log_info!{ "done with pre-processing" }
   log_info!{
-    "done with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+    "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
   }
   res
 
@@ -100,9 +99,9 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
     profile!{ |profiler| mark "pre-proc", "reducing" }
     log_info!{ "done reducing" }
 
-    log_info!{
-      "\n\n\n|===|instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_info!{
+    //   "\n\n\n|===|instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
+    // }
 
   }
 
