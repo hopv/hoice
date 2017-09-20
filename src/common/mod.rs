@@ -50,6 +50,14 @@ pub fn corrupted_err<T>(_: T) -> Error {
   "[bug] lock on learning data is corrupted...".into()
 }
 
+/// Notifies the user and reads a line from stdin.
+pub fn pause(s: & str) {
+  let mut dummy = String::new() ;
+  println!("") ;
+  println!( "; {}{}...", conf.emph("press return"), s ) ;
+  let _ = ::std::io::stdin().read_line(& mut dummy) ;
+}
+
 /// Disjunction type.
 pub enum Either<L, R> {
   Lft(L), Rgt(R)
@@ -108,6 +116,43 @@ pub type HConSet<T> = HashSet<
 pub type HConMap<T,V> = HashMap<
   ::hashconsing::HConsed<T>, V, hash::BuildHashU64
 > ;
+
+
+/// Information returned by
+/// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
+/// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
+pub struct RedInfo {
+  /// Number of predicates eliminated.
+  pub preds: usize,
+  /// Number of clauses removed.
+  pub clauses_rmed: usize,
+  /// Number of clauses created.
+  pub clauses_added: usize,
+}
+impl RedInfo {
+  /// True if one or more fields are non-zero.
+  pub fn non_zero(& self) -> bool {
+    self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0
+  }
+}
+impl From<(usize, usize, usize)> for RedInfo {
+  fn from(
+    (preds, clauses_rmed, clauses_added): (usize, usize, usize)
+  ) -> RedInfo {
+    RedInfo { preds, clauses_rmed, clauses_added }
+  }
+}
+impl ::std::ops::AddAssign for RedInfo {
+  fn add_assign(
+    & mut self, RedInfo { preds, clauses_rmed, clauses_added }: Self
+  ) {
+    self.preds += preds ;
+    self.clauses_rmed += clauses_rmed ;
+    self.clauses_added += clauses_added
+  }
+}
+
+
 
 
 

@@ -124,7 +124,13 @@ pub struct PreprocConf {
   /// Pre-processing flag.
   pub active: bool,
   /// Simple reduction flag.
-  pub simple_red: bool,
+  pub smt_red: bool,
+  /// One rhs.
+  pub one_rhs: bool,
+  /// One lhs.
+  pub one_lhs: bool,
+  /// Mono-predicate.
+  pub mono_pred: bool,
 }
 impl PreprocConf {
   /// Adds clap options to a clap App.
@@ -141,13 +147,43 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("simple_red").long("--simple_red").help(
-        "(de)activates simple reduction"
+      Arg::with_name("smt_red").long("--smt_red").help(
+        "(de)activates smt-based reduction strategies"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
       ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("one_rhs").long("--one_rhs").help(
+        "(de)activates one rhs reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("one_lhs").long("--one_lhs").help(
+        "(de)activates one lhs reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("mono_pred").long("--mono_pred").help(
+        "(de)activates mono-predicate reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -155,9 +191,12 @@ impl PreprocConf {
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "pre_proc") ;
-    let simple_red = bool_of_matches(matches, "simple_red") ;
+    let smt_red = bool_of_matches(matches, "smt_red") ;
+    let one_rhs = bool_of_matches(matches, "one_rhs") ;
+    let one_lhs = bool_of_matches(matches, "one_lhs") ;
+    let mono_pred = bool_of_matches(matches, "mono_pred") ;
 
-    PreprocConf { active, simple_red }
+    PreprocConf { active, smt_red, one_rhs, one_lhs, mono_pred }
   }
 }
 

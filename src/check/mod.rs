@@ -139,7 +139,7 @@ impl Output {
           count += 1
         }
       } else {
-        warn!(
+        println!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;

@@ -9,40 +9,6 @@ use instance::* ;
 
 
 
-/// Information returned by [`RedStrat`](trait.RedStrat.html)s and
-/// [`SolverRedStrat`](trait.SolverRedStrat.html)s.
-pub struct RedInfo {
-  /// Number of predicates eliminated.
-  pub preds: usize,
-  /// Number of clauses removed.
-  pub clauses_rmed: usize,
-  /// Number of clauses created.
-  pub clauses_added: usize,
-}
-impl RedInfo {
-  /// True if one or more fields are non-zero.
-  pub fn non_zero(& self) -> bool {
-    self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0
-  }
-}
-impl From<(usize, usize, usize)> for RedInfo {
-  fn from(
-    (preds, clauses_rmed, clauses_added): (usize, usize, usize)
-  ) -> RedInfo {
-    RedInfo { preds, clauses_rmed, clauses_added }
-  }
-}
-impl ::std::ops::AddAssign for RedInfo {
-  fn add_assign(
-    & mut self, RedInfo { preds, clauses_rmed, clauses_added }: Self
-  ) {
-    self.preds += preds ;
-    self.clauses_rmed += clauses_rmed ;
-    self.clauses_added += clauses_added
-  }
-}
-
-
 
 /// Runs pre-processing
 pub fn work(
@@ -52,7 +18,7 @@ pub fn work(
   profile!{ |profiler| tick "pre-proc" }
   log_info!{ "starting pre-processing" }
 
-  let res = if conf.preproc.simple_red {
+  let res = if conf.preproc.smt_red {
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
@@ -88,25 +54,42 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
   let mut reductor = Reductor::new(solver) ;
   let mut total: RedInfo = (0, 0, 0).into() ;
 
-  log_info!{ "running simplification" }
-  instance.check("before simplification") ? ;
-  profile!{ |profiler| tick "pre-proc", "simplify" }
-  instance.simplify_clauses() ? ;
-  profile!{ |profiler| mark "pre-proc", "simplify" }
+  // log_info!{ "running simplification" }
+  // instance.check("before simplification") ? ;
+  // profile!{ |profiler| tick "pre-proc", "propagate" }
+  // let clauses = instance.simplify_clauses() ? ;
+  // total.clauses_rmed += clauses ;
+  // profile!{ |profiler| mark "pre-proc", "propagate" }
+  // profile!{
+  //   |profiler| format!(
+  //     "{:>25} clause red", "propagate"
+  //   ) => add clauses
+  // }
 
-  profile!{ |profiler| tick "pre-proc", "simplifying" }
-  total += reductor.run_simplification(instance, & profiler) ? ;
-  profile!{ |profiler| mark "pre-proc", "simplifying" }
+
+  // log_info!{
+  //   "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
+  // }
 
 
-  log_info!{
-    "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
+  profile!{ |profiler| tick "pre-proc", "propagate" }
+  let clauses = instance.simplify_clauses() ? ;
+  total.clauses_rmed += clauses ;
+  profile!{ |profiler| mark "pre-proc", "propagate" }
+  profile!{
+    |profiler| format!(
+      "{:>25} clause red", "propagate"
+    ) => add clauses
   }
-
 
 
   let mut changed = true ;
   'preproc: while changed {
+
+    profile!{ |profiler| tick "pre-proc", "simplifying" }
+    let red_info = reductor.run_simplification(instance, & profiler) ? ;
+    total += red_info ;
+    profile!{ |profiler| mark "pre-proc", "simplifying" }
 
     log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
@@ -159,9 +142,13 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<'kid, S> {
     let mut solver_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
       Box::new( SmtTrivial::new() ),
     ] ;
-    if conf.preproc.simple_red {
-      solver_strats.push( Box::new( SimpleOneRhs::new() ) ) ;
-      // solver_strats.push( Box::new( SimpleOneLhs::new() ) ) ;
+    if conf.preproc.one_rhs {
+      solver_strats.push( Box::new( SimpleOneRhs::new() ) )
+    }
+    if conf.preproc.one_lhs {
+      solver_strats.push( Box::new( SimpleOneLhs::new() ) )
+    }
+    if conf.preproc.mono_pred {
       solver_strats.push( Box::new( MonoPredClause::new() ) )
     }
     let solver_strats = solver.map(
@@ -253,44 +240,48 @@ impl<'kid, S: Solver<'kid, Parser>> Reductor<'kid, S> {
     // }
 
     if let Some((ref mut solver, ref mut strats)) = self.solver_strats {
-      let mut changed = true ;
-      while changed {
-        changed = false ;
+      // let mut changed = true ;
+      // while changed {
+      //   changed = false ;
 
         for strat in strats.iter_mut() {
-          log_info!("applying {}", conf.emph( strat.name() )) ;
-          profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
-          let red_info = strat.apply(instance, solver) ? ;
-          changed = changed || red_info.non_zero() ;
+          let mut changed = true ;
+          while changed {
+            log_info!("applying {}", conf.emph( strat.name() )) ;
+            profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+            let red_info = strat.apply(instance, solver) ? ;
+            changed = red_info.non_zero() ;
 
-          if_not_bench!{
-            profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
-            profile!{
-              |_profiler| format!(
-                "{:>25}   pred red", strat.name()
-              ) => add red_info.preds
+
+            if_not_bench!{
+              profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+              profile!{
+                |_profiler| format!(
+                  "{:>25}   pred red", strat.name()
+                ) => add red_info.preds
+              }
+              profile!{
+                |_profiler| format!(
+                  "{:>25} clause red", strat.name()
+                ) => add red_info.clauses_rmed
+              }
+              profile!{
+                |_profiler| format!(
+                  "{:>25} clause add", strat.name()
+                ) => add red_info.clauses_added
+              }
             }
-            profile!{
-              |_profiler| format!(
-                "{:>25} clause red", strat.name()
-              ) => add red_info.clauses_rmed
-            }
-            profile!{
-              |_profiler| format!(
-                "{:>25} clause add", strat.name()
-              ) => add red_info.clauses_added
-            }
+
+            total += red_info ;
+            instance.check( strat.name() ) ? ;
           }
-
-          total += red_info ;
-          instance.check( strat.name() ) ? ;
 
           // let mut dummy = String::new() ;
           // println!("") ;
           // println!( "; waiting..." ) ;
           // let _ = ::std::io::stdin().read_line(& mut dummy) ;
         }
-      }
+      // }
     }
 
     Ok(total)
@@ -932,7 +923,7 @@ pub struct SimpleOneRhs {
 }
 impl SimpleOneRhs {
   /// Constructor.
-  fn new() -> Self {
+  pub fn new() -> Self {
     SimpleOneRhs {
       true_preds: PrdSet::with_capacity(7),
       false_preds: PrdSet::with_capacity(7),
@@ -951,8 +942,7 @@ where Slver: Solver<'kid, Parser> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
-    let mut clauses_rmed = 0 ;
-    let mut pred_count = 0 ;
+    let mut red_info: RedInfo = (0,0,0).into() ;
 
     for pred in instance.pred_indices() {
       log_debug!{ "looking at {}", instance[pred] }
@@ -984,31 +974,32 @@ where Slver: Solver<'kid, Parser> {
         }
 
         instance.forget_clause(clause) ? ;
-        clauses_rmed += 1 ;
+        red_info.clauses_rmed += 1 ;
 
         log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
         use self::ExtractRes::* ;
         match res {
           Trivial => {
             log_info!("  => false") ;
-            clauses_rmed += instance.force_false(Some(pred)) ?
+            red_info.clauses_rmed += instance.force_false(Some(pred)) ?
           },
           SuccessTrue => {
             log_info!("  => true") ;
-            clauses_rmed += instance.force_true(Some(pred)) ? ;
+            red_info.clauses_rmed += instance.force_true(Some(pred)) ? ;
           },
           Success(tterms) => {
             if_not_bench!{
               for tterm in & tterms {
-                log_info!("  => {}", tterm ) ;
+                log_debug!("  => {}", tterm ) ;
                 if let Some(pred) = tterm.pred() {
-                  log_info!("     {}", instance[pred])
+                  log_debug!("     {}", instance[pred])
                 }
               }
             }
-            clauses_rmed += instance.force_preds(
+            red_info += instance.force_preds(
               Some((pred, TTerms::conj(tterms)))
             ) ? ;
+
 
             instance.check("after unfolding") ?
           },
@@ -1018,16 +1009,12 @@ where Slver: Solver<'kid, Parser> {
         }
 
         if instance.forced_terms_of(pred).is_some() {
-          pred_count += 1
+          red_info.preds += 1
         }
       }
     }
 
-    if pred_count > 1 {
-      instance.simplify_clauses() ?
-    }
-
-    Ok( (pred_count, clauses_rmed, 0).into() )
+    Ok( red_info )
   }
 }
 
@@ -1067,8 +1054,7 @@ where Slver: Solver<'kid, Parser> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
-    let mut clauses_rmed = 0 ;
-    let mut pred_count = 0 ;
+    let mut red_info: RedInfo = (0,0,0).into() ;
 
     for pred in instance.pred_indices() {
       let clause_idx = if instance.clauses_of_pred(pred).0.len() == 1 {
@@ -1116,30 +1102,30 @@ where Slver: Solver<'kid, Parser> {
       }
 
       instance.forget_clause(clause_idx) ? ;
-      clauses_rmed += 1 ;
+      red_info.clauses_rmed += 1 ;
 
-      log_debug!{ "  unfolding {}", conf.emph(& instance[pred].name) }
+      log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
       use self::ExtractRes::* ;
       match res {
         SuccessTrue => {
-          log_debug!("  => true") ;
-          clauses_rmed += instance.force_true(Some(pred)) ? ;
+          log_info!("  => true") ;
+          red_info.clauses_rmed += instance.force_true(Some(pred)) ?
         },
         SuccessFalse => {
-          log_debug!("  => false") ;
-          clauses_rmed += instance.force_false(Some(pred)) ? ;
+          log_info!("  => false") ;
+          red_info.clauses_rmed += instance.force_false(Some(pred)) ?
         },
         Success(tterms) => {
           if_not_bench!{
             for tterm in & tterms {
-              log_debug!("  => {}", tterm ) ;
+              log_debug!("  => {} (t)", tterm ) ;
               if let Some(pred) = tterm.pred() {
                 log_debug!("     {}", instance[pred])
               }
             }
             log_debug!( "  {:?}", instance.clauses_of_pred(pred) )
           }
-          clauses_rmed += instance.force_preds(
+          red_info += instance.force_preds(
             Some((pred, TTerms::conj(tterms)))
           ) ? ;
 
@@ -1151,30 +1137,26 @@ where Slver: Solver<'kid, Parser> {
       }
 
       if instance.forced_terms_of(pred).is_some() {
-        pred_count += 1
+        red_info.preds += 1
       } else {
         if_verb!{
-          log_info!{ "  did not remove, still appears in lhs of" }
+          log_debug!{ "  did not remove, still appears in lhs of" }
           for clause in instance.clauses_of_pred(pred).0 {
-            log_info!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
           }
-          log_info!{ "  and rhs of" }
+          log_debug!{ "  and rhs of" }
           for clause in instance.clauses_of_pred(pred).1 {
-            log_info!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
           }
         }
       }
-      let mut dummy = String::new() ;
-      println!("") ;
-      println!( "; {}...", conf.emph("press return") ) ;
-      let _ = ::std::io::stdin().read_line(& mut dummy) ;
+      // let mut dummy = String::new() ;
+      // println!("") ;
+      // println!( "; {}...", conf.emph("press return") ) ;
+      // let _ = ::std::io::stdin().read_line(& mut dummy) ;
     }
 
-    if pred_count > 1 {
-      instance.simplify_clauses() ?
-    }
-
-    Ok( (pred_count, clauses_rmed, 0).into() )
+    Ok( red_info )
   }
 }
 
@@ -1359,7 +1341,7 @@ where Slver: Solver<'kid, Parser> {
     let clause_cnt = clauses_to_rm.len() ;
     instance.forget_clauses(clauses_to_rm) ? ;
     if clause_cnt > 0 {
-      log_info!{ "  dropped {} trivial clause(s)", clause_cnt }
+      log_debug!{ "  dropped {} trivial clause(s)", clause_cnt }
     }
     Ok( (0, clause_cnt, 0).into() )
   }

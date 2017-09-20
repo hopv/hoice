@@ -218,6 +218,9 @@ pub fn simplify(
 
     Op::Not => {
       assert!( args.len() == 1 ) ;
+      if let Some(b) = args[0].bool() {
+        return bool(! b)
+      }
       match * args[0] {
         RTerm::App { op: Op::Not, ref args } => {
           return args[0].clone()

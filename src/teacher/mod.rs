@@ -71,11 +71,11 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
-    // log_info!{
-    //   "all learning data:\n{}", teacher.data.string_do(
-    //     & (), |s| s.to_string()
-    //   ) ?
-    // }
+    log_info!{
+      "all learning data:\n{}", teacher.data.string_do(
+        & (), |s| s.to_string()
+      ) ?
+    }
 
     if conf.teacher.step {
       let mut dummy = String::new() ;
@@ -108,11 +108,12 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
             conf.emph( & teacher.learners[_idx].1 )
           ) ;
           for _pred in teacher.instance.preds() {
-            log_info!("{}:", _pred.name) ;
+            log_info!("{}:", conf.emph(& _pred.name)) ;
             if let Some(term) = candidates[_pred.idx].as_ref() {
               log_info!("  {}", term)
             }
           }
+          log_info!( "" )
         }
         profile!{ teacher tick "cexs" }
         let cexs = teacher.get_cexs(& candidates) ? ;
@@ -271,7 +272,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match self.from_learners.recv() {
         Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
           for _line in _s.lines() {
-            log_info!(
+            log_debug!(
               "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
             )
           }

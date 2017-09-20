@@ -772,7 +772,7 @@ impl Instance {
   /// Forces a predicate to be equal to something.
   ///
   /// Does not impact `pred_to_clauses`.
-  fn force_pred(& mut self, pred: PrdIdx, tterms: TTerms) -> Res<()> {
+  pub fn force_pred(& mut self, pred: PrdIdx, tterms: TTerms) -> Res<()> {
     if let Some(ts) = self.pred_terms[pred].as_ref() {
       if ts != & tterms {
         bail!(
@@ -848,13 +848,18 @@ impl Instance {
   // }
 
   /// Forget some clauses.
+  ///
+  /// Duplicates are handled as if they was only one.
   pub fn forget_clauses(& mut self, mut clauses: Vec<ClsIdx>) -> Res<()> {
     // Forgetting is done by swap remove, so we sort in DESCENDING order so
     // that indices always make sense.
     clauses.sort_unstable_by(
       |c_1, c_2| c_2.cmp(c_1)
     ) ;
+    let mut prev = None ;
     for clause in clauses {
+      if prev == Some(clause) { continue }
+      prev = Some(clause) ;
       let _ = self.forget_clause(clause) ? ;
     }
     self.check("after `forget_clause`") ? ;
@@ -892,6 +897,8 @@ impl Instance {
     let last_clause: ClsIdx = ( self.clauses.len() - 1 ).into() ;
     if clause != last_clause {
       self.relink_preds_to_clauses(last_clause, clause) ?
+    } else {
+      log_info!{ "  last clause" }
     }
     let res = self.clauses.swap_remove(clause) ;
     let (_lhs, _rhs) = self.clause_to_preds.pop().expect(
@@ -945,21 +952,22 @@ impl Instance {
 
 
 
-  /// Simplifies the clauses.
+  /// Simplifies the clauses. Returns the number of clauses removed.
   ///
   /// - propagates variable equalities in clauses' lhs
   ///
   /// # TO DO
   ///
   /// - currently kind of assumes equalities are binary, fix?
-  pub fn simplify_clauses(& mut self) -> Res<()> {
+  pub fn simplify_clauses(& mut self) -> Res<usize> {
     let mut clause: ClsIdx = 0.into() ;
+    let mut rmed = 0 ;
     while clause < self.clauses.len() {
       let removed = self.simplify_clause(clause) ? ;
-      if ! removed { clause.inc() }
+      if ! removed { clause.inc() } else { rmed += 1 }
     }
 
-    Ok(())
+    Ok(rmed)
   }
 
   /// Extracts some qualifiers from all clauses.
@@ -1368,21 +1376,29 @@ impl Instance {
   pub fn force_false<Preds: IntoIterator<Item = PrdIdx>>(
     & mut self, preds: Preds
   ) -> Res<usize> {
+    self.check("before force false") ? ;
     let mut clauses_dropped = 0 ;
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
     let fls = TTerms::fls() ;
     for pred in preds.into_iter() {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
-      info!("  forcing {} to false", self[pred]) ;
+
       self.force_pred( pred, fls.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
+
       clauses_dropped += clause_lhs.len() ;
-      self.forget_clauses( clause_lhs.drain().collect() ) ? ;
       for clause in clause_rhs.drain() {
         debug_assert_eq!{ self.clauses[clause].rhs.pred(), Some(pred) }
         self.clauses[clause].rhs = TTerm::T( term::fls() )
       }
+      debug_assert!{{
+        for clause in & clause_lhs {
+          debug_assert!( self[*clause].lhs_preds().get(& pred).is_some() )
+        }
+        true
+      }}
+      self.forget_clauses( clause_lhs.drain().collect() ) ?
     }
     self.check("force_false") ? ;
     Ok(clauses_dropped)
@@ -1402,7 +1418,6 @@ impl Instance {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
 
-      info!("  forcing {} to true", self[pred]) ;
       self.force_pred( pred, tru.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
@@ -1424,14 +1439,14 @@ impl Instance {
     Item = (PrdIdx, TTerms)
   >>(
     & mut self, preds: Preds
-  ) -> Res<usize> {
+  ) -> Res<RedInfo> {
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
     let mut terms_to_add = vec![] ;
     let mut clauses_to_rm = ClsSet::new() ;
     let mut clauses_rmed = 0 ;
     // We need to add clauses when forcing a predicate to be a disjunction.
     let mut clauses_to_add = Vec::with_capacity(10) ;
-    let mut _clauses_added = 0 ;
+    let mut clauses_added = 0 ;
 
     log_debug!{ "  force preds..." }
 
@@ -1549,22 +1564,16 @@ impl Instance {
             self.pred_to_clauses[pred].1.insert(clause) ;
             self.clause_to_preds[clause].1 = Some(pred) ;
           }
+          debug_assert_eq!{
+            self.clauses[clause].rhs.pred(), Some(pred)
+          }
           self.clauses[clause].rhs = tterm ;
           for tterm in tterms {
             let clause = self.clauses[clause].clone_with_rhs(tterm) ;
-            self.push_clause(clause) ?
+            clauses_to_add.push(clause)
+            // self.push_clause(clause) ?
           }
         }
-
-        let remove = self.simplifier.clause_propagate(
-          & mut self.clauses[clause]
-        ).chain_err(
-          || format!(
-            "on clause {}",
-            self.clauses[clause].to_string_info(& self.preds).unwrap()
-          )
-        ) ? ;
-        if remove { clauses_to_rm.insert(clause) ; () }
 
       }
 
@@ -1573,13 +1582,13 @@ impl Instance {
       }
       clauses_rmed += clauses_to_rm.len() ;
       self.forget_clauses( clauses_to_rm.drain().collect() ) ? ;
-      _clauses_added += clauses_to_add.len() ;
+      clauses_added += clauses_to_add.len() ;
       for clause in clauses_to_add.drain(0..) {
         self.push_clause(clause) ?
       }
     }
 
-    Ok(clauses_rmed)
+    Ok( (0, clauses_rmed, clauses_added).into() )
   }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {
