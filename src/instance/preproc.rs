@@ -1333,23 +1333,32 @@ where Slver: Solver<'kid, Parser> {
         }
 
         let rhs = if let Some(term) = clause.rhs().term() {
-          
-          if let Some(b) = term.bool() {
-            if b {
-              clauses_to_rm.push(clause_idx) ;
-              continue 'clause_iter
-            } else {
-              // Clause is true => false.
+
+          if clause.lhs_is_empty() {
+            if let Some(b) = term.bool() {
+              if b {
+                clauses_to_rm.push(clause_idx) ;
+                continue 'clause_iter
+              } else {
+                log_debug!{
+                  "unsat because of {}",
+                  clause.to_string_info( instance.preds() ) ?
+                }
+                // Clause is true => false.
+                bail!( ErrorKind::Unsat )
+              }
+            } else if solver.trivial_impl(
+              clause.vars(), Some(term).into_iter(), & term::fls()
+            ) ? {
+              log_debug!{
+                "unsat because of {}",
+                clause.to_string_info( instance.preds() ) ?
+              }
+              // Clause true => false.
               bail!( ErrorKind::Unsat )
             }
-          } else if solver.trivial_impl(
-            clause.vars(), Some(term).into_iter(), & term::fls()
-          ) ? {
-            // Clause true => false.
-            bail!( ErrorKind::Unsat )
-          } else {
-            term
           }
+          term
 
         } else {
           if lhs.is_empty() {
