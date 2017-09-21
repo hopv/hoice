@@ -109,17 +109,19 @@ fn read_and_work<R: ::std::io::Read>(
       profile!{ |profiler| mark "parsing" }
       break 'parse_work
     }
-
-    let parse_res = match parser_cxt.parser(
+    let parse_res = parser_cxt.parser(
       & buf, line_off
-    ).parse(& mut instance) {
+    ).parse(& mut instance) ;
+
+    line_off += lines_parsed ;
+
+    let parse_res = match parse_res {
       Ok(res) => res,
       Err(e) => {
         ::errors::print_err(e) ;
         continue 'parse_work
       },
     } ;
-    line_off += lines_parsed ;
 
     profile!{ |profiler| mark "parsing" }
     

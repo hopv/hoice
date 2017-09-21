@@ -400,8 +400,6 @@ pub struct Instance {
   /// Maps predicates to the clauses where they appear in the lhs and rhs
   /// respectively.
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
-  /// Maps clauses to the predicates appearing in them.
-  clause_to_preds: ClsMap< (PrdSet, Option<PrdIdx>) >,
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
 }
@@ -418,7 +416,6 @@ impl Instance {
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clause_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
-      clause_to_preds: ClsMap::with_capacity(clause_capa),
       simplifier: ClauseSimplifier::new(),
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
@@ -469,10 +466,11 @@ impl Instance {
     ( & self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1 )
   }
   /// Clauses a predicate appears in. Lhs and rhs.
+  #[inline]
   pub fn preds_of_clause(
     & self, clause: ClsIdx
-  ) -> ( & PrdSet, Option<PrdIdx> ) {
-    (& self.clause_to_preds[clause].0, self.clause_to_preds[clause].1)
+  ) -> (& PredApps, Option<PrdIdx>) {
+    (self[clause].lhs_preds(), self[clause].rhs().pred())
   }
 
 
@@ -583,7 +581,6 @@ impl Instance {
       match tterm {
         TTerm::P { pred, args } => {
           self.pred_to_clauses[pred].0.insert(clause_idx) ;
-          self.clause_to_preds[clause_idx].0.insert(pred) ;
           clause.insert_pred_app(pred, args) ;
         },
         TTerm::T(term) => {
@@ -648,7 +645,6 @@ impl Instance {
   /// clause.
   fn rm_pred_apps_in_lhs(& mut self, pred: PrdIdx, clause: ClsIdx) {
     self.pred_to_clauses[pred].0.remove(& clause) ;
-    self.clause_to_preds[clause].0.remove(& pred) ;
     self.clauses[clause].lhs_preds.remove(& pred) ;
   }
 
@@ -786,44 +782,31 @@ impl Instance {
   }
 
   /// Unlinks a predicate from all the clauses it's linked to, and conversely.
+  ///
+  /// Only impacts `self.pred_to_clauses`.
   fn drain_unlink_pred(
     & mut self, pred: PrdIdx, lhs: & mut ClsSet, rhs: & mut ClsSet
   ) -> () {
     for clause in self.pred_to_clauses[pred].0.drain() {
-      let was_there = self.clause_to_preds[clause].0.remove(& pred) ;
-      debug_assert!( was_there ) ;
-      let _ = lhs.insert(clause) ;
+      lhs.insert(clause) ;
     }
     for clause in self.pred_to_clauses[pred].1.drain() {
-      debug_assert_eq!( self.clause_to_preds[clause].1, Some(pred) ) ;
-      self.clause_to_preds[clause].1 = None ;
-      let _ = rhs.insert(clause) ;
+      rhs.insert(clause) ;
     }
   }
 
   /// Goes trough the predicates in `from`, and updates `pred_to_clauses` so
   /// that they point to `to` instead.
-  ///
-  /// - swaps `clause_to_preds[from]` and `clause_to_preds[to]`
-  /// - only legal if `clause_to_preds[to].0.is_empty()` and
-  ///   `clause_to_preds[to].1.is_none()`
   fn relink_preds_to_clauses(
     & mut self, from: ClsIdx, to: ClsIdx
   ) -> Res<()> {
-    if ! self.clause_to_preds[to].0.is_empty() {
-      bail!("illegal relinking, clause `{}` still has lhs links", to)
-    }
-    if self.clause_to_preds[to].1.is_some() {
-      bail!("illegal relinking, clause `{}` is still has an rhs link", to)
-    }
-    self.clause_to_preds.swap(from, to) ;
     for pred in self.clauses[from].lhs_preds.keys() {
       let pred = * pred ;
       let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
       let _ = self.pred_to_clauses[pred].0.insert(to) ;
       debug_assert!(was_there)
     }
-    if let TTerm::P { pred, .. } = * self.clauses[from].rhs() {
+    if let Some(pred) = self.clauses[from].rhs().pred() {
       let was_there = self.pred_to_clauses[pred].1.remove(& from) ;
       let _ = self.pred_to_clauses[pred].1.insert(to) ;
       debug_assert!(was_there)
@@ -875,22 +858,13 @@ impl Instance {
       let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
       debug_assert!(
         was_there || self.pred_terms[pred].is_some()
-      ) ;
-      let was_there = self.clause_to_preds[clause].0.remove(& pred) ;
-      debug_assert!(
-        was_there || self.pred_terms[pred].is_some()
       )
     }
     if let TTerm::P { pred, .. } = * self.clauses[clause].rhs() {
       let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
       debug_assert!(
         was_there || self.pred_terms[pred].is_some()
-      ) ;
-      debug_assert!(
-        self.clause_to_preds[clause].1 == Some(pred) ||
-        self.pred_terms[pred].is_some()
-      ) ;
-      self.clause_to_preds[clause].1 = None
+      )
     }
     // Relink the last clause as its index is going to be `clause`. Except if
     // `clause` is already the last one.
@@ -901,33 +875,21 @@ impl Instance {
       log_info!{ "  last clause" }
     }
     let res = self.clauses.swap_remove(clause) ;
-    let (_lhs, _rhs) = self.clause_to_preds.pop().expect(
-      "empty clause_to_preds, illegal internal state"
-    ) ;
-    debug_assert!( _lhs.is_empty() ) ;
-    debug_assert_eq!( _rhs, None ) ;
-    // self.check("forgetting clause") ? ;
     Ok(res)
   }
 
   /// Pushes a new clause.
   pub fn push_clause(& mut self, clause: Clause) -> Res<()> {
     let clause_index = self.clauses.next_index() ;
-    let mut lhs_preds = PrdSet::with_capacity( clause.lhs_preds.len() ) ;
-    let mut rhs_pred = None ;
     for pred in clause.lhs_preds.keys() {
       let pred = * pred ;
       let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
-      let is_new_too = lhs_preds.insert(pred) ;
-      debug_assert!(is_new) ;
-      debug_assert!(is_new_too)
+      debug_assert!(is_new)
     }
     if let Some(pred) = clause.rhs.pred() {
-      rhs_pred = Some(pred) ;
       let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
       debug_assert!(is_new)
     }
-    self.clause_to_preds.push( (lhs_preds, rhs_pred) ) ;
     self.clauses.push(clause) ;
     self.check("after `push_clause`")
   }
@@ -1180,36 +1142,7 @@ impl Instance {
       || format!("instance consistency check failed: {}", conf.emph(s))
     ) ? ;
 
-    self.check_clause_to_preds().chain_err(
-      || format!("while checking `{}`", conf.sad("clause_to_preds"))
-    ).chain_err(
-      || format!("instance consistency check failed: {}", conf.emph(s))
-    ) ? ;
     Ok(())
-  }
-
-  /// Pretty printer for a set of predicates.
-  #[cfg(debug_assertions)]
-  fn pretty_preds(& self, preds: & PrdSet) -> String {
-    let mut s = String::new() ;
-    s.push('{') ;
-    for pred in preds {
-      s.push(' ') ;
-      s.push_str(& self[* pred].name)
-    }
-    s.push(' ') ;
-    s.push('}') ;
-    s
-  }
-
-  /// Pretty printer for a predicate option.
-  #[cfg(debug_assertions)]
-  fn pretty_pred_opt(& self, pred: & Option<PrdIdx>) -> String {
-    if let Some(pred) = * pred {
-      format!("{}", self[pred].name)
-    } else {
-      "none".into()
-    }
   }
 
   /// Pretty printer for a set of clauses.
@@ -1296,76 +1229,6 @@ impl Instance {
             & self.pred_to_clauses[pred].1
           )
         )
-      }
-    }
-    Ok(())
-  }
-
-  /// Checks the consistency of `clause_to_preds`.
-  #[cfg(debug_assertions)]
-  fn check_clause_to_preds(& self) -> Res<()> {
-    for (cls_idx, clause) in self.clauses.index_iter() {
-      for pred in clause.lhs_preds.keys() {
-        if ! self.clause_to_preds[cls_idx].0.contains(pred) {
-          bail!(
-            "predicate {} appears in lhs of clause {} \
-            but is not registered as such\n{}\nlhs: {}\nrhs: {}",
-            self[* pred], cls_idx,
-            self.clauses[cls_idx].to_string_info(self.preds()) ?,
-            self.pretty_preds(
-              & self.clause_to_preds[cls_idx].0
-            ), self.pretty_pred_opt(
-              & self.clause_to_preds[cls_idx].1
-            )
-          )
-        }
-      }
-      if let Some(pred) = clause.rhs.pred() {
-        if self.clause_to_preds[cls_idx].1 != Some(pred) {
-          bail!(
-            "predicate {} appears in rhs of clause {} \
-            but is not registered as such\n{}\nlhs: {}\nrhs: {}",
-            self[pred], cls_idx,
-            self.clauses[cls_idx].to_string_info(self.preds()) ?,
-            self.pretty_preds(
-              & self.clause_to_preds[cls_idx].0
-            ), self.pretty_pred_opt(
-              & self.clause_to_preds[cls_idx].1
-            )
-          )
-        }
-      }
-    }
-    for (clause, & (ref lhs, ref rhs)) in self.clause_to_preds.index_iter() {
-      'pred_clauses: for pred in lhs {
-        if self.clauses[clause].lhs_preds.get(& pred).is_none() {
-          bail!(
-            "predicate {} is registered to appear in lhs of clause {} \
-            but it's not the case\n{}\nlhs: {}\nrhs: {}",
-            self[* pred], clause,
-            self.clauses[clause].to_string_info(self.preds()) ?,
-            self.pretty_preds(
-              & self.clause_to_preds[clause].0
-            ), self.pretty_pred_opt(
-              & self.clause_to_preds[clause].1
-            )
-          )
-        }
-      }
-      if let Some(pred) = * rhs {
-        if self.clauses[clause].rhs.pred() != Some(pred) {
-          bail!(
-            "predicate {} is registered to appear in rhs of clause {} \
-            but it's not the case\n{}\nlhs: {}\nrhs: {}",
-            self[pred], clause,
-            self.clauses[clause].to_string_info(self.preds()) ?,
-            self.pretty_preds(
-              & self.clause_to_preds[clause].0
-            ), self.pretty_pred_opt(
-              & self.clause_to_preds[clause].1
-            )
-          )
-        }
       }
     }
     Ok(())
@@ -1562,7 +1425,6 @@ impl Instance {
         if let Some(tterm) = tterms.next() {
           if let Some(pred) = tterm.pred() {
             self.pred_to_clauses[pred].1.insert(clause) ;
-            self.clause_to_preds[clause].1 = Some(pred) ;
           }
           debug_assert_eq!{
             self.clauses[clause].rhs.pred(), Some(pred)
@@ -1711,24 +1573,6 @@ impl<'a> PebcakFmt<'a> for Instance {
         write!(w, " {}", rhs) ?
       }
       write!(w, " }}\n") ?
-    }
-
-    write!(w, "\nclause to preds:\n") ? ;
-    for (clause, & (ref lhs, ref rhs)) in self.clause_to_preds.index_iter() {
-      write!(w, "  {}: lhs {{", clause) ? ;
-      if ! lhs.is_empty() {
-        write!(w, "\n   ") ? ;
-        for pred in lhs {
-          write!(w, " {}", self[* pred]) ?
-        }
-        write!(w, "\n") ?
-      }
-      write!(w, "  }}, rhs ") ? ;
-      if let Some(pred) = * rhs {
-        write!(w, "{}\n", self[pred])
-      } else {
-        write!(w, "none\n")
-      } ?
     }
 
     Ok(())
