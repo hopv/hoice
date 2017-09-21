@@ -565,16 +565,12 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
 /// Wraps a term to write as the body of a `define-fun`.
 pub struct TermWrap<'a>( & 'a Term ) ;
-impl<'a> ::rsmt2::Expr2Smt<()> for TermWrap<'a> {
+impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
-    let msg = "writing term as smt2" ;
-    smt_cast_io!{
-      msg => self.0.write(
-        w, |w, var| var.default_write(w),
-      )
-    }
+    self.0.write( w, |w, var| var.default_write(w) ) ? ;
+    Ok(())
   }
 }
 

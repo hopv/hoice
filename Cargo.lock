@@ -14,7 +14,7 @@ dependencies = [
  "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "rsmt2 0.6.0 (git+https://github.com/kino-mc/rsmt2)",
+ "rsmt2 0.9.0 (git+https://github.com/kino-mc/rsmt2)",
 ]
 
 [[package]]
@@ -350,8 +350,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "rsmt2"
-version = "0.6.0"
-source = "git+https://github.com/kino-mc/rsmt2#8062ef8182e611cd02b418f19501e7819777a50e"
+version = "0.9.0"
+source = "git+https://github.com/kino-mc/rsmt2#cf4b56c219eb23933300870cf3f14caf5e6498db"
 dependencies = [
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 3.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -485,7 +485,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum rayon-core 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7febc28567082c345f10cddc3612c6ea020fc3297a1977d472cf9fdb73e6e493"
 "checksum regex 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1731164734096285ec2a5ec7fea5248ae2f5485b3feeb0115af4fda2183b2d1b"
 "checksum regex-syntax 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ad890a5eef7953f55427c50575c680c42841653abd2b028b68cd223d157f62db"
-"checksum rsmt2 0.6.0 (git+https://github.com/kino-mc/rsmt2)" = "<none>"
+"checksum rsmt2 0.9.0 (git+https://github.com/kino-mc/rsmt2)" = "<none>"
 "checksum rustc-demangle 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "aee45432acc62f7b9a108cc054142dac51f979e69e71ddce7d6fc7adf29e817e"
 "checksum rustc-serialize 0.3.24 (registry+https://github.com/rust-lang/crates.io-index)" = "dcf128d1287d2ea9d80910b5f1120d0b8eede3fbf1abe91c40d39ea7d51e6fda"
 "checksum scopeguard 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "c79eb2c3ac4bc2507cda80e7f3ac5b88bd8eae4c0914d5663e6a8933994be918"

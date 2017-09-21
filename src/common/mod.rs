@@ -99,13 +99,13 @@ pub type Cexs = ClsHMap<Cex> ;
 pub type Args = VarMap<Val> ;
 
 /// Alias trait for a solver with this module's parser.
-pub trait Solver<'kid, P: 'static + ::rsmt2::ParseSmt2>:
-  ::rsmt2::Solver<'kid, P> +
-  ::rsmt2::Query<'kid, P> {}
+pub trait Solver<
+  'kid, P: 'static + ::rsmt2::ParseSmt2
+>: ::rsmt2::Solver<'kid, P> {}
 impl<
   'kid,
   P: 'static + ::rsmt2::ParseSmt2,
-  T: ::rsmt2::Solver<'kid, P> + ::rsmt2::Query<'kid, P>
+  T: ::rsmt2::Solver<'kid, P>
 > Solver<'kid, P> for T {}
 
 /// Custom hash set with trivial hashing.

@@ -102,11 +102,12 @@ impl Typ {
     }
   }
 }
-impl ::rsmt2::Sort2Smt for Typ {
+impl ::rsmt2::to_smt::Sort2Smt for Typ {
   fn sort_to_smt2<Writer>(
     & self, w: &mut Writer
   ) -> SmtRes<()> where Writer: Write {
-    smt_cast_io!( "while writing type as smt2" => write!(w, "{}", self) )
+    write!(w, "{}", self) ? ;
+    Ok(())
   }
 }
 impl_fmt!{
@@ -1029,7 +1030,7 @@ impl_fmt!{
   }
 }
 
-impl<'a> ::rsmt2::Expr2Smt<
+impl<'a> ::rsmt2::to_smt::Expr2Smt<
   (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
 > for TTerms {
   fn expr_to_smt2<Writer: Write>(
@@ -1038,25 +1039,23 @@ impl<'a> ::rsmt2::Expr2Smt<
     )
   ) -> SmtRes<()> {
     let (true_preds, false_preds, pred_info) = * info ;
-
-    smt_cast_io!(
-      "writing top terms as expression" => self.write_smt2(
-        w, |w, pred, args| {
-          if true_preds.contains(& pred) {
-            write!(w, "true")
-          } else if false_preds.contains(& pred) {
-            write!(w, "false")
-          } else {
-            write!(w, "({}", pred_info[pred]) ? ;
-            for arg in args {
-              write!(w, " ") ? ;
-              arg.write(w, |w, var| var.default_write(w)) ?
-            }
-            write!(w, ")")
+    self.write_smt2(
+      w, |w, pred, args| {
+        if true_preds.contains(& pred) {
+          write!(w, "true")
+        } else if false_preds.contains(& pred) {
+          write!(w, "false")
+        } else {
+          write!(w, "({}", pred_info[pred]) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| var.default_write(w)) ?
           }
+          write!(w, ")")
         }
-      )
-    )
+      }
+    ) ? ;
+    Ok(())
   }
 }
 

@@ -2,6 +2,8 @@
 
 use std::path::PathBuf ;
 
+use rsmt2::conf::SolverConf ;
+
 use clap::Arg ;
 use ansi::{ Colour, Style } ;
 
@@ -50,15 +52,15 @@ impl InstanceConf {
 
 
 /// Solver configuration.
-pub struct SolverConf {
+pub struct SmtConf {
   /// Actual solver configuration.
-  conf: ::rsmt2::SolverConf,
+  conf: SolverConf,
   /// Smt logging flag.
   pub log: bool,
 }
-impl SolverConf {
+impl SmtConf {
   /// Actual, `rsmt2` solver configuration.
-  pub fn conf(& self) -> ::rsmt2::SolverConf {
+  pub fn conf(& self) -> SolverConf {
     self.conf.clone()
   }
 
@@ -105,11 +107,11 @@ impl SolverConf {
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
     ).to_string() ;
-    let conf = ::rsmt2::SolverConf::z3().cmd( z3_cmd ) ;
+    let conf = SolverConf::z3().cmd( z3_cmd ) ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 
-    SolverConf { conf, log }
+    SmtConf { conf, log }
   }
 }
 
@@ -347,7 +349,7 @@ pub struct Config {
   /// Pre-processing configuration.
   pub preproc: PreprocConf,
   /// Solver configuration.
-  pub solver: SolverConf,
+  pub solver: SmtConf,
   /// Ice configuration.
   pub ice: IceConf,
   /// Teacher configuration.
@@ -385,7 +387,7 @@ impl Config {
     app = Self::add_check_args(app) ;
     app = InstanceConf::add_args(app) ;
     app = PreprocConf::add_args(app) ;
-    app = SolverConf::add_args(app) ;
+    app = SmtConf::add_args(app) ;
     app = IceConf::add_args(app) ;
     app = TeacherConf::add_args(app) ;
 
@@ -430,7 +432,7 @@ impl Config {
 
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
-    let solver = SolverConf::new(& matches) ;
+    let solver = SmtConf::new(& matches) ;
     let ice = IceConf::new(& matches) ;
     let teacher = TeacherConf::new(& matches) ;
 

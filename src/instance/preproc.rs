@@ -371,29 +371,28 @@ impl<'a, Terms> NegImplWrap<'a, Terms> {
     NegImplWrap { lhs: ::std::cell::RefCell::new(lhs), rhs }
   }
 }
-impl<'a, Terms> ::rsmt2::Expr2Smt<()> for NegImplWrap<'a, Terms>
+impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegImplWrap<'a, Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
     let mut lhs = self.lhs.borrow_mut() ;
-    let msg = "writing negated implication" ;
-    smtry_io!(msg => write!(w, "(not ")) ;
+    write!(w, "(not ")? ;
     if let Some(term) = lhs.next() {
-      smtry_io!( msg => write!(w, "(=> (and") ) ;
-      smtry_io!( msg => write!(w, " ") ) ;
-      smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) ) ;
+      write!(w, "(=> (and") ? ;
+      write!(w, " ") ? ;
+      term.write(w, |w, var| var.default_write(w)) ? ;
       while let Some(term) = lhs.next() {
-        smtry_io!( msg => write!(w, " ") ) ;
-        smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) )
+        write!(w, " ") ? ;
+        term.write(w, |w, var| var.default_write(w)) ?
       }
-      smtry_io!( msg => write!(w, ") ") ) ;
-      smtry_io!( msg => self.rhs.write(w, |w, var| var.default_write(w)) ) ;
-      smtry_io!( msg => write!(w, ")") )
+      write!(w, ") ") ? ;
+      self.rhs.write(w, |w, var| var.default_write(w)) ? ;
+      write!(w, ")") ?
     } else {
-      smtry_io!( msg => self.rhs.write(w, |w, var| var.default_write(w)) )
+      self.rhs.write(w, |w, var| var.default_write(w)) ?
     }
-    smtry_io!( msg => write!(w, ")") ) ;
+    write!(w, ")") ? ;
     Ok(())
   }
 }
@@ -412,27 +411,26 @@ impl<Terms> NegConj<Terms> {
     NegConj { terms: ::std::cell::RefCell::new(terms) }
   }
 }
-impl<'a, Terms> ::rsmt2::Expr2Smt<()> for NegConj<Terms>
+impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegConj<Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
     let mut terms = self.terms.borrow_mut() ;
-    let msg = "writing negated implication" ;
-    smtry_io!(msg => write!(w, "(not ")) ;
+    write!(w, "(not ") ? ;
     if let Some(term) = terms.next() {
-      smtry_io!( msg => write!(w, "(and") ) ;
-      smtry_io!( msg => write!(w, " ") ) ;
-      smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) ) ;
+      write!(w, "(and") ? ;
+      write!(w, " ") ? ;
+      term.write(w, |w, var| var.default_write(w)) ? ;
       while let Some(term) = terms.next() {
-        smtry_io!( msg => write!(w, " ") ) ;
-        smtry_io!( msg => term.write(w, |w, var| var.default_write(w)) )
+        write!(w, " ") ? ;
+        term.write(w, |w, var| var.default_write(w)) ?
       }
-      smtry_io!( msg => write!(w, ")") )
+      write!(w, ")") ?
     } else {
-      smtry_io!( msg => write!(w, "false") )
+      write!(w, "false") ?
     }
-    smtry_io!( msg => write!(w, ")") ) ;
+    write!(w, ")") ? ;
     Ok(())
   }
 }

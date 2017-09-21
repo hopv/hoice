@@ -291,7 +291,7 @@ impl ::std::ops::Index<VarIdx> for Clause {
     & self.vars[index]
   }
 }
-impl<'a> ::rsmt2::Expr2Smt<
+impl<'a> ::rsmt2::to_smt::Expr2Smt<
   (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
 > for Clause {
   fn expr_to_smt2<Writer: Write>(
@@ -300,73 +300,55 @@ impl<'a> ::rsmt2::Expr2Smt<
     )
   ) -> SmtRes<()> {
     let (ref true_preds, ref false_preds, ref prd_info) = * info ;
-    smt_cast_io!{
-      "writing clause as smt2" =>
-        write!(writer, "(not ") ;
-        if self.lhs_is_empty() {
-          Ok(())
-        } else {
-          write!(writer, "(=> (and")
-        } ;
-        {
-          for term in & self.lhs_terms {
-            smtry_io!(
-              "writing clause's lhs terms" =>
-              writer.write_all( " ".as_bytes() ) ;
-              term.write( writer, |w, var| var.default_write(w) )
-            )
-          }
-          for (pred, argss) in & self.lhs_preds {
-            if true_preds.contains(pred) {
-              smtry_io!( "true" => writer.write_all( " true".as_bytes() ) )
-            } else if false_preds.contains(pred) {
-              smtry_io!( "false" => writer.write_all( " false".as_bytes() ) )
-            } else {
-              for args in argss {
-                smtry_io!(
-                  "writing clause's lhs" =>
-                  writer.write_all( " (".as_bytes() ) ;
-                  writer.write_all( prd_info[* pred].name.as_bytes() )
-                ) ;
-                for arg in args {
-                  smtry_io!(
-                    "writing clause's lhs" =>
-                    writer.write_all( " ".as_bytes() ) ;
-                    arg.write(writer, |w, var| var.default_write(w))
-                  )
-                }
-                smtry_io!(
-                  "writing clause's lhs" => writer.write_all( ")".as_bytes() )
-                )
-              }
-            }
-          }
-          Ok(()) as IoRes<()>
-        } ;
-        if self.lhs_is_empty() { Ok(()) } else {
-          write!(writer, ") ")
-        } ;
-        self.rhs.write_smt2(
-          writer, |w, prd, args| {
-            if true_preds.contains(& prd) {
-              write!(w, "true")
-            } else if false_preds.contains(& prd) {
-              write!(w, "false")
-            } else {
-              write!(w, "({}", prd_info[prd].name) ? ;
-              for arg in args {
-                write!(w, " ") ? ;
-                arg.write(w, |w, var| var.default_write(w)) ?
-              }
-              write!(w, ")")
-            }
-          }
-        ) ;
-        if self.lhs_is_empty() { Ok(()) } else {
-          write!(writer, ")")
-        } ;
-        write!(writer, ")")
+    write!(writer, "(not ") ? ;
+    if ! self.lhs_is_empty() {
+      write!(writer, "(=> (and") ?
     }
+    for term in & self.lhs_terms {
+      writer.write_all( " ".as_bytes() ) ? ;
+      term.write( writer, |w, var| var.default_write(w) ) ?
+    }
+    for (pred, argss) in & self.lhs_preds {
+      if true_preds.contains(pred) {
+        writer.write_all( " true".as_bytes() ) ?
+      } else if false_preds.contains(pred) {
+        writer.write_all( " false".as_bytes() ) ?
+      } else {
+        for args in argss {
+          writer.write_all( " (".as_bytes() ) ? ;
+          writer.write_all( prd_info[* pred].name.as_bytes() ) ? ;
+          for arg in args {
+            writer.write_all( " ".as_bytes() ) ? ;
+            arg.write(writer, |w, var| var.default_write(w)) ?
+          }
+          writer.write_all( ")".as_bytes() ) ?
+        }
+      }
+    }
+    if ! self.lhs_is_empty() {
+      write!(writer, ") ") ?
+    }
+    self.rhs.write_smt2(
+      writer, |w, prd, args| {
+        if true_preds.contains(& prd) {
+          write!(w, "true")
+        } else if false_preds.contains(& prd) {
+          write!(w, "false")
+        } else {
+          write!(w, "({}", prd_info[prd].name) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| var.default_write(w)) ?
+          }
+          write!(w, ")")
+        }
+      }
+    ) ? ;
+    if ! self.lhs_is_empty() {
+      write!(writer, ")") ?
+    }
+    write!(writer, ")") ? ;
+    Ok(())
   }
 }
 
