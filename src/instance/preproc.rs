@@ -42,7 +42,13 @@ pub fn work(
   log_info!{
     "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
   }
-  res
+  match res {
+    Err(ref e) if e.is_unsat() => {
+      instance.set_unsat() ;
+      Ok(())
+    },
+    res => res
+  }
 
 }
 
@@ -66,10 +72,6 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
   // }
 
 
-  // log_info!{
-  //   "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
-  // }
-
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
   let clauses = instance.simplify_clauses() ? ;
@@ -81,6 +83,10 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
     ) => add clauses
   }
 
+  log_debug!{
+    "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
+  }
+
 
   let mut changed = true ;
   'preproc: while changed {
@@ -89,6 +95,10 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
     let red_info = reductor.run_simplification(instance, & profiler) ? ;
     total += red_info ;
     profile!{ |profiler| mark "pre-proc", "simplifying" }
+
+    log_debug!{
+      "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
+    }
 
     log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
@@ -1323,7 +1333,24 @@ where Slver: Solver<'kid, Parser> {
         }
 
         let rhs = if let Some(term) = clause.rhs().term() {
-          term
+          
+          if let Some(b) = term.bool() {
+            if b {
+              clauses_to_rm.push(clause_idx) ;
+              continue 'clause_iter
+            } else {
+              // Clause is true => false.
+              bail!( ErrorKind::Unsat )
+            }
+          } else if solver.trivial_impl(
+            clause.vars(), Some(term).into_iter(), & term::fls()
+          ) ? {
+            // Clause true => false.
+            bail!( ErrorKind::Unsat )
+          } else {
+            term
+          }
+
         } else {
           if lhs.is_empty() {
             continue 'clause_iter

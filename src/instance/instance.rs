@@ -402,6 +402,8 @@ pub struct Instance {
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
+  /// Unsat flag.
+  is_unsat: bool,
 }
 impl Instance {
   /// Instance constructor.
@@ -417,12 +419,18 @@ impl Instance {
       clauses: ClsMap::with_capacity(clause_capa),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       simplifier: ClauseSimplifier::new(),
+      is_unsat: false,
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
     let (wan,too) = (term::one(), term::zero()) ;
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
+  }
+
+  /// Sets the unsat flag in the instance.
+  pub fn set_unsat(& mut self) {
+    self.is_unsat = true
   }
 
   /// Returns the model corresponding to the input predicates and the forced
@@ -452,12 +460,14 @@ impl Instance {
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Res< Option<Model> > {
-    for term_opt in & self.pred_terms {
-      if term_opt.is_none() { return Ok(None) }
+  pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
+    if self.is_unsat { Ok( Some(None) ) } else {
+      for term_opt in & self.pred_terms {
+        if term_opt.is_none() { return Ok(None) }
+      }
+      // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
+      self.model_of( vec![].into() ).map(|res| Some(Some(res)))
     }
-    // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
-    self.model_of( vec![].into() ).map(|res| Some(res))
   }
 
 
@@ -841,6 +851,7 @@ impl Instance {
     ) ;
     let mut prev = None ;
     for clause in clauses {
+      log_debug!{ "forgetting {}", self[clause].to_string_info(& self.preds) ? }
       if prev == Some(clause) { continue }
       prev = Some(clause) ;
       let _ = self.forget_clause(clause) ? ;

@@ -1,8 +1,8 @@
-#![doc = r#"
-# TODO
+#![doc = r#"# TODO
 
 - improve `rsmt2` and make smt learner more efficient and less ad hoc
 - remove all the useless error messages in lo-level rsmt2 writers
+- investigate problems with trivial clauses of the form `true => false`
 "#]
 
 #![allow(non_upper_case_globals)]
@@ -136,12 +136,12 @@ fn read_and_work<R: ::std::io::Read>(
 
         if ! conf.infer { continue 'parse_work }
 
-        model = if let Some(model) = instance.is_trivial() ? {
+        model = if let Some(maybe_model) = instance.is_trivial() ? {
           // Pre-processing already decided satisfiability.
           log_info!(
             "answering satisfiability query by pre-processing only"
           ) ;
-          Some(model)
+          maybe_model
         } else {
           let arc_instance = Arc::new(instance) ;
           let partial_model = teacher::start_class(
