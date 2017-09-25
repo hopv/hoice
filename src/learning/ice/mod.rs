@@ -1461,7 +1461,6 @@ pub mod smt {
   use std::io::BufRead ;
 
   use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
-  use rsmt2::errors::Res as SmtRes ;
   use rsmt2::to_smt::* ;
 
   use common::* ;

@@ -10,7 +10,7 @@ pub use mylib::safe::int::CanNew ;
 
 pub use hashconsing::HashConsign ;
 
-pub use rsmt2::errors::Res as SmtRes ;
+pub use rsmt2::SmtRes ;
 
 pub use num::{ Zero, One, Signed } ;
 

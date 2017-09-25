@@ -287,7 +287,7 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
 
 mod smt {
   use rsmt2::parse::{ IdentParser, ValueParser } ;
-  use rsmt2::errors::Res as SmtRes ;
+  use rsmt2::SmtRes ;
 
   use check::{ Ident, Value } ;
 
