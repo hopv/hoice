@@ -1228,10 +1228,20 @@ impl Instance {
   }
 
 
-  // Forces some predicates to false.
+  /// Forces some predicates to false. Returns the number of clauses dropped.
   pub fn force_false<Preds: IntoIterator<Item = PrdIdx>>(
     & mut self, preds: Preds
-  ) -> Res<usize> {
+  ) -> Res<RedInfo> {
+    let mut res = self.internal_force_false(preds) ? ;
+    if res.non_zero() { res += self.force_trivial() ? }
+    Ok(res)
+  }
+  /// Forces some predicates to false. Returns the number of clauses dropped.
+  ///
+  /// Internal version, does not call `force_trivial`.
+  fn internal_force_false<Preds: IntoIterator<Item = PrdIdx>>(
+    & mut self, preds: Preds
+  ) -> Res<RedInfo> {
     self.check("before force false") ? ;
     let mut clauses_dropped = 0 ;
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
@@ -1257,15 +1267,25 @@ impl Instance {
       self.forget_clauses( clause_lhs.drain().collect() ) ?
     }
     self.check("force_false") ? ;
-    Ok(clauses_dropped)
+    Ok( (0, clauses_dropped, 0).into() )
   }
 
 
 
-  // Forces some predicates to true.
+  /// Forces some predicates to false. Returns the number of clauses dropped.
   pub fn force_true<Preds: IntoIterator<Item = PrdIdx>>(
     & mut self, preds: Preds
-  ) -> Res<usize> {
+  ) -> Res<RedInfo> {
+    let mut res = self.internal_force_true(preds) ? ;
+    if res.non_zero() { res += self.force_trivial() ? }
+    Ok(res)
+  }
+  /// Forces some predicates to true.
+  ///
+  /// Internal version, does not call `force_trivial`.
+  fn internal_force_true<Preds: IntoIterator<Item = PrdIdx>>(
+    & mut self, preds: Preds
+  ) -> Res<RedInfo> {
     let mut clauses_dropped = 0 ;
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
     let tru = TTerms::tru() ;
@@ -1284,7 +1304,34 @@ impl Instance {
       self.forget_clauses( clause_rhs.drain().collect() ) ? ;
     }
     self.check("force_true") ? ;
-    Ok(clauses_dropped)
+    Ok( (0, clauses_dropped, 0).into() )
+  }
+
+
+
+
+  /// Forces to false (true) all the predicates that only appear in clauses'
+  /// lhs (rhs).
+  pub fn force_trivial( & mut self) -> Res< RedInfo > {
+    let mut info: RedInfo = (0, 0, 0).into() ;
+    let mut fixed_point = false ;
+    while ! fixed_point {
+      fixed_point = true ;
+      for pred in PrdRange::zero_to( self.preds.len() ) {
+        if self.pred_terms[pred].is_none() {
+          if self.pred_to_clauses[pred].1.is_empty() {
+            info.preds += 1 ;
+            fixed_point = false ;
+            info += self.internal_force_false( Some(pred) ) ?
+          } else if self.pred_to_clauses[pred].0.is_empty() {
+            info.preds += 1 ;
+            fixed_point = false ;
+            info += self.internal_force_true( Some(pred) ) ?
+          }
+        }
+      }
+    }
+    Ok(info)
   }
 
 
@@ -1443,7 +1490,9 @@ impl Instance {
       }
     }
 
-    Ok( (0, clauses_rmed, clauses_added).into() )
+    let mut info: RedInfo = (0, clauses_rmed, clauses_added).into() ;
+    info += self.force_trivial() ? ;
+    Ok( info )
   }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {

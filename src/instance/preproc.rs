@@ -709,21 +709,7 @@ impl RedStrat for Trivial {
 
   fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
 
-    let (mut fls_preds, mut tru_preds) = (vec![], vec![]) ;
-    for pred in instance.pred_indices() {
-      if instance.forced_terms_of(pred).is_some() { continue }
-      if instance.clauses_of_pred(pred).1.is_empty() {
-        fls_preds.push(pred)
-      } else if instance.clauses_of_pred(pred).0.is_empty() {
-        tru_preds.push(pred)
-      }
-    }
-
-    let pred_cnt = fls_preds.len() + tru_preds.len() ;
-    let mut clse_cnt = instance.force_false(fls_preds) ? ;
-    clse_cnt += instance.force_true(tru_preds) ? ;
-
-    Ok( (pred_cnt, clse_cnt, 0).into() )
+    instance.force_trivial()
   }
 }
 
@@ -988,11 +974,11 @@ where Slver: Solver<'kid, Parser> {
         match res {
           Trivial => {
             log_info!("  => false") ;
-            red_info.clauses_rmed += instance.force_false(Some(pred)) ?
+            red_info += instance.force_false(Some(pred)) ?
           },
           SuccessTrue => {
             log_info!("  => true") ;
-            red_info.clauses_rmed += instance.force_true(Some(pred)) ? ;
+            red_info += instance.force_true(Some(pred)) ? ;
           },
           Success(tterms) => {
             if_not_bench!{
@@ -1017,6 +1003,17 @@ where Slver: Solver<'kid, Parser> {
 
         if instance.forced_terms_of(pred).is_some() {
           red_info.preds += 1
+        } else {
+          if_verb!{
+            log_debug!{ "  did not remove, still appears in lhs of" }
+            for clause in instance.clauses_of_pred(pred).0 {
+              log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            }
+            log_debug!{ "  and rhs of" }
+            for clause in instance.clauses_of_pred(pred).1 {
+              log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            }
+          }
         }
       }
     }
@@ -1111,16 +1108,18 @@ where Slver: Solver<'kid, Parser> {
       instance.forget_clause(clause_idx) ? ;
       red_info.clauses_rmed += 1 ;
 
+      log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
+
       log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
       use self::ExtractRes::* ;
       match res {
         SuccessTrue => {
           log_info!("  => true") ;
-          red_info.clauses_rmed += instance.force_true(Some(pred)) ?
+          red_info += instance.force_true(Some(pred)) ?
         },
         SuccessFalse => {
           log_info!("  => false") ;
-          red_info.clauses_rmed += instance.force_false(Some(pred)) ?
+          red_info += instance.force_false(Some(pred)) ?
         },
         Success(tterms) => {
           if_not_bench!{
@@ -1280,12 +1279,13 @@ where Slver: Solver<'kid, Parser> {
     use std::iter::Extend ;
     self.known.extend( known ) ;
 
-    let mut clauses = self.clauses_to_rm.len() ;
+    let clauses = self.clauses_to_rm.len() ;
     let preds = self.true_preds.len() ;
     instance.forget_clauses( self.clauses_to_rm.drain(0..).collect() ) ? ;
-    clauses += instance.force_true( self.true_preds.drain() ) ? ;
+    let mut info: RedInfo = (preds, clauses, nu_clause_count).into() ;
+    info += instance.force_true( self.true_preds.drain() ) ? ;
 
-    Ok( (preds, clauses, nu_clause_count).into() )
+    Ok( info )
   }
 }
 
