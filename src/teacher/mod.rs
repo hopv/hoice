@@ -7,15 +7,13 @@
 
 "#]
 
-use rsmt2::{ ParseSmt2, Kid } ;
-
-use nom::IResult ;
+use rsmt2::Kid ;
 
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
 
-
+use self::smt::Parser ;
 
 
 /// Starts the teaching process.
@@ -71,11 +69,11 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
-    // log_info!{
-    //   "all learning data:\n{}", teacher.data.string_do(
-    //     & (), |s| s.to_string()
-    //   ) ?
-    // }
+    log_info!{
+      "all learning data:\n{}", teacher.data.string_do(
+        & (), |s| s.to_string()
+      ) ?
+    }
 
     if conf.teacher.step {
       let mut dummy = String::new() ;
@@ -108,11 +106,12 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
             conf.emph( & teacher.learners[_idx].1 )
           ) ;
           for _pred in teacher.instance.preds() {
-            log_info!("{}:", _pred.name) ;
+            log_info!("{}:", conf.emph(& _pred.name)) ;
             if let Some(term) = candidates[_pred.idx].as_ref() {
               log_info!("  {}", term)
             }
           }
+          log_info!( "" )
         }
         profile!{ teacher tick "cexs" }
         let cexs = teacher.get_cexs(& candidates) ? ;
@@ -208,7 +207,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       * sender = None
     }
     while self.get_candidates()?.is_some() {}
-
     Ok(())
   }
   /// Finalizes the run, does nothing in bench mode.
@@ -272,7 +270,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match self.from_learners.recv() {
         Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
           for _line in _s.lines() {
-            log_info!(
+            log_debug!(
               "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
             )
           }
@@ -390,36 +388,24 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         )
       } ;
 
-      // Skip if trivially true or false.
-      if tterms.len() == 1 {
-        match tterms[0].bool() {
-          Some(true)  => {
-            let _ = true_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).1
-            ) ;
-            continue 'forced_preds
-          },
-          Some(false) => {
-            let _ = false_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).0
-            ) ;
-            continue 'forced_preds
-          },
-          None => (),
-        }
+      match * tterms {
+        TTerms::True => {
+          true_preds.insert(pred) ;
+        },
+        TTerms::False => {
+          false_preds.insert(pred) ;
+        },
+        _ => {
+          let pred = & self.instance[pred] ;
+          let sig: Vec<_> = pred.sig.index_iter().map(
+            |(var, typ)| (var, * typ)
+          ).collect() ;
+          self.solver.define_fun(
+            & pred.name, & sig, & Typ::Bool, tterms,
+            & ( & true_preds, & false_preds, self.instance.preds() )
+          ) ?
+        },
       }
-
-      // Reachable only if preds is not `true` or `false`.
-      let pred = & self.instance[pred] ;
-      let sig: Vec<_> = pred.sig.index_iter().map(
-        |(var, typ)| (var, * typ)
-      ).collect() ;
-      self.solver.define_fun(
-        & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
-        & ( & true_preds, & false_preds, self.instance.preds() )
-      ) ?
 
     }
 
@@ -509,13 +495,32 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
       if conf.solver.log {
-        for lhs in clause.lhs() {
+        self.solver.comment(& format!("clause variables:\n")) ? ;
+        for info in clause.vars() {
           self.solver.comment(
-            & format!("{}\n", lhs)
+            & format!("  v_{} ({})\n", info.idx, info.active)
           ) ?
         }
+        self.solver.comment(& format!("lhs terms:\n")) ? ;
+        for lhs in clause.lhs_terms() {
+          self.solver.comment(
+            & format!("  {}\n", lhs)
+          ) ?
+        }
+        self.solver.comment(& format!("lhs pred applications:\n")) ? ;
+        for (pred, argss) in clause.lhs_preds() {
+          for args in argss {
+            let mut s = format!("  ({}", & self.instance[* pred]) ;
+            for arg in args {
+              s = format!("{} {}", s, arg)
+            }
+            s.push(')') ;
+            self.solver.comment(& s) ?
+          }
+        }
+        self.solver.comment(& format!("rhs:\n")) ? ;
         self.solver.comment(
-          & format!("=> {}", clause.rhs())
+          & format!("  {}", clause.rhs())
         ) ?
       }
     }
@@ -535,11 +540,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     let res = if sat {
       profile!{ self tick "cexs", "model" }
       log_debug!{ "    sat, getting model..." }
-      let model = self.solver.get_model() ? ;
+      let model = self.solver.get_model_const() ? ;
       let mut map: VarMap<_> = clause.vars().iter().map(
         |info| info.typ.default_val()
       ).collect() ;
-      for (var,val) in model {
+      for (var, _, val) in model {
         log_debug!{ "    - {} = {}", var.default_str(), val }
         map[var] = val
       }
@@ -556,148 +561,68 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
 
 
-/// Wraps a vector of top terms to write as the body of a `define-fun`.
-///
-/// The vector is understood as a conjunction.
-///
-/// The info for smt2 printing is
-///
-/// - set of predicates defined as true
-/// - set of predicates defined as false
-/// - predicate info to print non-trivial predicates
-pub struct TTermsWrap<'a>( & 'a Vec<TTerm> ) ;
-impl<'a, 'b> ::rsmt2::Expr2Smt<
-  (& 'b PrdSet, & 'b PrdSet, & 'b PrdMap< ::instance::info::PrdInfo >)
-> for TTermsWrap<'a> {
+/// Wraps a term to write as the body of a `define-fun`.
+pub struct TermWrap<'a>( & 'a Term ) ;
+impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, info: & (
-      & 'b PrdSet, & 'b PrdSet, & 'b PrdMap<::instance::info::PrdInfo>
-    )
+    & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
-    let (true_preds, false_preds, pred_info) = * info ;
-    
-    let msg = "writing tterms as smt2" ;
-    smt_cast_io!{
-      msg =>
-      if self.0.len() > 1 {
-        smtry_io!(msg => write!(w, "(and") ) ;
-        for tterm in self.0 {
-          smtry_io!(msg => write!(w, " ")) ;
-          smtry_io!(
-            msg => tterm.write(
-              w, |w, var| var.default_write(w),
-              |w, pred, args| if true_preds.contains(& pred) {
-                write!(w, "true")
-              } else if false_preds.contains(& pred) {
-                write!(w, "false")
-              } else {
-                write!(w, "({}", pred_info[pred]) ? ;
-                for arg in args {
-                  write!(w, " ") ? ;
-                  arg.write(w, |w, var| var.default_write(w)) ?
-                }
-                write!(w, ")")
-              }
-            )
-          ) ;
+    self.0.write( w, |w, var| var.default_write(w) ) ? ;
+    Ok(())
+  }
+}
+
+
+
+/// Teacher's smt stuff.
+mod smt {
+  use std::str::FromStr ;
+  use std::io::BufRead ;
+
+  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
+
+  use common::* ;
+
+  /// Unit type parsing the output of the SMT solver.
+  ///
+  /// Parses variables of the form `v<int>` and constants. It is designed to
+  /// parse models of the falsification of a single clause, where the
+  /// variables of the clause are written as `v<index>` in smt2.
+  #[derive(Clone, Copy)]
+  pub struct Parser ;
+
+  impl<'a> IdentParser<'a, VarIdx, (), & 'a str> for Parser {
+    fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
+      debug_assert_eq!( & input[0..2], "v_" ) ;
+      match usize::from_str(& input[2..]) {
+        Ok(idx) => Ok( idx.into() ),
+        Err(e) => bail!(
+          "could not retrieve var index from `{}`: {}", input, e
+        ),
+      }
+    }
+    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+      Ok(())
+    }
+  }
+
+  impl<'a, Br> ValueParser<'a, Val, & 'a mut SmtParser<Br>> for Parser
+  where Br: BufRead {
+    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
+      if let Some(val) = input.try_int::<
+        _, _, ::num::bigint::ParseBigIntError
+      >(
+        |int, pos| {
+          let int = Int::from_str(int) ? ;
+          Ok( if ! pos { - int } else { int } )
         }
-        write!(w, ")")
-      } else if self.0.len() == 1 {
-        self.0[0].write(
-          w, |w, var| var.default_write(w),
-          |w, pred, args| if true_preds.contains(& pred) {
-            write!(w, "true")
-          } else if false_preds.contains(& pred) {
-            write!(w, "false")
-          } else {
-            write!(w, "({}", pred_info[pred]) ? ;
-            for arg in args {
-              write!(w, " ") ? ;
-              arg.write(w, |w, var| var.default_write(w)) ?
-            }
-            write!(w, ")")
-          }
-        )
+      ) ? {
+        Ok( Val::I(val) )
+      } else if let Some(val) = input.try_bool() ? {
+        Ok( Val::B(val) )
       } else {
-        bail!("predicate definition is empty")
+        input.fail_with("unexpected value")
       }
     }
   }
 }
-
-
-
-/// Wraps a term to write as the body of a `define-fun`.
-pub struct TermWrap<'a>( & 'a Term ) ;
-impl<'a> ::rsmt2::Expr2Smt<()> for TermWrap<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
-  ) -> SmtRes<()> {
-    let msg = "writing term as smt2" ;
-    smt_cast_io!{
-      msg => self.0.write(
-        w, |w, var| var.default_write(w),
-      )
-    }
-  }
-}
-
-
-
-
-
-
-#[doc = r#"Unit type parsing the output of the SMT solver.
-
-Parses variables of the form `v<int>` and constants. It is designed to parse
-models of the falsification of a single clause, where the variables of the
-clause are written as `v<index>` in smt2.
-"#]
-pub struct Parser ;
-impl ParseSmt2 for Parser {
-  type Ident = VarIdx ;
-  type Value = Val ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
-
-  fn parse_ident<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> IResult<& 'a [u8], VarIdx> {
-    use std::str::FromStr ;
-    preceded!(
-      bytes,
-      tag!("v_"),
-      map!(
-        map_res!(
-          map_res!(
-            re_bytes_find!("^[0-9][0-9]*"),
-            ::std::str::from_utf8
-          ),
-          usize::from_str
-        ),
-        |i| i.into()
-      )
-    )
-  }
-
-  fn parse_value<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> IResult<& 'a [u8], Val> {
-    fix_error!( bytes, u32, call!(Val::parse) )
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_expr` of the teacher parser should never be called")
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_proof` of the teacher parser should never be called")
-  }
-}
-
-

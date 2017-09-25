@@ -8,11 +8,13 @@ It does so using an SMT solver, and performing string substitution (roughly)
 to rewrite the problem as a pure SMT query. In particular, there is no real
 notion of term here."#]
 
-use common::* ;
+use errors::* ;
+use common::{ conf, ColorExt, Solver, HashMap, Read } ;
 
 pub mod parse ;
 
 use self::parse::InParser ;
+use self::smt::* ;
 
 /// A predicate is just a string.
 pub type Pred = String ;
@@ -138,7 +140,7 @@ impl Output {
           count += 1
         }
       } else {
-        warn!(
+        println!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;
@@ -209,7 +211,7 @@ impl Data {
 
       if solver.check_sat() ? {
         okay = false ;
-        let model = solver.get_model() ? ;
+        let model = solver.get_model_const() ? ;
         println!("") ;
         println!("(error \"") ;
         println!("  clause {} is falsifiable with {{", count) ;
@@ -226,7 +228,7 @@ impl Data {
         // println!("      ) {}", rhs) ;
         // println!("    )") ;
         // println!("  is falsifiable with {{") ;
-        for (ident, value) in model {
+        for (ident, _, value) in model {
           println!("    {}: {},", ident, value)
         }
         println!("  }}") ;
@@ -283,41 +285,32 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
 
 
 
+mod smt {
+  use rsmt2::parse::{ IdentParser, ValueParser } ;
+  use rsmt2::SmtRes ;
 
+  use check::{ Ident, Value } ;
 
 
 /// Parser for the output of the SMT solver.
 ///
 /// Parses idents and values as strings.
+#[derive(Clone, Copy)]
 pub struct Parser ;
-impl ::rsmt2::ParseSmt2 for Parser {
-  type Ident = Ident ;
-  type Value = Value ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
 
-  fn parse_ident<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Ident> {
-    ::check::parse::s_expr(bytes)
+
+  impl<'a> IdentParser<'a, Ident, (), & 'a str> for Parser {
+    fn parse_ident(self, input: & 'a str) -> SmtRes< Ident > {
+      Ok( input.into() )
+    }
+    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+      Ok(())
+    }
   }
 
-  fn parse_value<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Value> {
-    ::check::parse::s_expr(bytes)
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_expr` of the teacher parser should never be called")
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_proof` of the teacher parser should never be called")
+  impl<'a> ValueParser<'a, Value, & 'a str> for Parser {
+    fn parse_value(self, input: & 'a str) -> SmtRes<Value> {
+      Ok( input.into() )
+    }
   }
 }

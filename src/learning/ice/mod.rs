@@ -96,7 +96,7 @@ pub struct IceLearner<'core, Slver> {
   _profiler: Profiler,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
-where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
+where Slver: Solver<'kid, Parser> {
   /// Ice learner constructor.
   pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
@@ -1109,13 +1109,13 @@ where Slver: Solver<'kid, Parser> + ::rsmt2::QueryIdent<'kid, Parser, ()> {
     solver.assert( & constraint_2, & () ) ? ;
 
     let model = if solver.check_sat() ? {
-      solver.get_model() ?
+      solver.get_model_const() ?
     } else {
       bail!("[unreachable] could not separate points {:?} and {:?}", p_1, p_2)
     } ;
 
     let mut sum = Vec::with_capacity( coefs.len() ) ;
-    for (var_opt, val) in model {
+    for (var_opt, (), val) in model {
       use num::Zero ;
       if ! val.is_zero() {
         let val = term::int(val) ;
@@ -1453,99 +1453,77 @@ impl EntropyBuilder {
 
 
 
-/// Can parse values (int) and idents (`VarIdx`).
-///
-/// In the ice learner, parsing is only used for synthesizing, not for
-/// conflict detection.
-pub struct Parser ;
-impl ::rsmt2::ParseSmt2 for Parser {
-  type Ident = Option<VarIdx> ;
-  type Value = Int ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
-
-  fn parse_ident<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Option<VarIdx>> {
-    use std::str::FromStr ;
-    preceded!(
-      bytes,
-      char!('v'),
-      opt!(
-        preceded!(
-          char!('_'),
-          map!(
-            map_res!(
-              map_res!(
-                re_bytes_find!("^[0-9][0-9]*"),
-                ::std::str::from_utf8
-              ),
-              usize::from_str
-            ),
-            |n| n.into()
-          )
-        )
-      )
-    )
-  }
-
-  fn parse_value<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Int> {
-    use common::parse::* ;
-    dbg_dmp!(bytes, alt_complete!(
-      // bytes,
-      int | do_parse!(
-        char!('(') >>
-        spc_cmt >> char!('-') >>
-        spc_cmt >> value: int >>
-        spc_cmt >> char!(')') >>
-        (- value)
-      )
-    ))
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_expr` of the ICE parser should never be called")
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_proof` of the ICE parser should never be called")
-  }
-}
-
-
-
 
 
 /// Smt-related things.
 pub mod smt {
+  use std::str::FromStr ;
+  use std::io::BufRead ;
+
+  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
+  use rsmt2::to_smt::* ;
+
   use common::* ;
   use common::data::* ;
 
+
+
+  /// Can parse values (int) and idents (`VarIdx`).
+  ///
+  /// In the ice learner, parsing is only used for synthesizing, not for
+  /// conflict detection.
+  #[derive(Clone, Copy)]
+  pub struct Parser ;
+
+  impl<'a> IdentParser<'a, Option<VarIdx>, (), & 'a str> for Parser {
+    fn parse_ident(self, input: & 'a str) -> SmtRes< Option<VarIdx> > {
+      if input ==  "v" { return Ok(None) }
+
+      debug_assert_eq!( & input[0..2], "v_" ) ;
+      match usize::from_str(& input[2..]) {
+        Ok(idx) => Ok( Some(idx.into()) ),
+        Err(e) => bail!(
+          "could not retrieve var index from `{}`: {}", input, e
+        ),
+      }
+    }
+    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+      Ok(())
+    }
+  }
+
+  impl<'a, Br> ValueParser<'a, Int, & 'a mut SmtParser<Br>> for Parser
+  where Br: BufRead {
+    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Int> {
+      if let Some(val) = input.try_int::<
+        _, _, ::num::bigint::ParseBigIntError
+      >(
+        |int, pos| {
+          let int = Int::from_str(int) ? ;
+          Ok( if ! pos { - int } else { int } )
+        }
+      ) ? {
+        Ok(val)
+      } else {
+        input.fail_with("unexpected value")
+      }
+    }
+  }
+
   /// Wrapper around predicate / sample that forces smt printing.
   pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for SWrap<'a> {
+  impl<'a> Expr2Smt<()> for SWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> {
-      smt_cast_io!(
-        "writing sample as expression" => write!(
-          w, "|p_{} {}|", self.0, self.1.uid()
-        )
-      )
+      write!( w, "|p_{} {}|", self.0, self.1.uid() ) ? ;
+      Ok(())
     }
   }
-  impl<'a> ::rsmt2::Sym2Smt<()> for SWrap<'a> {
+  impl<'a> Sym2Smt<()> for SWrap<'a> {
     fn sym_to_smt2<Writer>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> where Writer: Write {
-      use ::rsmt2::Expr2Smt ;
       self.expr_to_smt2(w, & ())
     }
   }
@@ -1554,23 +1532,22 @@ pub mod smt {
   /// Wrapper around constraints that forces smt printing consistent with
   /// [`SWrap`](struct.SWrap.html).
   pub struct CWrap<'a>(pub & 'a Constraint) ;
-  impl<'a> ::rsmt2::Expr2Smt<()> for CWrap<'a> {
+  impl<'a> Expr2Smt<()> for CWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> {
-      let blah = "writing constraint as expression" ;
-      smtry_io!( blah => write!(w, "(=> (and") ) ;
+      write!(w, "(=> (and") ? ;
       for lhs in & self.0.lhs {
-        smtry_io!( blah => write!(w, " ", ) ) ;
+        write!(w, " ", ) ? ;
         SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
       }
-      smtry_io!( blah => write!(w, ") ") ) ;
+      write!(w, ") ") ? ;
       if let Some(rhs) = self.0.rhs.as_ref() {
         SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
       } else {
-        smtry_io!( blah => write!(w, "false") ) ;
+        write!(w, "false") ? ;
       }
-      smtry_io!( blah => write!(w, ")") ) ;
+      write!(w, ")") ? ;
       Ok(())
     }
   }
@@ -1599,59 +1576,52 @@ pub mod smt {
       format!("act_{}", self.actlit)
     }
   }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ActWrap<& 'a HSamples> {
+  impl<'a> Expr2Smt<()> for ActWrap<& 'a HSamples> {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
+      write!(
+        w, "(=> act_{} ({}", self.actlit,
+        if self.pos { "and" } else { "not (or" }
+      ) ? ;
       for unc in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
+        write!(w, " ", ) ? ;
         SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
       }
-      smtry_io!( blah => write!(w, "))") ) ;
+      write!(w, "))") ? ;
       if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
+        write!(w, ")") ?
       }
       Ok(())
     }
   }
-  impl<'a, T> ::rsmt2::Expr2Smt<()> for ActWrap<
+  impl<'a, T> Expr2Smt<()> for ActWrap<
     & 'a HConMap<Args, T>
   > {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> {
-      let blah = "writing unclassified data activation as expression" ;
-      smtry_io!(
-        blah => write!(
-          w, "(=> act_{} ({}", self.actlit,
-          if self.pos { "and" } else { "not (or" }
-        )
-      ) ;
+      write!(
+        w, "(=> act_{} ({}", self.actlit,
+        if self.pos { "and" } else { "not (or" }
+      ) ? ;
       for (unc, _) in self.unc {
-        smtry_io!( blah => write!(w, " ", ) ) ;
+        write!(w, " ", ) ? ;
         SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
       }
-      smtry_io!( blah => write!(w, "))") ) ;
+      write!(w, "))") ? ;
       if ! self.pos {
-        smtry_io!( blah => write!(w, ")") )
+        write!(w, ")") ?
       }
       Ok(())
     }
   }
-  impl<Samples> ::rsmt2::Sym2Smt<()> for ActWrap<Samples> {
+  impl<Samples> Sym2Smt<()> for ActWrap<Samples> {
     fn sym_to_smt2<Writer>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> where Writer: Write {
-      smt_cast_io!(
-        "writing actlit symbol" => write!(w, "act_{}", self.actlit)
-      )
+      write!(w, "act_{}", self.actlit) ? ;
+      Ok(())
     }
   }
 
@@ -1689,25 +1659,17 @@ pub mod smt {
       ValCoefWrap { vals, coefs, cst, pos }
     }
   }
-  impl<'a> ::rsmt2::Expr2Smt<()> for ValCoefWrap<'a> {
+  impl<'a> Expr2Smt<()> for ValCoefWrap<'a> {
     fn expr_to_smt2<Writer>(
       & self, w: & mut Writer, _: & ()
     ) -> SmtRes<()> where Writer: Write {
-      let blah = "while writing `ValCoefWrap` as expression" ;
-      smtry_io!(
-        blah => if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") }
-      ) ;
+      if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") } ? ;
       for (val, coef) in self.vals.iter().zip( self.coefs ) {
-        use ::rsmt2::Sym2Smt ;
-        smtry_io!(blah =>
-          write!(w, " (* {} ", val) ;
-          coef.sym_to_smt2(w, & ()) ;
-          write!(w, ")")
-        )
+        write!(w, " (* {} ", val) ? ;
+        coef.sym_to_smt2(w, & ()) ? ;
+        write!(w, ")") ?
       }
-      smtry_io!(
-        blah => write!(w, " {}) 0)", self.cst)
-      ) ;
+      write!(w, " {}) 0)", self.cst) ? ;
       Ok(())
     }
   }

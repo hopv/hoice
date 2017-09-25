@@ -31,29 +31,6 @@ impl Val {
       Val::N => Ok(None),
     }
   }
-  /// Value parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    use common::parse::* ;
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!( tag!("true"), |_| Val::B(true) ) |
-        map!( tag!("false"), |_| Val::B(false) ) |
-        map!( int, |i| Val::I(i) ) |
-        do_parse!(
-          char!('(') >>
-          spc_cmt >> char!('-') >>
-          spc_cmt >> value: int >>
-          spc_cmt >> char!(')') >>
-          ( Val::I(- value) )
-        )
-      )
-    )
-  }
 }
 impl_fmt!{
   Val(self, fmt) {

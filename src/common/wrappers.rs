@@ -3,6 +3,8 @@
 use std::io::Write ;
 use std::fmt ;
 
+use rsmt2::to_smt::* ;
+
 use common::SmtRes ;
 
 wrap_usize!{
@@ -58,22 +60,19 @@ impl<T: fmt::Display> fmt::Display for VarMap<T> {
   }
 }
 
-impl<T> ::rsmt2::Sym2Smt<T> for VarIdx {
+impl<T> Sym2Smt<T> for VarIdx {
   fn sym_to_smt2<Writer>(
     & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
-    smt_cast_io!{
-      "while writing var index as symbol" =>
-      self.default_write(w)
-    }
+    self.default_write(w) ? ;
+    Ok(())
   }
 }
 
-impl<T> ::rsmt2::Expr2Smt<T> for VarIdx {
+impl<T> Expr2Smt<T> for VarIdx {
   fn expr_to_smt2<Writer>(
     & self, w: & mut Writer, _: & T
   ) -> SmtRes<()> where Writer: Write {
-    use ::rsmt2::Sym2Smt ;
     self.sym_to_smt2(w, & ())
   }
 }

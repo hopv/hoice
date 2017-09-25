@@ -2,6 +2,8 @@
 
 use std::path::PathBuf ;
 
+use rsmt2::conf::SolverConf ;
+
 use clap::Arg ;
 use ansi::{ Colour, Style } ;
 
@@ -50,15 +52,15 @@ impl InstanceConf {
 
 
 /// Solver configuration.
-pub struct SolverConf {
+pub struct SmtConf {
   /// Actual solver configuration.
-  conf: ::rsmt2::SolverConf,
+  conf: SolverConf,
   /// Smt logging flag.
   pub log: bool,
 }
-impl SolverConf {
+impl SmtConf {
   /// Actual, `rsmt2` solver configuration.
-  pub fn conf(& self) -> ::rsmt2::SolverConf {
+  pub fn conf(& self) -> SolverConf {
     self.conf.clone()
   }
 
@@ -85,7 +87,7 @@ impl SolverConf {
 
       Arg::with_name("z3_cmd").long("--z3").help(
         "sets the command used to call z3"
-      ).default_value("z3").takes_value(true).number_of_values(1)
+      ).default_value("z3").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -95,7 +97,7 @@ impl SolverConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -105,11 +107,11 @@ impl SolverConf {
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
     ).to_string() ;
-    let conf = ::rsmt2::SolverConf::z3().cmd( z3_cmd ) ;
+    let conf = SolverConf::z3().cmd( z3_cmd ) ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 
-    SolverConf { conf, log }
+    SmtConf { conf, log }
   }
 }
 
@@ -124,7 +126,13 @@ pub struct PreprocConf {
   /// Pre-processing flag.
   pub active: bool,
   /// Simple reduction flag.
-  pub simple_red: bool,
+  pub smt_red: bool,
+  /// One rhs.
+  pub one_rhs: bool,
+  /// One lhs.
+  pub one_lhs: bool,
+  /// Mono-predicate.
+  pub mono_pred: bool,
 }
 impl PreprocConf {
   /// Adds clap options to a clap App.
@@ -137,17 +145,49 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
-      Arg::with_name("simple_red").long("--simple_red").help(
-        "(de)activates simple reduction"
+      Arg::with_name("smt_red").long("--smt_red").help(
+        "(de)activates smt-based reduction strategies"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("one_rhs").long("--one_rhs").help(
+        "(de)activates one rhs reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("one_lhs").long("--one_lhs").help(
+        "(de)activates one lhs reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("mono_pred").long("--mono_pred").help(
+        "(de)activates mono-predicate reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -155,9 +195,12 @@ impl PreprocConf {
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "pre_proc") ;
-    let simple_red = bool_of_matches(matches, "simple_red") ;
+    let smt_red = bool_of_matches(matches, "smt_red") ;
+    let one_rhs = bool_of_matches(matches, "one_rhs") ;
+    let one_lhs = bool_of_matches(matches, "one_lhs") ;
+    let mono_pred = bool_of_matches(matches, "mono_pred") ;
 
-    PreprocConf { active, simple_red }
+    PreprocConf { active, smt_red, one_rhs, one_lhs, mono_pred }
   }
 }
 
@@ -190,7 +233,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("1").takes_value(true).number_of_values(1)
+      ).default_value("1").takes_value(true)// .number_of_values(1)
 
     // ).arg(
 
@@ -200,7 +243,7 @@ impl IceConf {
     //     bool_validator
     //   ).value_name(
     //     bool_format
-    //   ).default_value("on").takes_value(true).number_of_values(1)
+    //   ).default_value("on").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -210,7 +253,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -220,7 +263,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("50").takes_value(true).number_of_values(1)
+      ).default_value("50").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -265,7 +308,7 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -306,7 +349,7 @@ pub struct Config {
   /// Pre-processing configuration.
   pub preproc: PreprocConf,
   /// Solver configuration.
-  pub solver: SolverConf,
+  pub solver: SmtConf,
   /// Ice configuration.
   pub ice: IceConf,
   /// Teacher configuration.
@@ -344,7 +387,7 @@ impl Config {
     app = Self::add_check_args(app) ;
     app = InstanceConf::add_args(app) ;
     app = PreprocConf::add_args(app) ;
-    app = SolverConf::add_args(app) ;
+    app = SmtConf::add_args(app) ;
     app = IceConf::add_args(app) ;
     app = TeacherConf::add_args(app) ;
 
@@ -389,7 +432,7 @@ impl Config {
 
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
-    let solver = SolverConf::new(& matches) ;
+    let solver = SmtConf::new(& matches) ;
     let ice = IceConf::new(& matches) ;
     let teacher = TeacherConf::new(& matches) ;
 
@@ -430,7 +473,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -438,7 +481,7 @@ impl Config {
         "sets the output directory (used only by smt logging currently)"
       ).value_name(
         "DIR"
-      ).default_value(".").takes_value(true).number_of_values(1)
+      ).default_value(".").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -448,7 +491,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -458,7 +501,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value("on").takes_value(true)//.number_of_values(1)
 
     )
   }
@@ -471,7 +514,7 @@ impl Config {
         "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
-      ).takes_value(true).number_of_values(1)
+      ).takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -481,7 +524,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1)
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }

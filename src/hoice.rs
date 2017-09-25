@@ -1,8 +1,8 @@
-#![doc = r#"
-# TODO
+#![doc = r#"# TODO
 
 - improve `rsmt2` and make smt learner more efficient and less ad hoc
 - remove all the useless error messages in lo-level rsmt2 writers
+- investigate problems with trivial clauses of the form `true => false`
 "#]
 
 #![allow(non_upper_case_globals)]
@@ -19,10 +19,7 @@ extern crate log ;
 extern crate clap ;
 extern crate ansi_term as ansi ;
 extern crate regex ;
-#[macro_use]
-extern crate nom ;
 extern crate hashconsing ;
-#[macro_use]
 extern crate rsmt2 ;
 extern crate num ;
 extern crate rayon ;
@@ -80,7 +77,7 @@ fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool
 ) -> Res<()> {
   use instance::parse::ItemRead ;
-  
+
   let profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
@@ -109,17 +106,19 @@ fn read_and_work<R: ::std::io::Read>(
       profile!{ |profiler| mark "parsing" }
       break 'parse_work
     }
-
-    let parse_res = match parser_cxt.parser(
+    let parse_res = parser_cxt.parser(
       & buf, line_off
-    ).parse(& mut instance) {
+    ).parse(& mut instance) ;
+
+    line_off += lines_parsed ;
+
+    let parse_res = match parse_res {
       Ok(res) => res,
       Err(e) => {
         ::errors::print_err(e) ;
         continue 'parse_work
       },
     } ;
-    line_off += lines_parsed ;
 
     profile!{ |profiler| mark "parsing" }
     
@@ -134,12 +133,12 @@ fn read_and_work<R: ::std::io::Read>(
 
         if ! conf.infer { continue 'parse_work }
 
-        model = if let Some(model) = instance.is_trivial() ? {
+        model = if let Some(maybe_model) = instance.is_trivial() ? {
           // Pre-processing already decided satisfiability.
           log_info!(
             "answering satisfiability query by pre-processing only"
           ) ;
-          Some(model)
+          maybe_model
         } else {
           let arc_instance = Arc::new(instance) ;
           let partial_model = teacher::start_class(
@@ -177,34 +176,18 @@ fn read_and_work<R: ::std::io::Read>(
         let stdout = & mut ::std::io::stdout() ;
         println!("(model") ;
         for & (ref pred, ref tterms) in model {
-          if ! tterms.is_empty() {
-            let pred_info = & instance[* pred] ;
-            println!("  (define-fun {}", pred_info.name) ;
-            print!(  "    (") ;
-            for (var, typ) in pred_info.sig.index_iter() {
-              print!(" ({} {})", term::var(var), typ)
-            }
-            println!(" ) Bool") ;
-            if tterms.len() > 1 {
-              print!("    (and\n") ;
-              for tterm in tterms {
-                print!("      ") ;
-                instance.print_tterm_as_model(stdout, tterm) ? ;
-                println!("")
-              }
-              println!("    )")
-            } else if tterms.len() == 1 {
-              print!("    ") ;
-              instance.print_tterm_as_model(stdout, & tterms[0]) ? ;
-              println!("")
-            } else {
-              bail!(
-                "model for predicate {} is empty",
-                conf.sad( & pred_info.name )
-              )
-            }
-            println!("  )")
+          let pred_info = & instance[* pred] ;
+          println!(
+            "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
+          ) ;
+          print!(  "    (") ;
+          for (var, typ) in pred_info.sig.index_iter() {
+            print!(" ({} {})", term::var(var), typ)
           }
+          println!(" ) {}", Typ::Bool) ;
+          print!(  "    ") ;
+          instance.print_tterms_as_model(stdout, tterms) ? ;
+          println!("\n  )")
         }
         println!(")")
       } else {

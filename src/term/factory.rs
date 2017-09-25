@@ -61,6 +61,22 @@ pub fn fls() -> Term {
   bool(false)
 }
 
+/// Negates a term.
+#[inline(always)]
+pub fn not(term: Term) -> Term {
+  app(Op::Not, vec![term])
+}
+/// Disjunction.
+#[inline(always)]
+pub fn or(terms: Vec<Term>) -> Term {
+  app(Op::Or, terms)
+}
+/// Conjunction.
+#[inline(always)]
+pub fn and(terms: Vec<Term>) -> Term {
+  app(Op::And, terms)
+}
+
 /// Creates an operator application.
 ///
 /// Runs [`simplify`](fn.simplify.html) and returns its result.
@@ -149,23 +165,62 @@ assert_eq!( n_var_1, term::simplify(Not, vec![ var_1 ]) ) ;
 pub fn simplify(
   op: Op, mut args: Vec<Term>
 ) -> Term {
+  use num::Zero ;
   let (op, args) = match op {
-    Op::And => if args.is_empty() {
-      return term::bool(false)
-    } else if args.len() == 1 {
-      return args.pop().unwrap()
-    } else {
-      (op, args)
+
+    Op::And => {
+      let mut cnt = 0 ;
+      let mut has_true = false ;
+      while cnt < args.len() {
+        if let Some(b) = args[cnt].bool() {
+          if b {
+            args.swap_remove(cnt) ;
+            has_true = true
+          } else {
+            return fls()
+          }
+        } else {
+          cnt += 1
+        }
+      }
+      if args.is_empty() {
+        return term::bool(has_true)
+      } else if args.len() == 1 {
+        return args.pop().unwrap()
+      } else {
+        (op, args)
+      }
     },
-    Op::Or => if args.is_empty() {
-      return term::bool(true)
-    } else if args.len() == 1 {
-      return args.pop().unwrap()
-    } else {
-      (op, args)
+
+    Op::Or => {
+      let mut cnt = 0 ;
+      let mut has_false = false ;
+      while cnt < args.len() {
+        if let Some(b) = args[cnt].bool() {
+          if ! b {
+            args.swap_remove(cnt) ;
+            has_false = true
+          } else {
+            return tru()
+          }
+        } else {
+          cnt += 1
+        }
+      }
+      if args.is_empty() {
+        return term::bool( ! has_false )
+      } else if args.len() == 1 {
+        return args.pop().unwrap()
+      } else {
+        (op, args)
+      }
     },
+
     Op::Not => {
       assert!( args.len() == 1 ) ;
+      if let Some(b) = args[0].bool() {
+        return bool(! b)
+      }
       match * args[0] {
         RTerm::App { op: Op::Not, ref args } => {
           return args[0].clone()
@@ -174,26 +229,86 @@ pub fn simplify(
       }
       (op, args)
     },
+
+    Op::Eql => {
+      if args.len() == 2 {
+        if args[0] == args[1] { return tru() }
+      }
+      (op, args)
+    },
+
     Op::Add => {
       let mut cnt = 0 ;
-      let mut zero = None ;
-      'remove_zeros: while cnt < args.len() {
-        if let Some(int) = args[0].int_val() {
-          if int.is_zero() {
-            zero = Some( args.swap_remove(cnt) ) ;
-            continue 'remove_zeros
-          }
+      if args.is_empty() {
+        panic!("trying to construct an empty sum")
+      }
+      let mut sum: Int = 0.into() ;
+      while cnt < args.len() {
+        if let Some(i) = args[cnt].int_val() {
+          args.swap_remove(cnt) ;
+          sum = sum + i
+        } else {
+          cnt += 1
         }
-        cnt += 1
       }
       if args.len() == 0 {
-        return zero.expect("trying to construct an empty application")
-      } else if args.len() == 1 {
+        return int(sum)
+      } else if args.len() == 1 && sum.is_zero() {
         return args.pop().unwrap()
       } else {
+        args.push( int(sum) ) ;
         (op, args)
       }
     },
+
+    Op::Mul => {
+      let mut cnt = 0 ;
+      if args.is_empty() {
+        panic!("trying to construct an empty sum")
+      }
+      let mut mul: Int = 1.into() ;
+      while cnt < args.len() {
+        if let Some(i) = args[cnt].int_val() {
+          if i.is_zero() { return int(i) }
+          args.swap_remove(cnt) ;
+          mul = mul * i
+        } else {
+          cnt += 1
+        }
+      }
+      if args.len() == 0 {
+        return int(mul)
+      } else if args.len() == 1 && mul.is_zero() {
+        return args.pop().unwrap()
+      } else {
+        args.push( int(mul) ) ;
+        (op, args)
+      }
+    },
+
+    // Op::Sub => {
+    //   let mut cnt = 0 ;
+    //   if args.is_empty() {
+    //     panic!("trying to construct an empty sub")
+    //   }
+    //   let mut sum: Int = 0.into() ;
+    //   while cnt < args.len() {
+    //     if let Some(int) = args[0].int_val() {
+    //       sum = sum + int
+    //     } else {
+    //       cnt += 1
+    //     }
+    //   }
+    //   if args.len() == 0 {
+    //     return int(sum)
+    //   } else if args.len() == 1 && sum.is_zero() {
+    //     return args.pop().unwrap()
+    //   } else {
+    //     args.push( int(sum) ) ;
+    //     (op, args)
+    //   }
+    // },
+
     // Op::Gt => if args.len() != 2 {
     //   panic!( "[bug] operator `>` applied to {} operands", args.len() )
     // } else {

@@ -26,13 +26,12 @@ impl VarInfo {
     self.name.as_bytes()
   }
 }
-impl ::rsmt2::Sym2Smt<()> for VarInfo {
+impl ::rsmt2::to_smt::Sym2Smt<()> for VarInfo {
   fn sym_to_smt2<Writer>(
     & self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> where Writer: Write {
-    smt_cast_io!(
-      "while writing variable as smt2" => write!(w, "v{}", self.idx)
-    )
+    write!(w, "v{}", self.idx) ? ;
+    Ok(())
   }
 }
 impl_fmt!{
@@ -62,13 +61,11 @@ impl_fmt!{
     fmt.write_str(& self.name)
   }
 }
-impl ::rsmt2::Sym2Smt<()> for PrdInfo {
+impl ::rsmt2::to_smt::Sym2Smt<()> for PrdInfo {
   fn sym_to_smt2<Writer: Write>(
     &self, w: & mut Writer, _: & ()
   ) -> SmtRes<()> {
-    smt_cast_io!(
-      "while writing predicate as symbol"
-      => write!(w, "p_{}", self.idx)
-    )
+    write!(w, "p_{}", self.idx) ? ;
+    Ok(())
   }
 }

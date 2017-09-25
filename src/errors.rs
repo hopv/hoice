@@ -85,6 +85,16 @@ error_chain!{
   }
 }
 
+impl Error {
+  /// True if the kind of the error is `ErrorKind::Unsat`.
+  pub fn is_unsat(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Unsat => true,
+      _ => false,
+    }
+  }
+}
+
 
 /// Prints an error.
 pub fn print_err(errs: Error) {

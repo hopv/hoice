@@ -14,7 +14,7 @@
 //! # use hoice::term::{ Op, RTerm } ;
 //! let some_term = term::eq(
 //!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::int(2), term::var(5) ]
+//!     Op::Mul, vec![ term::var(5), term::int(2) ]
 //!   )
 //! ) ;
 //! // A `Term` dereferences to an `RTerm`:
@@ -23,8 +23,8 @@
 //!     assert_eq!( args.len(), 2 ) ;
 //!     assert_eq!( term::int(11), args[0] ) ;
 //!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
-//!       assert_eq!( term::int(2), args[0] ) ;
-//!       assert_eq!( term::var(5), args[1] )
+//!       assert_eq!( term::var(5), args[0] ) ;
+//!       assert_eq!( term::int(2), args[1] )
 //!     } else { panic!("not a multiplication") }
 //!   },
 //!   _ => panic!("not an equality"),
@@ -33,6 +33,10 @@
 //!
 //! Terms are not typed at all. A predicate application is **not** a term, only
 //! operator applications are.
+//!
+//! Terms are simplified (when possible) at creation. In particular, the order
+//! of the arguments can change, double negations will be simplified, *etc.*
+//! See [`simplify`](fn.simplify.html) for more details.
 //!
 //! # Top-level terms
 //!
@@ -76,20 +80,6 @@ pub enum Typ {
   Bool,
 }
 impl Typ {
-  /// Type parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!(tag!("Int"),  |_| Typ::Int)  |
-        map!(tag!("Bool"), |_| Typ::Bool)
-      )
-    )
-  }
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
@@ -98,11 +88,12 @@ impl Typ {
     }
   }
 }
-impl ::rsmt2::Sort2Smt for Typ {
+impl ::rsmt2::to_smt::Sort2Smt for Typ {
   fn sort_to_smt2<Writer>(
     & self, w: &mut Writer
   ) -> SmtRes<()> where Writer: Write {
-    smt_cast_io!( "while writing type as smt2" => write!(w, "{}", self) )
+    write!(w, "{}", self) ? ;
+    Ok(())
   }
 }
 impl_fmt!{
@@ -138,6 +129,13 @@ impl RTerm {
   pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
     match * self {
       RTerm::App { op, ref args } => Some((op, args)),
+      _ => None,
+    }
+  }
+  /// Returns the kid of conjunctions.
+  pub fn and_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::And, ref args } => Some(args),
       _ => None,
     }
   }
@@ -442,8 +440,8 @@ impl RTerm {
   /// `map`.
   ///
   /// The boolean returned is true if at least on substitution occured.
-  pub fn subst_custom(
-    & self, map: & VarHMap<Term>, total: bool
+  pub fn subst_custom<Map: VarIndexed<Term>>(
+    & self, map: & Map, total: bool
   ) -> Option<(Term, bool)> {
     let mut current = & self.to_hcons() ;
     // Stack for traversal.
@@ -455,7 +453,7 @@ impl RTerm {
 
       // Go down.
       let mut term = match * current.get() {
-        RTerm::Var(var) => if let Some(term) = map.get(& var) {
+        RTerm::Var(var) => if let Some(term) = map.var_get(var) {
           subst_count += 1 ;
           term.clone()
         } else if total {
@@ -501,7 +499,9 @@ impl RTerm {
   ///
   /// Used for substitutions in the same clause / predicate scope.
   #[inline]
-  pub fn subst(& self, map: & VarHMap<Term>) -> (Term, bool) {
+  pub fn subst<Map: VarIndexed<Term>>(
+    & self, map: & Map
+  ) -> (Term, bool) {
     self.subst_custom(map, false).expect("total substitution can't fail")
   }
 
@@ -509,7 +509,9 @@ impl RTerm {
   ///
   /// Returns the new term and a boolean indicating whether any substitution
   /// occured.
-  pub fn subst_fp(& self, map: & VarHMap<Term>) -> (Term, bool) {
+  pub fn subst_fp<Map: VarIndexed<Term>>(
+    & self, map: & Map
+  ) -> (Term, bool) {
     let (mut term, mut changed) = self.subst(map) ;
     while changed {
       let (new_term, new_changed) = term.subst(map) ;
@@ -526,7 +528,9 @@ impl RTerm {
   /// occsured.
   ///
   /// Used for substitutions between different same clause / predicate scopes.
-  pub fn subst_total(& self, map: & VarHMap<Term>) -> Option< (Term, bool) > {
+  pub fn subst_total<Map: VarIndexed<Term>>(
+    & self, map: & Map
+  ) -> Option< (Term, bool) > {
     self.subst_custom(map, true)
   }
 
@@ -558,18 +562,6 @@ impl<'a> PebcakFmt<'a> for RTerm {
   }
 }
 
-// impl<'a, WriteVar> ::rsmt2::Expr2Smt<WriteVar> for SWrap<'a>
-// where WriteVar: Fn(VarIdx) -> & Val {
-//   fn expr_to_smt2<Writer: Write>(
-//     & self, w: & mut Writer, _: & ()
-//   ) -> SmtRes<()> {
-//     smt_cast_io!(
-//       "writing sample as expression" => write!(
-//         w, "|p_{} {}|", self.0, self.1.uid()
-//       )
-//     )
-//   }
-// }
 
 
 
@@ -580,7 +572,7 @@ pub type Term = HConsed<RTerm> ;
 
 
 /// Top term, as they appear in clauses.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum TTerm {
   /// A predicate application.
   P {
@@ -595,17 +587,11 @@ pub enum TTerm {
 impl TTerm {
   /// True if the top term is a term with no variables and evaluates to true.
   pub fn is_true(& self) -> bool {
-    match * self {
-      TTerm::T(ref t) => t.is_true(),
-      _ => false,
-    }
+    self.bool() == Some(true)
   }
   /// True if the top term is a term with no variables and evaluates to false.
   pub fn is_false(& self) -> bool {
-    match * self {
-      TTerm::T(ref t) => t.is_false(),
-      _ => false,
-    }
+    self.bool() == Some(false)
   }
   /// Boolean corresponding to the top term if it's a bool constant.
   pub fn bool(& self) -> Option<bool> {
@@ -627,6 +613,11 @@ impl TTerm {
       TTerm::T(ref t) => t.app_inspect(),
       _ => None,
     }
+  }
+  /// If the top term is simply a term, returns that term.
+  #[inline]
+  pub fn term(& self) -> Option<& Term> {
+    if let TTerm::T(ref t) = * self { Some(t) } else { None }
   }
 
   /// The predicate a top term is an application of, if any.
@@ -663,17 +654,23 @@ impl TTerm {
   /// In-place variable substitution for top terms.
   ///
   /// Used for substitutions in the same clause / predicate scope.
-  pub fn subst(
-    & mut self, map: & VarHMap<Term>
-  ) {
+  pub fn subst<Map: VarIndexed<Term>>(
+    & mut self, map: & Map
+  ) -> bool {
     match * self {
       TTerm::T(ref mut term) => {
-        * term = term.subst(map).0
+        let (t, b) = term.subst(map) ;
+        * term = t ;
+        b
       },
       TTerm::P { ref mut args, .. } => {
+        let mut changed = false ;
         for arg in args.iter_mut() {
-          * arg = arg.subst(map).0
+          let (t, b) = arg.subst(map) ;
+          * arg = t ;
+          changed = changed || b
         }
+        changed
       },
     }
   }
@@ -681,8 +678,8 @@ impl TTerm {
   /// Total variable substitution for top terms.
   ///
   /// Used for substitutions in different clause / predicate scope.
-  pub fn subst_total(
-    & self, map: & VarHMap<Term>
+  pub fn subst_total<Map: VarIndexed<Term>>(
+    & self, map: & Map
   ) -> Res<TTerm> {
     match * self {
       TTerm::P { pred, ref args } => {
@@ -749,6 +746,313 @@ impl_fmt!{
 }
 
 
+/// Either true, false, a conjunction or a DNF of top terms.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TTerms {
+  /// True.
+  True,
+  /// False.
+  False,
+  /// Conjunction.
+  And( Vec<TTerm> ),
+  /// Dnf.
+  Dnf( Vec< Vec<TTerm> > ),
+}
+impl TTerms {
+  /// True.
+  #[inline]
+  pub fn tru() -> Self { TTerms::True }
+  /// True?
+  #[inline]
+  pub fn is_tru(& self) -> bool { * self == TTerms::True }
+  /// False.
+  #[inline]
+  pub fn fls() -> Self { TTerms::False }
+  /// False?
+  #[inline]
+  pub fn is_fls(& self) -> bool { * self == TTerms::False }
+  /// Constructor from a boolean.
+  #[inline]
+  pub fn of_bool(b: bool) -> Self {
+    if b { Self::tru() } else { Self::fls() }
+  }
+  /// Boolean value if `True` or `False`.
+  #[inline]
+  pub fn bool(& self) -> Option<bool> {
+    match * self {
+      TTerms::True => Some(true),
+      TTerms::False => Some(false),
+      _ => None,
+    }
+  }
+
+  /// True if the top terms contain an application of `pred`.
+  pub fn mention_pred(& self, pred: PrdIdx) -> bool {
+    match * self {
+      TTerms::And(ref tterms) => for tterm in tterms {
+        if let Some(p) = tterm.pred() {
+          if p == pred { return true }
+        }
+      },
+      TTerms::Dnf(ref ttermss) => for tterms in ttermss {
+        for tterm in tterms {
+          if let Some(p) = tterm.pred() {
+            if p == pred { return true }
+          }
+        }
+      },
+      TTerms::True | TTerms::False => (),
+    }
+    false
+  }
+
+  /// Constructor for a single top term.
+  #[inline]
+  pub fn of_tterm(tterm: TTerm) -> Self {
+    if tterm.is_true() {
+      TTerms::True
+    } else if tterm.is_false() {
+      TTerms::False
+    } else {
+      TTerms::And( vec![tterm] )
+    }
+  }
+  /// Constructor for a conjunction.
+  #[inline]
+  pub fn conj(mut tterms: Vec<TTerm>) -> Self {
+    if tterms.len() == 1 {
+      let tterm = tterms.pop().unwrap() ;
+      Self::of_tterm(tterm)
+    } else {
+      TTerms::And(tterms)
+    }
+  }
+  /// Constructor for a DNF.
+  #[inline]
+  pub fn dnf(mut ttermss: Vec< Vec<TTerm> >) -> Self {
+    if ttermss.len() == 1 {
+      let tterms = ttermss.pop().unwrap() ;
+      Self::conj(tterms)
+    } else {
+      TTerms::Dnf(ttermss)
+    }
+  }
+
+  /// Simplifies some top terms.
+  pub fn simplify(& self) -> TTerms {
+    match * self {
+      TTerms::And(ref tterms) => {
+        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+        for tterm in tterms {
+          match tterm.bool() {
+            Some(true) => (),
+            Some(false) => return TTerms::fls(),
+            None => nu_tterms.push( tterm.clone() )
+          }
+        }
+        TTerms::conj(nu_tterms)
+      },
+      TTerms::Dnf(ref ttermss) => {
+        let mut nu_ttermss = Vec::with_capacity( ttermss.len() ) ;
+        'disj: for tterms in ttermss {
+          let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+          'conj: for tterm in tterms {
+            match tterm.bool() {
+              Some(true) => (),
+              Some(false) => continue 'disj,
+              None => nu_tterms.push( tterm.clone() )
+            }
+          }
+          if nu_tterms.is_empty() {
+            // Everything was true.
+            return Self::tru()
+          } else {
+            nu_ttermss.push(nu_tterms)
+          }
+        }
+        if nu_ttermss.is_empty() {
+          // Everything was false.
+          Self::fls()
+        } else {
+          TTerms::dnf(nu_ttermss)
+        }
+      },
+      _ => self.clone(),
+    }
+  }
+
+  /// The predicates appearing in some top terms.
+  pub fn preds(& self) -> PrdSet {
+    let mut set = PrdSet::new() ;
+    match * self {
+      TTerms::And(ref tterms) => for tterm in tterms {
+        if let Some(pred) = tterm.pred() { set.insert(pred) ; }
+      },
+      TTerms::Dnf(ref ttermss) => for tterms in ttermss {
+        for tterm in tterms {
+          if let Some(pred) = tterm.pred() { set.insert(pred) ; }
+        }
+      },
+      _ => (),
+    }
+    set
+  }
+
+  /// Total variable substitution for top terms.
+  ///
+  /// Used for substitutions in different clause / predicate scope.
+  pub fn subst_total<Map: VarIndexed<Term>>(
+    & self, map: & Map
+  ) -> Res<TTerms> {
+    match * self {
+      TTerms::And(ref tterms) => {
+        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+        for tterm in tterms {
+          nu_tterms.push( tterm.subst_total(map) ? )
+        }
+        Ok( TTerms::conj(nu_tterms) )
+      },
+      TTerms::Dnf(ref ttermss) => {
+        let mut nu_ttermss = Vec::with_capacity( ttermss.len() ) ;
+        for tterms in ttermss {
+          let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+          for tterm in tterms {
+            nu_tterms.push( tterm.subst_total(map) ? )
+          }
+          nu_ttermss.push(nu_tterms)
+        }
+        Ok( TTerms::dnf(nu_ttermss) )
+      },
+      _ => Ok( self.clone() ),
+    }
+  }
+
+  /// Writes some top terms using special functions for writing predicates and
+  /// variables.
+  pub fn write<W, WriteVar, WritePrd>(
+    & self, w: & mut W, write_var: WriteVar, write_prd: WritePrd
+  ) -> IoRes<()>
+  where
+  W: Write,
+  WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
+  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+    match * self {
+      TTerms::True => return write!(w, "true"),
+      TTerms::False => return write!(w, "false"),
+      TTerms::And(ref tterms) => {
+        write!(w, "(and") ? ;
+        for tterm in tterms {
+          write!(w, " ") ? ;
+          tterm.write(w, & write_var, & write_prd) ?
+        }
+        write!(w, ")")
+      },
+      TTerms::Dnf(ref ttermss) => {
+        write!(w, "(or") ? ;
+        for tterms in ttermss {
+          write!(w, " ") ? ;
+          if tterms.len() == 1 {
+            tterms[0].write(w, & write_var, & write_prd) ?
+          } else {
+            write!(w, "(and") ? ;
+            for tterm in tterms {
+              write!(w, " ") ? ;
+              tterm.write(w, & write_var, & write_prd) ?
+            }
+            write!(w, ")") ?
+          }
+        }
+        write!(w, ")")
+      },
+    }
+  }
+
+  /// Writes some top terms smt2 style using a special function for writing
+  /// predicates.
+  pub fn write_smt2<W, WritePrd>(
+    & self, w: & mut W, write_prd: WritePrd
+  ) -> IoRes<()>
+  where
+  W: Write,
+  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+    self.write(
+      w, |w, var| var.default_write(w), write_prd
+    )
+  }
+}
+
+
+impl_fmt!{
+  TTerms(self, fmt) {
+    match * self {
+      TTerms::True => return write!(fmt, "true"),
+      TTerms::False => return write!(fmt, "false"),
+      TTerms::And(ref tterms) => {
+        write!(fmt, "(and") ? ;
+        for tterm in tterms {
+          write!(fmt, " ") ? ;
+          tterm.fmt(fmt) ?
+        }
+        write!(fmt, ")")
+      },
+      TTerms::Dnf(ref ttermss) => {
+        write!(fmt, "(or") ? ;
+        for tterms in ttermss {
+          write!(fmt, " ") ? ;
+          if tterms.len() == 1 {
+            tterms[0].fmt(fmt) ?
+          } else {
+            write!(fmt, "(and") ? ;
+            for tterm in tterms {
+              write!(fmt, " ") ? ;
+              tterm.fmt(fmt) ?
+            }
+            write!(fmt, ")") ?
+          }
+        }
+        write!(fmt, ")")
+      },
+    }
+  }
+}
+
+impl<'a> ::rsmt2::to_smt::Expr2Smt<
+  (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
+> for TTerms {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, info: & (
+      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<::instance::info::PrdInfo>
+    )
+  ) -> SmtRes<()> {
+    let (true_preds, false_preds, pred_info) = * info ;
+    self.write_smt2(
+      w, |w, pred, args| {
+        if true_preds.contains(& pred) {
+          write!(w, "true")
+        } else if false_preds.contains(& pred) {
+          write!(w, "false")
+        } else {
+          write!(w, "({}", pred_info[pred]) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| var.default_write(w)) ?
+          }
+          write!(w, ")")
+        }
+      }
+    ) ? ;
+    Ok(())
+  }
+}
+
+
+
+
+
+
+
+
+
 /// Operators.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Op {
@@ -790,33 +1094,6 @@ impl Op {
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>",
     }
-  }
-
-  /// Operator parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!(tag!("+"),   |_| Op::Add ) |
-        map!(tag!("-"),   |_| Op::Sub ) |
-        map!(tag!("*"),   |_| Op::Mul ) |
-        map!(tag!("div"), |_| Op::Div ) |
-        map!(tag!("mod"), |_| Op::Mod ) |
-        map!(tag!("<="),  |_| Op::Le  ) |
-        map!(tag!("<"),   |_| Op::Lt  ) |
-        map!(tag!(">="),  |_| Op::Ge  ) |
-        map!(tag!(">"),   |_| Op::Gt  ) |
-        map!(tag!("=>"),  |_| Op::Impl) |
-        map!(tag!("="),   |_| Op::Eql ) |
-        map!(tag!("not"), |_| Op::Not ) |
-        map!(tag!("and"), |_| Op::And ) |
-        map!(tag!("or"),  |_| Op::Or  )
-      )
-    )
   }
 
 

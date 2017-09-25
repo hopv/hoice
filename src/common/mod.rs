@@ -10,13 +10,13 @@ pub use mylib::safe::int::CanNew ;
 
 pub use hashconsing::HashConsign ;
 
-pub use rsmt2::errors::Res as SmtRes ;
+pub use rsmt2::SmtRes ;
 
 pub use num::{ Zero, One, Signed } ;
 
 pub use errors::* ;
 pub use term ;
-pub use term::{ RTerm, Term, TTerm, Val, Op, Typ } ;
+pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
 pub use instance::Instance ;
 
 mod wrappers ;
@@ -50,6 +50,14 @@ pub fn corrupted_err<T>(_: T) -> Error {
   "[bug] lock on learning data is corrupted...".into()
 }
 
+/// Notifies the user and reads a line from stdin.
+pub fn pause(s: & str) {
+  let mut dummy = String::new() ;
+  println!("") ;
+  println!( "; {}{}...", conf.emph("press return"), s ) ;
+  let _ = ::std::io::stdin().read_line(& mut dummy) ;
+}
+
 /// Disjunction type.
 pub enum Either<L, R> {
   Lft(L), Rgt(R)
@@ -61,11 +69,36 @@ pub enum Either<L, R> {
 /// Integers.
 pub type Int = ::num::BigInt ;
 
+/// A trivially hashed set of variable maps.
+pub type VarMapSet<T> = HashSet<
+  VarMap<T>, hash::BuildHashU64
+> ;
+/// Some predicate applications.
+pub type PredApps = PrdHMap< VarMapSet<Term> > ;
+/// Predicate application alias type extension.
+pub trait PredAppsExt {
+  /// Insert a predicate application. Returns true if the application is new.
+  fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
+}
+impl<T: Eq + ::std::hash::Hash> HConSetExt for VarMapSet<T> {
+  fn new() -> Self { Self::with_hasher( hash::BuildHashU64 {} ) }
+  fn with_capacity(capacity: usize) -> Self {
+    Self::with_capacity_and_hasher(capacity, hash::BuildHashU64 {})
+  }
+}
+impl PredAppsExt for PredApps {
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
+    self.entry(pred).or_insert_with(
+      || VarMapSet::with_capacity(4)
+    ).insert(args)
+  }
+}
+
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Maps predicates to terms.
-pub type Model = Vec< (PrdIdx, Vec<TTerm>) > ;
+pub type Model = Vec< (PrdIdx, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -76,14 +109,10 @@ pub type Cexs = ClsHMap<Cex> ;
 pub type Args = VarMap<Val> ;
 
 /// Alias trait for a solver with this module's parser.
-pub trait Solver<'kid, P: 'static + ::rsmt2::ParseSmt2>:
-  ::rsmt2::Solver<'kid, P> +
-  ::rsmt2::Query<'kid, P> {}
-impl<
-  'kid,
-  P: 'static + ::rsmt2::ParseSmt2,
-  T: ::rsmt2::Solver<'kid, P> + ::rsmt2::Query<'kid, P>
-> Solver<'kid, P> for T {}
+pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
+
+impl<'kid, P, T> Solver<'kid, P> for T
+where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
 
 /// Custom hash set with trivial hashing.
 pub type HConSet<T> = HashSet<
@@ -93,6 +122,43 @@ pub type HConSet<T> = HashSet<
 pub type HConMap<T,V> = HashMap<
   ::hashconsing::HConsed<T>, V, hash::BuildHashU64
 > ;
+
+
+/// Information returned by
+/// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
+/// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
+pub struct RedInfo {
+  /// Number of predicates eliminated.
+  pub preds: usize,
+  /// Number of clauses removed.
+  pub clauses_rmed: usize,
+  /// Number of clauses created.
+  pub clauses_added: usize,
+}
+impl RedInfo {
+  /// True if one or more fields are non-zero.
+  pub fn non_zero(& self) -> bool {
+    self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0
+  }
+}
+impl From<(usize, usize, usize)> for RedInfo {
+  fn from(
+    (preds, clauses_rmed, clauses_added): (usize, usize, usize)
+  ) -> RedInfo {
+    RedInfo { preds, clauses_rmed, clauses_added }
+  }
+}
+impl ::std::ops::AddAssign for RedInfo {
+  fn add_assign(
+    & mut self, RedInfo { preds, clauses_rmed, clauses_added }: Self
+  ) {
+    self.preds += preds ;
+    self.clauses_rmed += clauses_rmed ;
+    self.clauses_added += clauses_added
+  }
+}
+
+
 
 
 
@@ -157,6 +223,24 @@ pub trait PebcakFmt<'a> {
   /// Formatted string.
   fn to_string_info(& self, i: Self::Info) -> Res<String> {
     self.string_do(i, |s| s.to_string())
+  }
+}
+
+
+/// Indexed by `VarIdx`.
+pub trait VarIndexed<T> {
+  /// Gets the value associated with a variable.
+  #[inline(always)]
+  fn var_get(& self, var: VarIdx) -> Option<& T> ;
+}
+impl<T> VarIndexed<T> for VarMap<T> {
+  fn var_get(& self, var: VarIdx) -> Option<& T> {
+    Some(& self[var])
+  }
+}
+impl<T> VarIndexed<T> for VarHMap<T> {
+  fn var_get(& self, var: VarIdx) -> Option<& T> {
+    self.get(& var)
   }
 }
 
@@ -234,31 +318,3 @@ mod hash {
   }
 }
 
-
-/// Basic parsing helpers.
-pub mod parse {
-  use common::* ;
-  pub use nom::multispace ;
-
-  named!{
-    #[doc = "Comment parser."],
-    pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
-  }
-
-  named!{
-    #[doc = "Parses comments and spaces."],
-    pub spc_cmt<()>, map!(
-      many0!( alt_complete!(cmt | multispace) ), |_| ()
-    )
-  }
-
-  named!{
-    #[doc = "Integer parser."],
-    pub int<Int>, map!(
-      re_bytes_find!("^([1-9][0-9]*|0)"),
-      |bytes| Int::parse_bytes(bytes, 10).expect(
-        "[bug] problem in integer parsing"
-      )
-    )
-  }
-}

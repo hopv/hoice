@@ -149,13 +149,16 @@ pub trait CanPrint {
   /// Debug print (multi-line).
   fn print(& self) ;
 }
+static STAT_LEN: usize = 40 ;
 impl CanPrint for Stats {
   fn print(& self) {
-    for (stat, count) in self {
-      let stat_len = ::std::cmp::min( 30, stat.len() ) ;
+    let mut stats: Vec<_> = self.iter().collect() ;
+    stats.sort_unstable() ;
+    for (stat, count) in stats {
+      let stat_len = ::std::cmp::min( STAT_LEN, stat.len() ) ;
       println!(
         ";   {0: >1$}{2}: {3: >5}",
-        "", 30 - stat_len, conf.emph(stat), count
+        "", STAT_LEN - stat_len, conf.emph(stat), count
       )
     }
   }
