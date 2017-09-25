@@ -7,15 +7,13 @@
 
 "#]
 
-use rsmt2::{ ParseSmt2, Kid } ;
-
-use nom::IResult ;
+use rsmt2::Kid ;
 
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
 
-
+use self::smt::Parser ;
 
 
 /// Starts the teaching process.
@@ -542,11 +540,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     let res = if sat {
       profile!{ self tick "cexs", "model" }
       log_debug!{ "    sat, getting model..." }
-      let model = self.solver.get_model() ? ;
+      let model = self.solver.get_model_const() ? ;
       let mut map: VarMap<_> = clause.vars().iter().map(
         |info| info.typ.default_val()
       ).collect() ;
-      for (var,val) in model {
+      for (var, _, val) in model {
         log_debug!{ "    - {} = {}", var.default_str(), val }
         map[var] = val
       }
@@ -576,60 +574,56 @@ impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
 
 
 
+/// Teacher's smt stuff.
+mod smt {
+  use std::str::FromStr ;
+  use std::io::BufRead ;
 
+  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
+  use rsmt2::errors::Res as SmtRes ;
 
+  use common::* ;
 
-#[doc = r#"Unit type parsing the output of the SMT solver.
+  /// Unit type parsing the output of the SMT solver.
+  ///
+  /// Parses variables of the form `v<int>` and constants. It is designed to
+  /// parse models of the falsification of a single clause, where the
+  /// variables of the clause are written as `v<index>` in smt2.
+  #[derive(Clone, Copy)]
+  pub struct Parser ;
 
-Parses variables of the form `v<int>` and constants. It is designed to parse
-models of the falsification of a single clause, where the variables of the
-clause are written as `v<index>` in smt2.
-"#]
-pub struct Parser ;
-impl ParseSmt2 for Parser {
-  type Ident = VarIdx ;
-  type Value = Val ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
-
-  fn parse_ident<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> IResult<& 'a [u8], VarIdx> {
-    use std::str::FromStr ;
-    preceded!(
-      bytes,
-      tag!("v_"),
-      map!(
-        map_res!(
-          map_res!(
-            re_bytes_find!("^[0-9][0-9]*"),
-            ::std::str::from_utf8
-          ),
-          usize::from_str
+  impl<'a> IdentParser<'a, VarIdx, (), & 'a str> for Parser {
+    fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
+      debug_assert_eq!( & input[0..2], "v_" ) ;
+      match usize::from_str(& input[2..]) {
+        Ok(idx) => Ok( idx.into() ),
+        Err(e) => bail!(
+          "could not retrieve var index from `{}`: {}", input, e
         ),
-        |i| i.into()
-      )
-    )
+      }
+    }
+    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+      Ok(())
+    }
   }
 
-  fn parse_value<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> IResult<& 'a [u8], Val> {
-    fix_error!( bytes, u32, call!(Val::parse) )
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_expr` of the teacher parser should never be called")
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_proof` of the teacher parser should never be called")
+  impl<'a, Br> ValueParser<'a, Val, & 'a mut SmtParser<Br>> for Parser
+  where Br: BufRead {
+    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
+      if let Some(val) = input.try_int::<
+        _, _, ::num::bigint::ParseBigIntError
+      >(
+        |int, pos| {
+          let int = Int::from_str(int) ? ;
+          Ok( if ! pos { - int } else { int } )
+        }
+      ) ? {
+        Ok( Val::I(val) )
+      } else if let Some(val) = input.try_bool() ? {
+        Ok( Val::B(val) )
+      } else {
+        input.fail_with("unexpected value")
+      }
+    }
   }
 }
-
-

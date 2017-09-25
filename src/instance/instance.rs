@@ -31,8 +31,6 @@ impl Clause {
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause { vars, lhs_terms, lhs_preds, rhs } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
-    clause.lhs_terms.shrink_to_fit() ;
-    clause.lhs_preds.shrink_to_fit() ;
     clause
   }
 
@@ -198,7 +196,7 @@ impl Clause {
       self.insert_term(term) ;
       changed = changed || b
     }
-    let mut nu_argss = HashSet::with_capacity(7) ;
+    let mut nu_argss = VarMapSet::with_capacity(7) ;
     for (_, argss) in & mut self.lhs_preds {
       debug_assert!( nu_argss.is_empty() ) ;
       for mut args in argss.drain() {
@@ -952,7 +950,7 @@ impl Instance {
     let mut maps = vec![] ;
 
     let rhs_opt = if let TTerm::P { ref pred, ref args } = clause.rhs {
-      let mut set = HashSet::with_capacity(1) ;
+      let mut set = VarMapSet::with_capacity(1) ;
       set.insert(args.clone()) ;
       Some((pred, set))
     } else { None } ;

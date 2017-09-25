@@ -69,17 +69,27 @@ pub enum Either<L, R> {
 /// Integers.
 pub type Int = ::num::BigInt ;
 
+/// A trivially hashed set of variable maps.
+pub type VarMapSet<T> = HashSet<
+  VarMap<T>, hash::BuildHashU64
+> ;
 /// Some predicate applications.
-pub type PredApps = PrdHMap< HashSet< VarMap<Term> > > ;
+pub type PredApps = PrdHMap< VarMapSet<Term> > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
   fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
 }
+impl<T: Eq + ::std::hash::Hash> HConSetExt for VarMapSet<T> {
+  fn new() -> Self { Self::with_hasher( hash::BuildHashU64 {} ) }
+  fn with_capacity(capacity: usize) -> Self {
+    Self::with_capacity_and_hasher(capacity, hash::BuildHashU64 {})
+  }
+}
 impl PredAppsExt for PredApps {
   fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
     self.entry(pred).or_insert_with(
-      || HashSet::with_capacity(4)
+      || VarMapSet::with_capacity(4)
     ).insert(args)
   }
 }
@@ -99,14 +109,10 @@ pub type Cexs = ClsHMap<Cex> ;
 pub type Args = VarMap<Val> ;
 
 /// Alias trait for a solver with this module's parser.
-pub trait Solver<
-  'kid, P: 'static + ::rsmt2::ParseSmt2
->: ::rsmt2::Solver<'kid, P> {}
-impl<
-  'kid,
-  P: 'static + ::rsmt2::ParseSmt2,
-  T: ::rsmt2::Solver<'kid, P>
-> Solver<'kid, P> for T {}
+pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
+
+impl<'kid, P, T> Solver<'kid, P> for T
+where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
 
 /// Custom hash set with trivial hashing.
 pub type HConSet<T> = HashSet<
@@ -312,31 +318,3 @@ mod hash {
   }
 }
 
-
-/// Basic parsing helpers.
-pub mod parse {
-  use common::* ;
-  pub use nom::multispace ;
-
-  named!{
-    #[doc = "Comment parser."],
-    pub cmt, re_bytes_find!(r#"^;.*[\n\r]*"#)
-  }
-
-  named!{
-    #[doc = "Parses comments and spaces."],
-    pub spc_cmt<()>, map!(
-      many0!( alt_complete!(cmt | multispace) ), |_| ()
-    )
-  }
-
-  named!{
-    #[doc = "Integer parser."],
-    pub int<Int>, map!(
-      re_bytes_find!("^([1-9][0-9]*|0)"),
-      |bytes| Int::parse_bytes(bytes, 10).expect(
-        "[bug] problem in integer parsing"
-      )
-    )
-  }
-}

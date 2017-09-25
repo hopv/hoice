@@ -8,8 +8,6 @@ use common::* ;
 use instance::* ;
 
 
-
-
 /// Runs pre-processing
 pub fn work(
   instance: & mut Instance, profiler: & Profiler
@@ -22,7 +20,7 @@ pub fn work(
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
-    let solver = ::rsmt2::solver(& mut kid, Parser).chain_err(
+    let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
     if let Some(log) = conf.solver.log_file("preproc") ? {
@@ -35,7 +33,7 @@ pub fn work(
   } else {
     run(
       instance, profiler,
-      None as Option< SolverWrapper<::rsmt2::PlainSolver<Parser>> >
+      None as Option< SolverWrapper<::rsmt2::PlainSolver<()>> >
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
@@ -52,7 +50,7 @@ pub fn work(
 
 }
 
-pub fn run<'kid, S: Solver<'kid, Parser>>(
+pub fn run<'kid, S: Solver<'kid, ()>>(
   instance: & mut Instance,
   profiler: & Profiler, solver: Option< SolverWrapper<S> >
 ) -> Res<()> {
@@ -133,7 +131,7 @@ pub fn run<'kid, S: Solver<'kid, Parser>>(
 
 
 /// Reductor, stores the reduction strategies and a solver.
-pub struct Reductor<'kid, S: Solver<'kid, Parser>> {
+pub struct Reductor<'kid, S: Solver<'kid, ()>> {
   /// Strategies.
   strats: Vec< Box<RedStrat> >,
   /// Solver strats.
@@ -141,7 +139,7 @@ pub struct Reductor<'kid, S: Solver<'kid, Parser>> {
     SolverWrapper<S>, Vec< Box<SolverRedStrat<'kid, S>> >
   ) >,
 }
-impl<'kid, S: Solver<'kid, Parser>> Reductor<'kid, S> {
+impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
   /// Constructor.
   pub fn new(solver: Option< SolverWrapper<S> >) -> Self {
     let strats: Vec< Box<RedStrat> > = vec![
@@ -467,7 +465,7 @@ pub struct SolverWrapper<S> {
   /// The solver.
   solver: S,
 }
-impl<'kid, S: Solver<'kid, Parser>> SolverWrapper<S> {
+impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
 
   /// True if a conjunction of terms is a tautology.
   ///
@@ -867,7 +865,7 @@ impl RedStrat for Trivial {
 /// Reduction strategy trait for strategies requiring a solver.
 ///
 /// Function `apply` will be applied until fixed point (`false` is returned).
-pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, Parser> >: HasName {
+pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, ()> >: HasName {
   /// Applies the reduction strategy. Returns the number of predicates
   /// eliminated, the number of clauses forgotten, and the number of clauses
   /// created.
@@ -928,7 +926,7 @@ impl HasName for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SimpleOneRhs
-where Slver: Solver<'kid, Parser> {
+where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
@@ -1051,7 +1049,7 @@ impl HasName for SimpleOneLhs {
   fn name(& self) -> & 'static str { "simple one lhs" }
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SimpleOneLhs
-where Slver: Solver<'kid, Parser> {
+where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
@@ -1199,7 +1197,7 @@ impl HasName for MonoPredClause {
   fn name(& self) -> & 'static str { "mono pred clause" }
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for MonoPredClause
-where Slver: Solver<'kid, Parser> {
+where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
@@ -1310,7 +1308,7 @@ impl HasName for SmtTrivial {
   fn name(& self) -> & 'static str { "smt trivial" }
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SmtTrivial
-where Slver: Solver<'kid, Parser> {
+where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
@@ -1379,56 +1377,3 @@ where Slver: Solver<'kid, Parser> {
     Ok( (0, clause_cnt, 0).into() )
   }
 }
-
-
-
-
-
-
-
-#[doc = r#"Unit type parsing the output of the SMT solver.
-
-Does not parse anything.
-"#]
-pub struct Parser ;
-impl ::rsmt2::ParseSmt2 for Parser {
-  type Ident = () ;
-  type Value = () ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
-
-  fn parse_ident<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!(
-      "`parse_ident` of the reduction solver parser should never be called"
-    )
-  }
-
-  fn parse_value<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!(
-      "`parse_value` of the reduction solver parser should never be called"
-    )
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!(
-      "`parse_expr` of the reduction solver parser should never be called"
-    )
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!(
-      "`parse_proof` of the reduction solver parser should never be called"
-    )
-  }
-}
-
-

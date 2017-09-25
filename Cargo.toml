@@ -33,7 +33,3 @@ rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 rayon = "*"
-
-[dependencies.nom]
-version = "^3.0"
-features = [ "regex", "regexp" ]

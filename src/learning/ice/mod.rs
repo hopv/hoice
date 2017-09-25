@@ -1109,13 +1109,13 @@ where Slver: Solver<'kid, Parser> {
     solver.assert( & constraint_2, & () ) ? ;
 
     let model = if solver.check_sat() ? {
-      solver.get_model() ?
+      solver.get_model_const() ?
     } else {
       bail!("[unreachable] could not separate points {:?} and {:?}", p_1, p_2)
     } ;
 
     let mut sum = Vec::with_capacity( coefs.len() ) ;
-    for (var_opt, val) in model {
+    for (var_opt, (), val) in model {
       use num::Zero ;
       if ! val.is_zero() {
         let val = term::int(val) ;
@@ -1453,81 +1453,63 @@ impl EntropyBuilder {
 
 
 
-/// Can parse values (int) and idents (`VarIdx`).
-///
-/// In the ice learner, parsing is only used for synthesizing, not for
-/// conflict detection.
-pub struct Parser ;
-impl ::rsmt2::ParseSmt2 for Parser {
-  type Ident = Option<VarIdx> ;
-  type Value = Int ;
-  type Expr = () ;
-  type Proof = () ;
-  type I = () ;
-
-  fn parse_ident<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Option<VarIdx>> {
-    use std::str::FromStr ;
-    preceded!(
-      bytes,
-      char!('v'),
-      opt!(
-        preceded!(
-          char!('_'),
-          map!(
-            map_res!(
-              map_res!(
-                re_bytes_find!("^[0-9][0-9]*"),
-                ::std::str::from_utf8
-              ),
-              usize::from_str
-            ),
-            |n| n.into()
-          )
-        )
-      )
-    )
-  }
-
-  fn parse_value<'a>(
-    & self, bytes: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], Int> {
-    use common::parse::* ;
-    dbg_dmp!(bytes, alt_complete!(
-      // bytes,
-      int | do_parse!(
-        char!('(') >>
-        spc_cmt >> char!('-') >>
-        spc_cmt >> value: int >>
-        spc_cmt >> char!(')') >>
-        (- value)
-      )
-    ))
-  }
-
-  fn parse_expr<'a>(
-    & self, _: & 'a [u8], _: & ()
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_expr` of the ICE parser should never be called")
-  }
-
-  fn parse_proof<'a>(
-    & self, _: & 'a [u8]
-  ) -> ::nom::IResult<& 'a [u8], ()> {
-    panic!("[bug] `parse_proof` of the ICE parser should never be called")
-  }
-}
-
-
-
 
 
 /// Smt-related things.
 pub mod smt {
+  use std::str::FromStr ;
+  use std::io::BufRead ;
+
+  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
+  use rsmt2::errors::Res as SmtRes ;
   use rsmt2::to_smt::* ;
+
   use common::* ;
   use common::data::* ;
+
+
+
+  /// Can parse values (int) and idents (`VarIdx`).
+  ///
+  /// In the ice learner, parsing is only used for synthesizing, not for
+  /// conflict detection.
+  #[derive(Clone, Copy)]
+  pub struct Parser ;
+
+  impl<'a> IdentParser<'a, Option<VarIdx>, (), & 'a str> for Parser {
+    fn parse_ident(self, input: & 'a str) -> SmtRes< Option<VarIdx> > {
+      if input ==  "v" { return Ok(None) }
+
+      debug_assert_eq!( & input[0..2], "v_" ) ;
+      match usize::from_str(& input[2..]) {
+        Ok(idx) => Ok( Some(idx.into()) ),
+        Err(e) => bail!(
+          "could not retrieve var index from `{}`: {}", input, e
+        ),
+      }
+    }
+    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+      Ok(())
+    }
+  }
+
+  impl<'a, Br> ValueParser<'a, Int, & 'a mut SmtParser<Br>> for Parser
+  where Br: BufRead {
+    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Int> {
+      if let Some(val) = input.try_int::<
+        _, _, ::num::bigint::ParseBigIntError
+      >(
+        |int, pos| {
+          let int = Int::from_str(int) ? ;
+          Ok( if ! pos { - int } else { int } )
+        }
+      ) ? {
+        Ok(val)
+      } else {
+        input.fail_with("unexpected value")
+      }
+    }
+  }
 
   /// Wrapper around predicate / sample that forces smt printing.
   pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;

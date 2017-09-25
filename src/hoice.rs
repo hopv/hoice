@@ -19,8 +19,6 @@ extern crate log ;
 extern crate clap ;
 extern crate ansi_term as ansi ;
 extern crate regex ;
-#[macro_use]
-extern crate nom ;
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;

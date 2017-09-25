@@ -80,20 +80,6 @@ pub enum Typ {
   Bool,
 }
 impl Typ {
-  /// Type parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!(tag!("Int"),  |_| Typ::Int)  |
-        map!(tag!("Bool"), |_| Typ::Bool)
-      )
-    )
-  }
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
@@ -1108,33 +1094,6 @@ impl Op {
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>",
     }
-  }
-
-  /// Operator parser.
-  #[allow(unused_variables)]
-  pub fn parse(
-    bytes: & [u8]
-  ) -> ::nom::IResult<& [u8], Self, Error> {
-    fix_error!(
-      bytes,
-      Error,
-      alt_complete!(
-        map!(tag!("+"),   |_| Op::Add ) |
-        map!(tag!("-"),   |_| Op::Sub ) |
-        map!(tag!("*"),   |_| Op::Mul ) |
-        map!(tag!("div"), |_| Op::Div ) |
-        map!(tag!("mod"), |_| Op::Mod ) |
-        map!(tag!("<="),  |_| Op::Le  ) |
-        map!(tag!("<"),   |_| Op::Lt  ) |
-        map!(tag!(">="),  |_| Op::Ge  ) |
-        map!(tag!(">"),   |_| Op::Gt  ) |
-        map!(tag!("=>"),  |_| Op::Impl) |
-        map!(tag!("="),   |_| Op::Eql ) |
-        map!(tag!("not"), |_| Op::Not ) |
-        map!(tag!("and"), |_| Op::And ) |
-        map!(tag!("or"),  |_| Op::Or  )
-      )
-    )
   }
 
 
