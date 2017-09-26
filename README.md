@@ -2,7 +2,9 @@
 
 It infers predicates verifying a set of horn clauses.
 
-[![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice)
+| linux | windows |     |
+|:-----:|:-------:|:---:|
+| [![Build Status](https://travis-ci.org/AdrienChampion/hoice.svg?branch=master)](https://travis-ci.org/AdrienChampion/hoice) | [![Build status](https://ci.appveyor.com/api/projects/status/db247pe2jp9uo9cs?svg=true)](https://ci.appveyor.com/project/AdrienChampion/rsmt2) | [![codecov](https://codecov.io/gh/AdrienChampion/hoice/branch/master/graph/badge.svg)](https://codecov.io/gh/AdrienChampion/hoice) |
 
 
 # Install

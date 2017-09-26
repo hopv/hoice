@@ -217,7 +217,7 @@ dependencies = [
 [[package]]
 name = "mylib"
 version = "0.1.0"
-source = "git+https://github.com/AdrienChampion/mylib#08adea16e3b0353944c1ff99a2ab6b67f77b2eba"
+source = "git+https://github.com/AdrienChampion/mylib#5bbe7699cee4b61e1501117add6e6df678cb3b92"
 dependencies = [
  "ansi_term 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
