@@ -9,6 +9,11 @@ use common::data::HSample ;
 
 
 /// Trait extending `QualValues` in `release` and `debug`.
+///
+/// # TODO
+///
+/// - investigate whether it would be possible to remove the qualifier from
+///   `QualValues` entirely
 pub trait QualValuesExt {
   /// Adds a sample for the qualifier.
   #[inline]
@@ -24,6 +29,9 @@ pub trait QualValuesExt {
 
 
 /// Stores the (truth) value of a qualifier on some samples.
+///
+/// The `Hash` implementation only hashes `self.qual`. Same for `PartialEq`.
+#[derive(Eq)]
 pub struct QualValues {
   /// The qualifier.
   pub qual: Term,
@@ -31,6 +39,16 @@ pub struct QualValues {
   true_set: HConSet<Args>,
   /// Samples on which the qualifier evaluates to false.
   flse_set: HConSet<Args>,
+}
+impl ::std::hash::Hash for QualValues {
+  fn hash<H: ::std::hash::Hasher>(& self, hasher: & mut H) {
+    self.qual.hash(hasher)
+  }
+}
+impl PartialEq for QualValues {
+  fn eq(& self, other: & Self) -> bool {
+    self.qual.eq( & other.qual )
+  }
 }
 impl QualValues {
   /// Constructor.
@@ -120,7 +138,7 @@ pub struct Qualifiers {
   ///
   /// Invariant: `arity_map.len()` is `instance.max_pred_arity` where
   /// `instance` is the Instance used during construction.
-  arity_map: ArityMap< HConMap<RTerm, QualValues> >,
+  arity_map: Quals,
   /// Decay map. Maps qualifiers to the number of times, up to now, that the
   /// qualifier has **not** been used.
   ///
@@ -201,7 +219,7 @@ impl Qualifiers {
       blacklist: HConSet::with_capacity(107),
     } ;
 
-    quals.add_quals( instance.qualifiers() ) ? ;
+    instance.qualifiers(& mut quals.arity_map) ;
 
     Ok(quals)
   }
@@ -213,6 +231,11 @@ impl Qualifiers {
       count += quals.len()
     }
     count
+  }
+
+  /// Check whether a qualifier is known for some arity.
+  pub fn is_known(& self, arity: Arity, term: & Term) -> bool {
+    self.arity_map[arity].contains_key(term)
   }
 
   /// Accessor to the qualifiers.
@@ -308,27 +331,15 @@ impl Qualifiers {
   //   Ok(())
   // }
 
-  /// Adds some qualifiers as terms.
-  pub fn add_quals<'a, Terms: IntoIterator<Item = Term>>(
-    & 'a mut self, quals: Terms
-  ) -> Res<()> {
-    self.add_qual_values(
-      quals.into_iter().map( |qual| QualValues::new(qual) )
-    )
-  }
-
   /// Adds some qualifiers as qualifier values.
-  pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
-    & 'a mut self, quals: Terms
+  pub fn add_qual_values(
+    & mut self, qualss: & mut Quals
   ) -> Res<()> {
-    for qual in quals {
-      let arity: Arity = if let Some(max_var) = qual.qual.highest_var() {
-        (1 + * max_var).into()
-      } else {
-        bail!("[bug] trying to add constant qualifier")
-      } ;
-      let _ = self.decay_map.insert( qual.qual.clone(), (arity, 0) ) ;
-      let _ = self.arity_map[arity].insert( qual.qual.clone(), qual ) ;
+    let mut arity: Arity = 0.into() ;
+    for quals in qualss {
+      use std::iter::Extend ;
+      self.arity_map[arity].extend( quals.drain() ) ;
+      arity.inc()
     }
     Ok(())
   }
@@ -437,14 +448,14 @@ impl<'a> QualIter<'a> {
 //   type Item = & 'a mut QualValues ;
 // }
 impl<'a> ::std::iter::Iterator for QualIter<'a> {
-  type Item = & 'a mut QualValues ;
-  fn next(& mut self) -> Option<& 'a mut QualValues> {
+  type Item = ((), & 'a mut QualValues) ;
+  fn next(& mut self) -> Option<((), & 'a mut QualValues)> {
     while self.curr_arity <= self.pred_arity {
       if let Some( ref mut iter ) = self.values {
         // Consume the elements until a non-blacklisted one is found.
         while let Some( (term, values) ) = iter.next() {
           if ! self.blacklist.contains(term) {
-            return Some(values)
+            return Some(((), values))
           }
         }
       } else {

@@ -924,12 +924,10 @@ impl Instance {
   }
 
   /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self) -> HConSet<RTerm> {
-    let mut set = HConSet::new() ;
+  pub fn qualifiers(& self, quals: & mut Quals) {
     for clause in & self.clauses {
-      self.qualifiers_of_clause(clause, & mut set)
+      self.qualifiers_of_clause(clause, quals)
     }
-    set
   }
 
   /// Extracts some qualifiers from a clause.
@@ -939,7 +937,7 @@ impl Instance {
   /// - write an explanation of what actually happens
   /// - and some tests, probably
   pub fn qualifiers_of_clause(
-    & self, clause: & Clause, quals: & mut HConSet<RTerm>
+    & self, clause: & Clause, quals: & mut Quals
   ) {
     // println!(
     //   "looking at clause {}", clause.to_string_info(self.preds()).unwrap()
@@ -993,7 +991,7 @@ impl Instance {
         for map in these_maps {
           // Push if non-empty.
           if ! map.is_empty() {
-            maps.push(map)
+            maps.push( (map) )
           }
         }
       }
@@ -1012,12 +1010,21 @@ impl Instance {
     // Now look for atoms and try to apply the mappings above.
     for term in clause.lhs_terms.iter().chain( clause.rhs().term() ) {
 
+      // Build the conjunction of atoms.
+      let mut conj = Vec::with_capacity( clause.lhs_terms.len() + 1 ) ;
+      let mut max_arity: Arity = 0.into() ;
+
       for map in & maps {
         if let Some( (term, true) ) = term.subst_total(map) {
           let term = if let Some(term) = term.rm_neg() {
             term
           } else { term } ;
-          let _ = quals.insert(term) ;
+          if let Some(max_var) = term.highest_var() {
+            conj.push( term.clone() ) ;
+            let arity: Arity = (1 + * max_var).into() ;
+            if arity > max_arity { max_arity = arity }
+            quals.insert(arity, term)
+          }
         }
         // else if let Some(kids) = term.kids() {
         //   for kid in kids {
@@ -1032,6 +1039,13 @@ impl Instance {
         //     }
         //   }
         // }
+      }
+
+      if conj.len() > 1 {
+        if clause.rhs().term().is_some() {
+          conj.pop() ;
+          quals.insert( max_arity, term::and(conj) )
+        }
       }
 
     }
@@ -1372,7 +1386,7 @@ impl Instance {
         if let Some(argss) = self.clauses[clause].lhs_preds.remove(& pred) {
           for args in argss {
 
-            match tterms.subst_total(& args)?.simplify() {
+            match tterms.subst_total(& args)? {
               TTerms::True => (),
               TTerms::False => {
                 terms_to_add.clear() ;
@@ -1386,16 +1400,8 @@ impl Instance {
                 // }
                 self.clause_lhs_extend(clause, tterms)
               },
-              TTerms::Dnf(mut ttermss) => {
-                // Need to create new clauses.
-                if let Some(tterms) = ttermss.pop() {
-                  self.clause_lhs_extend(clause, tterms) ;
-                  // terms_to_add.extend( ttermss ) ;
-                  unimplemented!("clause creation when forcing lhs to dnf")
-
-                } else {
-                  bail!("empty tterms dnf should not happen")
-                }
+              TTerms::Or(mut _tterms) => {
+                unimplemented!("disjunction of top terms in `force_preds`")
               },
             }
           }
@@ -1432,7 +1438,7 @@ impl Instance {
           pred: _this_pred, ref args
         } = self[clause].rhs {
           debug_assert_eq!( _this_pred, pred ) ;
-          tterms.subst_total(args)?.simplify()
+          tterms.subst_total(args) ?
         } else {
           bail!("inconsistent instance")
         } ;
@@ -1454,7 +1460,7 @@ impl Instance {
               bail!("illegal empty conjunction of top terms")
             }
           },
-          TTerms::Dnf(_) => bail!(
+          TTerms::Or(_) => bail!(
             "trying to force a rhs to a dnf"
           ),
         }
