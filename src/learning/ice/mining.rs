@@ -151,6 +151,7 @@ pub struct Qualifiers {
 }
 impl Qualifiers {
   /// Constructor.
+  #[allow(unused_mut)]
   pub fn new(instance: & Instance) -> Res<Self> {
     let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
     let mut decay_map = HConMap::with_capacity(
@@ -158,56 +159,7 @@ impl Qualifiers {
     ) ;
     arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
-      let arity = arity_map.next_index() ;
-      let var = term::var(var_idx) ;
-      let mut terms = HConMap::with_capacity(
-        instance.consts().len() * 4
-      ) ;
-      // for other_var in VarRange::zero_to( var_idx ) {
-      //   let other_var = term::var(other_var) ;
-      //   let term = instance.ge(var.clone(), other_var.clone()) ;
-      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-      //   let term = instance.le(var.clone(), other_var.clone()) ;
-      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-      //   let term = instance.eq(var.clone(), other_var) ;
-      //   let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-      //   let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-      // }
-      for cst in instance.consts() {
-        let term = term::ge(var.clone(), cst.clone()) ;
-        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-        let term = term::le(var.clone(), cst.clone()) ;
-        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-        let term = term::eq(var.clone(), cst.clone()) ;
-        let _ = decay_map.insert( term.clone(), (arity, 0) ) ;
-        let _ = terms.insert( term.clone(), QualValues::new(term) ) ;
-        // for other_var in VarRange::zero_to( var_idx ) {
-        //   use instance::Op ;
-        //   let other_var = term::var(other_var) ;
-        //   let add = instance.op(
-        //     Op::Add, vec![ var.clone(), other_var.clone() ]
-        //   ) ;
-        //   let _ = terms.insert( instance.ge(add.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.le(add.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.eq(add.clone(), cst.clone()) ) ;
-        //   let sub_1 = instance.op(
-        //     Op::Sub, vec![ var.clone(), other_var.clone() ]
-        //   ) ;
-        //   let _ = terms.insert( instance.ge(sub_1.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.le(sub_1.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.eq(sub_1.clone(), cst.clone()) ) ;
-        //   let sub_2 = instance.op(
-        //     Op::Sub, vec![ other_var, var.clone() ]
-        //   ) ;
-        //   let _ = terms.insert( instance.ge(sub_2.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.le(sub_2.clone(), cst.clone()) ) ;
-        //   let _ = terms.insert( instance.eq(sub_2.clone(), cst.clone()) ) ;
-        // }
-      }
+      let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
       arity_map.push(terms)
     }
     let pred_to_arity = instance.preds().iter().map(
