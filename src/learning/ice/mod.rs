@@ -267,7 +267,7 @@ where Slver: Solver<'kid, Parser> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if self.instance.forced_terms_of(pred).is_some() {
+      if self.instance.is_known(pred) {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;

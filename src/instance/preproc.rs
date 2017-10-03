@@ -37,6 +37,7 @@ pub fn work(
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
+
   log_info!{
     "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
   }
@@ -155,9 +156,9 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     if conf.preproc.one_lhs {
       solver_strats.push( Box::new( SimpleOneLhs::new() ) )
     }
-    // if conf.preproc.one_rhs {
-    //   solver_strats.push( Box::new( OneRhs::new() ) )
-    // }
+    if conf.preproc.one_rhs && conf.preproc.one_rhs_full {
+      solver_strats.push( Box::new( OneRhs::new() ) )
+    }
     // if conf.preproc.mono_pred {
     //   solver_strats.push( Box::new( MonoPredClause::new() ) )
     // }
@@ -254,44 +255,43 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
       // while changed {
       //   changed = false ;
 
+      let mut changed = true ;
+
+      'run_strats: while changed {
+        changed = false ;
+
         for strat in strats.iter_mut() {
-          let mut changed = true ;
-          while changed {
-            log_info!("applying {}", conf.emph( strat.name() )) ;
-            profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
-            let red_info = strat.apply(instance, solver) ? ;
-            changed = red_info.non_zero() ;
+          log_info!("applying {}", conf.emph( strat.name() )) ;
+          profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+          let red_info = strat.apply(instance, solver) ? ;
+          changed = red_info.non_zero() ;
 
-
-            if_not_bench!{
-              profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
-              profile!{
-                |_profiler| format!(
-                  "{:>25}   pred red", strat.name()
-                ) => add red_info.preds
-              }
-              profile!{
-                |_profiler| format!(
-                  "{:>25} clause red", strat.name()
-                ) => add red_info.clauses_rmed
-              }
-              profile!{
-                |_profiler| format!(
-                  "{:>25} clause add", strat.name()
-                ) => add red_info.clauses_added
-              }
+          if_not_bench!{
+            profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+            profile!{
+              |_profiler| format!(
+                "{:>25}   pred red", strat.name()
+              ) => add red_info.preds
             }
-
-            total += red_info ;
-            instance.check( strat.name() ) ? ;
+            profile!{
+              |_profiler| format!(
+                "{:>25} clause red", strat.name()
+              ) => add red_info.clauses_rmed
+            }
+            profile!{
+              |_profiler| format!(
+                "{:>25} clause add", strat.name()
+              ) => add red_info.clauses_added
+            }
           }
 
-          // let mut dummy = String::new() ;
-          // println!("") ;
-          // println!( "; waiting..." ) ;
-          // let _ = ::std::io::stdin().read_line(& mut dummy) ;
+          total += red_info ;
+          instance.check( strat.name() ) ? ;
+
+          // If something changed, re-run all strats.
+          if changed { continue 'run_strats }
         }
-      // }
+      }
     }
 
     Ok(total)
@@ -440,7 +440,7 @@ where Terms: Iterator<Item = & 'a Term> {
 /// Result of extracting the terms for a predicate application in a clause.
 #[derive(Clone, PartialEq, Eq)]
 #[allow(dead_code)]
-pub enum ExtractRes {
+pub enum ExtractRes<T = Vec<TTerm>> {
   /// The clause was found to be trivially true.
   Trivial,
   /// Terms could not be extracted.
@@ -454,9 +454,9 @@ pub enum ExtractRes {
   /// Success, predicate is equivalent to false.
   SuccessFalse,
   /// Success, predicate is equivalent to some top terms.
-  Success(Vec<TTerm>),
+  Success(T),
 }
-impl ExtractRes {
+impl<T: PartialEq + Eq> ExtractRes<T> {
   /// True if failed.
   pub fn is_failed(& self) -> bool{ * self == ExtractRes::Failed }
 }
@@ -704,7 +704,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
-  ) -> Res<ExtractRes> {
+  ) -> Res< ExtractRes< (Qualfed, Vec<TTerm>) > > {
     log_debug!{ "    qterms_of_rhs_app on {} {}", instance[pred], args }
 
     // Implication trivial?
@@ -713,11 +713,12 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       return Ok( ExtractRes::Trivial )
     }
 
-    let (terms, map, mut app_vars) = if let Some(res) = terms_of_app(
+    let (terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
       instance, pred, args, |term| term
     ) ? { res } else {
       return Ok(ExtractRes::Failed)
     } ;
+    let mut fresh = instance[pred].sig.next_index() ;
 
     if_not_bench!{
       log_debug!{ "      terms:" }
@@ -727,43 +728,51 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     }
 
     let mut tterms: Vec<_> = terms.into_iter().map(|t| TTerm::T(t)).collect() ;
-    let mut lhs_terms: Vec<_> = lhs_terms.iter().collect() ;
-    let mut lhs_terms_buf: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
     let mut qvars = VarHMap::with_capacity(7) ;
 
+    macro_rules! add_vars {
+      (
+        $vars:expr => $app_vars:ident
+        |> $map:expr, $qvars:expr, $info:expr, $fresh:expr
+      ) => (
+        for var in $vars {
+          let is_new = $app_vars.insert(var) ;
+          if is_new {
+            let _prev = $qvars.insert($fresh, $info[var].typ) ;
+            debug_assert_eq!( None, _prev ) ;
+            let _prev = $map.insert( var, term::var($fresh) ) ;
+            debug_assert_eq!( None, _prev ) ;
+            $fresh.inc()
+          }
+        }
+      ) ;
+    }
 
-    let mut vars = VarSet::with_capacity(7) ;
     for (pred, argss) in lhs_preds {
       for args in argss {
         let mut nu_args = VarMap::with_capacity( args.len() ) ;
         for arg in args {
-          use std::iter::Extend ;
-          vars.extend( arg.vars() ) ;
+          add_vars!{
+            arg.vars() => app_vars |> map, qvars, var_info, fresh
+          }
           if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
             // Total substitution succeeded, all variables are known.
             nu_args.push(nu_arg)
           } else {
-            // For all we know, `pred` is false and there's no constraint on
-            // the predicate we're resolving. Even if the variables are
-            // completely disjoint.
-            return Ok(ExtractRes::Failed)
+            // Unreacheable as we just made sure all variables in the argument
+            // are in the map.
+            bail!("unreachable, rhs  substitution was not total")
           }
         }
         tterms.push( TTerm::P { pred: * pred, args: nu_args } )
       }
     }
-    for var in vars {
-      let is_new = app_vars.insert(var) ;
-      if is_new {
-        let _prev = qvars.insert(var, var_info[var].typ) ;
-        debug_assert_eq!( None, _prev )
-      }
-    }
 
-
+    let mut lhs_terms: Vec<_> = lhs_terms.iter().collect() ;
+    let mut lhs_terms_buf: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
     let mut fixed_point = false ;
 
-    while fixed_point {
+    while ! fixed_point {
       fixed_point = true ;
 
       for term in lhs_terms.drain(0..) {
@@ -774,20 +783,19 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
         }
         let vars = term.vars() ;
         if vars.is_subset( & app_vars ) {
+          log_debug!("pushing {}", term.to_string_info(var_info) ?) ;
           let (term, _) = term.subst_total(& map).ok_or::<Error>(
             "failure during total substitution".into()
           ) ? ;
+          log_debug!(" -> {}", term) ;
+
           tterms.push( TTerm::T(term) )
         } else if vars.is_disjoint(& app_vars) {
           lhs_terms_buf.push(term)
         } else {
           fixed_point = false ;
-          for var in vars {
-            let is_new = app_vars.insert(var) ;
-            if is_new {
-              let _prev = qvars.insert( var, var_info[var].typ ) ;
-              debug_assert_eq!( _prev, None )
-            }
+          add_vars!{
+            vars => app_vars |> map, qvars, var_info, fresh
           }
         }
       }
@@ -799,7 +807,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       Ok(ExtractRes::SuccessTrue)
     } else {
       Ok(
-        ExtractRes::Success( tterms.into_iter().collect() )
+        ExtractRes::Success( (qvars, tterms.into_iter().collect()) )
       )
     }
   }
@@ -978,7 +986,7 @@ where Slver: Solver<'kid, ()> {
           Failed | SuccessFalse => unreachable!(),
         }
 
-        if instance.forced_terms_of(pred).is_some() {
+        if instance.is_known(pred) {
           red_info.preds += 1
         } else {
           if_verb!{
@@ -1119,7 +1127,7 @@ where Slver: Solver<'kid, ()> {
         _ => unreachable!(),
       }
 
-      if instance.forced_terms_of(pred).is_some() {
+      if instance.is_known(pred) {
         red_info.preds += 1
       } else {
         if_verb!{
@@ -1133,10 +1141,6 @@ where Slver: Solver<'kid, ()> {
           }
         }
       }
-      // let mut dummy = String::new() ;
-      // println!("") ;
-      // println!( "; {}...", conf.emph("press return") ) ;
-      // let _ = ::std::io::stdin().read_line(& mut dummy) ;
     }
 
     Ok( red_info )
@@ -1165,7 +1169,7 @@ impl OneRhs {
   }
 }
 impl HasName for OneRhs {
-  fn name(& self) -> & 'static str { "simple one rhs" }
+  fn name(& self) -> & 'static str { "one rhs" }
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for OneRhs
 where Slver: Solver<'kid, ()> {
@@ -1175,11 +1179,16 @@ where Slver: Solver<'kid, ()> {
     debug_assert!( self.new_vars.is_empty() ) ;
     let mut red_info: RedInfo = (0,0,0).into() ;
 
-    for pred in instance.pred_indices() {
-      log_debug!{ "looking at {}", instance[pred] }
+    'all_preds: for pred in instance.pred_indices() {
       if instance.clauses_of_pred(pred).1.len() == 1 {
         let clause =
           * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
+
+        if instance.clauses_of_pred(pred).0.contains(& clause) {
+        // || instance[clause].lhs_pred_apps_len() > 1 {
+          continue 'all_preds
+        }
+
         log_debug!{
           "trying to unfold {}", instance[pred]
         }
@@ -1188,7 +1197,7 @@ where Slver: Solver<'kid, ()> {
           pred: _this_pred, ref args
         } = * instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
-          solver.terms_of_rhs_app(
+          solver.qterms_of_rhs_app(
             instance,
             instance[clause].lhs_terms(), instance[clause].lhs_preds(),
             pred, args, instance[clause].vars()
@@ -1201,11 +1210,11 @@ where Slver: Solver<'kid, ()> {
           log_debug!{ "  skipping" }
           continue
         }
-        
-        // log_debug!{
-        //   "from {}",
-        //   instance.clauses()[clause].to_string_info( instance.preds() ) ?
-        // }
+
+        log_debug!{
+          "from {}",
+          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+        }
 
         instance.forget_clause(clause) ? ;
         red_info.clauses_rmed += 1 ;
@@ -1221,8 +1230,12 @@ where Slver: Solver<'kid, ()> {
             log_info!("  => true") ;
             red_info += instance.force_true(Some(pred)) ? ;
           },
-          Success(tterms) => {
+          Success( (qvars, tterms) ) => {
             if_not_bench!{
+              log_debug!("  {} quantified variables", qvars.len()) ;
+              for (var, typ) in & qvars {
+                log_debug!("  - v_{}: {}", var, typ)
+              }
               for tterm in & tterms {
                 log_debug!("  => {}", tterm ) ;
                 if let Some(pred) = tterm.pred() {
@@ -1231,7 +1244,7 @@ where Slver: Solver<'kid, ()> {
               }
             }
             red_info += instance.force_preds(
-              Some((pred, None, TTerms::conj(tterms)))
+              Some((pred, Some(qvars), TTerms::conj(tterms)))
             ) ? ;
 
 
@@ -1242,7 +1255,7 @@ where Slver: Solver<'kid, ()> {
           Failed | SuccessFalse => unreachable!(),
         }
 
-        if instance.forced_terms_of(pred).is_some() {
+        if instance.is_known(pred) {
           red_info.preds += 1
         } else {
           if_verb!{
@@ -1256,6 +1269,10 @@ where Slver: Solver<'kid, ()> {
             }
           }
         }
+
+        // We did something, stop there in case more simple stuff can be done.
+        break 'all_preds
+
       }
     }
 

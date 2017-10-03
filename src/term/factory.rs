@@ -233,6 +233,18 @@ pub fn simplify(
     Op::Eql => {
       if args.len() == 2 {
         if args[0] == args[1] { return tru() }
+      } else if let Some(b) = args[0].bool() {
+        return if b {
+          args[1].clone()
+        } else {
+          not( args[1].clone() )
+        }
+      } else if let Some(b) = args[1].bool() {
+        return if b {
+          args[0].clone()
+        } else {
+          not( args[0].clone() )
+        }
       }
       (op, args)
     },

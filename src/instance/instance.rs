@@ -295,9 +295,9 @@ impl Clause {
     ) ? ;
     write!(w, "\n") ? ;
     if let Some(suff) = suff {
-      write!(w, "{}", suff) ?
+      write!(w, "{}\n", suff) ?
     }
-    write!(w, "\n))")
+    write!(w, "))")
   }
 }
 impl ::std::ops::Index<VarIdx> for Clause {
@@ -433,6 +433,13 @@ impl Instance {
     self.is_unsat = true
   }
 
+  /// True if a predicate is forced to something.
+  #[inline]
+  pub fn is_known(& self, pred: PrdIdx) -> bool {
+    self.pred_terms[pred].is_some() ||
+    self.pred_qterms[pred].is_some()
+  }
+
   /// Returns the model corresponding to the input predicates and the forced
   /// predicates.
   ///
@@ -562,15 +569,23 @@ impl Instance {
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& TTerms> {
-    self.pred_terms[pred].as_ref()
+  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<(
+    Option<& Qualfed>, & TTerms
+  )> {
+    if let Some(tterms) = self.pred_terms[pred].as_ref() {
+      Some( (None, tterms) )
+    } else {
+      self.pred_qterms[pred].as_ref().map(
+        |& (ref quals, ref tterms)| (Some(quals), tterms)
+      )
+    }
   }
 
   /// If the input predicate is forced to a constant boolean, returns its
   /// value.
   pub fn bool_value_of(& self, pred: PrdIdx) -> Option<bool> {
     self.forced_terms_of(pred).and_then(
-      |terms| terms.bool()
+      |(_, terms)| terms.bool()
     )
   }
 
@@ -606,16 +621,19 @@ impl Instance {
   }
 
   /// Replaces the rhs of a clause.
+  ///
+  /// Updates `pred_to_clauses` for the term it inserts but **not** the one it
+  /// removes.
   pub fn clause_rhs_force(
-    & mut self, clause: ClsIdx, tterm: TTerm
+    & mut self, clause_idx: ClsIdx, tterm: TTerm
   ) {
-    if let TTerm::P { pred, .. } = self.clauses[clause].rhs {
-      self.pred_to_clauses[pred].1.remove(& clause) ;
+    let clause = & mut self.clauses[clause_idx] ;
+    if let Some(pred) = tterm.pred() {
+      let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
+      log_debug!{ "clause_rhs_force: {}\n  {}", tterm, clause.to_string_info(& self.preds).unwrap() }
+      debug_assert!( is_new )
     }
-    if let TTerm::P { pred, .. } = tterm {
-      self.pred_to_clauses[pred].1.insert(clause) ;
-    }
-    self.clauses[clause].rhs = tterm
+    clause.rhs = tterm
   }
 
   // /// Evaluates the term a predicate is forced to, if any.
@@ -789,14 +807,16 @@ impl Instance {
   ) -> Res<()> {
     if let Some(_) = self.pred_terms[pred].as_ref() {
       bail!(
-        "[bug] trying to force predicate {} twice",
-        conf.sad(& self[pred].name)
+        "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
+        conf.sad(& self[pred].name),
+        tterms, quals.map(|q| q.len()).unwrap_or(0)
       )
     }
     if let Some(_) = self.pred_qterms[pred].as_ref() {
       bail!(
-        "trying to force predicate {} twice",
-        conf.sad(& self[pred].name)
+        "trying to force predicate {} twice\n{}\n{} qualifier(s)",
+        conf.sad(& self[pred].name),
+        tterms, quals.map(|q| q.len()).unwrap_or(0)
       )
     }
     if let Some(quals) = quals {
@@ -1362,7 +1382,7 @@ impl Instance {
     while ! fixed_point {
       fixed_point = true ;
       for pred in PrdRange::zero_to( self.preds.len() ) {
-        if self.pred_terms[pred].is_none() {
+        if ! self.is_known(pred) {
           if self.pred_to_clauses[pred].1.is_empty() {
             info.preds += 1 ;
             fixed_point = false ;
@@ -1388,7 +1408,7 @@ impl Instance {
     & mut self, preds: Preds
   ) -> Res<RedInfo> {
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
-    let mut terms_to_add = vec![] ;
+    // let mut terms_to_add = vec![] ;
     let mut clauses_to_rm = ClsSet::new() ;
     let mut clauses_rmed = 0 ;
     // We need to add clauses when forcing a predicate to be a disjunction.
@@ -1412,7 +1432,7 @@ impl Instance {
 
         // LHS.
         'clause_iter_lhs: for clause in clause_lhs.drain() {
-          debug_assert!( terms_to_add.is_empty() ) ;
+          // debug_assert!( terms_to_add.is_empty() ) ;
           
           if clauses_to_rm.contains(& clause) { continue 'clause_iter_lhs }
 
@@ -1429,7 +1449,7 @@ impl Instance {
               } {
                 TTerms::True => (),
                 TTerms::False => {
-                  terms_to_add.clear() ;
+                  // terms_to_add.clear() ;
                   clauses_to_rm.insert(clause) ;
                   continue 'clause_iter_lhs
                 },
@@ -1454,6 +1474,8 @@ impl Instance {
 
           // self.clauses[clause].lhs.extend( terms_to_add.drain(0..) ) ;
 
+          log_debug!{ "forced pred in a clause: {}", self.clauses[clause].to_string_info(& self.preds).unwrap() }
+
           let remove = self.simplifier.clause_propagate(
             & mut self.clauses[clause]
           ).chain_err(
@@ -1477,7 +1499,7 @@ impl Instance {
 
           if clauses_to_rm.contains(& clause) { continue 'clause_iter_rhs }
 
-          debug_assert!( terms_to_add.is_empty() ) ;
+          // debug_assert!( terms_to_add.is_empty() ) ;
 
           let tterms = if let TTerm::P {
             pred: _this_pred, ref args
@@ -1496,13 +1518,37 @@ impl Instance {
             TTerms::False => {
               self.clauses[clause].rhs = TTerm::T( term::fls() )
             },
-            TTerms::And(mut tterms) => {
-              // Need to create more clauses.
-              if let Some(tterm) = tterms.pop() {
-                self.clauses[clause].rhs = tterm ;
-                terms_to_add.extend( tterms )
-              } else {
-                bail!("illegal empty conjunction of top terms")
+            TTerms::And(tterms) => {
+              debug_assert!( ! tterms.is_empty() ) ;
+              let mut tterms = tterms.into_iter() ;
+              while let Some(tterm) = tterms.next() {
+                match tterm.bool() {
+                  Some(true) => {
+                    clauses_to_rm.insert(clause) ;
+                  },
+                  Some(false) => {
+                    self.clause_rhs_force(
+                      clause, TTerm::T( term::fls() )
+                    ) ;
+                    break
+                  },
+                  None => {
+                    self.clause_rhs_force(
+                      clause, tterm
+                    ) ;
+                    break
+                  },
+                }
+              }
+              for tterm in tterms {
+                let tterm = match tterm.bool() {
+                  Some(true) => continue,
+                  Some(false) => TTerm::T( term::fls() ),
+                  None => tterm,
+                } ;
+                let clause = self.clauses[clause].clone_with_rhs(tterm) ;
+                clauses_to_add.push(clause)
+                // self.push_clause(clause) ?
               }
             },
             TTerms::Or(_) => bail!(
@@ -1510,27 +1556,12 @@ impl Instance {
             ),
           }
 
-          let mut tterms = terms_to_add.drain(0..) ;
-          if let Some(tterm) = tterms.next() {
-            if let Some(pred) = tterm.pred() {
-              self.pred_to_clauses[pred].1.insert(clause) ;
-            }
-            debug_assert_eq!{
-              self.clauses[clause].rhs.pred(), Some(pred)
-            }
-            self.clauses[clause].rhs = tterm ;
-            for tterm in tterms {
-              let clause = self.clauses[clause].clone_with_rhs(tterm) ;
-              clauses_to_add.push(clause)
-              // self.push_clause(clause) ?
-            }
-          }
-
         }
 
       }
 
       if ! tterms.mention_pred(pred) {
+        log_debug!{ "    forcing {}", self[pred] }
         self.force_pred(pred, quals, tterms) ?
       }
       clauses_rmed += clauses_to_rm.len() ;
@@ -1616,7 +1647,8 @@ impl<'a> PebcakFmt<'a> for Instance {
     use common::consts::keywords ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
-      if self.pred_terms[pred_idx].is_none() {
+      if self.pred_terms[pred_idx].is_none()
+      && self.pred_qterms[pred_idx].is_none() {
         write!(
           w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
         ) ? ;
@@ -1630,6 +1662,21 @@ impl<'a> PebcakFmt<'a> for Instance {
     if self.sorted_pred_terms.is_empty() {
       // Either there's no forced predicate, or we are printing before
       // finalizing.
+      for (pred, & (ref quals, ref tterms)) in self.pred_qterms.index_iter().filter_map(
+        |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
+      ) {
+        write!(w, "({} {}\n  (", keywords::prd_def, self[pred]) ? ;
+        for (var, typ) in self[pred].sig.index_iter() {
+          write!(w, " (v_{} {})", var, typ) ?
+        }
+        write!(w, " ) Bool\n") ? ;
+        write!(w, "  (exists (") ? ;
+        for (var, typ) in quals {
+          write!(w, " ({} {})", var.default_str(), typ) ?
+        }
+        write!(w, " )\n    {}", tterms) ? ;
+        write!(w,"  )\n)\n") ?
+      }
       for (pred, tterms) in self.pred_terms.index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
       ) {

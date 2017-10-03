@@ -379,7 +379,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     // Define forced predicates in topological order.
     'forced_preds: for pred in self.instance.sorted_forced_terms() {
       let pred = * pred ;
-      let tterms = if let Some(tterms) = self.instance.forced_terms_of(pred) {
+      let (
+        quals, tterms
+      ) = if let Some(tterms) = self.instance.forced_terms_of(pred) {
         tterms
       } else {
         bail!(
@@ -387,6 +389,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           sorted forced predicates"
         )
       } ;
+
+      // Don't declare predicates with qualifiers to stay in a QF fragment.
+      if quals.is_some() { continue 'forced_preds }
 
       match * tterms {
         TTerms::True => {

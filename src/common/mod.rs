@@ -273,7 +273,11 @@ pub trait VarIndexed<T> {
 }
 impl<Elem> VarIndexed<Elem> for VarMap<Elem> {
   fn var_get(& self, var: VarIdx) -> Option<& Elem> {
-    Some(& self[var])
+    if var < self.len() {
+      Some(& self[var])
+    } else {
+      None
+    }
   }
 }
 impl<Elem> VarIndexed<Elem> for VarHMap<Elem> {

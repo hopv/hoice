@@ -129,6 +129,8 @@ pub struct PreprocConf {
   pub smt_red: bool,
   /// One rhs.
   pub one_rhs: bool,
+  /// Allow to introduce quantifiers.
+  pub one_rhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
   /// Mono-predicate.
@@ -171,6 +173,16 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("one_rhs_full").long("--one_rhs_full").help(
+        "(de)activates full one rhs reduction (might introduce quantifiers)"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("one_lhs").long("--one_lhs").help(
         "(de)activates one lhs reduction"
       ).validator(
@@ -197,10 +209,11 @@ impl PreprocConf {
     let active = bool_of_matches(matches, "pre_proc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
+    let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
     let mono_pred = bool_of_matches(matches, "mono_pred") ;
 
-    PreprocConf { active, smt_red, one_rhs, one_lhs, mono_pred }
+    PreprocConf { active, smt_red, one_rhs, one_rhs_full, one_lhs, mono_pred }
   }
 }
 
