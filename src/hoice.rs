@@ -175,7 +175,7 @@ fn read_and_work<R: ::std::io::Read>(
       Parsed::GetModel => if let Some(ref model) = model {
         let stdout = & mut ::std::io::stdout() ;
         println!("(model") ;
-        for & (ref pred, ref tterms) in model {
+        for & (ref pred, ref qvars, ref tterms) in model {
           let pred_info = & instance[* pred] ;
           println!(
             "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
@@ -185,9 +185,20 @@ fn read_and_work<R: ::std::io::Read>(
             print!(" ({} {})", term::var(var), typ)
           }
           println!(" ) {}", Typ::Bool) ;
-          print!(  "    ") ;
+          let (ident, closing) = if let Some(ref qvars) = * qvars {
+            println!(  "    (exists") ;
+            println!(  "      (") ;
+            for (var, typ) in qvars {
+              print!(" ({} {})", var.default_str(), typ)
+            }
+            println!(" )") ;
+            ("      ", "\n    )")
+          } else {
+            ("    ", "")
+          } ;
+          print!("{}", ident) ;
           instance.print_tterms_as_model(stdout, tterms) ? ;
-          println!("\n  )")
+          println!("{}\n  )", closing)
         }
         println!(")")
       } else {

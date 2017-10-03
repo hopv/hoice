@@ -131,8 +131,12 @@ impl PredAppsExt for PredApps {
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
-/// Maps predicates to terms.
-pub type Model = Vec< (PrdIdx, TTerms) > ;
+
+/// Qualified variables for a top term.
+pub type Qualfed = VarHMap<Typ> ;
+
+/// Associates predicates to some quantified variables and some top terms.
+pub type Model = Vec< (PrdIdx, Option<Qualfed>, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -267,14 +271,34 @@ pub trait VarIndexed<T> {
   #[inline(always)]
   fn var_get(& self, var: VarIdx) -> Option<& T> ;
 }
-impl<T> VarIndexed<T> for VarMap<T> {
-  fn var_get(& self, var: VarIdx) -> Option<& T> {
+impl<Elem> VarIndexed<Elem> for VarMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
     Some(& self[var])
   }
 }
-impl<T> VarIndexed<T> for VarHMap<T> {
-  fn var_get(& self, var: VarIdx) -> Option<& T> {
+impl<Elem> VarIndexed<Elem> for VarHMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
     self.get(& var)
+  }
+}
+impl<Elem, T, U> VarIndexed<Elem> for (T, U)
+where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+    if let Some(res) = self.0.var_get(var) {
+      debug_assert!( self.1.var_get(var).is_none() ) ;
+      Some(res)
+    } else if let Some(res) = self.1.var_get(var) {
+      debug_assert!( self.0.var_get(var).is_none() ) ;
+      Some(res)
+    } else {
+      None
+    }
+  }
+}
+impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
+where T: VarIndexed<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+    (* self).var_get(var)
   }
 }
 

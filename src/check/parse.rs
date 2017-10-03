@@ -444,6 +444,8 @@ impl<'a> InParser<'a> {
         ()
       } else if self.tag_opt("get-model") {
         ()
+      } else if self.tag_opt("exit") {
+        ()
       } else {
         print!("> `") ;
         while let Some(next) = self.next() {
