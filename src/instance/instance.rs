@@ -78,7 +78,11 @@ impl Clause {
   #[inline(always)]
   pub fn lhs_insert(& mut self, tterm: TTerm) -> bool {
     match tterm {
-      TTerm::T(term) => self.insert_term(term),
+      TTerm::T(term) => if let Some(true) = term.bool() {
+        false
+      } else {
+        self.insert_term(term)
+      },
       TTerm::P { pred, args } => self.insert_pred_app(pred, args),
     }
   }
@@ -95,20 +99,24 @@ impl Clause {
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<RTerm>, term: Term) -> bool {
-    if let Some(kids) = term.and_inspect() {
+    if let Some(kids) = term.conj_inspect() {
       let mut new_stuff = false ;
       let mut stack = vec![] ;
       for kid in kids {
-        if let Some(kids) = kid.and_inspect() {
+        if let Some(kids) = kid.conj_inspect() {
           for kid in kids { stack.push(kid) }
+        } else if let Some(true) = term.bool() {
+          ()
         } else {
           let is_new = lhs_terms.insert( kid.clone() ) ;
           new_stuff = new_stuff || is_new
         }
       }
       while let Some(term) = stack.pop() {
-        if let Some(kids) = term.and_inspect() {
+        if let Some(kids) = term.conj_inspect() {
           for kid in kids { stack.push(kid) }
+        } else if let Some(true) = term.bool() {
+          ()
         } else {
           let is_new = lhs_terms.insert( term.clone() ) ;
           new_stuff = new_stuff || is_new
@@ -116,9 +124,14 @@ impl Clause {
       }
       return new_stuff
     }
-    // Only reachable when `term.and_inspect()` is `None`. Needs to be outside
+
+    // Only reachable when `term.conj_inspect()` is `None`. Needs to be outside
     // the match because of lexical lifetimes.
-    lhs_terms.insert(term)
+    if let Some(true) = term.bool() {
+      false
+    } else {
+      lhs_terms.insert(term)
+    }
   }
 
   /// Inserts a term in the LHS.
@@ -458,13 +471,10 @@ impl Instance {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push( (pred, None, tterms.clone()) )
+      } else if let Some((ref qualfed, ref tterms)) = self.pred_qterms[pred] {
+        model.push( (pred, Some(qualfed.clone()), tterms.clone()) )
       } else {
         bail!("inconsistency in sorted forced predicates")
-      }
-    }
-    for (pred, qterm) in self.pred_qterms.index_iter() {
-      if let Some((ref qvars, ref tterms)) = * qterm {
-        model.push( (pred, Some(qvars.clone()), tterms.clone()) )
       }
     }
     Ok( model )
@@ -474,8 +484,11 @@ impl Instance {
   /// assigned to them.
   pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
     if self.is_unsat { Ok( Some(None) ) } else {
-      for term_opt in & self.pred_terms {
-        if term_opt.is_none() { return Ok(None) }
+      for pred in self.pred_indices() {
+        if self.pred_terms[pred].is_none()
+        && self.pred_qterms[pred].is_none() {
+          return Ok(None)
+        }
       }
       // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
       self.model_of( vec![].into() ).map(|res| Some(Some(res)))
@@ -533,18 +546,18 @@ impl Instance {
       self.preds.len()
     ) ;
 
-    // Populate `sorted_pred_terms`.
-    for (pred, tterms) in self.pred_terms.index_iter() {
-      if let Some(ref tterms) = * tterms {
+    // Populate `tmp`.
+    let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
+    for pred in self.pred_indices() {
+      if let Some(ref tterms) = self.pred_terms[pred] {
         tmp.push( (pred, tterms.preds()) )
+      } else if let Some((_, ref tterms)) = self.pred_qterms[pred] {
+        tmp.push( (pred, tterms.preds()) )
+      } else {
+        known_preds.insert(pred) ;
       }
     }
-
     // Sort by dependencies.
-    let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
-    for (pred, want_none) in self.pred_terms.index_iter() {
-      if want_none.is_none() { known_preds.insert(pred) ; () }
-    }
     while ! tmp.is_empty() {
       let mut cnt = 0 ; // Will use swap remove.
       'find_preds: while cnt < tmp.len() {
@@ -954,7 +967,7 @@ impl Instance {
     ) ? ;
     // log_debug!{ "{}", self.clauses[clause].to_string_info(& self.preds) ? }
     if remove {
-      self.clauses.swap_remove(clause) ;
+      self.forget_clause(clause) ? ;
     }
     Ok(remove)
   }
@@ -968,15 +981,72 @@ impl Instance {
   /// # TO DO
   ///
   /// - currently kind of assumes equalities are binary, fix?
-  pub fn simplify_clauses(& mut self) -> Res<usize> {
-    let mut clause: ClsIdx = 0.into() ;
-    let mut rmed = 0 ;
-    while clause < self.clauses.len() {
-      let removed = self.simplify_clause(clause) ? ;
-      if ! removed { clause.inc() } else { rmed += 1 }
+  pub fn simplify_clauses(& mut self) -> Res<RedInfo> {
+    let mut changed = true ;
+    let mut red_info: RedInfo = (0, 0, 0).into() ;
+    let mut nu_clauses = Vec::with_capacity(7) ;
+    while changed {
+      changed = false ;
+
+      let mut clause: ClsIdx = 0.into() ;
+      while clause < self.clauses.len() {
+        let removed = self.simplify_clause(clause) ? ;
+        if ! removed {
+          clause.inc()
+        } else {
+          red_info.clauses_rmed += 1
+        }
+      }
+
+      // Split disjunctions.
+      for clause in self.clauses.iter_mut() {
+        // Skip those for which the predicate in the rhs only appears in this
+        // rhs.
+        if let Some(pred) = clause.rhs.pred() {
+          if self.pred_to_clauses[pred].1.len() == 1 {
+            continue
+          }
+        }
+
+        let mut disj = None ;
+        for term in & clause.lhs_terms {
+          if let Some(args) = term.disj_inspect() {
+            disj = Some((term.clone(), args.clone())) ;
+            // break
+          }
+        }
+        if let Some((disj, mut kids)) = disj {
+          log_debug!{
+            "splitting clause {}", clause.to_string_info(& self.preds) ?
+          }
+          let _was_there = clause.lhs_terms.remove(& disj) ;
+          debug_assert!(_was_there) ;
+          if let Some(kid) = kids.pop() {
+            for kid in kids {
+              let mut clause = clause.clone() ;
+              clause.insert_term(kid) ;
+              nu_clauses.push(clause)
+            }
+            clause.insert_term(kid) ;
+          } else {
+            bail!("illegal empty disjunction")
+          }
+        }
+      }
+
+      if ! nu_clauses.is_empty() {
+        changed = true ;
+        red_info.clauses_added += nu_clauses.len() ;
+        for clause in nu_clauses.drain(0..) {
+          self.push_clause(clause) ?
+        }
+      }
+
+      self.check("during clause simplification") ?
     }
 
-    Ok(rmed)
+
+    Ok(red_info)
   }
 
   /// Extracts some qualifiers from all clauses.
@@ -1059,22 +1129,32 @@ impl Instance {
     // }
     // println!("}} quals {{") ;
 
+    // Build the conjunction of atoms.
+    let mut conjs = vec![
+      ( HConSet::with_capacity( clause.lhs_terms.len() + 1 ), 0.into() ) ;
+      maps.len()
+    ] ;
+
+    // let mut max_arity: Arity = 0.into() ;
+
+    let rhs = clause.rhs().term() ;
     // Now look for atoms and try to apply the mappings above.
     for term in clause.lhs_terms.iter().chain( clause.rhs().term() ) {
+      let push = rhs.is_none() || rhs == Some(& term) ;
 
-      // Build the conjunction of atoms.
-      let mut conj = Vec::with_capacity( clause.lhs_terms.len() + 1 ) ;
-      let mut max_arity: Arity = 0.into() ;
-
+      let mut cnt = 0 ;
       for map in & maps {
         if let Some( (term, true) ) = term.subst_total(map) {
-          let term = if let Some(term) = term.rm_neg() {
-            term
-          } else { term } ;
           if let Some(max_var) = term.highest_var() {
-            conj.push( term.clone() ) ;
             let arity: Arity = (1 + * max_var).into() ;
-            if arity > max_arity { max_arity = arity }
+            if push {
+              conjs[cnt].0.insert( term.clone() ) ;
+              if arity > conjs[cnt].1 { conjs[cnt].1 = arity }
+            }
+            cnt += 1 ;
+            let term = if let Some(term) = term.rm_neg() {
+              term
+            } else { term } ;
             quals.insert(arity, term)
           }
         }
@@ -1093,13 +1173,12 @@ impl Instance {
         // }
       }
 
-      if conj.len() > 1 {
-        if clause.rhs().term().is_some() {
-          conj.pop() ;
-          quals.insert( max_arity, term::and(conj) )
-        }
-      }
+    }
 
+    for (conj, max_arity) in conjs {
+      if conj.len() > 1 {
+        quals.insert( max_arity, term::and( conj.into_iter().collect() ) )
+      }
     }
     // println!("}}")
 
@@ -1108,8 +1187,8 @@ impl Instance {
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: Cexs
-  ) -> Res<()> {
-
+  ) -> Res<bool> {
+    let mut nu_stuff = false ;
     for (clause, cex) in cexs.into_iter() {
       log_debug!{ "    working on clause {}...", clause }
       let clause = & self[clause] ;
@@ -1149,7 +1228,10 @@ impl Instance {
       log_debug!{ "    working on rhs..." }
       let consequent = match * clause.rhs() {
         TTerm::P { pred, ref args } => {
-          log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.pred_terms.len() }
+          log_debug!{
+            "        pred: {} / {} ({})",
+            pred, self.preds.len(), self.pred_terms.len()
+          }
           let mut values = VarMap::with_capacity( args.len() ) ;
           'pred_args: for arg in args {
             values.push(
@@ -1172,14 +1254,21 @@ impl Instance {
         ),
         (1, None) => {
           let (pred, args) = antecedents.pop().unwrap() ;
-          data.stage_raw_neg(pred, args) ?
+          let new = data.stage_raw_neg(pred, args) ? ;
+          nu_stuff = nu_stuff || new
         },
-        (0, Some( (pred, args) )) => data.stage_raw_pos(pred, args) ?,
-        (_, consequent) => data.add_cstr(antecedents, consequent) ?,
+        (0, Some( (pred, args) )) => {
+          let new = data.stage_raw_pos(pred, args) ? ;
+          nu_stuff = nu_stuff || new
+        },
+        (_, consequent) => {
+          let new = data.add_cstr(antecedents, consequent) ? ;
+          nu_stuff = nu_stuff || new
+        },
       }
     }
 
-    Ok(())
+    Ok(nu_stuff)
   }
 
 
@@ -1255,6 +1344,12 @@ impl Instance {
 
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       'pred_clauses: for clause in lhs {
+        if * clause >= self.clauses.len() {
+          bail!(
+            "predicate {} is registered as appearing in lhs of clause {} \
+            which is above the maximal clause index", self[pred], clause
+          )
+        }
         if self.clauses[* clause].lhs_preds.get(& pred).is_none() {
           bail!(
             "predicate {} is registered as appearing in lhs of clause {} \
@@ -1270,6 +1365,12 @@ impl Instance {
         }
       }
       for clause in rhs {
+        if * clause >= self.clauses.len() {
+          bail!(
+            "predicate {} is registered as appearing in rhs of clause {} \
+            which is above the maximal clause index", self[pred], clause
+          )
+        }
         if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
           if this_pred == pred {
             continue
@@ -1891,7 +1992,7 @@ impl ClauseSimplifier {
       }
     }
 
-    for eq in self.eqs.drain(0..) {
+    while let Some(eq) = self.eqs.pop() {
       remove = true ;
       log_debug!{ "  looking at equality {}", eq }
 
@@ -1996,7 +2097,35 @@ impl ClauseSimplifier {
           }
         },
 
-        (None, None) => remove = false,
+        // Two terms.
+        (None, None) => {
+          let inline = if clause.lhs_terms.contains(& args[0]) {
+            Some( args[1].clone() )
+          } else if clause.lhs_terms.contains(& args[1]) {
+            Some( args[0].clone() )
+          } else {
+            let not_lhs = term::not( args[0].clone() ) ;
+            let not_rhs = term::not( args[1].clone() ) ;
+            if clause.lhs_terms.contains(& not_lhs) {
+              Some(not_rhs)
+            } else if clause.lhs_terms.contains(& not_rhs) {
+              Some(not_lhs)
+            } else {
+              None
+            }
+          } ;
+          if let Some(term) = inline {
+            clause.insert_term( term.clone() ) ;
+            remove = true ;
+            if term.is_eq() {
+              self.eqs.push(term)
+            } else {
+              self.terms_to_add.push(term)
+            }
+          } else {
+            remove = false
+          }
+        },
 
       }
 

@@ -116,6 +116,14 @@ where Slver: Solver<'kid, Parser> {
       new_quals.push( HConMap::with_capacity( map.len() ) )
     }
     profile!{ |_profiler| mark "mining" }
+    if_verb!{
+      log_info!{ "qualifiers:" } ;
+      for quals in qualifiers.qualifiers() {
+        for (qual, _) in quals {
+          log_info!("- {}", qual)
+        }
+      }
+    }
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
@@ -273,7 +281,7 @@ where Slver: Solver<'kid, Parser> {
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
-      if pos_len == 0 {
+      if pos_len == 0 && neg_len > 0 {
         msg!( self => "legal_pred (1)" ) ;
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
@@ -290,7 +298,7 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
-      if neg_len == 0 {
+      if neg_len == 0 && pos_len > 0 {
         msg!( self => "legal_pred (2)" ) ;
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {

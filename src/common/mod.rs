@@ -14,6 +14,8 @@ pub use rsmt2::SmtRes ;
 
 pub use num::{ Zero, One, Signed } ;
 
+pub use either::Either ;
+
 pub use errors::* ;
 pub use term ;
 pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
@@ -56,11 +58,6 @@ pub fn pause(s: & str) {
   println!("") ;
   println!( "; {}{}...", conf.emph("press return"), s ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
-}
-
-/// Disjunction type.
-pub enum Either<L, R> {
-  Lft(L), Rgt(R)
 }
 
 

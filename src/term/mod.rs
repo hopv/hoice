@@ -133,9 +133,16 @@ impl RTerm {
     }
   }
   /// Returns the kid of conjunctions.
-  pub fn and_inspect(& self) -> Option<& Vec<Term>> {
+  pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::And, ref args } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kid of disjunctions.
+  pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Or, ref args } => Some(args),
       _ => None,
     }
   }
@@ -306,6 +313,13 @@ impl RTerm {
       RTerm::App { op: Op::Lt, .. } |
       RTerm::App { op: Op::Le, .. } => true,
       RTerm::App { op: Op::Not, ref args } => args[0].is_relation(),
+      _ => false,
+    }
+  }
+  /// Checks whether a term is an equality.
+  pub fn is_eq(& self) -> bool {
+    match * self {
+      RTerm::App { op: Op::Eql, .. } => true,
       _ => false,
     }
   }
@@ -1108,14 +1122,22 @@ impl Op {
         }
       },
       Div => {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res / try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
+        if args.len() != 2 {
+          bail!("unexpected division over {} numbers", args.len())
         }
+        let den = try_val!( int args.pop().unwrap() ) ;
+        let num = try_val!( int args.pop().unwrap() ) ;
+        if den.is_zero() {
+          bail!("denominator is zero...")
+        }
+        let mut res = & num / & den ;
+        use num::Signed ;
+        if num.is_positive() ^ den.is_positive() {
+          if den * & res != num {
+            res = res - 1
+          }
+        }
+        Ok( Val::I(res) )
       },
       Mod => if args.len() != 2 {
         bail!(

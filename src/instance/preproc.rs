@@ -73,14 +73,19 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
 
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
-  let clauses = instance.simplify_clauses() ? ;
-  total.clauses_rmed += clauses ;
+  let simplify = instance.simplify_clauses() ? ;
   profile!{ |profiler| mark "pre-proc", "propagate" }
   profile!{
     |profiler| format!(
       "{:>25} clause red", "propagate"
-    ) => add clauses
+    ) => add simplify.clauses_rmed
   }
+  profile!{
+    |profiler| format!(
+      "{:>25} clause add", "propagate"
+    ) => add simplify.clauses_added
+  }
+  total += simplify ;
 
   log_debug!{
     "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
@@ -1441,7 +1446,11 @@ where Slver: Solver<'kid, ()> {
         lhs.clear() ;
 
         for term in clause.lhs_terms() {
-          lhs.push(term)
+          match term.bool() {
+            Some(true) => (),
+            Some(false) => clauses_to_rm.push(clause_idx),
+            _ => lhs.push(term),
+          }
         }
 
         let rhs = if let Some(term) = clause.rhs().term() {

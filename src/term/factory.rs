@@ -79,10 +79,10 @@ pub fn and(terms: Vec<Term>) -> Term {
 
 /// Creates an operator application.
 ///
-/// Runs [`simplify`](fn.simplify.html) and returns its result.
+/// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline(always)]
 pub fn app(op: Op, args: Vec<Term>) -> Term {
-  simplify(op, args)
+  normalize(op, args)
 }
 
 /// Creates a less than or equal to.
@@ -119,7 +119,7 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
 
 
 
-#[doc = r#"Tries to simplify an operator application.
+#[doc = r#"Tries to normalize an operator application.
 
 # Nullary / unary applications of `And` and `Or`
 
@@ -132,18 +132,18 @@ let fls = term::bool(false) ;
 let var_1 = term::var(7) ;
 let var_2 = term::var(2) ;
 
-assert_eq!( fls, term::simplify(And, vec![]) ) ;
-assert_eq!( tru, term::simplify(Or, vec![]) ) ;
-assert_eq!( var_2, term::simplify(And, vec![ var_2.clone() ]) ) ;
-assert_eq!( var_1, term::simplify(Or, vec![ var_1.clone() ]) ) ;
+assert_eq!( fls, term::normalize(And, vec![]) ) ;
+assert_eq!( tru, term::normalize(Or, vec![]) ) ;
+assert_eq!( var_2, term::normalize(And, vec![ var_2.clone() ]) ) ;
+assert_eq!( var_1, term::normalize(Or, vec![ var_1.clone() ]) ) ;
 
 let and = term::app(And, vec![ var_2.clone(), var_1.clone() ]) ;
 assert_eq!(
-  and, term::simplify(And, vec![ var_2.clone(), var_1.clone() ])
+  and, term::normalize(And, vec![ var_2.clone(), var_1.clone() ])
 ) ;
 let or = term::app(Or, vec![ var_2.clone(), var_1.clone() ]) ;
 assert_eq!(
-  or, term::simplify(Or, vec![ var_2.clone(), var_1.clone() ])
+  or, term::normalize(Or, vec![ var_2.clone(), var_1.clone() ])
 ) ;
 ```
 
@@ -155,17 +155,71 @@ use hoice::term::Op::* ;
 
 let var_1 = term::var(7) ;
 let n_var_1 = term::app( Not, vec![ var_1.clone() ] ) ;
-assert_eq!( var_1, term::simplify(Not, vec![ n_var_1 ]) ) ;
+assert_eq!( var_1, term::normalize(Not, vec![ n_var_1 ]) ) ;
 
 let var_1 = term::var(7) ;
 let n_var_1 = term::app( Not, vec![ var_1.clone() ] ) ;
-assert_eq!( n_var_1, term::simplify(Not, vec![ var_1 ]) ) ;
+assert_eq!( n_var_1, term::normalize(Not, vec![ var_1 ]) ) ;
 ```
 "#]
-pub fn simplify(
-  op: Op, mut args: Vec<Term>
+pub fn normalize(
+  op: Op, args: Vec<Term>
 ) -> Term {
+
+  // Contains stack frames composed of
+  //
+  // - the operator `op` to apply,
+  // - a vector of operators to apply to some arguments before applying `op`
+  // - the arguments to apply `op`, basically storing the results of the
+  //   applications from the second element
+  //
+  // It is important that the second, `to_do`, element of the frames is in
+  // **reverse order**. This is because its elements will be `pop`ped and
+  // `push`ed on the third element.
+  //
+  // (It actually doesn't matter that much right now as `normalize_app` only
+  // works on symmetric operators, but still.)
+  let mut stack = vec![ (op, vec![], args) ] ;
+
+  while let Some((op, mut to_do, args)) = stack.pop() {
+
+    if let Some( (nu_op, nu_args) ) = to_do.pop() {
+
+      stack.push( (op, to_do, args) ) ;
+      stack.push( (nu_op, vec![], nu_args) )
+
+    } else {
+
+      match normalize_app(op, args) {
+        // Going down...
+        Either::Right((op, mut to_do)) => {
+          let args = Vec::with_capacity( to_do.len() ) ;
+          to_do.reverse() ;
+          stack.push( (op, to_do, args) )
+        },
+        // Going up...
+        Either::Left(term) => if let Some(
+          & mut ( _, _, ref mut args )
+        ) = stack.last_mut() {
+          args.push( term )
+        } else {
+          return term
+        },
+      }
+
+    }
+  }
+
+  unreachable!()
+}
+
+
+/// Normalizes an operation application.
+fn normalize_app(
+  op: Op, mut args: Vec<Term>
+) -> Either<Term, (Op, Vec<(Op, Vec<Term>)>)> {
   use num::Zero ;
+
   let (op, args) = match op {
 
     Op::And => {
@@ -177,16 +231,16 @@ pub fn simplify(
             args.swap_remove(cnt) ;
             has_true = true
           } else {
-            return fls()
+            return Either::Left( fls() )
           }
         } else {
           cnt += 1
         }
       }
       if args.is_empty() {
-        return term::bool(has_true)
+        return Either::Left( term::bool(has_true) )
       } else if args.len() == 1 {
-        return args.pop().unwrap()
+        return Either::Left( args.pop().unwrap() )
       } else {
         (op, args)
       }
@@ -201,16 +255,16 @@ pub fn simplify(
             args.swap_remove(cnt) ;
             has_false = true
           } else {
-            return tru()
+            return Either::Left( tru() )
           }
         } else {
           cnt += 1
         }
       }
       if args.is_empty() {
-        return term::bool( ! has_false )
+        return Either::Left( term::bool( ! has_false ) )
       } else if args.len() == 1 {
-        return args.pop().unwrap()
+        return Either::Left( args.pop().unwrap() )
       } else {
         (op, args)
       }
@@ -219,11 +273,25 @@ pub fn simplify(
     Op::Not => {
       assert!( args.len() == 1 ) ;
       if let Some(b) = args[0].bool() {
-        return bool(! b)
+        return Either::Left( bool(! b) )
       }
       match * args[0] {
         RTerm::App { op: Op::Not, ref args } => {
-          return args[0].clone()
+          return Either::Left( args[0].clone() )
+        },
+        RTerm::App { op: Op::And, ref args } => {
+          return Either::Right((
+            Op::Or, args.iter().map(
+              |arg| (Op::Not, vec![arg.clone()])
+            ).collect()
+          ))
+        },
+        RTerm::App { op: Op::Or, ref args } => {
+          return Either::Right((
+            Op::And, args.iter().map(
+              |arg| (Op::Not, vec![arg.clone()])
+            ).collect()
+          ))
         },
         _ => (),
       }
@@ -232,18 +300,24 @@ pub fn simplify(
 
     Op::Eql => {
       if args.len() == 2 {
-        if args[0] == args[1] { return tru() }
-      } else if let Some(b) = args[0].bool() {
-        return if b {
-          args[1].clone()
-        } else {
-          not( args[1].clone() )
-        }
-      } else if let Some(b) = args[1].bool() {
-        return if b {
-          args[0].clone()
-        } else {
-          not( args[0].clone() )
+        if args[0] == args[1] {
+          return Either::Left( tru() )
+        } else if let Some(b) = args[0].bool() {
+          return Either::Left(
+            if b {
+              args[1].clone()
+            } else {
+              not( args[1].clone() )
+            }
+          )
+        } else if let Some(b) = args[1].bool() {
+          return Either::Left(
+            if b {
+              args[0].clone()
+            } else {
+              not( args[0].clone() )
+            }
+          )
         }
       }
       (op, args)
@@ -264,9 +338,9 @@ pub fn simplify(
         }
       }
       if args.len() == 0 {
-        return int(sum)
+        return Either::Left( int(sum) )
       } else if args.len() == 1 && sum.is_zero() {
-        return args.pop().unwrap()
+        return Either::Left( args.pop().unwrap() )
       } else {
         args.push( int(sum) ) ;
         (op, args)
@@ -281,7 +355,9 @@ pub fn simplify(
       let mut mul: Int = 1.into() ;
       while cnt < args.len() {
         if let Some(i) = args[cnt].int_val() {
-          if i.is_zero() { return int(i) }
+          if i.is_zero() {
+            return Either::Left( int(i) )
+          }
           args.swap_remove(cnt) ;
           mul = mul * i
         } else {
@@ -289,77 +365,67 @@ pub fn simplify(
         }
       }
       if args.len() == 0 {
-        return int(mul)
+        return Either::Left( int(mul) )
       } else if args.len() == 1 && mul.is_zero() {
-        return args.pop().unwrap()
+        return Either::Left( args.pop().unwrap() )
       } else {
         args.push( int(mul) ) ;
         (op, args)
       }
     },
 
-    // Op::Sub => {
-    //   let mut cnt = 0 ;
-    //   if args.is_empty() {
-    //     panic!("trying to construct an empty sub")
-    //   }
-    //   let mut sum: Int = 0.into() ;
-    //   while cnt < args.len() {
-    //     if let Some(int) = args[0].int_val() {
-    //       sum = sum + int
-    //     } else {
-    //       cnt += 1
-    //     }
-    //   }
-    //   if args.len() == 0 {
-    //     return int(sum)
-    //   } else if args.len() == 1 && sum.is_zero() {
-    //     return args.pop().unwrap()
-    //   } else {
-    //     args.push( int(sum) ) ;
-    //     (op, args)
-    //   }
-    // },
+    Op::Ge => if args.len() == 2 {
+      if args[0] == args[1] {
+        return Either::Left( tru() )
+      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+        return Either::Left( bool(lhs >= rhs) )
+      } else {
+        (op, args)
+      }
+    } else {
+      (op, args)
+    },
 
-    // Op::Gt => if args.len() != 2 {
-    //   panic!( "[bug] operator `>` applied to {} operands", args.len() )
-    // } else {
-    //   if let Some( i ) = args[0].int_val() {
-    //     // Checks whether it's zero before decreasing.
-    //     if i.is_zero() {
-    //       // Args is unchanged, term is equivalent to false anyway.
-    //       (Op::Ge, args)
-    //     } else {
-    //       args[0] = term::int(i - Int::one()) ;
-    //       (Op::Ge, args)
-    //     }
-    //   } else if let Some( i ) = args[1].int_val() {
-    //     args[1] = term::int(i + Int::one()) ;
-    //     (Op::Ge, args)
-    //   } else {
-    //     (op, args)
-    //   }
-    // },
-    // Op::Lt => if args.len() != 2 {
-    //   panic!( "[bug] operator `<` applied to {} operands", args.len() )
-    // } else {
-    //   if let Some( i ) = args[0].int_val() {
-    //     args[0] = term::int(i + Int::one()) ;
-    //     (Op::Le, args)
-    //   } else if let Some( i ) = args[1].int_val() {
-    //     // Checks whether it's zero before decreasing.
-    //     if i.is_zero() {
-    //       // Args is unchanged, term is equivalent to false anyway.
-    //       (Op::Le, args)
-    //     } else {
-    //       args[1] = term::int(i - Int::one()) ;
-    //       (Op::Le, args)
-    //     }
-    //   } else {
-    //     (op, args)
-    //   }
-    // },
+    Op::Gt => if args.len() == 2 {
+      if args[0] == args[1] {
+        return Either::Left( fls() )
+      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+        return Either::Left( bool(lhs > rhs) )
+      } else {
+        (op, args)
+      }
+    } else {
+      (op, args)
+    },
+
+    Op::Le => if args.len() == 2 {
+      if args[0] == args[1] {
+        return Either::Left( tru() )
+      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+        return Either::Left( bool(lhs <= rhs) )
+      } else {
+        (op, args)
+      }
+    } else {
+      (op, args)
+    },
+
+    Op::Lt => if args.len() == 2 {
+      if args[0] == args[1] {
+        return Either::Left( fls() )
+      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+        return Either::Left( bool(lhs < rhs) )
+      } else {
+        (op, args)
+      }
+    } else {
+      (op, args)
+    },
+    
+
     _ => (op, args),
+
   } ;
-  factory.mk( RTerm::App { op, args } )
+
+  Either::Left( factory.mk( RTerm::App { op, args } ) )
 }

@@ -128,6 +128,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
         //     & (), |s| s.to_string()
         //   ) ?
         // }
+        let _ = teacher.data.drain_new_samples() ;
         profile!{ teacher tick "data", "registration" }
         if let Err(e) = teacher.instance.cexs_to_data(
           & mut teacher.data, cexs
@@ -141,6 +142,9 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
           }
         }
         profile!{ teacher mark "data", "registration" }
+        // if ! teacher.data.has_new_samples() {
+        //   bail!( "candidates do not verify the clauses but no new data found" )
+        // }
         // log_info!{
         //   "\nlearning data before propagation:\n{}",
         //   teacher.data.string_do(
@@ -376,43 +380,43 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       }
     }
 
-    // Define forced predicates in topological order.
-    'forced_preds: for pred in self.instance.sorted_forced_terms() {
-      let pred = * pred ;
-      let (
-        quals, tterms
-      ) = if let Some(tterms) = self.instance.forced_terms_of(pred) {
-        tterms
-      } else {
-        bail!(
-          "inconsistency between forced predicates and \
-          sorted forced predicates"
-        )
-      } ;
+    // // Define forced predicates in topological order.
+    // 'forced_preds: for pred in self.instance.sorted_forced_terms() {
+    //   let pred = * pred ;
+    //   let (
+    //     quals, tterms
+    //   ) = if let Some(tterms) = self.instance.forced_terms_of(pred) {
+    //     tterms
+    //   } else {
+    //     bail!(
+    //       "inconsistency between forced predicates and \
+    //       sorted forced predicates"
+    //     )
+    //   } ;
 
-      // Don't declare predicates with qualifiers to stay in a QF fragment.
-      if quals.is_some() { continue 'forced_preds }
+    //   // Don't declare predicates with qualifiers to stay in a QF fragment.
+    //   if quals.is_some() { continue 'forced_preds }
 
-      match * tterms {
-        TTerms::True => {
-          true_preds.insert(pred) ;
-        },
-        TTerms::False => {
-          false_preds.insert(pred) ;
-        },
-        _ => {
-          let pred = & self.instance[pred] ;
-          let sig: Vec<_> = pred.sig.index_iter().map(
-            |(var, typ)| (var, * typ)
-          ).collect() ;
-          self.solver.define_fun(
-            & pred.name, & sig, & Typ::Bool, tterms,
-            & ( & true_preds, & false_preds, self.instance.preds() )
-          ) ?
-        },
-      }
+    //   match * tterms {
+    //     TTerms::True => {
+    //       true_preds.insert(pred) ;
+    //     },
+    //     TTerms::False => {
+    //       false_preds.insert(pred) ;
+    //     },
+    //     _ => {
+    //       let pred = & self.instance[pred] ;
+    //       let sig: Vec<_> = pred.sig.index_iter().map(
+    //         |(var, typ)| (var, * typ)
+    //       ).collect() ;
+    //       self.solver.define_fun(
+    //         & pred.name, & sig, & Typ::Bool, tterms,
+    //         & ( & true_preds, & false_preds, self.instance.preds() )
+    //       ) ?
+    //     },
+    //   }
 
-    }
+    // }
 
     // // Define non-trivially true or false predicates.
     // 'define_preds: for (pred, cand) in cands.index_iter() {
@@ -496,6 +500,12 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   pub fn get_cex(
     & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
   ) -> SmtRes< Option<Cex> > {
+    // log_debug!{
+    //   "getting cex for {}",
+    //   self.instance[clause_idx].to_string_info(
+    //     self.instance.preds()
+    //   ).unwrap()
+    // }
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
