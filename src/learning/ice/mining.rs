@@ -160,8 +160,13 @@ impl Qualifiers {
     arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
+      let term = term::ge( term::var(var_idx), term::int(0) ) ;
+      terms.insert(
+        term.clone(), QualValues::new(term)
+      ) ;
       arity_map.push(terms)
     }
+
     let pred_to_arity = instance.preds().iter().map(
       |info| info.sig.len().into()
     ).collect() ;
