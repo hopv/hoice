@@ -1725,6 +1725,38 @@ impl Instance {
 
     Ok(())
   }
+
+  /// Writes a model.
+  pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
+    writeln!(w, "(model") ? ;
+    for & (ref pred, ref qvars, ref tterms) in model {
+      let pred_info = & self[* pred] ;
+      writeln!(
+        w, "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
+      ) ? ;
+      write!(w, "    (")  ?;
+      for (var, typ) in pred_info.sig.index_iter() {
+        write!(w, " ({} {})", term::var(var), typ) ?
+      }
+      writeln!(w, " ) {}", Typ::Bool) ? ;
+      let (ident, closing) = if let Some(ref qvars) = * qvars {
+        writeln!(w, "    (exists") ? ;
+        writeln!(w, "      (") ? ;
+        for (var, typ) in qvars {
+          write!(w, " ({} {})", var.default_str(), typ) ?
+        }
+        writeln!(w, " )") ? ;
+        ("      ", "\n    )")
+      } else {
+        ("    ", "")
+      } ;
+      write!(w, "{}", ident) ? ;
+      self.print_tterms_as_model(w, tterms) ? ;
+      writeln!(w, "{}\n  )", closing) ?
+    }
+    writeln!(w, ")") ? ;
+    Ok(())
+  }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {
   type Output = Clause ;

@@ -584,6 +584,6 @@ fn mul_simplify() {
     > term::mul( vec![ int(7), var(), int(-3) ] ),
       term::mul( vec![ var(), int(-21) ] ) ;
     > term::mul( vec![ int(-42), var() ] ),
-      term::mul( vec![ var(), int(-42) ] ) ;
+      term::mul( vec![ var(), int(-42 ) ] ) ;
   }
 }

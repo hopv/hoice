@@ -73,17 +73,27 @@ pub struct Input {
 }
 impl Input {
   /// Loads some input data from a file.
-  pub fn of_file(file: & str) -> Res<Self> {
+  pub fn of_file<P: AsRef<::std::path::Path>>(file: P) -> Res<Self> {
     use std::fs::OpenOptions ;
-    info!{ "loading horn clause file {}...", conf.emph(file) }
+    let file = file.as_ref() ;
+    info!{
+      "loading horn clause file {}...", conf.emph(file.to_string_lossy())
+    }
     let mut buff = String::new() ;
     OpenOptions::new().read(true).open(file).chain_err(
-      || format!( "while opening file {}", conf.emph(file) )
+      || format!(
+        "while opening file {}", conf.emph(file.to_string_lossy())
+      )
     )?.read_to_string(& mut buff).chain_err(
-      || format!( "while reading file {}", conf.emph(file) )
+      || format!(
+        "while reading file {}", conf.emph(file.to_string_lossy())
+      )
     )? ;
-    let parser = InParser::new(& buff) ;
-    parser.parse_input()
+    Self::of_str(& buff)
+  }
+  /// Loads some input data from a string.
+  pub fn of_str(data: & str) -> Res<Self> {
+    InParser::new(data).parse_input()
   }
 }
 
@@ -103,8 +113,11 @@ impl Output {
     )?.read_to_string(& mut buff).chain_err(
       || format!( "while reading file {}", conf.emph(file) )
     )? ;
-    let parser = InParser::new(& buff) ;
-    parser.parse_output()
+    Self::of_str(& buff)
+  }
+  /// Loads some input data from a string.
+  pub fn of_str(data: & str) -> Res<Self> {
+    InParser::new(data).parse_output()
   }
 
   /// Checks the signature of the predicates match the declarations of an input
@@ -251,7 +264,7 @@ impl Data {
 
 
 
-/// Checks a `hoice` run.
+/// Checks a `hoice` run from two files.
 pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
   let data = Data::of_files(input_file, output_file) ? ;
@@ -270,6 +283,40 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
     }
   }
   println!("(safe)") ;
+  kid.kill().chain_err(
+    || "while killing solver kid"
+  ) ? ;
+  Ok(())
+}
+
+
+
+
+/// Checks a `hoice` run, script from a file, model from a string.
+///
+/// This is currently only used for testing purposes.
+#[cfg(test)]
+pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
+  input_file: P, model: & str
+) -> Res<()> {
+  use rsmt2::{ solver, Kid } ;
+  let data = Data::new(
+    Input::of_file(input_file) ?, Output::of_str(model) ?
+  ) ? ;
+
+  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
+    || ErrorKind::Z3SpawnError
+  ) ? ;
+  {
+    let solver = solver(& mut kid, Parser).chain_err(
+      || "while constructing the checkers solver"
+    ) ? ;
+    if let Some(log) = conf.solver.log_file("check") ? {
+      data.check(solver.tee(log)) ?
+    } else {
+      data.check(solver) ?
+    }
+  }
   kid.kill().chain_err(
     || "while killing solver kid"
   ) ? ;
