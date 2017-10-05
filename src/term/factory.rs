@@ -112,6 +112,17 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
   app(Op::Eql, vec![lhs, rhs])
 }
 
+/// Creates a sum.
+#[inline(always)]
+pub fn add(kids: Vec<Term>) -> Term {
+  app(Op::Add, kids)
+}
+/// Creates a multiplication.
+#[inline(always)]
+pub fn mul(kids: Vec<Term>) -> Term {
+  app(Op::Mul, kids)
+}
+
 
 
 
@@ -132,8 +143,8 @@ let fls = term::bool(false) ;
 let var_1 = term::var(7) ;
 let var_2 = term::var(2) ;
 
-assert_eq!( fls, term::normalize(And, vec![]) ) ;
-assert_eq!( tru, term::normalize(Or, vec![]) ) ;
+assert_eq!( tru, term::normalize(And, vec![]) ) ;
+assert_eq!( fls, term::normalize(Or, vec![]) ) ;
 assert_eq!( var_2, term::normalize(And, vec![ var_2.clone() ]) ) ;
 assert_eq!( var_1, term::normalize(Or, vec![ var_1.clone() ]) ) ;
 
@@ -224,12 +235,10 @@ fn normalize_app(
 
     Op::And => {
       let mut cnt = 0 ;
-      let mut has_true = false ;
       while cnt < args.len() {
         if let Some(b) = args[cnt].bool() {
           if b {
             args.swap_remove(cnt) ;
-            has_true = true
           } else {
             return Either::Left( fls() )
           }
@@ -238,7 +247,7 @@ fn normalize_app(
         }
       }
       if args.is_empty() {
-        return Either::Left( term::bool(has_true) )
+        return Either::Left( term::tru() )
       } else if args.len() == 1 {
         return Either::Left( args.pop().unwrap() )
       } else {
@@ -248,12 +257,10 @@ fn normalize_app(
 
     Op::Or => {
       let mut cnt = 0 ;
-      let mut has_false = false ;
       while cnt < args.len() {
         if let Some(b) = args[cnt].bool() {
           if ! b {
             args.swap_remove(cnt) ;
-            has_false = true
           } else {
             return Either::Left( tru() )
           }
@@ -262,7 +269,7 @@ fn normalize_app(
         }
       }
       if args.is_empty() {
-        return Either::Left( term::bool( ! has_false ) )
+        return Either::Left( term::fls() )
       } else if args.len() == 1 {
         return Either::Left( args.pop().unwrap() )
       } else {
@@ -331,6 +338,8 @@ fn normalize_app(
         //       )
         //     ]
         //   ))
+        } else if let (Some(i_1), Some(i_2)) = (args[0].int(), args[1].int()) {
+          return Either::Left( term::bool( i_1 == i_2 ) )
         }
       }
       (op, args)

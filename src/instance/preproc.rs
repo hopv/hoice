@@ -825,9 +825,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     while ! fixed_point {
       fixed_point = true ;
 
-      log_debug!("    app vars:") ;
-      for var in & app_vars {
-        log_debug!("    - {}", var_info[* var])
+      if_not_bench!{
+        log_debug!("    app vars:") ;
+        for var in & app_vars {
+          log_debug!("    - {}", var_info[* var])
+        }
       }
 
       for term in lhs_terms.drain(0..) {
