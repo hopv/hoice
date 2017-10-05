@@ -71,6 +71,11 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   // }
 
 
+  preproc_dump!(
+    instance =>
+    "preproc_000_original_instance", "Instance before pre-processing."
+  ) ? ;
+
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
   let simplify = instance.simplify_clauses() ? ;
@@ -91,6 +96,12 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
   }
 
+  preproc_dump!(
+    instance =>
+    "preproc_001_simplified_instance", "Instance after basic simplifications."
+  ) ? ;
+
+  let mut cnt = 2 ;
 
   let mut changed = true ;
   'preproc: while changed {
@@ -104,18 +115,28 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
       "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
     }
 
+    preproc_dump!(
+      instance =>
+        format!("preproc_{:0>3}_reduction", cnt),
+        "Instance after smt-free reduction"
+    ) ? ;
+    cnt += 1 ;
+
     log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
-    let red_info = reductor.run(instance, & profiler) ? ;
+    let red_info = reductor.run(instance, & profiler, & mut cnt) ? ;
     changed = red_info.non_zero() ;
     total += red_info ;
     instance.check("after reduction") ? ;
     profile!{ |profiler| mark "pre-proc", "reducing" }
     log_info!{ "done reducing" }
 
-    // log_info!{
-    //   "\n\n\n|===|instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    // }
+    preproc_dump!(
+      instance =>
+        format!("preproc_{:0>3}_smt_reduction", cnt),
+        "Instance after smt-based reduction"
+    ) ? ;
+    cnt += 1 ;
 
   }
 
@@ -128,6 +149,12 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   profile!{
     |profiler| "clauses created" => add total.clauses_added
   }
+
+  preproc_dump!(
+    instance =>
+      format!("preproc_{:0>3}_fixed_point", cnt),
+      "Instance after reduction fixed-point"
+  ) ? ;
 
   Ok(())
 }
@@ -223,7 +250,8 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 
   /// Runs expensive reduction.
   pub fn run(
-    & mut self, instance: & mut Instance, _profiler: & Profiler
+    & mut self, instance: & mut Instance, _profiler: & Profiler,
+    cnt: & mut usize
   ) -> Res<RedInfo> {
     let mut total: RedInfo = (0, 0, 0).into() ;
     
@@ -289,6 +317,23 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
               ) => add red_info.clauses_added
             }
           }
+
+          preproc_dump!(
+            instance =>
+              format!(
+                "preproc_{:0>3}_{}", cnt, {
+                  let mut s = String::new() ;
+                  for token in strat.name().split_whitespace() {
+                    s = if s.is_empty() { token.into() } else {
+                      format!("{}_{}", s, token)
+                    }
+                  }
+                  s
+                }
+              ),
+              "Instance afte smt-based reduction"
+          ) ? ;
+          * cnt += 1 ;
 
           total += red_info ;
           instance.check( strat.name() ) ? ;
@@ -766,7 +811,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           } else {
             // Unreacheable as we just made sure all variables in the argument
             // are in the map.
-            bail!("unreachable, rhs  substitution was not total")
+            bail!("unreachable, rhs substitution was not total")
           }
         }
         tterms.push( TTerm::P { pred: * pred, args: nu_args } )
@@ -780,28 +825,42 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     while ! fixed_point {
       fixed_point = true ;
 
+      log_debug!("    app vars:") ;
+      for var in & app_vars {
+        log_debug!("    - {}", var_info[* var])
+      }
+
       for term in lhs_terms.drain(0..) {
+        log_debug!("    {}", term.to_string_info(var_info) ?) ;
         if let Some(b) = term.bool() {
+          log_debug!{"    - trivial"}
           // if `b` was false then `trivial_impl` above would have caught it
           debug_assert!(b) ;
           continue
         }
         let vars = term.vars() ;
         if vars.is_subset( & app_vars ) {
-          log_debug!("pushing {}", term.to_string_info(var_info) ?) ;
           let (term, _) = term.subst_total(& map).ok_or::<Error>(
             "failure during total substitution".into()
           ) ? ;
-          log_debug!(" -> {}", term) ;
-
+          log_debug!("    - pushing") ;
+          log_debug!("      {}", term) ;
           tterms.push( TTerm::T(term) )
         } else if vars.is_disjoint(& app_vars) {
+          log_debug!("    - disjoint") ;
           lhs_terms_buf.push(term)
         } else {
           fixed_point = false ;
           add_vars!{
             vars => app_vars |> map, qvars, var_info, fresh
           }
+          let (term, _) = term.subst_total(& map).ok_or::<Error>(
+            "failure during total substitution".into()
+          ) ? ;
+          log_debug!("    - intersects") ;
+          log_debug!("      {}", term) ;
+
+          tterms.push( TTerm::T(term) )
         }
       }
 

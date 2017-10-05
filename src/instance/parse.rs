@@ -14,6 +14,8 @@ pub enum Parsed {
   Exit,
   /// Only parsed some item(s), no query.
   Items,
+  /// Reset.
+  Reset,
   /// End of file.
   Eof,
 }
@@ -116,6 +118,11 @@ impl ParserCxt {
     Parser {
       cxt: self, chars: string.char_indices(), string, line_off
     }
+  }
+
+  /// Resets the parser.
+  pub fn reset(& mut self) {
+    self.pred_name_map.clear()
   }
 }
 
@@ -955,6 +962,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Parses an reset command.
+  fn reset(& mut self) -> bool {
+    if self.tag_opt("reset") {
+      true
+    } else {
+      false
+    }
+  }
+
   /// Parses items, returns true if it found a check-sat.
   pub fn parse(
     mut self, instance: & mut Instance
@@ -980,6 +996,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Parsed::GetModel
       } else if self.exit() {
         Parsed::Exit
+      } else if self.reset() {
+        Parsed::Reset
       } else if let Some(blah) = self.echo() ? {
         println!("{}", blah) ;
         Parsed::Items

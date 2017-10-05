@@ -208,6 +208,12 @@ fn read_and_work<R: ::std::io::Read>(
 
       Parsed::Items => (),
 
+      Parsed::Reset => {
+        parser_cxt.reset() ;
+        instance = Instance::new() ;
+        model = None
+      },
+
       Parsed::Eof => (),
 
       Parsed::Exit => break 'parse_work,

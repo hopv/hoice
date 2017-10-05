@@ -17,6 +17,14 @@ pub type Matches = ::clap::ArgMatches<'static> ;
 
 
 
+/// Functions all sub-configurations must have.
+pub trait SubConf {
+  /// True if the options of the subconf need the output directory.
+  fn need_out_dir(& self) -> bool ;
+  /// Initializes stuff (creates directory, typically).
+  fn init(& self) -> Res<()> ;
+}
+
 
 
 
@@ -30,6 +38,10 @@ pub struct InstanceConf {
   pub clause_capa: usize,
   /// Initial capacity of the predicate vector.
   pub pred_capa: usize,
+}
+impl SubConf for InstanceConf {
+  fn need_out_dir(& self) -> bool { false }
+  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl InstanceConf {
   /// Adds clap options to a clap App.
@@ -58,20 +70,46 @@ pub struct SmtConf {
   /// Smt logging flag.
   pub log: bool,
 }
+impl SubConf for SmtConf {
+  fn need_out_dir(& self) -> bool { self.log }
+  fn init(& self) -> Res<()> {
+    if let Some(path) = self.log_dir() {
+      ::std::fs::DirBuilder::new().recursive(true).create(
+        path
+      ).chain_err(
+        || format!(
+          "while creating smt output directory in `{}`", ::common::conf.out_dir
+        )
+      )
+    } else {
+      Ok(())
+    }
+  }
+}
 impl SmtConf {
   /// Actual, `rsmt2` solver configuration.
   pub fn conf(& self) -> SolverConf {
     self.conf.clone()
   }
 
-  /// Smt log file, if any.
-  pub fn log_file(
-    & self, name: & str
-  ) -> ::common::IoRes< Option<::std::fs::File> > {
-    use std::fs::OpenOptions ;
+  /// Smt log dir, if any.
+  pub fn log_dir(& self) -> Option<PathBuf> {
     if self.log {
       let mut path = ::common::conf.out_dir() ;
-      path.push(name) ;
+      path.push("solvers") ;
+      Some(path)
+    } else {
+      None
+    }
+  }
+
+  /// Smt log file, if any.
+  pub fn log_file<S: AsRef<str >>(
+    & self, name: S
+  ) -> ::common::IoRes< Option<::std::fs::File> > {
+    use std::fs::OpenOptions ;
+    if let Some(mut path) = self.log_dir() {
+      path.push(name.as_ref()) ;
       path.set_extension("smt2") ;
       OpenOptions::new()
       .write(true).truncate(true).create(true)
@@ -123,6 +161,8 @@ impl SmtConf {
 
 /// Pre-processing configuration.
 pub struct PreprocConf {
+  /// Dump instance as smt2 flag.
+  pub dump: bool,
   /// Pre-processing flag.
   pub active: bool,
   /// Simple reduction flag.
@@ -136,7 +176,52 @@ pub struct PreprocConf {
   /// Mono-predicate.
   pub mono_pred: bool,
 }
+impl SubConf for PreprocConf {
+  fn need_out_dir(& self) -> bool { self.dump && self.active }
+  fn init(& self) -> Res<()> {
+    if self.active {
+      if let Some(path) = self.log_dir() {
+        ::std::fs::DirBuilder::new().recursive(true).create(
+          path
+        ).chain_err(
+          || format!(
+            "while creating preproc output directory in `{}`",
+            ::common::conf.out_dir
+          )
+       ) ?
+      }
+    }
+    Ok(())
+  }
+}
 impl PreprocConf {
+  /// Instance dump dir.
+  pub fn log_dir(& self) -> Option<PathBuf> {
+    if self.dump {
+      let mut path = ::common::conf.out_dir() ;
+      path.push("preproc") ;
+      Some(path)
+    } else {
+      None
+    }
+  }
+
+  /// Instance dump file.
+  pub fn log_file<S: AsRef<str>>(
+    & self, name: S
+  ) -> ::common::IoRes< Option<::std::fs::File> > {
+    use std::fs::OpenOptions ;
+    if let Some(mut path) = self.log_dir() {
+      path.push(name.as_ref()) ;
+      path.set_extension("smt2") ;
+      OpenOptions::new()
+      .write(true).truncate(true).create(true)
+      .open(& path).map(|f| Some(f))
+    } else {
+      Ok(None)
+    }
+  }
+
   /// Adds clap options to a clap App.
   pub fn add_args(app: App) -> App {
     app.arg(
@@ -201,6 +286,16 @@ impl PreprocConf {
         bool_format
       ).default_value("off").takes_value(true)// .number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("dump_preproc").long("--dump_preproc").help(
+        "(de)activates instance dumping during preprocessing"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
+
     )
   }
 
@@ -212,8 +307,11 @@ impl PreprocConf {
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
     let mono_pred = bool_of_matches(matches, "mono_pred") ;
+    let dump = bool_of_matches(matches, "dump_preproc") ;
 
-    PreprocConf { active, smt_red, one_rhs, one_rhs_full, one_lhs, mono_pred }
+    PreprocConf {
+      dump, active, smt_red, one_rhs, one_rhs_full, one_lhs, mono_pred
+    }
   }
 }
 
@@ -233,6 +331,10 @@ pub struct IceConf {
   pub decay: bool,
   /// Maximum decay above which qualifiers are dropped.
   pub max_decay: usize,
+}
+impl SubConf for IceConf {
+  fn need_out_dir(& self) -> bool { false }
+  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl IceConf {
   /// Adds clap options to a clap App.
@@ -309,6 +411,10 @@ impl IceConf {
 pub struct TeacherConf {
   /// Stop before sending data to learner(s).
   pub step: bool,
+}
+impl SubConf for TeacherConf {
+  fn need_out_dir(& self) -> bool { false }
+  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl TeacherConf {
   /// Adds clap options to a clap App.
@@ -494,7 +600,7 @@ impl Config {
         "sets the output directory (used only by smt logging currently)"
       ).value_name(
         "DIR"
-      ).default_value(".").takes_value(true)// .number_of_values(1)
+      ).default_value("hoice_out").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -562,15 +668,23 @@ impl Config {
       ) ?
     }
     // Are we gonna use the output directory?
-    if self.solver.log {
+    if self.solver.need_out_dir()
+    || self.preproc.need_out_dir()
+    || self.instance.need_out_dir()
+    || self.ice.need_out_dir()
+    || self.teacher.need_out_dir() {
       ::std::fs::DirBuilder::new().recursive(true).create(
         & self.out_dir
       ).chain_err(
         || format!("while creating output directory `{}`", self.out_dir)
-      )
-    } else {
-      Ok(())
+      ) ?
     }
+    self.solver.init() ? ;
+    self.preproc.init() ? ;
+    self.instance.init() ? ;
+    self.ice.init() ? ;
+    self.teacher.init() ? ;
+    Ok(())
   }
 }
 

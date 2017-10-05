@@ -1385,7 +1385,7 @@ impl CData {
 
 
 
-/// Wrapper around an `f64` used to compute a the approximation of the ratio
+/// Wrapper around an `f64` used to compute an approximation of the ratio
 /// between legal positive classifications and negative ones, without actually
 /// splitting the data.
 ///

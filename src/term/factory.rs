@@ -318,6 +318,19 @@ fn normalize_app(
               not( args[0].clone() )
             }
           )
+        // } else if args[0].is_relation() {
+        //   return Either::Right((
+        //     Op::Or, vec![
+        //       ( Op::And, args.clone() ),
+        //       (
+        //         Op::And, args.iter().map(
+        //           |arg| ( not(arg.clone()) )
+        //           //      ^^^^^^^^^^^^^^^^
+        //           // This is essentially a recursive call... it sucks :(
+        //         ).collect()
+        //       )
+        //     ]
+        //   ))
         }
       }
       (op, args)

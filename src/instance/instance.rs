@@ -1012,7 +1012,7 @@ impl Instance {
         for term in & clause.lhs_terms {
           if let Some(args) = term.disj_inspect() {
             disj = Some((term.clone(), args.clone())) ;
-            // break
+            break
           }
         }
         if let Some((disj, mut kids)) = disj {
@@ -1675,7 +1675,55 @@ impl Instance {
 
     let mut info: RedInfo = (0, clauses_rmed, clauses_added).into() ;
     info += self.force_trivial() ? ;
+    info += self.simplify_clauses() ? ;
     Ok( info )
+  }
+
+  /// Dumps the instance as an SMT-LIB 2 problem.
+  pub fn dump_as_smt2<File, Blah>(
+    & self, w: & mut File, blah: Blah
+  ) -> Res<()>
+  where File: Write, Blah: AsRef<str> {
+    use common::consts::keywords ;
+    let blah = blah.as_ref() ;
+
+    for line in blah.lines() {
+      write!(w, "; {}\n", line) ?
+    }
+    write!(w, "\n") ? ;
+
+    for (pred_idx, pred) in self.preds.index_iter() {
+      if self.pred_terms[pred_idx].is_none()
+      && self.pred_qterms[pred_idx].is_none() {
+        write!(
+          w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
+        ) ? ;
+        for typ in & pred.sig {
+          write!(w, " {}", typ) ?
+        }
+        write!(w, " ) Bool\n)\n") ?
+      }
+    }
+
+    for (idx, clause) in self.clauses.index_iter() {
+      write!(w, "\n; Clause #{}\n", idx) ? ;
+      clause.write(
+        w, |w, p, args| {
+          write!(w, "(") ? ;
+          w.write_all( self[p].name.as_bytes() ) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
+          }
+          write!(w, ")")
+        }
+      ) ? ;
+      write!(w, "\n\n") ?
+    }
+
+    write!(w, "\n(check-sat)\n") ? ;
+
+    Ok(())
   }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {
@@ -1760,6 +1808,8 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
     }
 
+    use rsmt2::to_smt::Expr2Smt ;
+    let empty_prd_set = PrdSet::new() ;
     if self.sorted_pred_terms.is_empty() {
       // Either there's no forced predicate, or we are printing before
       // finalizing.
@@ -1775,7 +1825,10 @@ impl<'a> PebcakFmt<'a> for Instance {
         for (var, typ) in quals {
           write!(w, " ({} {})", var.default_str(), typ) ?
         }
-        write!(w, " )\n    {}", tterms) ? ;
+        write!(w, " )\n    ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
         write!(w,"  )\n)\n") ?
       }
       for (pred, tterms) in self.pred_terms.index_iter().filter_map(
@@ -1785,7 +1838,11 @@ impl<'a> PebcakFmt<'a> for Instance {
         for (var, typ) in self[pred].sig.index_iter() {
           write!(w, " (v_{} {})", var, typ) ?
         }
-        write!(w, " ) Bool\n  {}\n)\n", tterms) ?
+        write!(w, " ) Bool\n  ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
+        write!(w, "\n)\n") ?
       }
     } else {
       for pred in & self.sorted_pred_terms {
@@ -1794,7 +1851,11 @@ impl<'a> PebcakFmt<'a> for Instance {
           write!(w, " (v_{} {})", var, typ) ?
         }
         let tterms = self.pred_terms[* pred].as_ref().unwrap() ;
-        write!(w, " ) Bool\n  {}\n)\n", tterms) ?
+        write!(w, " ) Bool\n  ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
+        write!(w, "\n)\n", ) ?
       }
     }
 
@@ -1819,11 +1880,6 @@ impl<'a> PebcakFmt<'a> for Instance {
     Ok(())
   }
 }
-
-
-
-
-
 
 /// Simplifies clauses.
 ///
