@@ -3,6 +3,9 @@
 use common::* ;
 use instance::* ;
 
+
+
+
 /// Result yielded by the parser.
 #[derive(PartialEq, Eq)]
 pub enum Parsed {
@@ -116,7 +119,10 @@ impl ParserCxt {
     & 'cxt mut self, string: & 's str, line_off: usize
   ) -> Parser<'cxt, 's> {
     Parser {
-      cxt: self, chars: string.char_indices(), string, line_off
+      cxt: self,
+      chars: string.char_indices(),
+      string, line_off,
+      bindings: Vec::with_capacity(7),
     }
   }
 
@@ -127,6 +133,10 @@ impl ParserCxt {
 }
 
 
+/// Wraps an integer, represents a number of let-bindings parsed.
+pub struct LetCount {
+  n: usize
+}
 
 
 /// Parser structure. Generated from a `ParserCxt`.
@@ -139,6 +149,8 @@ pub struct Parser<'cxt, 's> {
   string: & 's str,
   /// Line offset (for errors).
   line_off: usize,
+  /// Stack of bindings.
+  bindings: Vec< HashMap<& 's str, Term> >,
 }
 
 
@@ -185,6 +197,99 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     )
   }
 
+  /// Adds a binding to the current bindings.
+  fn insert_bind(& mut self, var: & 's str, term: Term) -> Option<Term> {
+    if let Some(bindings) = self.bindings.last_mut() {
+      bindings.insert(var, term)
+    } else {
+      panic!("bug, adding binding before pushing a binding scope")
+    }
+  }
+  /// Pushes a binding scopes.
+  fn push_bind(& mut self) {
+    self.bindings.push( HashMap::with_capacity(17) )
+  }
+  /// Pops a binding scope.
+  fn pop_bind(& mut self) {
+    if self.bindings.pop().is_none() {
+      panic!("bug, popping binding scope but there's no scope")
+    }
+  }
+  /// Finds what a variable is mapped to.
+  fn get_bind(& self, var: & str) -> Option<Term> {
+    for bindings in & self.bindings {
+      if let Some(term) = bindings.get(var) {
+        return Some( term.clone() )
+      }
+    }
+    None
+  }
+
+
+  /// Parses the end of some consecutive let-bindings.
+  #[inline]
+  fn close_let_bindings(& mut self, count: LetCount) -> Res<()> {
+    for _ in 0..count.n {
+      self.char(')') ?
+    }
+    Ok(())
+  }
+
+
+
+
+  /// Parses some consecutive let-bindings.
+  ///
+  /// - open paren,
+  /// - `let` keyword, and
+  /// - bindings.
+  ///
+  /// Returns the number of let-bindings it parsed, *i.e.* the number of
+  /// corresponding closing parens.
+  #[inline]
+  fn let_bindings(
+    & mut self, map: & HashMap<& 's str, VarIdx>
+  ) -> Res<LetCount> {
+    let mut n = 0 ;
+    'parse_lets: loop {
+      self.ws_cmt() ;
+      if let Some((pos, c)) = self.next() {
+        if c == '(' && {
+          self.ws_cmt() ; self.tag_opt("let")
+        } {
+          self.push_bind() ;
+          self.ws_cmt() ;
+          self.char('(') ? ;
+          while { self.ws_cmt() ; self.char_opt('(') } {
+            self.ws_cmt() ;
+            let (_, id) = self.ident() ? ;
+            self.ws_cmt() ;
+            let mut terms = self.term_seq(map) ? ;
+            let term = if let Some(term) = terms.pop() {
+              if ! terms.is_empty() {
+                bail!("found more than one term in binding")
+              }
+              term
+            } else {
+              bail!("expected term in binding")
+            } ;
+            self.insert_bind(id, term) ;
+            self.ws_cmt() ;
+            self.char(')') ?
+          }
+          self.ws_cmt() ;
+          self.char(')') ? ;
+          n += 1
+        } else {
+          break 'parse_lets
+          self.txen(pos, c)
+        }
+      } else {
+        break 'parse_lets
+      }
+    }
+    Ok( LetCount { n } )
+  }
 
 
   /// Returns `true` if there's still things to parse.
@@ -413,6 +518,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     if self.char_opt('"') {
       self.eat_until('"')
+    } else if self.char_opt('|') {
+      self.eat_until('|')
     }
     Ok(true)
   }
@@ -902,7 +1009,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.char('(') ? ;
     self.ws_cmt() ;
 
-    let (var_map, lhs, rhs) = if let Some(res) = self.forall(instance) ? {
+    let (
+      var_map, lhs, rhs
+    ) = if let Some(res) = self.forall(instance) ? {
       res
     } else if let Some(res) = self.exists(instance) ? {
       res
