@@ -25,10 +25,10 @@ pub fn work(
     ) ? ;
     if let Some(log) = conf.solver.log_file("preproc") ? {
       run(
-        instance, profiler, Some( SolverWrapper { solver: solver.tee(log) } )
-        )
+        instance, profiler, Some( SolverWrapper::new(solver.tee(log)) )
+      )
     } else {
-      run( instance, profiler, Some( SolverWrapper { solver } ) )
+      run( instance, profiler, Some( SolverWrapper::new(solver) ) )
     }
   } else {
     run(
@@ -37,6 +37,7 @@ pub fn work(
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
+
   log_info!{
     "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
   }
@@ -70,21 +71,37 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   // }
 
 
+  preproc_dump!(
+    instance =>
+    "preproc_000_original_instance", "Instance before pre-processing."
+  ) ? ;
+
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
-  let clauses = instance.simplify_clauses() ? ;
-  total.clauses_rmed += clauses ;
+  let simplify = instance.simplify_clauses() ? ;
   profile!{ |profiler| mark "pre-proc", "propagate" }
   profile!{
     |profiler| format!(
       "{:>25} clause red", "propagate"
-    ) => add clauses
+    ) => add simplify.clauses_rmed
   }
+  profile!{
+    |profiler| format!(
+      "{:>25} clause add", "propagate"
+    ) => add simplify.clauses_added
+  }
+  total += simplify ;
 
   log_debug!{
     "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
   }
 
+  preproc_dump!(
+    instance =>
+    "preproc_001_simplified_instance", "Instance after basic simplifications."
+  ) ? ;
+
+  let mut cnt = 2 ;
 
   let mut changed = true ;
   'preproc: while changed {
@@ -98,18 +115,28 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
       "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
     }
 
+    preproc_dump!(
+      instance =>
+        format!("preproc_{:0>3}_reduction", cnt),
+        "Instance after smt-free reduction"
+    ) ? ;
+    cnt += 1 ;
+
     log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
-    let red_info = reductor.run(instance, & profiler) ? ;
+    let red_info = reductor.run(instance, & profiler, & mut cnt) ? ;
     changed = red_info.non_zero() ;
     total += red_info ;
     instance.check("after reduction") ? ;
     profile!{ |profiler| mark "pre-proc", "reducing" }
     log_info!{ "done reducing" }
 
-    // log_info!{
-    //   "\n\n\n|===|instance after reduction:\n{}\n\n", instance.to_string_info(()) ?
-    // }
+    preproc_dump!(
+      instance =>
+        format!("preproc_{:0>3}_smt_reduction", cnt),
+        "Instance after smt-based reduction"
+    ) ? ;
+    cnt += 1 ;
 
   }
 
@@ -122,6 +149,12 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   profile!{
     |profiler| "clauses created" => add total.clauses_added
   }
+
+  preproc_dump!(
+    instance =>
+      format!("preproc_{:0>3}_fixed_point", cnt),
+      "Instance after reduction fixed-point"
+  ) ? ;
 
   Ok(())
 }
@@ -155,9 +188,12 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     if conf.preproc.one_lhs {
       solver_strats.push( Box::new( SimpleOneLhs::new() ) )
     }
-    if conf.preproc.mono_pred {
-      solver_strats.push( Box::new( MonoPredClause::new() ) )
+    if conf.preproc.one_rhs && conf.preproc.one_rhs_full {
+      solver_strats.push( Box::new( OneRhs::new() ) )
     }
+    // if conf.preproc.mono_pred {
+    //   solver_strats.push( Box::new( MonoPredClause::new() ) )
+    // }
     let solver_strats = solver.map(
       |solver| (solver, solver_strats)
     ) ;
@@ -214,7 +250,8 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 
   /// Runs expensive reduction.
   pub fn run(
-    & mut self, instance: & mut Instance, _profiler: & Profiler
+    & mut self, instance: & mut Instance, _profiler: & Profiler,
+    cnt: & mut usize
   ) -> Res<RedInfo> {
     let mut total: RedInfo = (0, 0, 0).into() ;
     
@@ -251,44 +288,60 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
       // while changed {
       //   changed = false ;
 
+      let mut changed = true ;
+
+      'run_strats: while changed {
+        changed = false ;
+
         for strat in strats.iter_mut() {
-          let mut changed = true ;
-          while changed {
-            log_info!("applying {}", conf.emph( strat.name() )) ;
-            profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
-            let red_info = strat.apply(instance, solver) ? ;
-            changed = red_info.non_zero() ;
+          log_info!("applying {}", conf.emph( strat.name() )) ;
+          profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
+          let red_info = strat.apply(instance, solver) ? ;
+          changed = red_info.non_zero() ;
 
-
-            if_not_bench!{
-              profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
-              profile!{
-                |_profiler| format!(
-                  "{:>25}   pred red", strat.name()
-                ) => add red_info.preds
-              }
-              profile!{
-                |_profiler| format!(
-                  "{:>25} clause red", strat.name()
-                ) => add red_info.clauses_rmed
-              }
-              profile!{
-                |_profiler| format!(
-                  "{:>25} clause add", strat.name()
-                ) => add red_info.clauses_added
-              }
+          if_not_bench!{
+            profile!{ |_profiler| mark "pre-proc", "reducing", strat.name() }
+            profile!{
+              |_profiler| format!(
+                "{:>25}   pred red", strat.name()
+              ) => add red_info.preds
             }
-
-            total += red_info ;
-            instance.check( strat.name() ) ? ;
+            profile!{
+              |_profiler| format!(
+                "{:>25} clause red", strat.name()
+              ) => add red_info.clauses_rmed
+            }
+            profile!{
+              |_profiler| format!(
+                "{:>25} clause add", strat.name()
+              ) => add red_info.clauses_added
+            }
           }
 
-          // let mut dummy = String::new() ;
-          // println!("") ;
-          // println!( "; waiting..." ) ;
-          // let _ = ::std::io::stdin().read_line(& mut dummy) ;
+          preproc_dump!(
+            instance =>
+              format!(
+                "preproc_{:0>3}_{}", cnt, {
+                  let mut s = String::new() ;
+                  for token in strat.name().split_whitespace() {
+                    s = if s.is_empty() { token.into() } else {
+                      format!("{}_{}", s, token)
+                    }
+                  }
+                  s
+                }
+              ),
+              "Instance afte smt-based reduction"
+          ) ? ;
+          * cnt += 1 ;
+
+          total += red_info ;
+          instance.check( strat.name() ) ? ;
+
+          // If something changed, re-run all strats.
+          if changed { continue 'run_strats }
         }
-      // }
+      }
     }
 
     Ok(total)
@@ -437,7 +490,7 @@ where Terms: Iterator<Item = & 'a Term> {
 /// Result of extracting the terms for a predicate application in a clause.
 #[derive(Clone, PartialEq, Eq)]
 #[allow(dead_code)]
-pub enum ExtractRes {
+pub enum ExtractRes<T = Vec<TTerm>> {
   /// The clause was found to be trivially true.
   Trivial,
   /// Terms could not be extracted.
@@ -451,9 +504,9 @@ pub enum ExtractRes {
   /// Success, predicate is equivalent to false.
   SuccessFalse,
   /// Success, predicate is equivalent to some top terms.
-  Success(Vec<TTerm>),
+  Success(T),
 }
-impl ExtractRes {
+impl<T: PartialEq + Eq> ExtractRes<T> {
   /// True if failed.
   pub fn is_failed(& self) -> bool{ * self == ExtractRes::Failed }
 }
@@ -464,8 +517,21 @@ impl ExtractRes {
 pub struct SolverWrapper<S> {
   /// The solver.
   solver: S,
+  // /// Variable set storing new quantified variables.
+  // ///
+  // /// Used when aggregating the terms in a quantified term, see
+  // /// [`qterms_of_rhs_app`][fun].
+  // ///
+  // /// [fun]: struct.SolverWrapper.html#method.qterms_of_rhs_app
+  // new_vars: VarSet,
 }
 impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
+  /// Constructor.
+  pub fn new(solver: S) -> Self {
+    SolverWrapper {
+      solver // , new_vars: VarSet::with_capacity(17),
+    }
+  }
 
   /// True if a conjunction of terms is a tautology.
   ///
@@ -676,6 +742,141 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       )
     }
   }
+
+
+  /// Returns the strongest quantified term such that `/\ lhs => (pred args)`.
+  ///
+  /// # TODO
+  ///
+  /// - move things allocated here to the struct above
+  pub fn qterms_of_rhs_app(
+    & mut self, instance: & Instance,
+    lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
+    pred: PrdIdx, args: & VarMap<Term>,
+    var_info: & VarMap<VarInfo>
+  ) -> Res< ExtractRes< (Qualfed, Vec<TTerm>) > > {
+    log_debug!{ "    qterms_of_rhs_app on {} {}", instance[pred], args }
+
+    // Implication trivial?
+    if self.trivial_impl(var_info, lhs_terms.iter(), & term::fls()) ? {
+      log_debug!{ "      implication is trivial" }
+      return Ok( ExtractRes::Trivial )
+    }
+
+    let (terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
+      instance, pred, args, |term| term
+    ) ? { res } else {
+      return Ok(ExtractRes::Failed)
+    } ;
+    let mut fresh = instance[pred].sig.next_index() ;
+
+    if_not_bench!{
+      log_debug!{ "      terms:" }
+      for term in & terms { log_debug!{ "      - {}", term } }
+      log_debug!{ "      map:" }
+      for (var, trm) in & map { log_debug!{ "      - v_{} -> {}", var, trm } }
+    }
+
+    let mut tterms: Vec<_> = terms.into_iter().map(|t| TTerm::T(t)).collect() ;
+    let mut qvars = VarHMap::with_capacity(7) ;
+
+    macro_rules! add_vars {
+      (
+        $vars:expr => $app_vars:ident
+        |> $map:expr, $qvars:expr, $info:expr, $fresh:expr
+      ) => (
+        for var in $vars {
+          let is_new = $app_vars.insert(var) ;
+          if is_new {
+            let _prev = $qvars.insert($fresh, $info[var].typ) ;
+            debug_assert_eq!( None, _prev ) ;
+            let _prev = $map.insert( var, term::var($fresh) ) ;
+            debug_assert_eq!( None, _prev ) ;
+            $fresh.inc()
+          }
+        }
+      ) ;
+    }
+
+    for (pred, argss) in lhs_preds {
+      for args in argss {
+        let mut nu_args = VarMap::with_capacity( args.len() ) ;
+        for arg in args {
+          add_vars!{
+            arg.vars() => app_vars |> map, qvars, var_info, fresh
+          }
+          if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
+            // Total substitution succeeded, all variables are known.
+            nu_args.push(nu_arg)
+          } else {
+            // Unreacheable as we just made sure all variables in the argument
+            // are in the map.
+            bail!("unreachable, rhs substitution was not total")
+          }
+        }
+        tterms.push( TTerm::P { pred: * pred, args: nu_args } )
+      }
+    }
+
+    let mut lhs_terms: Vec<_> = lhs_terms.iter().collect() ;
+    let mut lhs_terms_buf: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
+    let mut fixed_point = false ;
+
+    while ! fixed_point {
+      fixed_point = true ;
+
+      if_not_bench!{
+        log_debug!("    app vars:") ;
+        for var in & app_vars {
+          log_debug!("    - {}", var_info[* var])
+        }
+      }
+
+      for term in lhs_terms.drain(0..) {
+        log_debug!("    {}", term.to_string_info(var_info) ?) ;
+        if let Some(b) = term.bool() {
+          log_debug!{"    - trivial"}
+          // if `b` was false then `trivial_impl` above would have caught it
+          debug_assert!(b) ;
+          continue
+        }
+        let vars = term.vars() ;
+        if vars.is_subset( & app_vars ) {
+          let (term, _) = term.subst_total(& map).ok_or::<Error>(
+            "failure during total substitution".into()
+          ) ? ;
+          log_debug!("    - pushing") ;
+          log_debug!("      {}", term) ;
+          tterms.push( TTerm::T(term) )
+        } else if vars.is_disjoint(& app_vars) {
+          log_debug!("    - disjoint") ;
+          lhs_terms_buf.push(term)
+        } else {
+          fixed_point = false ;
+          add_vars!{
+            vars => app_vars |> map, qvars, var_info, fresh
+          }
+          let (term, _) = term.subst_total(& map).ok_or::<Error>(
+            "failure during total substitution".into()
+          ) ? ;
+          log_debug!("    - intersects") ;
+          log_debug!("      {}", term) ;
+
+          tterms.push( TTerm::T(term) )
+        }
+      }
+
+      ::std::mem::swap( & mut lhs_terms, & mut lhs_terms_buf )
+    }
+
+    if tterms.is_empty() {
+      Ok(ExtractRes::SuccessTrue)
+    } else {
+      Ok(
+        ExtractRes::Success( (qvars, tterms.into_iter().collect()) )
+      )
+    }
+  }
 }
 
 
@@ -710,154 +911,6 @@ impl RedStrat for Trivial {
     instance.force_trivial()
   }
 }
-
-
-// /// Simplifies clauses of the form `true => p(v_1, ..., v_n)` where all the
-// /// `v_i`s are different. Unfolds `p` to `true`.
-// ///
-// /// # TODO
-// ///
-// /// - handle `true => (x >= x)` correctly
-// pub struct ForcedImplies {
-//   /// Predicates found to be equivalent to true, but not propagated yet.
-//   true_preds: PrdSet,
-//   /// Predicates found to be equivalent to false, but not propagated yet.
-//   false_preds: PrdSet,
-//   /// Predicates to propagate.
-//   preds: PrdHMap< Vec<TTerm> >,
-// }
-// impl ForcedImplies {
-//   /// Constructor.
-//   fn new() -> Self {
-//     ForcedImplies {
-//       true_preds: PrdSet::with_capacity(7),
-//       false_preds: PrdSet::with_capacity(7),
-//       preds: PrdHMap::with_capacity(7),
-//     }
-//   }
-// }
-// impl RedStrat for ForcedImplies {
-//   fn name(& self) -> & 'static str { "true => ..." }
-//   fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
-//     let mut clauses_rmed = 0 ;
-
-//     let mut clause_idx: ClsIdx = 0.into() ;
-//     'iter_clauses: while clause_idx < instance.clauses.len() {
-
-//       if instance[clause_idx].lhs.is_empty() {
-//         let clause = instance.forget_clause(clause_idx) ? ;
-//         clauses_rmed += 1 ;
-//         match clause.rhs {
-//           TTerm::P { pred, args } => match terms_of_rhs_app(
-//             instance, None, pred, args
-//           ) ? {
-//             Some( Either::Rgt(true) ) => (),
-//             Some( Either::Rgt(false) ) => bail!( ErrorKind::Unsat ),
-            
-//             Some( Either::Lft(tterms) ) => {
-//               if self.true_preds.contains(& pred) {
-//                 ()
-//               } else if self.false_preds.contains(& pred) {
-//                 bail!( ErrorKind::Unsat )
-//               } else {
-//                 let mut args = VarMap::with_capacity(
-//                   instance[pred].sig.len()
-//                 ) ;
-//                 for (idx, typ) in instance[pred].sig.index_iter() {
-//                   args.push(
-//                     VarInfo {
-//                       name: format!("v{}", idx),
-//                       typ: * typ, idx
-//                     }
-//                   )
-//                 }
-//                 for tterm in & tterms {
-//                   instance.push_clause(
-//                     Clause::new( args.clone(), vec![], tterm.clone() )
-//                   )
-//                 }
-//                 let prev = self.preds.insert(pred, tterms) ;
-//                 if prev.is_some() { unimplemented!() }
-//               }
-//             },
-
-//             None => unimplemented!(),
-//           },
-//           TTerm::T(term) => match term.bool() {
-//             Some(true) => (),
-//             _ => bail!( ErrorKind::Unsat ),
-//           },
-//         }
-//         continue 'iter_clauses
-//       } else {
-//         match instance[clause_idx].rhs.bool() {
-//           Some(true) => {
-//             let _ = instance.forget_clause(clause_idx) ? ;
-//             clauses_rmed += 1 ;
-//             continue 'iter_clauses
-//           },
-
-//           Some(false) => {
-//             if instance[clause_idx].lhs.len() == 1 {
-//               let clause = instance.forget_clause(clause_idx) ? ;
-//               match clause.lhs.into_iter().next().unwrap() {
-//                 TTerm::P { pred, args } => match terms_of_rhs_app(
-//                   instance, None, pred, & args.into_index_iter().collect()
-//                 ) ? {
-//                   Some( Either::Rgt(true) ) => bail!( ErrorKind::Unsat ),
-//                   Some( Either::Rgt(false) ) => (),
-
-//                   Some( Either::Lft( (tterms, map) ) ) => {
-//                     if self.true_preds.contains(& pred) {
-//                       bail!( ErrorKind::Unsat )
-//                     } else if self.false_preds.contains(& pred) {
-//                       ()
-//                     } else {
-//                       let term = term::app(
-//                         Op::Not, vec![
-//                           term::app(
-//                             Op::And, tterms.into_iter().map(
-//                               |tterm| if let TTerm::T(term) = tterm {
-//                                 term
-//                               } else {
-//                                 unreachable!()
-//                               }
-//                             ).collect()
-//                           )
-//                         ]
-//                       ) ;
-//                       let tterms = vec![ TTerm::T(term) ] ;
-//                       let prev = self.preds.insert(pred, (tterms, map)) ;
-//                       if prev.is_some() { unimplemented!() }
-//                     }
-//                   },
-                  
-//                   // Should not be possible with an empty lhs.
-//                   None => unimplemented!(),
-//                 },
-//               }
-//               continue 'iter_clauses
-//             }
-//           },
-
-//           None => (),
-//         }
-//       }
-
-//       clause_idx.inc()
-
-//     }
-
-//     let pred_count =
-//       self.true_preds.len() + self.false_preds.len() + self.preds.len() ;
-
-//     clauses_rmed += instance.force_true(self.true_preds.drain()) ? ;
-//     clauses_rmed += instance.force_false(self.false_preds.drain()) ? ;
-//     clauses_rmed += force_pred(instance, self.preds.drain()) ? ;
-
-//     Ok( (pred_count, clauses_rmed) )
-//   }
-// }
 
 
 
@@ -988,7 +1041,7 @@ where Slver: Solver<'kid, ()> {
               }
             }
             red_info += instance.force_preds(
-              Some((pred, TTerms::conj(tterms)))
+              Some((pred, None, TTerms::conj(tterms)))
             ) ? ;
 
 
@@ -999,7 +1052,7 @@ where Slver: Solver<'kid, ()> {
           Failed | SuccessFalse => unreachable!(),
         }
 
-        if instance.forced_terms_of(pred).is_some() {
+        if instance.is_known(pred) {
           red_info.preds += 1
         } else {
           if_verb!{
@@ -1130,7 +1183,7 @@ where Slver: Solver<'kid, ()> {
             log_debug!( "  {:?}", instance.clauses_of_pred(pred) )
           }
           red_info += instance.force_preds(
-            Some((pred, TTerms::conj(tterms)))
+            Some((pred, None, TTerms::conj(tterms)))
           ) ? ;
 
           instance.check("after unfolding") ?
@@ -1140,7 +1193,7 @@ where Slver: Solver<'kid, ()> {
         _ => unreachable!(),
       }
 
-      if instance.forced_terms_of(pred).is_some() {
+      if instance.is_known(pred) {
         red_info.preds += 1
       } else {
         if_verb!{
@@ -1154,10 +1207,139 @@ where Slver: Solver<'kid, ()> {
           }
         }
       }
-      // let mut dummy = String::new() ;
-      // println!("") ;
-      // println!( "; {}...", conf.emph("press return") ) ;
-      // let _ = ::std::io::stdin().read_line(& mut dummy) ;
+    }
+
+    Ok( red_info )
+  }
+}
+
+
+
+
+
+
+/// Works on predicates that appear in only one rhs.
+///
+/// Only works on predicates that need qualifiers to be reduced, it's the
+/// dual of `SimpleOneRhs` in a way.
+pub struct OneRhs {
+  /// Stores new variables discovered as we iterate over the lhs of clauses.
+  new_vars: VarSet,
+}
+impl OneRhs {
+  /// Constructor.
+  pub fn new() -> Self {
+    OneRhs {
+      new_vars: VarSet::with_capacity(17)
+    }
+  }
+}
+impl HasName for OneRhs {
+  fn name(& self) -> & 'static str { "one rhs" }
+}
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for OneRhs
+where Slver: Solver<'kid, ()> {
+  fn apply(
+    & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
+  ) -> Res<RedInfo> {
+    debug_assert!( self.new_vars.is_empty() ) ;
+    let mut red_info: RedInfo = (0,0,0).into() ;
+
+    'all_preds: for pred in instance.pred_indices() {
+      if instance.clauses_of_pred(pred).1.len() == 1 {
+        let clause =
+          * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
+
+        if instance.clauses_of_pred(pred).0.contains(& clause) {
+        // || instance[clause].lhs_pred_apps_len() > 1 {
+          continue 'all_preds
+        }
+
+        log_debug!{
+          "trying to unfold {}", instance[pred]
+        }
+
+        let res = if let TTerm::P {
+          pred: _this_pred, ref args
+        } = * instance[clause].rhs() {
+          debug_assert_eq!( pred, _this_pred ) ;
+          solver.qterms_of_rhs_app(
+            instance,
+            instance[clause].lhs_terms(), instance[clause].lhs_preds(),
+            pred, args, instance[clause].vars()
+          ) ?
+        } else {
+          bail!("inconsistent instance state")
+        } ;
+
+        if res.is_failed() {
+          log_debug!{ "  skipping" }
+          continue
+        }
+
+        log_debug!{
+          "from {}",
+          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+        }
+
+        instance.forget_clause(clause) ? ;
+        red_info.clauses_rmed += 1 ;
+
+        log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
+        use self::ExtractRes::* ;
+        match res {
+          Trivial => {
+            log_info!("  => false") ;
+            red_info += instance.force_false(Some(pred)) ?
+          },
+          SuccessTrue => {
+            log_info!("  => true") ;
+            red_info += instance.force_true(Some(pred)) ? ;
+          },
+          Success( (qvars, tterms) ) => {
+            if_not_bench!{
+              log_debug!("  {} quantified variables", qvars.len()) ;
+              for (var, typ) in & qvars {
+                log_debug!("  - v_{}: {}", var, typ)
+              }
+              for tterm in & tterms {
+                log_debug!("  => {}", tterm ) ;
+                if let Some(pred) = tterm.pred() {
+                  log_debug!("     {}", instance[pred])
+                }
+              }
+            }
+            red_info += instance.force_preds(
+              Some((pred, Some(qvars), TTerms::conj(tterms)))
+            ) ? ;
+
+
+            instance.check("after unfolding") ?
+          },
+          // Failed is caught before this match, and false is not possible for
+          // the function generating `res`.
+          Failed | SuccessFalse => unreachable!(),
+        }
+
+        if instance.is_known(pred) {
+          red_info.preds += 1
+        } else {
+          if_verb!{
+            log_debug!{ "  did not remove, still appears in lhs of" }
+            for clause in instance.clauses_of_pred(pred).0 {
+              log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            }
+            log_debug!{ "  and rhs of" }
+            for clause in instance.clauses_of_pred(pred).1 {
+              log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+            }
+          }
+        }
+
+        // We did something, stop there in case more simple stuff can be done.
+        break 'all_preds
+
+      }
     }
 
     Ok( red_info )
@@ -1325,7 +1507,11 @@ where Slver: Solver<'kid, ()> {
         lhs.clear() ;
 
         for term in clause.lhs_terms() {
-          lhs.push(term)
+          match term.bool() {
+            Some(true) => (),
+            Some(false) => clauses_to_rm.push(clause_idx),
+            _ => lhs.push(term),
+          }
         }
 
         let rhs = if let Some(term) = clause.rhs().term() {

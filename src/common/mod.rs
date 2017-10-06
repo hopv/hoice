@@ -14,6 +14,8 @@ pub use rsmt2::SmtRes ;
 
 pub use num::{ Zero, One, Signed } ;
 
+pub use either::Either ;
+
 pub use errors::* ;
 pub use term ;
 pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
@@ -58,11 +60,6 @@ pub fn pause(s: & str) {
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 
-/// Disjunction type.
-pub enum Either<L, R> {
-  Lft(L), Rgt(R)
-}
-
 
 // |===| Type and traits aliases.
 
@@ -73,6 +70,40 @@ pub type Int = ::num::BigInt ;
 pub type VarMapSet<T> = HashSet<
   VarMap<T>, hash::BuildHashU64
 > ;
+
+/// Alias type for a map from arity to a map from terms to qualifier values.
+///
+/// The term to qualifier maps map the qualifier to their values. It sounds
+/// stupid to do this since `QualValues` already contains the qualifier.
+/// Ideally, it should be a set of values hashed by the qualifier. But we need
+/// to iterate on this collection with `iter_mut` to update the values,
+/// something `HashSet` does not admit as it is unsafe in general to do so.
+///
+/// Hence we have the qualifier twice, which is not that bad to check directly
+/// if a term is a known qualifier or not.
+///
+/// # TODO
+///
+/// - investigate whether it would be possible to remove the qualifier from
+///   `QualValues` entirely
+pub type Quals = ArityMap<
+  HConMap<RTerm, ::learning::ice::mining::QualValues>
+> ;
+/// Helpers for `Quals`.
+pub trait QualsExt {
+  /// Treats the `HConMap` as sets for inserting qualifiers.
+  ///
+  /// Returns true if the term was not there (think `is_new`).
+  fn insert(& mut self, arity: Arity, term: Term) ;
+}
+impl QualsExt for Quals {
+  fn insert(& mut self, arity: Arity, term: Term) {
+    self[arity].entry( term.clone() ).or_insert_with(
+      || ::learning::ice::mining::QualValues::new(term)
+    ) ;
+  }
+}
+
 /// Some predicate applications.
 pub type PredApps = PrdHMap< VarMapSet<Term> > ;
 /// Predicate application alias type extension.
@@ -97,8 +128,12 @@ impl PredAppsExt for PredApps {
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
-/// Maps predicates to terms.
-pub type Model = Vec< (PrdIdx, TTerms) > ;
+
+/// Qualified variables for a top term.
+pub type Qualfed = VarHMap<Typ> ;
+
+/// Associates predicates to some quantified variables and some top terms.
+pub type Model = Vec< (PrdIdx, Option<Qualfed>, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -233,14 +268,38 @@ pub trait VarIndexed<T> {
   #[inline(always)]
   fn var_get(& self, var: VarIdx) -> Option<& T> ;
 }
-impl<T> VarIndexed<T> for VarMap<T> {
-  fn var_get(& self, var: VarIdx) -> Option<& T> {
-    Some(& self[var])
+impl<Elem> VarIndexed<Elem> for VarMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+    if var < self.len() {
+      Some(& self[var])
+    } else {
+      None
+    }
   }
 }
-impl<T> VarIndexed<T> for VarHMap<T> {
-  fn var_get(& self, var: VarIdx) -> Option<& T> {
+impl<Elem> VarIndexed<Elem> for VarHMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
     self.get(& var)
+  }
+}
+impl<Elem, T, U> VarIndexed<Elem> for (T, U)
+where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+    if let Some(res) = self.0.var_get(var) {
+      debug_assert!( self.1.var_get(var).is_none() ) ;
+      Some(res)
+    } else if let Some(res) = self.1.var_get(var) {
+      debug_assert!( self.0.var_get(var).is_none() ) ;
+      Some(res)
+    } else {
+      None
+    }
+  }
+}
+impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
+where T: VarIndexed<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+    (* self).var_get(var)
   }
 }
 

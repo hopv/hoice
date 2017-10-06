@@ -78,7 +78,11 @@ impl Clause {
   #[inline(always)]
   pub fn lhs_insert(& mut self, tterm: TTerm) -> bool {
     match tterm {
-      TTerm::T(term) => self.insert_term(term),
+      TTerm::T(term) => if let Some(true) = term.bool() {
+        false
+      } else {
+        self.insert_term(term)
+      },
       TTerm::P { pred, args } => self.insert_pred_app(pred, args),
     }
   }
@@ -95,20 +99,24 @@ impl Clause {
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<RTerm>, term: Term) -> bool {
-    if let Some(kids) = term.and_inspect() {
+    if let Some(kids) = term.conj_inspect() {
       let mut new_stuff = false ;
       let mut stack = vec![] ;
       for kid in kids {
-        if let Some(kids) = kid.and_inspect() {
+        if let Some(kids) = kid.conj_inspect() {
           for kid in kids { stack.push(kid) }
+        } else if let Some(true) = term.bool() {
+          ()
         } else {
           let is_new = lhs_terms.insert( kid.clone() ) ;
           new_stuff = new_stuff || is_new
         }
       }
       while let Some(term) = stack.pop() {
-        if let Some(kids) = term.and_inspect() {
+        if let Some(kids) = term.conj_inspect() {
           for kid in kids { stack.push(kid) }
+        } else if let Some(true) = term.bool() {
+          ()
         } else {
           let is_new = lhs_terms.insert( term.clone() ) ;
           new_stuff = new_stuff || is_new
@@ -116,9 +124,14 @@ impl Clause {
       }
       return new_stuff
     }
-    // Only reachable when `term.and_inspect()` is `None`. Needs to be outside
+
+    // Only reachable when `term.conj_inspect()` is `None`. Needs to be outside
     // the match because of lexical lifetimes.
-    lhs_terms.insert(term)
+    if let Some(true) = term.bool() {
+      false
+    } else {
+      lhs_terms.insert(term)
+    }
   }
 
   /// Inserts a term in the LHS.
@@ -214,6 +227,23 @@ impl Clause {
     changed
   }
 
+  /// Adds fresh variables to the clause for each of the input variables.
+  /// Returns a map from the input variables to the fresh ones (as terms).
+  ///
+  /// Used when inlining a predicate with quantified variables.
+  fn fresh_vars_for(& mut self, vars: & Qualfed) -> VarHMap<Term> {
+    let mut map = VarHMap::with_capacity( vars.len() ) ;
+    for (var, typ) in vars {
+      let fresh = self.vars.next_index() ;
+      let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
+      let info = VarInfo::new(fresh_name, * typ, fresh) ;
+      self.vars.push(info) ;
+      let _prev = map.insert(* var, term::var(fresh)) ;
+      debug_assert!( _prev.is_none() )
+    }
+    map
+  }
+
   // /// Replaces a predicate application by some top terms.
   // ///
   // /// Does not preserve the order of the top terms.
@@ -278,9 +308,9 @@ impl Clause {
     ) ? ;
     write!(w, "\n") ? ;
     if let Some(suff) = suff {
-      write!(w, "{}", suff) ?
+      write!(w, "{}\n", suff) ?
     }
-    write!(w, "\n))")
+    write!(w, "))")
   }
 }
 impl ::std::ops::Index<VarIdx> for Clause {
@@ -369,6 +399,8 @@ pub struct Instance {
   preds: PrdMap<PrdInfo>,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
+  /// Predicates for which a suitable quantified term has been found.
+  pred_qterms: PrdMap< Option< (VarHMap<Typ>, TTerms) > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
@@ -394,6 +426,7 @@ impl Instance {
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
+      pred_qterms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clause_capa),
@@ -413,37 +446,49 @@ impl Instance {
     self.is_unsat = true
   }
 
+  /// True if a predicate is forced to something.
+  #[inline]
+  pub fn is_known(& self, pred: PrdIdx) -> bool {
+    self.pred_terms[pred].is_some() ||
+    self.pred_qterms[pred].is_some()
+  }
+
   /// Returns the model corresponding to the input predicates and the forced
   /// predicates.
   ///
   /// The model is sorted in topological order.
   pub fn model_of(& self, candidates: Candidates) -> Res<Model> {
     use std::iter::Extend ;
-    let mut res = Model::with_capacity( self.preds.len() ) ;
-    res.extend(
+    let mut model = Model::with_capacity( self.preds.len() ) ;
+    model.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |term| (pred, TTerms::of_tterm( TTerm::T(term) ))
+          |term| (pred, None, TTerms::of_tterm( TTerm::T(term) ))
         )
       )
     ) ;
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
-        res.push( (pred, tterms.clone()) )
+        model.push( (pred, None, tterms.clone()) )
+      } else if let Some((ref qualfed, ref tterms)) = self.pred_qterms[pred] {
+        model.push( (pred, Some(qualfed.clone()), tterms.clone()) )
       } else {
         bail!("inconsistency in sorted forced predicates")
       }
     }
-    Ok(res)
+    Ok( model )
   }
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
   pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
     if self.is_unsat { Ok( Some(None) ) } else {
-      for term_opt in & self.pred_terms {
-        if term_opt.is_none() { return Ok(None) }
+      for pred in self.pred_indices() {
+        if self.pred_terms[pred].is_none()
+        && self.pred_qterms[pred].is_none() {
+          return Ok(None)
+        }
       }
       // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
       self.model_of( vec![].into() ).map(|res| Some(Some(res)))
@@ -501,18 +546,18 @@ impl Instance {
       self.preds.len()
     ) ;
 
-    // Populate `sorted_pred_terms`.
-    for (pred, tterms) in self.pred_terms.index_iter() {
-      if let Some(ref tterms) = * tterms {
+    // Populate `tmp`.
+    let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
+    for pred in self.pred_indices() {
+      if let Some(ref tterms) = self.pred_terms[pred] {
         tmp.push( (pred, tterms.preds()) )
+      } else if let Some((_, ref tterms)) = self.pred_qterms[pred] {
+        tmp.push( (pred, tterms.preds()) )
+      } else {
+        known_preds.insert(pred) ;
       }
     }
-
     // Sort by dependencies.
-    let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
-    for (pred, want_none) in self.pred_terms.index_iter() {
-      if want_none.is_none() { known_preds.insert(pred) ; () }
-    }
     while ! tmp.is_empty() {
       let mut cnt = 0 ; // Will use swap remove.
       'find_preds: while cnt < tmp.len() {
@@ -537,15 +582,23 @@ impl Instance {
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& TTerms> {
-    self.pred_terms[pred].as_ref()
+  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<(
+    Option<& Qualfed>, & TTerms
+  )> {
+    if let Some(tterms) = self.pred_terms[pred].as_ref() {
+      Some( (None, tterms) )
+    } else {
+      self.pred_qterms[pred].as_ref().map(
+        |& (ref quals, ref tterms)| (Some(quals), tterms)
+      )
+    }
   }
 
   /// If the input predicate is forced to a constant boolean, returns its
   /// value.
   pub fn bool_value_of(& self, pred: PrdIdx) -> Option<bool> {
     self.forced_terms_of(pred).and_then(
-      |terms| terms.bool()
+      |(_, terms)| terms.bool()
     )
   }
 
@@ -581,16 +634,19 @@ impl Instance {
   }
 
   /// Replaces the rhs of a clause.
+  ///
+  /// Updates `pred_to_clauses` for the term it inserts but **not** the one it
+  /// removes.
   pub fn clause_rhs_force(
-    & mut self, clause: ClsIdx, tterm: TTerm
+    & mut self, clause_idx: ClsIdx, tterm: TTerm
   ) {
-    if let TTerm::P { pred, .. } = self.clauses[clause].rhs {
-      self.pred_to_clauses[pred].1.remove(& clause) ;
+    let clause = & mut self.clauses[clause_idx] ;
+    if let Some(pred) = tterm.pred() {
+      let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
+      log_debug!{ "clause_rhs_force: {}\n  {}", tterm, clause.to_string_info(& self.preds).unwrap() }
+      debug_assert!( is_new )
     }
-    if let TTerm::P { pred, .. } = tterm {
-      self.pred_to_clauses[pred].1.insert(clause) ;
-    }
-    self.clauses[clause].rhs = tterm
+    clause.rhs = tterm
   }
 
   // /// Evaluates the term a predicate is forced to, if any.
@@ -749,6 +805,7 @@ impl Instance {
     let idx = self.preds.next_index() ;
     self.preds.push( PrdInfo { name, idx, sig } ) ;
     self.pred_terms.push(None) ;
+    self.pred_qterms.push(None) ;
     self.pred_to_clauses.push(
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
@@ -758,16 +815,28 @@ impl Instance {
   /// Forces a predicate to be equal to something.
   ///
   /// Does not impact `pred_to_clauses`.
-  pub fn force_pred(& mut self, pred: PrdIdx, tterms: TTerms) -> Res<()> {
-    if let Some(ts) = self.pred_terms[pred].as_ref() {
-      if ts != & tterms {
-        bail!(
-          "[bug] trying to force predicate {} twice",
-          conf.sad(& self[pred].name)
-        )
-      }
+  fn force_pred(
+    & mut self, pred: PrdIdx, quals: Option<Qualfed>, tterms: TTerms
+  ) -> Res<()> {
+    if let Some(_) = self.pred_terms[pred].as_ref() {
+      bail!(
+        "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
+        conf.sad(& self[pred].name),
+        tterms, quals.map(|q| q.len()).unwrap_or(0)
+      )
     }
-    self.pred_terms[pred] = Some(tterms) ;
+    if let Some(_) = self.pred_qterms[pred].as_ref() {
+      bail!(
+        "trying to force predicate {} twice\n{}\n{} qualifier(s)",
+        conf.sad(& self[pred].name),
+        tterms, quals.map(|q| q.len()).unwrap_or(0)
+      )
+    }
+    if let Some(quals) = quals {
+      self.pred_qterms[pred] = Some( (quals, tterms) )
+    } else {
+      self.pred_terms[pred] = Some(tterms)
+    }
     Ok(())
   }
 
@@ -898,7 +967,7 @@ impl Instance {
     ) ? ;
     // log_debug!{ "{}", self.clauses[clause].to_string_info(& self.preds) ? }
     if remove {
-      self.clauses.swap_remove(clause) ;
+      self.forget_clause(clause) ? ;
     }
     Ok(remove)
   }
@@ -912,24 +981,79 @@ impl Instance {
   /// # TO DO
   ///
   /// - currently kind of assumes equalities are binary, fix?
-  pub fn simplify_clauses(& mut self) -> Res<usize> {
-    let mut clause: ClsIdx = 0.into() ;
-    let mut rmed = 0 ;
-    while clause < self.clauses.len() {
-      let removed = self.simplify_clause(clause) ? ;
-      if ! removed { clause.inc() } else { rmed += 1 }
+  pub fn simplify_clauses(& mut self) -> Res<RedInfo> {
+    let mut changed = true ;
+    let mut red_info: RedInfo = (0, 0, 0).into() ;
+    let mut nu_clauses = Vec::with_capacity(7) ;
+    while changed {
+      changed = false ;
+
+      let mut clause: ClsIdx = 0.into() ;
+      while clause < self.clauses.len() {
+        let removed = self.simplify_clause(clause) ? ;
+        if ! removed {
+          clause.inc()
+        } else {
+          red_info.clauses_rmed += 1
+        }
+      }
+
+      // Split disjunctions.
+      for clause in self.clauses.iter_mut() {
+        // Skip those for which the predicate in the rhs only appears in this
+        // rhs.
+        if let Some(pred) = clause.rhs.pred() {
+          if self.pred_to_clauses[pred].1.len() == 1 {
+            continue
+          }
+        }
+
+        let mut disj = None ;
+        for term in & clause.lhs_terms {
+          if let Some(args) = term.disj_inspect() {
+            disj = Some((term.clone(), args.clone())) ;
+            break
+          }
+        }
+        if let Some((disj, mut kids)) = disj {
+          log_debug!{
+            "splitting clause {}", clause.to_string_info(& self.preds) ?
+          }
+          let _was_there = clause.lhs_terms.remove(& disj) ;
+          debug_assert!(_was_there) ;
+          if let Some(kid) = kids.pop() {
+            for kid in kids {
+              let mut clause = clause.clone() ;
+              clause.insert_term(kid) ;
+              nu_clauses.push(clause)
+            }
+            clause.insert_term(kid) ;
+          } else {
+            bail!("illegal empty disjunction")
+          }
+        }
+      }
+
+      if ! nu_clauses.is_empty() {
+        changed = true ;
+        red_info.clauses_added += nu_clauses.len() ;
+        for clause in nu_clauses.drain(0..) {
+          self.push_clause(clause) ?
+        }
+      }
+
+      self.check("during clause simplification") ?
     }
 
-    Ok(rmed)
+
+    Ok(red_info)
   }
 
   /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self) -> HConSet<RTerm> {
-    let mut set = HConSet::new() ;
+  pub fn qualifiers(& self, quals: & mut Quals) {
     for clause in & self.clauses {
-      self.qualifiers_of_clause(clause, & mut set)
+      self.qualifiers_of_clause(clause, quals)
     }
-    set
   }
 
   /// Extracts some qualifiers from a clause.
@@ -939,11 +1063,8 @@ impl Instance {
   /// - write an explanation of what actually happens
   /// - and some tests, probably
   pub fn qualifiers_of_clause(
-    & self, clause: & Clause, quals: & mut HConSet<RTerm>
+    & self, clause: & Clause, quals: & mut Quals
   ) {
-    // println!(
-    //   "looking at clause {}", clause.to_string_info(self.preds()).unwrap()
-    // ) ;
 
     // Extraction of the variables map based on the way the predicates are
     // used.
@@ -969,17 +1090,16 @@ impl Instance {
             let mut to_add = vec![] ;
             for map in & mut these_maps {
               if map.contains_key(& clause_var_index) {
-                // Current clause variable is already bound in this map,
-                // clone it, change the binding, and remember to add it
-                // later.
+                // Current clause variable is already bound in this map, clone
+                // it, change the binding, and remember to add it later.
                 let mut map = map.clone() ;
                 let _ = map.insert(
                   clause_var_index, term::var(pred_var_index)
                 ) ;
                 to_add.push(map)
               } else {
-                // Current clause variable not bound in this map, just add
-                // the new binding.
+                // Current clause variable not bound in this map, just add the
+                // new binding.
                 let _ = map.insert(
                   clause_var_index, term::var(pred_var_index)
                 ) ;
@@ -993,7 +1113,7 @@ impl Instance {
         for map in these_maps {
           // Push if non-empty.
           if ! map.is_empty() {
-            maps.push(map)
+            maps.push( (map) )
           }
         }
       }
@@ -1009,15 +1129,34 @@ impl Instance {
     // }
     // println!("}} quals {{") ;
 
+    // Build the conjunction of atoms.
+    let mut conjs = vec![
+      ( HConSet::with_capacity( clause.lhs_terms.len() + 1 ), 0.into() ) ;
+      maps.len()
+    ] ;
+
+    // let mut max_arity: Arity = 0.into() ;
+
+    let rhs = clause.rhs().term() ;
     // Now look for atoms and try to apply the mappings above.
     for term in clause.lhs_terms.iter().chain( clause.rhs().term() ) {
+      let push = rhs.is_none() || rhs == Some(& term) ;
 
+      let mut cnt = 0 ;
       for map in & maps {
         if let Some( (term, true) ) = term.subst_total(map) {
-          let term = if let Some(term) = term.rm_neg() {
-            term
-          } else { term } ;
-          let _ = quals.insert(term) ;
+          if let Some(max_var) = term.highest_var() {
+            let arity: Arity = (1 + * max_var).into() ;
+            if push {
+              conjs[cnt].0.insert( term.clone() ) ;
+              if arity > conjs[cnt].1 { conjs[cnt].1 = arity }
+            }
+            cnt += 1 ;
+            let term = if let Some(term) = term.rm_neg() {
+              term
+            } else { term } ;
+            quals.insert(arity, term)
+          }
         }
         // else if let Some(kids) = term.kids() {
         //   for kid in kids {
@@ -1035,6 +1174,12 @@ impl Instance {
       }
 
     }
+
+    for (conj, max_arity) in conjs {
+      if conj.len() > 1 {
+        quals.insert( max_arity, term::and( conj.into_iter().collect() ) )
+      }
+    }
     // println!("}}")
 
   }
@@ -1042,8 +1187,8 @@ impl Instance {
   /// Turns a teacher counterexample into learning data.
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: Cexs
-  ) -> Res<()> {
-
+  ) -> Res<bool> {
+    let mut nu_stuff = false ;
     for (clause, cex) in cexs.into_iter() {
       log_debug!{ "    working on clause {}...", clause }
       let clause = & self[clause] ;
@@ -1083,7 +1228,10 @@ impl Instance {
       log_debug!{ "    working on rhs..." }
       let consequent = match * clause.rhs() {
         TTerm::P { pred, ref args } => {
-          log_debug!{ "        pred: {} / {} ({})", pred, self.preds.len(), self.pred_terms.len() }
+          log_debug!{
+            "        pred: {} / {} ({})",
+            pred, self.preds.len(), self.pred_terms.len()
+          }
           let mut values = VarMap::with_capacity( args.len() ) ;
           'pred_args: for arg in args {
             values.push(
@@ -1106,14 +1254,21 @@ impl Instance {
         ),
         (1, None) => {
           let (pred, args) = antecedents.pop().unwrap() ;
-          data.stage_raw_neg(pred, args) ?
+          let new = data.stage_raw_neg(pred, args) ? ;
+          nu_stuff = nu_stuff || new
         },
-        (0, Some( (pred, args) )) => data.stage_raw_pos(pred, args) ?,
-        (_, consequent) => data.add_cstr(antecedents, consequent) ?,
+        (0, Some( (pred, args) )) => {
+          let new = data.stage_raw_pos(pred, args) ? ;
+          nu_stuff = nu_stuff || new
+        },
+        (_, consequent) => {
+          let new = data.add_cstr(antecedents, consequent) ? ;
+          nu_stuff = nu_stuff || new
+        },
       }
     }
 
-    Ok(())
+    Ok(nu_stuff)
   }
 
 
@@ -1189,6 +1344,12 @@ impl Instance {
 
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       'pred_clauses: for clause in lhs {
+        if * clause >= self.clauses.len() {
+          bail!(
+            "predicate {} is registered as appearing in lhs of clause {} \
+            which is above the maximal clause index", self[pred], clause
+          )
+        }
         if self.clauses[* clause].lhs_preds.get(& pred).is_none() {
           bail!(
             "predicate {} is registered as appearing in lhs of clause {} \
@@ -1204,6 +1365,12 @@ impl Instance {
         }
       }
       for clause in rhs {
+        if * clause >= self.clauses.len() {
+          bail!(
+            "predicate {} is registered as appearing in rhs of clause {} \
+            which is above the maximal clause index", self[pred], clause
+          )
+        }
         if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
           if this_pred == pred {
             continue
@@ -1248,7 +1415,7 @@ impl Instance {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
 
-      self.force_pred( pred, fls.clone() ) ? ;
+      self.force_pred( pred, None, fls.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
       clauses_dropped += clause_lhs.len() ;
@@ -1292,7 +1459,7 @@ impl Instance {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
 
-      self.force_pred( pred, tru.clone() ) ? ;
+      self.force_pred( pred, None, tru.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
       for clause in clause_lhs.drain() {
@@ -1316,7 +1483,7 @@ impl Instance {
     while ! fixed_point {
       fixed_point = true ;
       for pred in PrdRange::zero_to( self.preds.len() ) {
-        if self.pred_terms[pred].is_none() {
+        if ! self.is_known(pred) {
           if self.pred_to_clauses[pred].1.is_empty() {
             info.preds += 1 ;
             fixed_point = false ;
@@ -1337,12 +1504,12 @@ impl Instance {
 
   /// Forces some predicates to be something.
   pub fn force_preds<Preds: IntoIterator<
-    Item = (PrdIdx, TTerms)
+    Item = (PrdIdx, Option<Qualfed>, TTerms)
   >>(
     & mut self, preds: Preds
   ) -> Res<RedInfo> {
     let (mut clause_lhs, mut clause_rhs) = (ClsSet::new(), ClsSet::new()) ;
-    let mut terms_to_add = vec![] ;
+    // let mut terms_to_add = vec![] ;
     let mut clauses_to_rm = ClsSet::new() ;
     let mut clauses_rmed = 0 ;
     // We need to add clauses when forcing a predicate to be a disjunction.
@@ -1351,7 +1518,7 @@ impl Instance {
 
     log_debug!{ "  force preds..." }
 
-    for (pred, tterms) in preds.into_iter() {
+    for (pred, quals, tterms) in preds.into_iter() {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
       debug_assert!( clauses_to_add.is_empty() ) ;
@@ -1361,124 +1528,142 @@ impl Instance {
 
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
-      // LHS.
-      'clause_iter_lhs: for clause in clause_lhs.drain() {
-        debug_assert!( terms_to_add.is_empty() ) ;
-        
-        if clauses_to_rm.contains(& clause) { continue 'clause_iter_lhs }
+      {
+        let quals = quals.as_ref() ;
 
-        // log_debug!{ "    working on lhs of clause #{}", clause }
+        // LHS.
+        'clause_iter_lhs: for clause in clause_lhs.drain() {
+          // debug_assert!( terms_to_add.is_empty() ) ;
+          
+          if clauses_to_rm.contains(& clause) { continue 'clause_iter_lhs }
 
-        if let Some(argss) = self.clauses[clause].lhs_preds.remove(& pred) {
-          for args in argss {
+          // log_debug!{ "    working on lhs of clause #{}", clause }
 
-            match tterms.subst_total(& args)?.simplify() {
-              TTerms::True => (),
-              TTerms::False => {
-                terms_to_add.clear() ;
-                clauses_to_rm.insert(clause) ;
-                continue 'clause_iter_lhs
-              },
-              TTerms::And(tterms) => {
-                // log_debug!{ "    extending..." }
-                // for tterm in & tterms {
-                //   log_debug!{ "    - {}", tterm }
-                // }
-                self.clause_lhs_extend(clause, tterms)
-              },
-              TTerms::Dnf(mut ttermss) => {
-                // Need to create new clauses.
-                if let Some(tterms) = ttermss.pop() {
-                  self.clause_lhs_extend(clause, tterms) ;
-                  // terms_to_add.extend( ttermss ) ;
-                  unimplemented!("clause creation when forcing lhs to dnf")
+          if let Some(argss) = self.clauses[clause].lhs_preds.remove(& pred) {
+            for args in argss {
 
-                } else {
-                  bail!("empty tterms dnf should not happen")
-                }
-              },
+              match if let Some(quals) = quals {
+                let qual_map = self.clauses[clause].fresh_vars_for(quals) ;
+                tterms.subst_total( & (& args, qual_map) ) ?
+              } else {
+                tterms.subst_total(& args) ?
+              } {
+                TTerms::True => (),
+                TTerms::False => {
+                  // terms_to_add.clear() ;
+                  clauses_to_rm.insert(clause) ;
+                  continue 'clause_iter_lhs
+                },
+                TTerms::And(tterms) => {
+                  // log_debug!{ "    extending..." }
+                  // for tterm in & tterms {
+                  //   log_debug!{ "    - {}", tterm }
+                  // }
+                  self.clause_lhs_extend(clause, tterms)
+                },
+                TTerms::Or(mut _tterms) => {
+                  unimplemented!("disjunction of top terms in `force_preds`")
+                },
+              }
             }
+          } else {
+            bail!(
+              "inconsistent instance state, \
+              `pred_to_clauses` and clauses out of sync"
+            )
           }
-        } else {
-          bail!(
-            "inconsistent instance state, \
-            `pred_to_clauses` and clauses out of sync"
-          )
+
+          // self.clauses[clause].lhs.extend( terms_to_add.drain(0..) ) ;
+
+          log_debug!{ "forced pred in a clause: {}", self.clauses[clause].to_string_info(& self.preds).unwrap() }
+
+          let remove = self.simplifier.clause_propagate(
+            & mut self.clauses[clause]
+          ).chain_err(
+            || format!(
+              "on clause {}",
+              self.clauses[clause].to_string_info(& self.preds).unwrap()
+            )
+          ) ? ;
+          if remove { clauses_to_rm.insert(clause) ; () }
+
         }
-
-        // self.clauses[clause].lhs.extend( terms_to_add.drain(0..) ) ;
-
-        let remove = self.simplifier.clause_propagate(
-          & mut self.clauses[clause]
-        ).chain_err(
-          || format!(
-            "on clause {}",
-            self.clauses[clause].to_string_info(& self.preds).unwrap()
-          )
-        ) ? ;
-        if remove { clauses_to_rm.insert(clause) ; () }
-
       }
 
-      // RHS.
-      'clause_iter_rhs: for clause in clause_rhs.drain() {
-        // log_debug!{ "    rhs..." }
+      if quals.is_some() {
+        debug_assert!( clause_rhs.is_empty() )
+      } else {
 
-        if clauses_to_rm.contains(& clause) { continue 'clause_iter_rhs }
+        // RHS.
+        'clause_iter_rhs: for clause in clause_rhs.drain() {
+          // log_debug!{ "    rhs..." }
 
-        debug_assert!( terms_to_add.is_empty() ) ;
+          if clauses_to_rm.contains(& clause) { continue 'clause_iter_rhs }
 
-        let tterms = if let TTerm::P {
-          pred: _this_pred, ref args
-        } = self[clause].rhs {
-          debug_assert_eq!( _this_pred, pred ) ;
-          tterms.subst_total(args)?.simplify()
-        } else {
-          bail!("inconsistent instance")
-        } ;
+          // debug_assert!( terms_to_add.is_empty() ) ;
 
-        match tterms {
-          TTerms::True => {
-            clauses_to_rm.insert(clause) ;
-            continue 'clause_iter_rhs
-          },
-          TTerms::False => {
-            self.clauses[clause].rhs = TTerm::T( term::fls() )
-          },
-          TTerms::And(mut tterms) => {
-            // Need to create more clauses.
-            if let Some(tterm) = tterms.pop() {
-              self.clauses[clause].rhs = tterm ;
-              terms_to_add.extend( tterms )
-            } else {
-              bail!("illegal empty conjunction of top terms")
-            }
-          },
-          TTerms::Dnf(_) => bail!(
-            "trying to force a rhs to a dnf"
-          ),
-        }
+          let tterms = if let TTerm::P {
+            pred: _this_pred, ref args
+          } = self[clause].rhs {
+            debug_assert_eq!( _this_pred, pred ) ;
+            tterms.subst_total(args) ?
+          } else {
+            bail!("inconsistent instance")
+          } ;
 
-        let mut tterms = terms_to_add.drain(0..) ;
-        if let Some(tterm) = tterms.next() {
-          if let Some(pred) = tterm.pred() {
-            self.pred_to_clauses[pred].1.insert(clause) ;
+          match tterms {
+            TTerms::True => {
+              clauses_to_rm.insert(clause) ;
+              continue 'clause_iter_rhs
+            },
+            TTerms::False => {
+              self.clauses[clause].rhs = TTerm::T( term::fls() )
+            },
+            TTerms::And(tterms) => {
+              debug_assert!( ! tterms.is_empty() ) ;
+              let mut tterms = tterms.into_iter() ;
+              while let Some(tterm) = tterms.next() {
+                match tterm.bool() {
+                  Some(true) => {
+                    clauses_to_rm.insert(clause) ;
+                  },
+                  Some(false) => {
+                    self.clause_rhs_force(
+                      clause, TTerm::T( term::fls() )
+                    ) ;
+                    break
+                  },
+                  None => {
+                    self.clause_rhs_force(
+                      clause, tterm
+                    ) ;
+                    break
+                  },
+                }
+              }
+              for tterm in tterms {
+                let tterm = match tterm.bool() {
+                  Some(true) => continue,
+                  Some(false) => TTerm::T( term::fls() ),
+                  None => tterm,
+                } ;
+                let clause = self.clauses[clause].clone_with_rhs(tterm) ;
+                clauses_to_add.push(clause)
+                // self.push_clause(clause) ?
+              }
+            },
+            TTerms::Or(_) => bail!(
+              "trying to force a rhs to a dnf"
+            ),
           }
-          debug_assert_eq!{
-            self.clauses[clause].rhs.pred(), Some(pred)
-          }
-          self.clauses[clause].rhs = tterm ;
-          for tterm in tterms {
-            let clause = self.clauses[clause].clone_with_rhs(tterm) ;
-            clauses_to_add.push(clause)
-            // self.push_clause(clause) ?
-          }
+
         }
 
       }
 
       if ! tterms.mention_pred(pred) {
-        self.force_pred(pred, tterms) ?
+        log_debug!{ "    forcing {}", self[pred] }
+        self.force_pred(pred, quals, tterms) ?
       }
       clauses_rmed += clauses_to_rm.len() ;
       self.forget_clauses( clauses_to_rm.drain().collect() ) ? ;
@@ -1490,7 +1675,87 @@ impl Instance {
 
     let mut info: RedInfo = (0, clauses_rmed, clauses_added).into() ;
     info += self.force_trivial() ? ;
+    info += self.simplify_clauses() ? ;
     Ok( info )
+  }
+
+  /// Dumps the instance as an SMT-LIB 2 problem.
+  pub fn dump_as_smt2<File, Blah>(
+    & self, w: & mut File, blah: Blah
+  ) -> Res<()>
+  where File: Write, Blah: AsRef<str> {
+    use common::consts::keywords ;
+    let blah = blah.as_ref() ;
+
+    for line in blah.lines() {
+      write!(w, "; {}\n", line) ?
+    }
+    write!(w, "\n") ? ;
+
+    for (pred_idx, pred) in self.preds.index_iter() {
+      if self.pred_terms[pred_idx].is_none()
+      && self.pred_qterms[pred_idx].is_none() {
+        write!(
+          w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
+        ) ? ;
+        for typ in & pred.sig {
+          write!(w, " {}", typ) ?
+        }
+        write!(w, " ) Bool\n)\n") ?
+      }
+    }
+
+    for (idx, clause) in self.clauses.index_iter() {
+      write!(w, "\n; Clause #{}\n", idx) ? ;
+      clause.write(
+        w, |w, p, args| {
+          write!(w, "(") ? ;
+          w.write_all( self[p].name.as_bytes() ) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
+          }
+          write!(w, ")")
+        }
+      ) ? ;
+      write!(w, "\n\n") ?
+    }
+
+    write!(w, "\n(check-sat)\n") ? ;
+
+    Ok(())
+  }
+
+  /// Writes a model.
+  pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
+    writeln!(w, "(model") ? ;
+    for & (ref pred, ref qvars, ref tterms) in model {
+      let pred_info = & self[* pred] ;
+      writeln!(
+        w, "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
+      ) ? ;
+      write!(w, "    (")  ?;
+      for (var, typ) in pred_info.sig.index_iter() {
+        write!(w, " ({} {})", term::var(var), typ) ?
+      }
+      writeln!(w, " ) {}", Typ::Bool) ? ;
+      let (ident, closing) = if let Some(ref qvars) = * qvars {
+        writeln!(w, "    (exists") ? ;
+        writeln!(w, "      (") ? ;
+        for (var, typ) in qvars {
+          write!(w, " ({} {})", var.default_str(), typ) ?
+        }
+        writeln!(w, " )") ? ;
+        ("      ", "\n    )")
+      } else {
+        ("    ", "")
+      } ;
+      write!(w, "{}", ident) ? ;
+      self.print_tterms_as_model(w, tterms) ? ;
+      writeln!(w, "{}\n  )", closing) ?
+    }
+    writeln!(w, ")") ? ;
+    Ok(())
   }
 }
 impl ::std::ops::Index<ClsIdx> for Instance {
@@ -1563,7 +1828,8 @@ impl<'a> PebcakFmt<'a> for Instance {
     use common::consts::keywords ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
-      if self.pred_terms[pred_idx].is_none() {
+      if self.pred_terms[pred_idx].is_none()
+      && self.pred_qterms[pred_idx].is_none() {
         write!(
           w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
         ) ? ;
@@ -1574,9 +1840,29 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
     }
 
+    use rsmt2::to_smt::Expr2Smt ;
+    let empty_prd_set = PrdSet::new() ;
     if self.sorted_pred_terms.is_empty() {
       // Either there's no forced predicate, or we are printing before
       // finalizing.
+      for (pred, & (ref quals, ref tterms)) in self.pred_qterms.index_iter().filter_map(
+        |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
+      ) {
+        write!(w, "({} {}\n  (", keywords::prd_def, self[pred]) ? ;
+        for (var, typ) in self[pred].sig.index_iter() {
+          write!(w, " (v_{} {})", var, typ) ?
+        }
+        write!(w, " ) Bool\n") ? ;
+        write!(w, "  (exists (") ? ;
+        for (var, typ) in quals {
+          write!(w, " ({} {})", var.default_str(), typ) ?
+        }
+        write!(w, " )\n    ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
+        write!(w,"  )\n)\n") ?
+      }
       for (pred, tterms) in self.pred_terms.index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
       ) {
@@ -1584,7 +1870,11 @@ impl<'a> PebcakFmt<'a> for Instance {
         for (var, typ) in self[pred].sig.index_iter() {
           write!(w, " (v_{} {})", var, typ) ?
         }
-        write!(w, " ) Bool\n  {}\n)\n", tterms) ?
+        write!(w, " ) Bool\n  ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
+        write!(w, "\n)\n") ?
       }
     } else {
       for pred in & self.sorted_pred_terms {
@@ -1593,7 +1883,11 @@ impl<'a> PebcakFmt<'a> for Instance {
           write!(w, " (v_{} {})", var, typ) ?
         }
         let tterms = self.pred_terms[* pred].as_ref().unwrap() ;
-        write!(w, " ) Bool\n  {}\n)\n", tterms) ?
+        write!(w, " ) Bool\n  ") ? ;
+        tterms.expr_to_smt2(
+          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
+        ).unwrap() ;
+        write!(w, "\n)\n", ) ?
       }
     }
 
@@ -1618,11 +1912,6 @@ impl<'a> PebcakFmt<'a> for Instance {
     Ok(())
   }
 }
-
-
-
-
-
 
 /// Simplifies clauses.
 ///
@@ -1791,7 +2080,7 @@ impl ClauseSimplifier {
       }
     }
 
-    for eq in self.eqs.drain(0..) {
+    while let Some(eq) = self.eqs.pop() {
       remove = true ;
       log_debug!{ "  looking at equality {}", eq }
 
@@ -1896,7 +2185,35 @@ impl ClauseSimplifier {
           }
         },
 
-        (None, None) => remove = false,
+        // Two terms.
+        (None, None) => {
+          let inline = if clause.lhs_terms.contains(& args[0]) {
+            Some( args[1].clone() )
+          } else if clause.lhs_terms.contains(& args[1]) {
+            Some( args[0].clone() )
+          } else {
+            let not_lhs = term::not( args[0].clone() ) ;
+            let not_rhs = term::not( args[1].clone() ) ;
+            if clause.lhs_terms.contains(& not_lhs) {
+              Some(not_rhs)
+            } else if clause.lhs_terms.contains(& not_rhs) {
+              Some(not_lhs)
+            } else {
+              None
+            }
+          } ;
+          if let Some(term) = inline {
+            clause.insert_term( term.clone() ) ;
+            remove = true ;
+            if term.is_eq() {
+              self.eqs.push(term)
+            } else {
+              self.terms_to_add.push(term)
+            }
+          } else {
+            remove = false
+          }
+        },
 
       }
 

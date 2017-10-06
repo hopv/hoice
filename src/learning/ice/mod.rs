@@ -92,6 +92,8 @@ pub struct IceLearner<'core, Slver> {
   candidate: PrdMap< Option<Term> >,
   /// Activation literal counter.
   actlit: usize,
+  /// Set storing new qualifiers during synthesis (avoids allocation).
+  new_quals: Quals,
   /// Profiler.
   _profiler: Profiler,
 }
@@ -107,16 +109,21 @@ where Slver: Solver<'kid, Parser> {
     let qualifiers = Qualifiers::new(& * instance).chain_err(
       || "while creating qualifier structure"
     ) ? ;
+    let mut new_quals = Quals::with_capacity(
+      qualifiers.qualifiers().len()
+    ) ;
+    for map in qualifiers.qualifiers() {
+      new_quals.push( HConMap::with_capacity( map.len() ) )
+    }
     profile!{ |_profiler| mark "mining" }
-    // println!("done mining for qualifiers") ;
-    // println!("") ;
-    // println!("qualifiers:") ;
-    // for qualifiers in qualifiers.qualifiers() {
-    //   for qual in qualifiers {
-    //     println!("  {}", qual.qual)
-    //   }
-    //   println!("")
-    // }
+    if_verb!{
+      log_info!{ "qualifiers:" } ;
+      for quals in qualifiers.qualifiers() {
+        for (qual, _) in quals {
+          log_info!("- {}", qual)
+        }
+      }
+    }
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
@@ -127,7 +134,9 @@ where Slver: Solver<'kid, Parser> {
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
-        dec_mem, candidate, actlit: 0, _profiler,
+        dec_mem, candidate, actlit: 0,
+        new_quals,
+        _profiler,
       }
     )
   }
@@ -266,13 +275,13 @@ where Slver: Solver<'kid, Parser> {
       // msg!{
       //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
       // } ;
-      if self.instance.forced_terms_of(pred).is_some() {
+      if self.instance.is_known(pred) {
         continue
       }
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
-      if pos_len == 0 {
+      if pos_len == 0 && neg_len > 0 {
         msg!( self => "legal_pred (1)" ) ;
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
@@ -289,7 +298,7 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
-      if neg_len == 0 {
+      if neg_len == 0 && pos_len > 0 {
         msg!( self => "legal_pred (2)" ) ;
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {
@@ -524,7 +533,9 @@ where Slver: Solver<'kid, Parser> {
 
   /// Gets the best qualifier if any, parallel version using `rayon`.
   pub fn get_best_qualifier_para<
-    'a, I: ::rayon::iter::IntoParallelIterator<Item = & 'a mut QualValues>
+    'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
+      Item = (Key, & 'a mut QualValues)
+    >
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -535,7 +546,7 @@ where Slver: Solver<'kid, Parser> {
     profile!{ |_profiler| tick "learning", "qual", "// gain" }
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
-      |values| match data.gain(pred, all_data, values) {
+      |(_, values)| match data.gain(pred, all_data, values) {
         Ok( Some((gain, _, _)) ) => Ok( Some( (gain, values) ) ),
         Ok( None ) => Ok(None),
         Err(e) => Err(e),
@@ -588,7 +599,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Gets the best qualifier if any, sequential version.
   pub fn get_best_qualifier_seq<
-    'a, I: IntoIterator<Item = & 'a mut QualValues>
+    'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -596,7 +607,7 @@ where Slver: Solver<'kid, Parser> {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
-    'search_qual: for values in quals {
+    'search_qual: for (_, values) in quals {
       if let Some(
         (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
       ) = data.gain(pred, all_data, values) ? {
@@ -616,7 +627,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Gets the best qualifier if any.
   pub fn get_best_qualifier<
-    'a, I: IntoIterator<Item = & 'a mut QualValues>
+    'a, Key: Send, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -701,26 +712,29 @@ where Slver: Solver<'kid, Parser> {
     //   msg!{ self => msg } ;
     // }
 
+    if_not_bench!{
+      for map in & self.new_quals {
+        debug_assert!( map.is_empty() )
+      }
+    }
+
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    let mut new_quals: Vec<QualValues> = if conf.ice.fpice_synth {
-      let mut quals = HConSet::new() ;
+    if conf.ice.fpice_synth {
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
       for sample in & data.pos {
-        Self::synthesize(sample, & mut quals)
+        self.synthesize(sample)
       }
       for sample in & data.neg {
-        Self::synthesize(sample, & mut quals)
+        self.synthesize(sample)
       }
       for sample in & data.unc {
-        Self::synthesize(sample, & mut quals)
+        self.synthesize(sample)
       }
 
-      profile!{ self "qualifier synthesized" => add quals.len() }
-
-      quals.into_iter().map(QualValues::new).collect()
+      profile!{ self "qualifier synthesized" => add self.new_quals.len() }
     } else {
       let qual = match (
         data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
@@ -747,13 +761,21 @@ where Slver: Solver<'kid, Parser> {
         ),
       } ;
       profile!{ self "qualifier synthesized" => add 1 }
-      vec![ QualValues::new(qual) ]
+      let arity: Arity = if let Some(max_var) = qual.highest_var() {
+        (1 + * max_var).into()
+      } else {
+        bail!("[bug] trying to add constant qualifier")
+      } ;
+      self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
     } ;
     profile!{ self mark "learning", "qual", "synthesis" }
 
     
     let res = if let Some( (_gain, values) ) = Self::get_best_qualifier(
-      & self._profiler, & self.data, pred, & data, new_quals.iter_mut(),
+      & self._profiler, & self.data, pred, & data,
+      self.new_quals.iter_mut().flat_map(
+        |map| map.iter_mut()
+      ),
       used_quals
     ) ? {
       let (q_data, nq_data) = data.split(values) ;
@@ -781,7 +803,7 @@ where Slver: Solver<'kid, Parser> {
       bail!("[bug] unable to split the data after synthesis...")
     } ;
 
-    self.qualifiers.add_qual_values(new_quals) ? ;
+    self.qualifiers.add_qual_values(& mut self.new_quals) ? ;
 
     res
 
@@ -985,14 +1007,15 @@ where Slver: Solver<'kid, Parser> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    sample: & HSample, set: & mut HConSet<RTerm>
+    & mut self, sample: & HSample
   ) -> () {
     let mut previous: Vec<(Term, _)> = Vec::with_capacity(
       sample.len()
     ) ;
 
-    for (var, val) in sample.index_iter() {
-      let var = term::var(var) ;
+    for (var_idx, val) in sample.index_iter() {
+      let arity: Arity = (1 + * var_idx).into() ;
+      let var = term::var(var_idx) ;
       let val = match * val {
         Val::B(_) => continue,
         Val::I(ref i) => i,
@@ -1000,34 +1023,40 @@ where Slver: Solver<'kid, Parser> {
       } ;
 
       let val_term = term::int( val.clone() ) ;
-      let _ = set.insert(
-        term::app( Op::Ge, vec![ var.clone(), val_term.clone() ] )
-      ) ;
-      let _ = set.insert(
-        term::app( Op::Le, vec![ var.clone(), val_term ] )
-      ) ;
+      let term = term::app( Op::Ge, vec![ var.clone(), val_term.clone() ] ) ;
+      if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+        self.new_quals.insert( arity, term )
+      }
+      let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
+      if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+        self.new_quals.insert( arity, term )
+      }
 
       for & (ref pre_var, pre_val) in & previous {
         let add = term::app(
           Op::Add, vec![ pre_var.clone(), var.clone() ]
         ) ;
         let add_val = term::int( pre_val + val ) ;
-        let _ = set.insert(
-          term::app( Op::Ge, vec![ add.clone(), add_val.clone() ] )
-        ) ;
-        let _ = set.insert(
-          term::app( Op::Le, vec![ add, add_val ] )
-        ) ;
+        let term = term::app( Op::Ge, vec![ add.clone(), add_val.clone() ] ) ;
+        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+          self.new_quals.insert( arity, term )
+        }
+        let term = term::app( Op::Le, vec![ add, add_val ] ) ;
+        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+          self.new_quals.insert( arity, term )
+        }
         let sub = term::app(
           Op::Sub, vec![ pre_var.clone(), var.clone() ]
         ) ;
         let sub_val = term::int( pre_val - val ) ;
-        let _ = set.insert(
-          term::app( Op::Ge, vec![ sub.clone(), sub_val.clone() ] )
-        ) ;
-        let _ = set.insert(
-          term::app( Op::Le, vec![ sub, sub_val ] )
-        ) ;
+        let term = term::app( Op::Ge, vec![ sub.clone(), sub_val.clone() ] ) ;
+        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+          self.new_quals.insert( arity, term )
+        }
+        let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
+        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
+          self.new_quals.insert( arity, term )
+        }
       }
 
       previous.push( (var, val) )
@@ -1356,7 +1385,7 @@ impl CData {
 
 
 
-/// Wrapper around an `f64` used to compute a the approximation of the ratio
+/// Wrapper around an `f64` used to compute an approximation of the ratio
 /// between legal positive classifications and negative ones, without actually
 /// splitting the data.
 ///

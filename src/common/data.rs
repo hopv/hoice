@@ -242,6 +242,11 @@ impl Data {
     self.new_samples.drain(0..).collect()
   }
 
+  /// True if there are new samples.
+  pub fn has_new_samples(& mut self) -> bool {
+    ! self.new_samples.is_empty()
+  }
+
   /// Remember a positive example to add.
   pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) {
     let _ = self.pos_to_add.entry(pred).or_insert_with(
@@ -652,46 +657,46 @@ impl Data {
     (args, is_new)
   }
 
-  /// Adds positive data after hash consing.
+  /// Adds positive data after hash consing. True if new.
   ///
   /// Stages propagation but does not run it.
   pub fn stage_raw_pos(
     & mut self, pred: PrdIdx, args: Args
-  ) -> Res<()> {
+  ) -> Res<bool> {
     let (args, is_new) = self.mk_sample(args) ;
     if is_new {
       let is_new = self.pos[pred].insert(args) ;
       debug_assert!( is_new ) ;
-      Ok(())
+      Ok(true)
     } else {
       if ! self.pos[pred].contains(& args) {
         self.stage_pos(pred, args)
       }
-      Ok(())
+      Ok(false)
     }
   }
 
-  /// Adds negative data after hash consing.
+  /// Adds negative data after hash consing. True if new.
   pub fn stage_raw_neg(
     & mut self, pred: PrdIdx, args: Args
-  ) -> Res<()> {
+  ) -> Res<bool> {
     let (args, is_new) = self.mk_sample(args) ;
     if is_new {
       let is_new = self.neg[pred].insert(args) ;
       debug_assert!( is_new ) ;
-      Ok(())
+      Ok(true)
     } else {
       if ! self.neg[pred].contains(& args) {
         self.stage_neg(pred, args) ;
       }
-      Ok(())
+      Ok(false)
     }
   }
 
   /// Adds a constraint. Propagates positive and negative samples.
   pub fn add_cstr(
     & mut self, lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
-  ) -> Res<()> {
+  ) -> Res<bool> {
     self.propagate() ? ;
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     'smpl_iter: for (pred, args) in lhs {
@@ -702,7 +707,7 @@ impl Data {
           continue 'smpl_iter
         } else if self.neg[pred].contains(& args) {
           // Sample known to be negative, constraint is a tautology.
-          return Ok(())
+          return Ok(false)
         }
       }
       // Neither pos or neg, memorizing.
@@ -713,7 +718,7 @@ impl Data {
       if ! is_new {
         if self.pos[pred].contains(& args) {
           // Sample known to be positive, constraint's a tautology.
-          return Ok(())
+          return Ok(false)
         } else if self.neg[pred].contains(& args) {
           // Sample known to be negative, constraint is a negative one.
           None
@@ -731,7 +736,9 @@ impl Data {
       if let Some( Sample { pred, args } ) = nu_rhs {
         self.stage_pos(pred, args) ;
         self.add_propagate_pos() ? ;
-        return Ok(())
+        // Necessarily new, otherwise we would know that the constraint is a
+        // tautology.
+        return Ok(true)
       } else {
         bail!(ErrorKind::Unsat)
       }
@@ -742,7 +749,9 @@ impl Data {
       ) ;
       self.stage_neg(pred, args) ;
       self.add_propagate_neg() ? ;
-      return Ok(())
+      // Necessarily new, otherwise we would know that the constraint is a
+      // tautology.
+      return Ok(true)
     }
 
     let cstr_index = self.constraints.next_index() ;
@@ -764,7 +773,7 @@ impl Data {
 
     self.constraints.push(cstr) ;
 
-    Ok(())
+    Ok(true)
   }
 
 

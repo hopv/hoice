@@ -23,6 +23,7 @@ extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;
 extern crate rayon ;
+extern crate either ;
 
 pub mod errors ;
 #[macro_use]
@@ -31,8 +32,10 @@ pub mod term ;
 pub mod instance ;
 pub mod teacher ;
 pub mod learning ;
-
 pub mod check ;
+
+#[cfg(test)]
+mod tests ;
 
 use common::* ;
 use instance::Instance ;
@@ -57,14 +60,16 @@ pub fn work() -> Res<()> {
       || format!("while opening input file `{}`", conf.emph(file_path))
     ) ? ;
 
-    read_and_work(file, true)
+    read_and_work(file, true, false) ? ;
+    Ok(())
 
   } else {
     // Reading from stdin.
 
     let stdin = ::std::io::stdin() ;
 
-    read_and_work(stdin, false)
+    read_and_work(stdin, false, false) ? ;
+    Ok(())
 
   }
 }
@@ -72,10 +77,18 @@ pub fn work() -> Res<()> {
 
 
 
-
-fn read_and_work<R: ::std::io::Read>(
-  reader: R, file_input: bool
-) -> Res<()> {
+/// Reads from a [Read][read]er.
+///
+/// The `file_input` flag indicates whether we're reading from a file. If true,
+/// parse errors will mention the line where the error occured.
+///
+/// The `stop_on_check` flag forces the function to return once the first check
+/// is complete. Only used in tests.
+///
+/// [read]: https://doc.rust-lang.org/std/io/trait.Read.html (Read trait)
+pub fn read_and_work<R: ::std::io::Read>(
+  reader: R, file_input: bool, stop_on_check: bool,
+) -> Res< (Option<Model>, Instance) > {
   use instance::parse::ItemRead ;
 
   let profiler = Profiler::new() ;
@@ -161,6 +174,9 @@ fn read_and_work<R: ::std::io::Read>(
             None
           }
         } ;
+        if stop_on_check {
+          return Ok( (model, instance) )
+        }
         if model.is_some() {
           println!("sat")
         } else {
@@ -174,29 +190,24 @@ fn read_and_work<R: ::std::io::Read>(
       // Print model if available.
       Parsed::GetModel => if let Some(ref model) = model {
         let stdout = & mut ::std::io::stdout() ;
-        println!("(model") ;
-        for & (ref pred, ref tterms) in model {
-          let pred_info = & instance[* pred] ;
-          println!(
-            "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
-          ) ;
-          print!(  "    (") ;
-          for (var, typ) in pred_info.sig.index_iter() {
-            print!(" ({} {})", term::var(var), typ)
-          }
-          println!(" ) {}", Typ::Bool) ;
-          print!(  "    ") ;
-          instance.print_tterms_as_model(stdout, tterms) ? ;
-          println!("\n  )")
-        }
-        println!(")")
+        instance.write_model(model, stdout) ?
       } else {
         bail!("no model available")
       },
 
       Parsed::Items => (),
 
-      Parsed::Eof => (),
+      Parsed::Reset => {
+        parser_cxt.reset() ;
+        instance = Instance::new() ;
+        model = None
+      },
+
+      Parsed::Eof => if stop_on_check {
+        bail!("reached <eof> without reading a check-sat...")
+      } else {
+        ()
+      },
 
       Parsed::Exit => break 'parse_work,
     }
@@ -204,7 +215,7 @@ fn read_and_work<R: ::std::io::Read>(
 
   print_stats(profiler) ;
 
-  Ok(())
+  Ok( (model, instance) )
 }
 
 

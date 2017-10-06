@@ -72,7 +72,7 @@ pub use self::val::Val ;
 
 
 /// Types.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Typ {
   /// Integers.
   Int,
@@ -133,9 +133,16 @@ impl RTerm {
     }
   }
   /// Returns the kid of conjunctions.
-  pub fn and_inspect(& self) -> Option<& Vec<Term>> {
+  pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::And, ref args } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kid of disjunctions.
+  pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Or, ref args } => Some(args),
       _ => None,
     }
   }
@@ -306,6 +313,13 @@ impl RTerm {
       RTerm::App { op: Op::Lt, .. } |
       RTerm::App { op: Op::Le, .. } => true,
       RTerm::App { op: Op::Not, ref args } => args[0].is_relation(),
+      _ => false,
+    }
+  }
+  /// Checks whether a term is an equality.
+  pub fn is_eq(& self) -> bool {
+    match * self {
+      RTerm::App { op: Op::Eql, .. } => true,
       _ => false,
     }
   }
@@ -755,8 +769,8 @@ pub enum TTerms {
   False,
   /// Conjunction.
   And( Vec<TTerm> ),
-  /// Dnf.
-  Dnf( Vec< Vec<TTerm> > ),
+  /// Disjunction.
+  Or( Vec<TTerm> ),
 }
 impl TTerms {
   /// True.
@@ -794,11 +808,9 @@ impl TTerms {
           if p == pred { return true }
         }
       },
-      TTerms::Dnf(ref ttermss) => for tterms in ttermss {
-        for tterm in tterms {
-          if let Some(p) = tterm.pred() {
-            if p == pred { return true }
-          }
+      TTerms::Or(ref tterms) => for tterm in tterms {
+        if let Some(p) = tterm.pred() {
+          if p == pred { return true }
         }
       },
       TTerms::True | TTerms::False => (),
@@ -820,64 +832,37 @@ impl TTerms {
   /// Constructor for a conjunction.
   #[inline]
   pub fn conj(mut tterms: Vec<TTerm>) -> Self {
-    if tterms.len() == 1 {
-      let tterm = tterms.pop().unwrap() ;
-      Self::of_tterm(tterm)
+    let mut cnt = 0 ;
+    while cnt < tterms.len() {
+      match tterms[cnt].bool() {
+        Some(true) => { tterms.swap_remove(cnt) ; },
+        Some(false) => return TTerms::fls(),
+        None => cnt += 1,
+      }
+    }
+    if tterms.is_empty() {
+      TTerms::tru()
     } else {
       TTerms::And(tterms)
     }
   }
   /// Constructor for a DNF.
   #[inline]
-  pub fn dnf(mut ttermss: Vec< Vec<TTerm> >) -> Self {
-    if ttermss.len() == 1 {
-      let tterms = ttermss.pop().unwrap() ;
-      Self::conj(tterms)
-    } else {
-      TTerms::Dnf(ttermss)
+  pub fn disj(mut tterms: Vec<TTerm>) -> Self {
+    let mut cnt = 0 ;
+    while cnt < tterms.len() {
+      match tterms[cnt].bool() {
+        Some(true) => return TTerms::tru(),
+        Some(false) => { tterms.swap_remove(cnt) ; },
+        None => cnt += 1,
+      }
     }
-  }
-
-  /// Simplifies some top terms.
-  pub fn simplify(& self) -> TTerms {
-    match * self {
-      TTerms::And(ref tterms) => {
-        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-        for tterm in tterms {
-          match tterm.bool() {
-            Some(true) => (),
-            Some(false) => return TTerms::fls(),
-            None => nu_tterms.push( tterm.clone() )
-          }
-        }
-        TTerms::conj(nu_tterms)
-      },
-      TTerms::Dnf(ref ttermss) => {
-        let mut nu_ttermss = Vec::with_capacity( ttermss.len() ) ;
-        'disj: for tterms in ttermss {
-          let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-          'conj: for tterm in tterms {
-            match tterm.bool() {
-              Some(true) => (),
-              Some(false) => continue 'disj,
-              None => nu_tterms.push( tterm.clone() )
-            }
-          }
-          if nu_tterms.is_empty() {
-            // Everything was true.
-            return Self::tru()
-          } else {
-            nu_ttermss.push(nu_tterms)
-          }
-        }
-        if nu_ttermss.is_empty() {
-          // Everything was false.
-          Self::fls()
-        } else {
-          TTerms::dnf(nu_ttermss)
-        }
-      },
-      _ => self.clone(),
+    if tterms.len() == 0 {
+      TTerms::fls()
+    } else if tterms.len() == 1 {
+      TTerms::And(tterms)
+    } else {
+      TTerms::Or(tterms)
     }
   }
 
@@ -888,10 +873,8 @@ impl TTerms {
       TTerms::And(ref tterms) => for tterm in tterms {
         if let Some(pred) = tterm.pred() { set.insert(pred) ; }
       },
-      TTerms::Dnf(ref ttermss) => for tterms in ttermss {
-        for tterm in tterms {
-          if let Some(pred) = tterm.pred() { set.insert(pred) ; }
-        }
+      TTerms::Or(ref tterms) => for tterm in tterms {
+        if let Some(pred) = tterm.pred() { set.insert(pred) ; }
       },
       _ => (),
     }
@@ -908,20 +891,36 @@ impl TTerms {
       TTerms::And(ref tterms) => {
         let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
         for tterm in tterms {
-          nu_tterms.push( tterm.subst_total(map) ? )
-        }
-        Ok( TTerms::conj(nu_tterms) )
-      },
-      TTerms::Dnf(ref ttermss) => {
-        let mut nu_ttermss = Vec::with_capacity( ttermss.len() ) ;
-        for tterms in ttermss {
-          let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-          for tterm in tterms {
-            nu_tterms.push( tterm.subst_total(map) ? )
+          let tterm = tterm.subst_total(map) ? ;
+          if let Some(b) = tterm.bool() {
+            if ! b { return Ok( Self::fls() ) }
+          } else {
+            nu_tterms.push(tterm)
           }
-          nu_ttermss.push(nu_tterms)
         }
-        Ok( TTerms::dnf(nu_ttermss) )
+        if nu_tterms.is_empty() {
+          Ok( TTerms::tru() )
+        } else {
+          Ok( TTerms::And(nu_tterms) )
+        }
+      },
+      TTerms::Or(ref tterms) => {
+        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+        for tterm in tterms {
+          let tterm = tterm.subst_total(map) ? ;
+          if let Some(b) = tterm.bool() {
+            if b { return Ok( Self::tru() ) }
+          } else {
+            nu_tterms.push( tterm )
+          }
+        }
+        if nu_tterms.len() == 0 {
+          Ok( TTerms::fls() )
+        } else if nu_tterms.len() == 1 {
+          Ok( TTerms::And(nu_tterms) )
+        } else {
+          Ok( TTerms::Or(nu_tterms) )
+        }
       },
       _ => Ok( self.clone() ),
     }
@@ -947,20 +946,11 @@ impl TTerms {
         }
         write!(w, ")")
       },
-      TTerms::Dnf(ref ttermss) => {
+      TTerms::Or(ref tterms) => {
         write!(w, "(or") ? ;
-        for tterms in ttermss {
+        for tterm in tterms {
           write!(w, " ") ? ;
-          if tterms.len() == 1 {
-            tterms[0].write(w, & write_var, & write_prd) ?
-          } else {
-            write!(w, "(and") ? ;
-            for tterm in tterms {
-              write!(w, " ") ? ;
-              tterm.write(w, & write_var, & write_prd) ?
-            }
-            write!(w, ")") ?
-          }
+          tterm.write(w, & write_var, & write_prd) ?
         }
         write!(w, ")")
       },
@@ -995,20 +985,11 @@ impl_fmt!{
         }
         write!(fmt, ")")
       },
-      TTerms::Dnf(ref ttermss) => {
+      TTerms::Or(ref tterms) => {
         write!(fmt, "(or") ? ;
-        for tterms in ttermss {
+        for tterm in tterms {
           write!(fmt, " ") ? ;
-          if tterms.len() == 1 {
-            tterms[0].fmt(fmt) ?
-          } else {
-            write!(fmt, "(and") ? ;
-            for tterm in tterms {
-              write!(fmt, " ") ? ;
-              tterm.fmt(fmt) ?
-            }
-            write!(fmt, ")") ?
-          }
+          tterm.fmt(fmt) ?
         }
         write!(fmt, ")")
       },
@@ -1141,14 +1122,22 @@ impl Op {
         }
       },
       Div => {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res / try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
+        if args.len() != 2 {
+          bail!("unexpected division over {} numbers", args.len())
         }
+        let den = try_val!( int args.pop().unwrap() ) ;
+        let num = try_val!( int args.pop().unwrap() ) ;
+        if den.is_zero() {
+          bail!("denominator is zero...")
+        }
+        let mut res = & num / & den ;
+        use num::Signed ;
+        if num.is_positive() ^ den.is_positive() {
+          if den * & res != num {
+            res = res - 1
+          }
+        }
+        Ok( Val::I(res) )
       },
       Mod => if args.len() != 2 {
         bail!(

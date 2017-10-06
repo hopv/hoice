@@ -2,11 +2,12 @@
 
 use common::* ;
 use term::Op ;
+use term::int ;
 
 #[test]
 fn cst_add() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let sum = term::app( Op::Add, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -16,8 +17,8 @@ fn cst_add() {
 
 #[test]
 fn cst_sub_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let sub = term::app( Op::Sub, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -27,7 +28,7 @@ fn cst_sub_1() {
 
 #[test]
 fn cst_sub_2() {
-  let c_1 = term::int(7) ;
+  let c_1 = int(7) ;
   let sub = term::app( Op::Sub, vec![ c_1 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -37,8 +38,8 @@ fn cst_sub_2() {
 
 #[test]
 fn cst_mul() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let mul = term::app( Op::Mul, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -48,8 +49,8 @@ fn cst_mul() {
 
 #[test]
 fn cst_div() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let div = term::app( Op::Div, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -59,8 +60,8 @@ fn cst_div() {
 
 #[test]
 fn cst_mod() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let m0d = term::app( Op::Mod, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -70,8 +71,8 @@ fn cst_mod() {
 
 #[test]
 fn cst_gt_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let gt = term::app( Op::Gt, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -81,8 +82,8 @@ fn cst_gt_1() {
 
 #[test]
 fn cst_gt_2() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(7) ;
+  let c_1 = int(7) ;
+  let c_2 = int(7) ;
   let gt = term::app( Op::Gt, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -92,8 +93,8 @@ fn cst_gt_2() {
 
 #[test]
 fn cst_ge_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let ge = term::app( Op::Ge, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -103,8 +104,8 @@ fn cst_ge_1() {
 
 #[test]
 fn cst_ge_2() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(7) ;
+  let c_1 = int(7) ;
+  let c_2 = int(7) ;
   let ge = term::app( Op::Ge, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -114,8 +115,8 @@ fn cst_ge_2() {
 
 #[test]
 fn cst_le_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let le = term::app( Op::Le, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -125,8 +126,8 @@ fn cst_le_1() {
 
 #[test]
 fn cst_le_2() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(7) ;
+  let c_1 = int(7) ;
+  let c_2 = int(7) ;
   let le = term::app( Op::Le, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -136,8 +137,8 @@ fn cst_le_2() {
 
 #[test]
 fn cst_lt_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let lt = term::app( Op::Lt, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -147,8 +148,8 @@ fn cst_lt_1() {
 
 #[test]
 fn cst_lt_2() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(7) ;
+  let c_1 = int(7) ;
+  let c_2 = int(7) ;
   let lt = term::app( Op::Lt, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -158,8 +159,8 @@ fn cst_lt_2() {
 
 #[test]
 fn cst_eq_1() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(7) ;
+  let c_1 = int(7) ;
+  let c_2 = int(7) ;
   let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -169,8 +170,8 @@ fn cst_eq_1() {
 
 #[test]
 fn cst_eq_2() {
-  let c_1 = term::int(7) ;
-  let c_2 = term::int(3) ;
+  let c_1 = int(7) ;
+  let c_2 = int(3) ;
   let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
@@ -394,8 +395,8 @@ fn models() {
   // (7 - v_2) + (v_2 * 2) + (- v_3)
   let lhs = term::app(
     Op::Add, vec![
-      term::app( Op::Sub, vec![ term::int(7), v_2.clone() ] ),
-      term::app( Op::Mul, vec![ v_2.clone(), term::int(2) ] ),
+      term::app( Op::Sub, vec![ int(7), v_2.clone() ] ),
+      term::app( Op::Mul, vec![ v_2.clone(), int(2) ] ),
       term::app( Op::Sub, vec![ v_3.clone() ] ),
     ]
   ) ;
@@ -404,7 +405,7 @@ fn models() {
 
   // v_3 * 3
   let rhs = term::app(
-    Op::Mul, vec![ v_3.clone(), term::int(3) ]
+    Op::Mul, vec![ v_3.clone(), int(3) ]
   ) ;
   assert_eval!(int model_1 => rhs, 9) ;
   assert_eval!(int model_2 => rhs, 0) ;
@@ -424,4 +425,165 @@ fn models() {
   assert_eval!(bool     model_2 => and) ;
 
   ()
+}
+
+
+
+
+
+use term::{ tru, fls } ;
+
+
+macro_rules! eq {
+  ($(> $lhs:expr, $rhs:expr);* $(;)*) => ({
+    $( assert_eq!($lhs, $rhs) ; )*
+  }) ;
+}
+
+fn var() -> Term { term::var(0) }
+
+#[test]
+fn and_simplify() {
+  eq!{
+    > term::and( vec![ var() ] ),
+      var() ;
+    > term::and( vec![ tru(), var(), tru() ] ),
+      var() ;
+    > term::and( vec![ tru(), fls(), var() ] ),
+      fls() ;
+    > term::and( vec![] ),
+      tru() ;
+    > term::and( vec![
+        tru(),
+        term::eq( var(), var() ),
+      ] ),
+      tru() ;
+  }
+}
+
+#[test]
+fn or_simplify() {
+  eq!{
+    > term::or( vec![ var() ] ),
+      var() ;
+    > term::or( vec![ fls(), var(), fls() ] ),
+      var() ;
+    > term::or( vec![ fls(), tru(), var() ] ),
+      tru() ;
+    > term::or( vec![] ),
+      fls() ;
+    > term::or( vec![
+        fls(),
+        term::eq( var(), var() ),
+      ] ),
+      tru() ;
+  }
+}
+
+#[test]
+fn ge_simplify() {
+  eq!{
+    > term::ge( var(), var() ),
+      tru() ;
+    > term::ge( int(7), int(-3) ),
+      tru() ;
+    > term::ge( int(-42), int(0) ),
+      fls() ;
+  }
+}
+
+#[test]
+fn le_simplify() {
+  eq!{
+    > term::le( var(), var() ),
+      tru() ;
+    > term::le( int(7), int(-3) ),
+      fls() ;
+    > term::le( int(-42), int(0) ),
+      tru() ;
+  }
+}
+
+#[test]
+fn gt_simplify() {
+  eq!{
+    > term::gt( var(), var() ),
+      fls() ;
+    > term::gt( int(7), int(-3) ),
+      tru() ;
+    > term::gt( int(-42), int(0) ),
+      fls() ;
+  }
+}
+
+#[test]
+fn lt_simplify() {
+  eq!{
+    > term::lt( var(), var() ),
+      fls() ;
+    > term::lt( int(7), int(-3) ),
+      fls() ;
+    > term::lt( int(-42), int(0) ),
+      tru() ;
+  }
+}
+
+#[test]
+fn eq_simplify() {
+  eq!{
+    > term::eq( var(), var() ),
+      tru() ;
+    > term::eq( fls(), var() ),
+      term::not(var()) ;
+    > term::eq( tru(), var() ),
+      var() ;
+    > term::eq( var(), fls() ),
+      term::not(var()) ;
+    > term::eq( var(), tru() ),
+      var() ;
+    > term::eq( int(7), int(3) ),
+      fls() ;
+    > term::eq( int(3), int(3) ),
+      tru() ;
+  }
+}
+
+#[test]
+fn not_simplify() {
+  eq!{
+    > term::not( tru() ),
+      fls() ;
+    > term::not( fls() ),
+      tru() ;
+    > term::not( term::not( var() ) ),
+      var() ;
+    > term::not( term::and( vec![ var(), term::var(7) ] ) ),
+      term::or( vec![ term::not(var()), term::not( term::var(7) ) ] ) ;
+    > term::not( term::or( vec![ var(), term::var(7) ] ) ),
+      term::and( vec![ term::not(var()), term::not( term::var(7) ) ] ) ;
+  }
+}
+
+#[test]
+fn add_simplify() {
+  eq!{
+    > term::add( vec![ int(7), int(3) ] ),
+      int(10) ;
+    > term::add( vec![ int(7), var(), int(-3) ] ),
+      term::add( vec![ var(), int(4) ] ) ;
+    > term::add( vec![ int(-42), var() ] ),
+      term::add( vec![ var(), int(-42) ] ) ;
+  }
+}
+
+#[test]
+fn mul_simplify() {
+  eq!{
+    > term::mul( vec![ int(7), int(3) ] ),
+      int(21) ;
+    > term::mul( vec![ int(7), var(), int(-3) ] ),
+      term::mul( vec![ var(), int(-21) ] ) ;
+    > term::mul( vec![ int(-42), var() ] ),
+      term::mul( vec![ var(), int(-42 ) ] ) ;
+  }
 }

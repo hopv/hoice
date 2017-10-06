@@ -14,6 +14,8 @@ pub enum Parsed {
   Exit,
   /// Only parsed some item(s), no query.
   Items,
+  /// Reset.
+  Reset,
   /// End of file.
   Eof,
 }
@@ -116,6 +118,11 @@ impl ParserCxt {
     Parser {
       cxt: self, chars: string.char_indices(), string, line_off
     }
+  }
+
+  /// Resets the parser.
+  pub fn reset(& mut self) {
+    self.pred_name_map.clear()
   }
 }
 
@@ -352,6 +359,19 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       }
     } else {
       false
+    }
+  }
+  /// Tries to parse a character, yielding its position.
+  fn char_opt_pos(& mut self, char: char) -> Option<usize> {
+    if let Some( (pos, c) ) = self.next() {
+      if c != char {
+        self.txen(pos, c) ;
+        None
+      } else {
+        Some(pos)
+      }
+    } else {
+      None
     }
   }
   /// Parses a character or fails.
@@ -695,7 +715,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       bail!( self.error_here("expected term") )
     }
   }
-  /// Tries to parse a term.
+  /// Tries to parse a top term.
   fn top_term_opt(
     & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Option<TTerm> > {
@@ -802,17 +822,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn conjunction(
     & mut self, var_map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Vec<TTerm> > {
-    if self.char_opt('(') {
+    if let Some(pos) = self.char_opt_pos('(') {
       self.ws_cmt() ;
-      self.tag("and") ? ;
-      self.ws_cmt() ;
-      let mut conj = Vec::with_capacity(11) ;
-      while let Some(tterm) = self.top_term_opt(var_map, instance) ? {
-        conj.push(tterm) ;
-        self.ws_cmt()
+      if self.tag_opt("and") {
+        self.ws_cmt() ;
+        let mut conj = Vec::with_capacity(11) ;
+        while let Some(tterm) = self.top_term_opt(var_map, instance) ? {
+          conj.push(tterm) ;
+          self.ws_cmt()
+        }
+        self.char(')') ? ;
+        Ok(conj)
+      } else {
+        self.txen(pos, '(') ;
+        Ok( vec![ self.top_term(var_map, instance) ? ] )
       }
-      self.char(')') ? ;
-      Ok(conj)
     } else {
       Ok( vec![ self.top_term(var_map, instance) ? ] )
     }
@@ -938,6 +962,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Parses an reset command.
+  fn reset(& mut self) -> bool {
+    if self.tag_opt("reset") {
+      true
+    } else {
+      false
+    }
+  }
+
   /// Parses items, returns true if it found a check-sat.
   pub fn parse(
     mut self, instance: & mut Instance
@@ -963,6 +996,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Parsed::GetModel
       } else if self.exit() {
         Parsed::Exit
+      } else if self.reset() {
+        Parsed::Reset
       } else if let Some(blah) = self.echo() ? {
         println!("{}", blah) ;
         Parsed::Items
