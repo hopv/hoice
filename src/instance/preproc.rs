@@ -331,7 +331,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
                   s
                 }
               ),
-              "Instance afte smt-based reduction"
+              "Instance after smt-based reduction"
           ) ? ;
           * cnt += 1 ;
 
@@ -1509,38 +1509,40 @@ where Slver: Solver<'kid, ()> {
         for term in clause.lhs_terms() {
           match term.bool() {
             Some(true) => (),
-            Some(false) => clauses_to_rm.push(clause_idx),
+            Some(false) => {
+              clauses_to_rm.push(clause_idx) ;
+              continue 'clause_iter
+            },
             _ => lhs.push(term),
           }
         }
 
-        let rhs = if let Some(term) = clause.rhs().term() {
+        let rhs = if let Some(rhs) = clause.rhs().term() {
 
-          if clause.lhs_is_empty() {
-            if let Some(b) = term.bool() {
-              if b {
-                clauses_to_rm.push(clause_idx) ;
-                continue 'clause_iter
-              } else {
-                log_debug!{
-                  "unsat because of {}",
-                  clause.to_string_info( instance.preds() ) ?
-                }
-                // Clause is true => false.
-                bail!( ErrorKind::Unsat )
-              }
-            } else if solver.trivial_impl(
-              clause.vars(), Some(term).into_iter(), & term::fls()
+          if let Some(true) = rhs.bool() {
+            clauses_to_rm.push(clause_idx) ;
+            continue 'clause_iter
+          }
+
+          // No predicate application?
+          if clause.lhs_preds().is_empty() {
+            // Either it is trivial, or falsifiablie regardless of the
+            // predicates.
+            if solver.trivial_impl(
+              clause.vars(), lhs.drain(0..), rhs
             ) ? {
+              clauses_to_rm.push(clause_idx) ;
+              continue 'clause_iter
+            } else {
               log_debug!{
                 "unsat because of {}",
                 clause.to_string_info( instance.preds() ) ?
               }
-              // Clause true => false.
               bail!( ErrorKind::Unsat )
             }
           }
-          term
+
+          rhs
 
         } else {
           if lhs.is_empty() {
@@ -1550,7 +1552,8 @@ where Slver: Solver<'kid, ()> {
         } ;
 
         if solver.trivial_impl(clause.vars(), lhs.drain(0..), rhs) ? {
-          clauses_to_rm.push(clause_idx)
+          clauses_to_rm.push(clause_idx) ;
+          continue 'clause_iter
         }
       }
     }
