@@ -2249,13 +2249,27 @@ impl ClauseSimplifier {
       let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
       if changed { * term = nu_term }
     }
-    if_debug!{
-      for (rep, term) in & self.rep_to_term {
-        log_debug!{ "    {} -> {}", rep, term }
+    let mut to_rm = vec![] ;
+    for (rep, term) in & self.rep_to_term {
+      log_debug!{ "    {} -> {}", rep, term }
+      if term.vars().contains(rep) {
+        log_debug!{ "      -> recursive, putting equality back." }
+        to_rm.push(* rep)
       }
     }
+    for to_rm in to_rm {
+      let term = self.rep_to_term.remove(& to_rm).ok_or::<Error>(
+        "unreachable".into()
+      ) ? ;
+      self.terms_to_add.push(
+        term::eq( term::var(to_rm), term )
+      )
+    }
 
-    log_debug!{ "  stabilizing `rep_to_term` (second step)" }
+    log_debug!{
+      "  stabilizing `rep_to_term` (second step, {})",
+      self.rep_to_term.len()
+    }
     self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;

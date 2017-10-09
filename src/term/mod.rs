@@ -1065,6 +1065,8 @@ pub enum Op {
   And,
   /// Disjunction.
   Or,
+  /// If-then-else.
+  Ite,
 }
 impl Op {
   /// String representation.
@@ -1073,7 +1075,7 @@ impl Op {
     match * self {
       Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
-      Not => "not", And => "and", Or => "or", Impl => "=>",
+      Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
     }
   }
 
@@ -1281,6 +1283,20 @@ impl Op {
           _ => Ok(Val::N),
         }
       },
+      Ite => if args.len() != 3 {
+        bail!(
+          format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
+        )
+      } else {
+        let (els, thn, cnd) = (
+          args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
+        ) ;
+        match cnd.to_bool() ? {
+          Some(true) => Ok(thn),
+          Some(false) => Ok(els),
+          _ => Ok(Val::N),
+        }
+      }
     }
   }
 }
