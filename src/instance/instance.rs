@@ -1537,7 +1537,7 @@ impl Instance {
           
           if clauses_to_rm.contains(& clause) { continue 'clause_iter_lhs }
 
-          // log_debug!{ "    working on lhs of clause #{}", clause }
+          log_debug!{ "    working on lhs of clause #{}", clause }
 
           if let Some(argss) = self.clauses[clause].lhs_preds.remove(& pred) {
             for args in argss {
@@ -1596,7 +1596,7 @@ impl Instance {
 
         // RHS.
         'clause_iter_rhs: for clause in clause_rhs.drain() {
-          // log_debug!{ "    rhs..." }
+          log_debug!{ "    rhs of #{}...", clause }
 
           if clauses_to_rm.contains(& clause) { continue 'clause_iter_rhs }
 

@@ -25,6 +25,33 @@ pub enum Parsed {
 
 
 
+lazy_static!{
+  /// Set of legal special characters in identifiers.
+  static ref id_special_chars: HashSet<char> = {
+    let mut set = HashSet::with_capacity(17) ;
+    set.insert('~') ;
+    set.insert('!') ;
+    set.insert('@') ;
+    set.insert('$') ;
+    set.insert('%') ;
+    set.insert('^') ;
+    set.insert('&') ;
+    set.insert('*') ;
+    set.insert('_') ;
+    set.insert('-') ;
+    set.insert('+') ;
+    set.insert('=') ;
+    set.insert('<') ;
+    set.insert('>') ;
+    set.insert('.') ;
+    set.insert('?') ;
+    set.insert('/') ;
+    set
+  } ;
+}
+
+
+
 /// Extends `BufRead` with SMT-LIB 2 item parsing.
 pub trait ItemRead {
   /// Reads the next item.
@@ -135,8 +162,14 @@ impl ParserCxt {
 
 /// Wraps an integer, represents a number of let-bindings parsed.
 #[must_use]
-pub struct LetCount {
+struct LetCount {
   n: usize
+}
+impl LetCount {
+  /// True if zero.
+  pub fn is_zero(& self) -> bool{ self.n == 0 }
+  /// Decreases the value. `true` if zero **after** decrement.
+  pub fn dec(& mut self) -> bool{ self.n -= 1 ; self.is_zero() }
 }
 
 
@@ -151,7 +184,7 @@ pub struct Parser<'cxt, 's> {
   /// Line offset (for errors).
   line_off: usize,
   /// Stack of bindings.
-  bindings: Vec< HashMap<& 's str, Term> >,
+  bindings: Vec< HashMap<& 's str, Vec<TTerm>> >,
 }
 
 
@@ -310,21 +343,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           }
         }
         panic!("expected '|', found eof")
-      } else if char.is_alphabetic() {
+      } else if char.is_alphabetic() || id_special_chars.contains(& char) {
         let mut end_pos = self.string.len() ;
         'unquoted: while let Some((pos, char)) = self.next() {
-          if char.is_alphanumeric() {
+          if char.is_alphanumeric() || id_special_chars.contains(& char) {
             ()
           } else {
-            match char {
-              '~' | '!' | '@' | '$' | '%' | '^' | '&' | '*' | '_' | '-' | '+' |
-              '=' | '<' | '>' | '.' | '?' | '/' => (),
-              _ => {
-                self.txen(pos, char) ;
-                end_pos = pos ;
-                break
-              },
-            }
+            self.txen(pos, char) ;
+            end_pos = pos ;
+            break
           }
         }
         Some( (start_pos, & self.string[start_pos..end_pos]) )
@@ -555,9 +582,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Adds a binding to the current bindings.
-  fn insert_bind(& mut self, var: & 's str, term: Term) -> Option<Term> {
+  fn insert_bind(& mut self, var: & 's str, term: Vec<TTerm>) {
     if let Some(bindings) = self.bindings.last_mut() {
-      bindings.insert(var, term)
+      bindings.insert(var, term) ;
     } else {
       panic!("bug, adding binding before pushing a binding scope")
     }
@@ -573,10 +600,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
   /// Finds what a variable is mapped to.
-  fn get_bind(& self, var: & str) -> Option<Term> {
+  fn get_bind(& self, var: & str) -> Option< & Vec<TTerm> > {
     for bindings in & self.bindings {
-      if let Some(term) = bindings.get(var) {
-        return Some( term.clone() )
+      if let Some(tterms) = bindings.get(var) {
+        return Some( tterms )
       }
     }
     None
@@ -622,7 +649,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// corresponding closing parens.
   #[inline]
   fn let_bindings(
-    & mut self, map: & HashMap<& 's str, VarIdx>
+    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res<LetCount> {
     let mut n = 0 ;
     'parse_lets: loop {
@@ -638,16 +665,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
-            let mut terms = self.term_seq(map) ? ;
-            let term = if let Some(term) = terms.pop() {
-              if ! terms.is_empty() {
-                bail!("found more than one term in binding")
-              }
-              term
-            } else {
-              bail!("expected term in binding")
-            } ;
-            self.insert_bind(id, term) ;
+            let tterms = self.conjunction(map, instance) ? ;
+            self.insert_bind(id, tterms) ;
             self.ws_cmt() ;
             self.char(')') ?
           }
@@ -772,14 +791,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a sequence of terms.
   fn term_seq(
-    & mut self, map: & HashMap<& 's str, VarIdx>
+    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Vec<Term> > {
     debug_assert!( self.cxt.term_stack.is_empty() ) ;
     let mut seq = Vec::with_capacity(11) ;
 
     'read_kids: loop {
       self.ws_cmt() ;
-      let bind_count = self.let_bindings(map) ? ;
+      let bind_count = self.let_bindings(map, instance) ? ;
       self.ws_cmt() ;
       let mut term = if self.char_opt('(') {
         self.ws_cmt() ;
@@ -794,8 +813,16 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else if let Some((pos, id)) = self.ident_opt() {
         if let Some(idx) = map.get(id) {
           term::var(* idx)
-        } else if let Some(term) = self.get_bind(id) {
-          term.clone()
+        } else if let Some(tterms) = self.get_bind(id) {
+          let mut terms = Vec::with_capacity(tterms.len()) ;
+          for tterm in tterms {
+            if let Some(term) = tterm.term() {
+              terms.push( term.clone() )
+            } else {
+              bail!("illegal horn clause")
+            }
+          }
+          term::and(terms)
         } else {
           bail!(
             self.error(
@@ -839,7 +866,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses a top term or fails.
   fn top_term(
     & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
-  ) -> Res<TTerm> {
+  ) -> Res<Vec<TTerm>> {
     if let Some(term) = self.top_term_opt(map, instance) ? {
       Ok(term)
     } else {
@@ -849,21 +876,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Tries to parse a top term.
   fn top_term_opt(
     & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
-  ) -> Res< Option<TTerm> > {
-    let bind_count = self.let_bindings(map) ? ;
+  ) -> Res< Option< Vec<TTerm> > > {
+    let bind_count = self.let_bindings(map, instance) ? ;
     let res = if self.char_opt('(') {
       self.ws_cmt() ;
       if let Some(op) = self.op_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map) ? ;
+        let args = self.term_seq(map, instance) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
         Ok( Some(
-          TTerm::T( term::app(op, args) )
+          vec![ TTerm::T( term::app(op, args) ) ]
         ) )
       } else if let Some((pos,ident)) = self.ident_opt() {
         self.ws_cmt() ;
-        let args = self.term_seq(map) ? ;
+        let args = self.term_seq(map, instance) ? ;
         self.ws_cmt() ;
         self.char(')') ? ;
         let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
@@ -890,7 +917,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
         }
         Ok( Some(
-          TTerm::P { pred, args: args.into() }
+          vec![ TTerm::P { pred, args: args.into() } ]
         ) )
       } else {
         bail!(
@@ -898,14 +925,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         )
       }
     } else if let Some(b) = self.bool() {
-      Ok( Some( TTerm::T( term::bool(b) ) ) )
+      Ok( Some( vec![ TTerm::T( term::bool(b) ) ] ) )
     } else if let Some(int) = self.int() {
-      Ok( Some( TTerm::T( term::int(int) ) ) )
+      Ok( Some( vec![ TTerm::T( term::int(int) ) ] ) )
     } else if let Some((pos,id)) = self.ident_opt() {
       if let Some(idx) = map.get(id) {
-        Ok( Some( TTerm::T( term::var(* idx) ) ) )
-      } else if let Some(term) = self.get_bind(id) {
-        Ok( Some(TTerm::T( term.clone() )) )
+        Ok( Some( vec![ TTerm::T( term::var(* idx) ) ] ) )
+      } else if let Some(tterms) = self.get_bind(id) {
+        Ok( Some(tterms.clone()) )
       } else {
         bail!(
           self.error(
@@ -957,73 +984,188 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn conjunction(
     & mut self, var_map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Vec<TTerm> > {
-    if let Some(pos) = self.char_opt_pos('(') {
+    // `Some(bind_count)` if the paren closes a let-binding, `None` if it
+    // closes a conjunction.
+    let mut closing_parens = Vec::with_capacity(17) ;
+    let mut conj = Vec::with_capacity(17) ;
+
+    // There's two ways to exit this loop:
+    //
+    // - by parsing the last closing paren from `closing_parens`
+    // - by parsing a term and `closing_parens` is empty, meaning the
+    //   conjunction is a single term.
+    'parse_conj: loop {
+      // println!("closing parens len: {}", closing_parens.len()) ;
+      let mut parse_tterm = true ;
+
       self.ws_cmt() ;
-      if self.tag_opt("and") {
-        self.ws_cmt() ;
-        let mut conj = Vec::with_capacity(11) ;
-        while let Some(tterm) = self.top_term_opt(var_map, instance) ? {
-          conj.push(tterm) ;
-          self.ws_cmt()
-        }
-        self.char(')') ? ;
-        Ok(conj)
-      } else {
-        self.txen(pos, '(') ;
-        Ok( vec![ self.top_term(var_map, instance) ? ] )
+      let bind_count = self.let_bindings(var_map, instance) ? ;
+      if ! bind_count.is_zero() {
+        // println!("  let bindings...") ;
+        closing_parens.push( Some(bind_count) ) ;
+        self.ws_cmt()
       }
-    } else {
-      Ok( vec![ self.top_term(var_map, instance) ? ] )
+
+      'parse_conjs: while let Some((pos, char)) = self.next() {
+        if char == '(' && { self.ws_cmt() ; self.tag_opt("and") } {
+          // println!("  conjunction...") ;
+          parse_tterm = false ;
+          closing_parens.push(None) ;
+          self.ws_cmt()
+        } else {
+          self.txen(pos, char) ;
+          break 'parse_conjs
+        }
+      }
+
+      'closing_parens: while let Some((pos, char)) = self.next() {
+        if ! closing_parens.is_empty() && char == ')' {
+          parse_tterm = false ;
+          if let Some(Some(mut bind_count)) = closing_parens.pop() {
+            // println!("  closing paren (binding)") ;
+            let push_back = ! bind_count.dec() ;
+            self.pop_bind() ;
+            if push_back { closing_parens.push(Some(bind_count)) }
+          } else {
+            // println!("  closing paren (conj)")
+            // End of conjunction, nothing to do.
+          }
+          self.ws_cmt() ;
+          if closing_parens.is_empty() {
+            break 'parse_conj
+          }
+        } else {
+          self.txen(pos, char) ;
+          break 'closing_parens
+        }
+      }
+
+      if parse_tterm {
+        use std::iter::Extend ;
+        conj.extend( self.top_term(var_map, instance) ? ) ;
+        if closing_parens.is_empty() { break 'parse_conj }
+      }
+
     }
+
+    Ok(conj)
+
+    // if let Some(pos) = self.char_opt_pos('(') {
+    //   let mut closing_paren = 1 ;
+    //   self.ws_cmt() ;
+    //   if self.tag_opt("and") {
+    //     self.ws_cmt() ;
+    //     let mut conj = Vec::with_capacity(11) ;
+    //     'parse_conj: loop {
+    //       while self.tag_opt(')') {
+    //         self.ws_cmt() ;
+    //         closing_paren -= 1 ;
+    //         if closing_paren == 0 {
+    //           break 'parse_conj
+    //         }
+    //       }
+    //       if let Some((pos, char)) = self.next() {
+    //         if char == '(' && { self.ws_cmt() ; self.tag_opt("and") } {
+    //           closing_paren += 1
+    //         } else {
+
+    //         }
+    //       }
+    //       use std::iter::Extend ;
+    //       let Some(tterm) = self.top_term_opt(var_map, instance) ? {
+    //       conj.extend(tterm) ;
+    //       self.ws_cmt()
+    //     }
+    //     Ok(conj)
+    //   } else {
+    //     self.txen(pos, '(') ;
+    //     Ok( self.top_term(var_map, instance) ? )
+    //   }
+    // } else {
+    //   Ok( self.top_term(var_map, instance) ? )
+    // }
   }
 
 
   /// Parses a forall.
-  fn forall(& mut self, instance: & Instance) -> Res<
-    Option< (VarMap<VarInfo>, Vec<TTerm>, TTerm) >
-  > {
+  fn forall(& mut self, instance: & mut Instance) -> Res<bool> {
     if ! self.tag_opt("forall") {
-      return Ok(None)
+      return Ok(false)
     }
     self.ws_cmt() ;
     let (var_map, hash_map) = self.args() ? ;
     self.ws_cmt() ;
-    let outter_bind_count = self.let_bindings(& hash_map) ? ;
+    let outter_bind_count = self.let_bindings(& hash_map, instance) ? ;
     self.ws_cmt() ;
     self.char('(') ? ;
     self.ws_cmt() ;
-    self.tag("=>") ? ;
-    self.ws_cmt() ;
-    let lhs_bind_count = self.let_bindings(& hash_map) ? ;
-    self.ws_cmt() ;
-    let lhs = self.conjunction(& hash_map, instance) ? ;
-    self.ws_cmt() ;
-    self.close_let_bindings(lhs_bind_count) ? ;
-    self.ws_cmt() ;
-    let rhs_bind_count = self.let_bindings(& hash_map) ? ;
-    let rhs = if let Some(top_term) = self.top_term_opt(
-      & hash_map, instance
-    ) ? {  top_term } else {
-      bail!( self.error_here("expected top term") )
-    } ;
-    self.close_let_bindings(rhs_bind_count) ? ;
+    if self.tag_opt("=>") {
+      self.ws_cmt() ;
+      let lhs_bind_count = self.let_bindings(& hash_map, instance) ? ;
+      self.ws_cmt() ;
+      let lhs = self.conjunction(& hash_map, instance) ? ;
+      self.ws_cmt() ;
+      self.close_let_bindings(lhs_bind_count) ? ;
+      self.ws_cmt() ;
+      let rhs_bind_count = self.let_bindings(& hash_map, instance) ? ;
+      let mut rhs = if let Some(tterms) = self.top_term_opt(
+        & hash_map, instance
+      ) ? { tterms } else {
+        bail!( self.error_here("expected top term") )
+      } ;
+      self.close_let_bindings(rhs_bind_count) ? ;
+
+      if let Some(last) = rhs.pop() {
+        for rhs in rhs {
+          self.add_clause(instance, var_map.clone(), lhs.clone(), rhs) ?
+        }
+        self.add_clause(instance, var_map, lhs, last) ?
+      }
+    } else if self.tag_opt("not") {
+      self.ws_cmt() ;
+      let parsed = if let Some((pos, char)) = self.next() {
+        self.ws_cmt() ;
+        if char == '(' && self.tag_opt("or") {
+          self.ws_cmt() ;
+          while ! self.tag_opt(")") {
+            let conj = self.conjunction(& hash_map, instance) ? ;
+            self.ws_cmt() ;
+            self.add_clause(
+              instance, var_map.clone(), conj, TTerm::T( term::fls() )
+            ) ?
+          }
+          true
+        } else {
+          self.txen(pos, char) ;
+          false
+        }
+      } else {
+        false
+      } ;
+      if ! parsed {
+        let conj = self.conjunction(& hash_map, instance) ? ;
+        self.add_clause(
+          instance, var_map, conj, TTerm::T( term::fls() )
+        ) ?
+      }
+    } else {
+      bail!("expected `=>` or `(not (or ...` in `forall`")
+    }
     self.ws_cmt() ;
     self.char(')') ? ;
     self.ws_cmt() ;
     self.close_let_bindings(outter_bind_count) ? ;
-    Ok( Some((var_map, lhs, rhs)) )
+    Ok(true)
   }
 
 
   /// Parses a negated exists.
-  fn exists(& mut self, instance: & mut Instance) -> Res<
-    Option< (VarMap<VarInfo>, Vec<TTerm>, TTerm) >
-  > {
+  fn exists(& mut self, instance: & mut Instance) -> Res<bool> {
     if ! self.tag_opt("not") {
-      return Ok(None)
+      return Ok(false)
     }
     self.ws_cmt() ;
-    let outter_bind_count = self.let_bindings(& HashMap::new()) ? ;
+    let outter_bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
     self.ws_cmt() ;
     self.char('(') ? ;
     self.ws_cmt() ;
@@ -1031,7 +1173,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     let (var_map, hash_map) = self.args() ? ;
     self.ws_cmt() ;
-    let lhs_bind_count = self.let_bindings(& hash_map) ? ;
+    let lhs_bind_count = self.let_bindings(& hash_map, instance) ? ;
     self.ws_cmt() ;
     let lhs = self.conjunction(& hash_map, instance) ? ;
     self.ws_cmt() ;
@@ -1040,39 +1182,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.char(')') ? ;
     self.ws_cmt() ;
     self.close_let_bindings(outter_bind_count) ? ;
-    Ok(
-      Some( (var_map, lhs, TTerm::T(term::bool(false))) )
-    )
+    self.add_clause(
+      instance, var_map, lhs, TTerm::T(term::bool(false))
+    ) ? ;
+    Ok(true)
   }
 
-
-  /// Parses an assert.
-  fn assert(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("assert") {
-      return Ok(false)
-    }
-    self.ws_cmt() ;
-    let bind_count = self.let_bindings(& HashMap::new()) ? ;
-    self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
-
-    let (
-      var_map, lhs, rhs
-    ) = if let Some(res) = self.forall(instance) ? {
-      res
-    } else if let Some(res) = self.exists(instance) ? {
-      res
-    } else {
-      bail!(
-        self.error_here("expected forall or negated exists")
-      )
-    } ;
-    self.ws_cmt() ;
-    self.char(')') ? ;
-
-    self.close_let_bindings(bind_count) ? ;
-
+  /// Adds a clause to an instance.
+  fn add_clause(
+    & self, instance: & mut Instance,
+    var_map: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
+  ) -> Res<()> {
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     let mut lhs_is_false = false ;
     for lhs in lhs {
@@ -1087,9 +1207,37 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::new(var_map, nu_lhs, rhs)
+        Clause::new(var_map.clone(), nu_lhs.clone(), rhs)
       ) ?
     }
+    Ok(())
+  }
+
+
+  /// Parses an assert.
+  fn assert(& mut self, instance: & mut Instance) -> Res<bool> {
+    if ! self.tag_opt("assert") {
+      return Ok(false)
+    }
+    self.ws_cmt() ;
+    let bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
+    self.ws_cmt() ;
+    self.char('(') ? ;
+    self.ws_cmt() ;
+
+    if self.forall(instance) ? {
+      ()
+    } else if self.exists(instance) ? {
+      ()
+    } else {
+      bail!(
+        self.error_here("expected forall or negated exists")
+      )
+    } ;
+    self.ws_cmt() ;
+    self.char(')') ? ;
+
+    self.close_let_bindings(bind_count) ? ;
 
     Ok(true)
   }
@@ -1136,6 +1284,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   ) -> Res<Parsed> {
     self.ws_cmt() ;
     let mut res = Parsed::Eof ;
+    self.cxt.term_stack.clear() ;
 
     while self.has_next() {
       self.char('(') ? ;

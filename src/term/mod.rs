@@ -702,7 +702,7 @@ impl TTerm {
           if let Some((term, _)) = term.subst_total(map) {
             new_args.push(term)
           } else {
-            bail!("total substitution failed")
+            bail!("total substitution failed (predicate)")
           }
         }
         Ok( TTerm::P { pred, args: new_args } )
@@ -710,7 +710,7 @@ impl TTerm {
       TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
         Ok( TTerm::T(term) )
       } else {
-        bail!("total substitution failed")
+        bail!("total substitution failed (term)")
       },
     }
   }

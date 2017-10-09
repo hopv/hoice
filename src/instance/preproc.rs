@@ -604,7 +604,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       log_debug!{ "      terms:" }
       for term in & terms { log_debug!{ "      - {}", term } }
       log_debug!{ "      map:" }
-      for (var, trm) in & map { log_debug!{ "      - v_{} -> {}", var, trm } }
+      for (var, trm) in & map {
+        log_debug!{
+          "      - {} -> {}", var_info[* var], trm
+        }
+      }
     }
 
     let lhs_true = lhs.is_empty() || self.trivial_conj(
@@ -612,7 +616,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     ) ? ;
 
     if let Some(term) = rhs.term() {
-      terms.insert( term.clone() ) ;
+      if let Some((rhs, _)) = term.subst_total(& map) {
+        terms.insert(rhs) ;
+      } else {
+        return Ok( ExtractRes::Failed )
+      }
     } else if lhs_true && terms.is_empty() {
       if let Ok(rhs) = rhs.subst_total(& map) {
         return Ok( ExtractRes::Success( vec![rhs] ) )
@@ -1159,7 +1167,7 @@ where Slver: Solver<'kid, ()> {
       instance.forget_clause(clause_idx) ? ;
       red_info.clauses_rmed += 1 ;
 
-      log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
+      // log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
 
       log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
       use self::ExtractRes::* ;
