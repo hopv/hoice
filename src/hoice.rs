@@ -104,6 +104,8 @@ pub fn read_and_work<R: ::std::io::Read>(
   let mut instance = Instance::new() ;
   // Current model.
   let mut model = None ;
+  // Any error encountered?
+  let mut error = false ;
 
   'parse_work: loop {
     use instance::parse::Parsed ;
@@ -121,13 +123,26 @@ pub fn read_and_work<R: ::std::io::Read>(
     }
     let parse_res = parser_cxt.parser(
       & buf, line_off
-    ).parse(& mut instance) ? ;
+    ).parse(& mut instance) ;
+
+    let parse_res = match parse_res {
+      Ok(res) => res,
+      Err(e) => {
+        error = true ;
+        print_err(e) ;
+        continue 'parse_work
+      },
+    } ;
 
     line_off += lines_parsed ;
 
     profile!{ |profiler| mark "parsing" }
     
     match parse_res {
+
+      Parsed::CheckSat if error => {
+        println!("unknown")
+      },
 
       // Check-sat, start class.
       Parsed::CheckSat => {

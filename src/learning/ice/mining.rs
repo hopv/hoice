@@ -157,6 +157,9 @@ impl Qualifiers {
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
     ) ;
+    let mut nullary_cands = HConMap::with_capacity(2) ;
+    nullary_cands.insert( term::tru(), QualValues::new(term::tru()) ) ;
+    nullary_cands.insert( term::fls(), QualValues::new(term::fls()) ) ;
     arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;

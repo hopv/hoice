@@ -873,6 +873,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           PTTerms::tterm( TTerm::T( term::app(op, args) ) )
         ) )
       } else if let Some((pos,ident)) = self.ident_opt() {
+        if ident == "forall" || ident == "exists" {
+          bail!(
+            self.error(
+              pos, format!("unable to work on clauses that are not ground")
+            )
+          )
+        }
         self.ws_cmt() ;
         let args = self.term_seq(map, instance) ? ;
         self.ws_cmt() ;
@@ -917,6 +924,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Ok( Some( PTTerms::tterm( TTerm::T( term::var(* idx) ) ) ) )
       } else if let Some(tterms) = self.get_bind(id) {
         Ok( Some( tterms.clone() ) )
+      } else if let Some(idx) = self.cxt.pred_name_map.get(id) {
+        Ok(
+          Some(
+            PTTerms::tterm(
+              TTerm::P { pred: * idx, args: VarMap::with_capacity(0) }
+            )
+          )
+        )
       } else {
         bail!(
           self.error(
@@ -1055,21 +1070,29 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     let bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
     self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
 
-    if self.forall(instance) ? {
+    if self.tag_opt("true") {
       ()
-    } else if self.exists(instance) ? {
-      ()
+    } else if self.tag_opt("false") {
+      instance.set_unsat()
     } else {
-      bail!(
-        self.error_here("expected forall or negated exists")
-      )
-    } ;
-    self.ws_cmt() ;
-    self.char(')') ? ;
+      self.char('(') ? ;
+      self.ws_cmt() ;
 
+      if self.forall(instance) ? {
+        ()
+      } else if self.exists(instance) ? {
+        ()
+      } else {
+        bail!(
+          self.error_here("expected forall or negated exists")
+        )
+      } ;
+      self.ws_cmt() ;
+      self.char(')') ? ;
+    }
+
+    self.ws_cmt() ;
     self.close_let_bindings(bind_count) ? ;
 
     Ok(true)
@@ -1428,6 +1451,29 @@ impl PTTerms {
     PTTerms::TTerm( tterm )
   }
 
+  /// True if `PTTerms` does not contain a non-negated predicate.
+  pub fn is_legal_lhs(& self) -> bool {
+    let mut to_do = Vec::with_capacity(37) ;
+    to_do.push(self) ;
+
+    while let Some(ptterm) = to_do.pop() {
+      match * ptterm {
+        PTTerms::And(ref args) => for arg in args {
+          to_do.push(arg)
+        },
+        PTTerms::Or(ref args) => for arg in args {
+          to_do.push(arg)
+        },
+        PTTerms::NTTerm(_) => (),
+        PTTerms::TTerm(ref term) => if term.pred().is_some() {
+          return false
+        },
+      }
+    }
+
+    true
+  }
+
   pub fn to_clauses(self) -> Res< Vec< (Vec<TTerm>, TTerm) > > {
     match self {
       PTTerms::TTerm(tterm) => Ok(
@@ -1439,6 +1485,7 @@ impl PTTerms {
 
       PTTerms::Or(ptterms) => {
         let mut lhs = Vec::with_capacity( ptterms.len() ) ;
+        let mut multipliers = Vec::with_capacity(3) ;
         let mut rhs = None ;
 
         for ptt in ptterms {
@@ -1455,21 +1502,64 @@ impl PTTerms {
 
             PTTerms::And(ptts) => {
               let mut tts = Vec::with_capacity( ptts.len() ) ;
+              let mut positive_preds = None ;
               for ptt in ptts {
                 match ptt {
-                  PTTerms::TTerm(tterm) => tts.push(tterm),
-                  PTTerms::NTTerm(tterm) => if let TTerm::T(term) = tterm {
-                    tts.push( TTerm::T(term::not(term)) )
-                  } else {
-                    bail!("ill-formed horn clause (or, 2)")
+                  PTTerms::NTTerm(tterm) => tts.push(tterm),
+                  PTTerms::TTerm(tterm) => match tterm {
+                    TTerm::T(term) => tts.push( TTerm::T(term::not(term)) ),
+                    tterm => {
+                      let positive_preds = positive_preds.get_or_insert_with(
+                        || Vec::with_capacity(7)
+                      ) ;
+                      positive_preds.push( tterm )
+                    },
                   },
                   _ => bail!("ill-formed horn clause (or, 3)"),
                 }
               }
-              rhs = Some(tts)
+              if let Some(pos_preds) = positive_preds {
+                tts.extend( pos_preds ) ;
+                rhs = Some( tts )
+              } else {
+                multipliers.push(tts)
+              }
             },
 
             _ => bail!("ecountered normalization issue (or, 4)"),
+          }
+        }
+
+        let mut nu_lhs = Vec::with_capacity(
+          lhs.len() * (multipliers.len() + 1)
+        ) ;
+        nu_lhs.push(lhs) ;
+        let mut tmp_lhs = Vec::with_capacity(nu_lhs.len()) ;
+        for mut vec in multipliers {
+          if let Some(last) = vec.pop() {
+            let last = if let Some(term) = last.term() {
+              TTerm::T( term::not( term.clone() ) )
+            } else {
+              last.clone()
+            } ;
+            tmp_lhs.clear() ;
+            for tterm in vec {
+              let tterm = if let Some(term) = tterm.term() {
+                TTerm::T( term::not( term.clone() ) )
+              } else {
+                tterm.clone()
+              } ;
+              for lhs in & nu_lhs {
+                let mut lhs = lhs.clone() ;
+                lhs.push( tterm.clone() ) ;
+                tmp_lhs.push( lhs )
+              }
+            }
+            for mut lhs in nu_lhs.drain(0..) {
+              lhs.push(last.clone()) ;
+              tmp_lhs.push( lhs )
+            }
+            ::std::mem::swap(& mut nu_lhs, & mut tmp_lhs)
           }
         }
 
@@ -1478,13 +1568,21 @@ impl PTTerms {
           let mut rhs = rhs.into_iter() ;
           if let Some(last) = rhs.next() {
             for rhs in rhs {
-              res.push( (lhs.clone(), rhs) )
+              for lhs in & nu_lhs {
+                res.push( (lhs.clone(), rhs.clone()) )
+              }
             }
-            res.push((lhs, last))
+            for lhs in nu_lhs {
+              res.push((lhs, last.clone()))
+            }
           }
           Ok(res)
         } else {
-          Ok( vec![ (lhs, TTerm::fls()) ] )
+          Ok(
+            nu_lhs.into_iter().map(
+              |lhs| (lhs, TTerm::fls())
+            ).collect()
+          )
         }
       },
 
