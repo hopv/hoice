@@ -599,6 +599,11 @@ pub enum TTerm {
   T(Term),
 }
 impl TTerm {
+  /// The false top term.
+  pub fn fls() -> Self {
+    TTerm::T( term::fls() )
+  }
+
   /// True if the top term is a term with no variables and evaluates to true.
   pub fn is_true(& self) -> bool {
     self.bool() == Some(true)
