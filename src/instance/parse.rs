@@ -1071,12 +1071,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
     self.ws_cmt() ;
 
-    if self.tag_opt("true") {
-      ()
-    } else if self.tag_opt("false") {
-      instance.set_unsat()
-    } else {
-      self.char('(') ? ;
+    if self.char_opt('(') {
       self.ws_cmt() ;
 
       if self.forall(instance) ? {
@@ -1090,6 +1085,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } ;
       self.ws_cmt() ;
       self.char(')') ? ;
+    } else if self.tag_opt("true") {
+      ()
+    } else if self.tag_opt("false") {
+      instance.set_unsat()
+    } else {
+      bail!(
+        self.error_here("expected negation, qualifier, `true` or `false`")
+      )
     }
 
     self.ws_cmt() ;
