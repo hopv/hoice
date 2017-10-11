@@ -1052,6 +1052,7 @@ impl Instance {
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Quals) {
     for clause in & self.clauses {
+      // println!("  - mining clause\n{}", clause.to_string_info(& self.preds).unwrap()) ;
       self.qualifiers_of_clause(clause, quals)
     }
   }
@@ -1070,72 +1071,100 @@ impl Instance {
     // used.
     let mut maps = vec![] ;
 
+    // Qualifiers generated while looking at predicate applications.
+    let mut app_quals = HConSet::with_capacity(17) ;
+
     let rhs_opt = if let TTerm::P { ref pred, ref args } = clause.rhs {
       let mut set = VarMapSet::with_capacity(1) ;
       set.insert(args.clone()) ;
       Some((pred, set))
     } else { None } ;
-    let rhs_opt = rhs_opt.as_ref().map( |& (pred, ref set)| (pred, set) ) ;
 
-    for (_, argss) in clause.lhs_preds.iter().chain(rhs_opt.into_iter()) {
-      for args in argss {
-        // All the *clause var* to *pred var* maps for this predicate
-        // application.
-        let mut these_maps = vec![ VarHMap::with_capacity( args.len() ) ] ;
+    {
+      // Represents equalities between *pred vars* and terms over *clause
+      // variables*. These will be added to `app_quals` if the total
+      // substitution of the term by `map` succeeds.
+      let mut eq_quals = VarHMap::with_capacity(7) ;
 
-        for (pred_var_index, term) in args.index_iter() {
-          if let Some(clause_var_index) = term.var_idx() {
-            // Stores the new maps to add in case a clause variable is bound
-            // several times.
-            let mut to_add = vec![] ;
-            for map in & mut these_maps {
-              if map.contains_key(& clause_var_index) {
-                // Current clause variable is already bound in this map, clone
-                // it, change the binding, and remember to add it later.
-                let mut map = map.clone() ;
-                let _ = map.insert(
-                  clause_var_index, term::var(pred_var_index)
+      let rhs_opt = rhs_opt.as_ref().map( |& (pred, ref set)| (pred, set) ) ;
+
+      for (_, argss) in clause.lhs_preds.iter().chain( rhs_opt.into_iter() ) {
+        debug_assert!( app_quals.is_empty() ) ;
+        for args in argss {
+          debug_assert!( eq_quals.is_empty() ) ;
+
+          // All the *clause var* to *pred var* maps for this predicate
+          // application.
+          let mut map: VarHMap<Term> = VarHMap::with_capacity( args.len() ) ;
+
+          // println!("  iterating over pred app") ;
+          for (pred_var, term) in args.index_iter() {
+
+            // Parameter's a variable?
+            if let Some(clause_var_index) = term.var_idx() {
+
+              // Clause variable's already known as parameter?
+              if let Some(other_pred_var) = map.get(& clause_var_index).map(
+                |t| t.clone()
+              ) {
+                // println!("  - v_{} = {}", pred_var, other_pred_var) ;
+                // Equality qualifier.
+                app_quals.insert(
+                  term::eq( term::var(pred_var), other_pred_var.clone() )
                 ) ;
-                to_add.push(map)
               } else {
-                // Current clause variable not bound in this map, just add the
-                // new binding.
-                let _ = map.insert(
-                  clause_var_index, term::var(pred_var_index)
-                ) ;
+                // Add to map.
+                let _prev = map.insert(clause_var_index, term::var(pred_var)) ;
+                debug_assert!( _prev.is_none() )
+              }
+
+            } else {
+              // Parameter's not a variable, store potential equality.
+              let _prev = eq_quals.insert(pred_var, term) ;
+              debug_assert!( _prev.is_none() )
+            }
+
+          }
+
+          // println!("  generating var / term equalities") ;
+          for (pred, term) in eq_quals.drain() {
+            if let Some((term, _)) = term.subst_total(& map) {
+              // println!("  - v_{} = {}", pred, term) ;
+              app_quals.insert( term::eq( term::var(pred), term ) ) ;
+            }
+          }
+
+          if ! app_quals.is_empty() {
+            let mut highest_var: VarIdx = 0.into() ;
+            let build_conj = app_quals.len() > 1 ;
+            let mut conj = Vec::with_capacity( app_quals.len() ) ;
+            for term in app_quals.drain() {
+              if let Some(max_var) = term.highest_var() {
+                if build_conj { conj.push(term.clone()) }
+                let arity: Arity = (1 + * max_var).into() ;
+                quals.insert(arity, term) ;
+                if max_var > highest_var { highest_var = max_var }
+              } else {
+                // Unreachable because all the elements of `app_quals` are
+                // equalities between a variable and something else.
+                unreachable!()
               }
             }
-            use std::iter::Extend ;
-            these_maps.extend( to_add )
+            if build_conj {
+              quals.insert( (1 + * highest_var).into(), term::and(conj) )
+            }
           }
-        }
 
-        for map in these_maps {
-          // Push if non-empty.
-          if ! map.is_empty() {
-            maps.push( (map) )
-          }
+          maps.push(map)
         }
       }
     }
-
-    // println!("maps {{") ;
-    // for map in & maps {
-    //   let mut is_first = true ;
-    //   for (idx, term) in map.iter() {
-    //     println!("  {} {} -> {}", if is_first {"-"} else {" "}, idx, term) ;
-    //     is_first = false
-    //   }
-    // }
-    // println!("}} quals {{") ;
 
     // Build the conjunction of atoms.
     let mut conjs = vec![
       ( HConSet::with_capacity( clause.lhs_terms.len() + 1 ), 0.into() ) ;
       maps.len()
     ] ;
-
-    // let mut max_arity: Arity = 0.into() ;
 
     let rhs = clause.rhs().term() ;
     // Now look for atoms and try to apply the mappings above.
@@ -1158,19 +1187,6 @@ impl Instance {
             quals.insert(arity, term)
           }
         }
-        // else if let Some(kids) = term.kids() {
-        //   for kid in kids {
-        //     if kid.is_relation() {
-        //       if let Some( (term, true) ) = self.subst_total(map, kid) {
-        //         log_info!("-> {}", term) ;
-        //         let term = if let Some(term) = term.rm_neg() {
-        //           term
-        //         } else { term } ;
-        //         let _ = quals.insert(term) ;
-        //       }
-        //     }
-        //   }
-        // }
       }
 
     }
@@ -1180,7 +1196,6 @@ impl Instance {
         quals.insert( max_arity, term::and( conj.into_iter().collect() ) )
       }
     }
-    // println!("}}")
 
   }
 
@@ -2124,6 +2139,13 @@ impl ClauseSimplifier {
               let _is_new = set_1.insert(var) ;
               debug_assert!( _is_new )
             }
+            // Re-route `rep_to_term`.
+            if let Some(term) = self.rep_to_term.remove(& rep_2) {
+              let prev = self.rep_to_term.insert(rep_1, term.clone()) ;
+              if let Some(other_term) = prev {
+                self.terms_to_add.push( term::eq(term, other_term) )
+              }
+            }
           },
           // Only `v_1` has a rep.
           (Some(rep_1), None) => {
@@ -2169,10 +2191,13 @@ impl ClauseSimplifier {
           ) { rep } else {
             let _prev = self.var_to_rep.insert(var, var) ;
             debug_assert!( _prev.is_none() ) ;
-            let _prev = self.rep_to_vars.insert(var, VarSet::with_capacity(4)) ;
+            let _prev = self.rep_to_vars.insert(
+              var, VarSet::with_capacity(4)
+            ) ;
             debug_assert!( _prev.is_none() ) ;
             var
           } ;
+          log_debug!{ "rep of {} is {}", var, rep }
           let prev = self.rep_to_term.insert(rep, term.clone()) ;
           if let Some(prev) = prev {
             let eq = term::eq(prev, term) ;
@@ -2270,7 +2295,7 @@ impl ClauseSimplifier {
       "  stabilizing `rep_to_term` (second step, {})",
       self.rep_to_term.len()
     }
-    self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
+    // self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
@@ -2285,6 +2310,7 @@ impl ClauseSimplifier {
     // Note that clause variable de-activation is done in this loop.
     log_debug!{ "  completing substitution" }
     for (rep, vars) in self.rep_to_vars.drain() {
+      log_debug!{"  - rep {}", rep}
       let term = if let Some(term) = self.rep_to_stable_term.get(& rep) {
         clause.vars[rep].active = false ;
         term.clone()
@@ -2293,9 +2319,12 @@ impl ClauseSimplifier {
         term::var(rep)
       } ;
       for var in vars {
-        clause.vars[var].active = false ;
-        let _prev = self.rep_to_stable_term.insert(var, term.clone()) ;
-        debug_assert_eq!( _prev, None )
+        if var != rep {
+          log_debug!{"    var: {}", var}
+          clause.vars[var].active = false ;
+          let _prev = self.rep_to_stable_term.insert(var, term.clone()) ;
+          debug_assert_eq!( _prev, None )
+        }
       }
     }
     if_debug!{

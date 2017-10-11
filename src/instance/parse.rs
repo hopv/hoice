@@ -1518,7 +1518,11 @@ impl PTTerms {
                       positive_preds.push( tterm )
                     },
                   },
-                  _ => bail!("ill-formed horn clause (or, 3)"),
+                  ptt => if let Ok(term) = ptt.to_term() {
+                    tts.push( TTerm::T( term::not(term) ) )
+                  } else {
+                    bail!("ill-formed horn clause (or, 2)")
+                  },
                 }
               }
               if let Some(pos_preds) = positive_preds {
@@ -1529,7 +1533,7 @@ impl PTTerms {
               }
             },
 
-            _ => bail!("ecountered normalization issue (or, 4)"),
+            _ => bail!("ecountered normalization issue (or, 3)"),
           }
         }
 
