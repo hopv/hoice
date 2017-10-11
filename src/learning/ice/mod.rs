@@ -806,32 +806,6 @@ where Slver: Solver<'kid, Parser> {
     self.qualifiers.add_qual_values(& mut self.new_quals) ? ;
 
     res
-
-    // RECURSIVE CALL.
-    //
-    // It's fine, the next call is logically obligated to terminate.
-    // self.get_qualifier(pred, data, false)
-
-    // // Insert new qualifier.
-    // let (q_data, nq_data) = {
-    //   let values = self.qualifiers.add_qual(
-    //     qual.clone(), // & self.data.samples
-    //   ) ? ;
-    //   data.split(values)
-    // } ;
-    // msg!(
-    //   self =>
-    //     "  using synthetic qualifier {} | \
-    //     pos: ({},{},{}), neg: ({},{},{})",
-    //     qual,
-    //     q_data.pos.len(),
-    //     q_data.neg.len(),
-    //     q_data.unc.len(),
-    //     nq_data.pos.len(),
-    //     nq_data.neg.len(),
-    //     nq_data.unc.len(),
-    // ) ;
-    // Ok( (qual, q_data, nq_data) )
   }
 
 
