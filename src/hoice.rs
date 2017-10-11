@@ -161,24 +161,41 @@ pub fn read_and_work<R: ::std::io::Read>(
           maybe_model
         } else {
           let arc_instance = Arc::new(instance) ;
-          let partial_model = teacher::start_class(
+          match teacher::start_class(
             & arc_instance, & profiler
-          ) ? ;
-          { // Careful with this block, so that the unwrap does not fail
-            while Arc::strong_count(& arc_instance) != 1 {}
-            instance = if let Ok(
-              instance
-            ) = Arc::try_unwrap( arc_instance ) { instance } else {
-              bail!("\
-                [bug] finalized teacher but there are still \
-                strong references to the instance\
-              ")
-            }
-          }
-          if let Some(partial_model) = partial_model {
-            Some( instance.model_of(partial_model) ? )
-          } else {
-            None
+          ) {
+            Ok(partial_model) => {
+              while Arc::strong_count(& arc_instance) != 1 {}
+              instance = if let Ok(
+                instance
+              ) = Arc::try_unwrap( arc_instance ) { instance } else {
+                bail!("\
+                  [bug] finalized teacher but there are still \
+                  strong references to the instance\
+                ")
+              } ;
+              if let Some(partial_model) = partial_model {
+                Some( instance.model_of(partial_model) ? )
+              } else {
+                None
+              }
+            },
+            Err(e) => {
+              while Arc::strong_count(& arc_instance) != 1 {}
+              instance = if let Ok(
+                instance
+              ) = Arc::try_unwrap( arc_instance ) { instance } else {
+                bail!("\
+                  [bug] finalized teacher but there are still \
+                  strong references to the instance\
+                ")
+              } ;
+              if let ErrorKind::Unsat = * e.kind() {
+                None 
+              } else {
+                bail!(e)
+              }
+            },
           }
         } ;
         if stop_on_check {
