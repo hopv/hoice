@@ -1067,6 +1067,10 @@ impl Instance {
     & self, clause: & Clause, quals: & mut Quals
   ) {
 
+    // println!(
+    //   "qualifiers for clause {}", clause.to_string_info(& self.preds).unwrap()
+    // ) ;
+
     // Extraction of the variables map based on the way the predicates are
     // used.
     let mut maps = vec![] ;
@@ -1099,6 +1103,7 @@ impl Instance {
 
           // println!("  iterating over pred app") ;
           for (pred_var, term) in args.index_iter() {
+            // println!("v_{}: {}", pred_var, term) ;
 
             // Parameter's a variable?
             if let Some(clause_var_index) = term.var_idx() {
@@ -1107,7 +1112,6 @@ impl Instance {
               if let Some(other_pred_var) = map.get(& clause_var_index).map(
                 |t| t.clone()
               ) {
-                // println!("  - v_{} = {}", pred_var, other_pred_var) ;
                 // Equality qualifier.
                 app_quals.insert(
                   term::eq( term::var(pred_var), other_pred_var.clone() )
@@ -1129,7 +1133,6 @@ impl Instance {
           // println!("  generating var / term equalities") ;
           for (pred, term) in eq_quals.drain() {
             if let Some((term, _)) = term.subst_total(& map) {
-              // println!("  - v_{} = {}", pred, term) ;
               app_quals.insert( term::eq( term::var(pred), term ) ) ;
             }
           }
@@ -1142,6 +1145,7 @@ impl Instance {
               if let Some(max_var) = term.highest_var() {
                 if build_conj { conj.push(term.clone()) }
                 let arity: Arity = (1 + * max_var).into() ;
+                // println!("- {}", term) ;
                 quals.insert(arity, term) ;
                 if max_var > highest_var { highest_var = max_var }
               } else {
@@ -1151,7 +1155,9 @@ impl Instance {
               }
             }
             if build_conj {
-              quals.insert( (1 + * highest_var).into(), term::and(conj) )
+              let term = term::and(conj) ;
+              // println!("- {}", term) ;
+              quals.insert( (1 + * highest_var).into(), term )
             }
           }
 
@@ -1184,6 +1190,7 @@ impl Instance {
             let term = if let Some(term) = term.rm_neg() {
               term
             } else { term } ;
+            // println!("- {}", term) ;
             quals.insert(arity, term)
           }
         }
@@ -1193,7 +1200,9 @@ impl Instance {
 
     for (conj, max_arity) in conjs {
       if conj.len() > 1 {
-        quals.insert( max_arity, term::and( conj.into_iter().collect() ) )
+        let term = term::and( conj.into_iter().collect() ) ;
+        // println!("- {}", term) ;
+        quals.insert( max_arity, term )
       }
     }
 

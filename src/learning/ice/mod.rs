@@ -1198,13 +1198,25 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0., 0., 0., 0., 0., 0.) ;
     for pos in & self.pos {
-      if qual.eval(pos) { q_pos += 1. } else { nq_pos += 1. }
+      match qual.eval(pos) {
+        Some(true) => q_pos += 1.,
+        Some(false) => nq_pos += 1.,
+        None => return None,
+      }
     }
     for neg in & self.neg {
-      if qual.eval(neg) { q_neg += 1. } else { nq_neg += 1. }
+      match qual.eval(neg) {
+        Some(true) => q_neg += 1.,
+        Some(false) => nq_neg += 1.,
+        None => return None,
+      }
     }
     for unc in & self.unc {
-      if qual.eval(unc) { q_unc += 1. } else { nq_unc += 1. }
+      match qual.eval(unc) {
+        Some(true) => q_unc += 1.,
+        Some(false) => nq_unc += 1.,
+        None => return None,
+      }
     }
     if q_pos + q_neg + q_unc == 0. || nq_pos + nq_neg + nq_unc == 0. {
       None
@@ -1250,24 +1262,36 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0, 0, 0., 0, 0, 0.) ;
     for pos in & self.pos {
-      if qual.eval(pos) { q_pos += 1 } else { nq_pos += 1 }
+      match qual.eval(pos) {
+        Some(true) => q_pos += 1,
+        Some(false) => nq_pos += 1,
+        None => return Ok(None),
+      }
     }
     q_ent.set_pos_count(q_pos) ;
     nq_ent.set_pos_count(nq_pos) ;
 
     for neg in & self.neg {
-      if qual.eval(neg) { q_neg += 1 } else { nq_neg += 1 }
+      match qual.eval(neg) {
+        Some(true) => q_neg += 1,
+        Some(false) => nq_neg += 1,
+        None => return Ok(None),
+      }
     }
     q_ent.set_neg_count(q_neg) ;
     nq_ent.set_neg_count(nq_neg) ;
 
     for unc in & self.unc {
-      if qual.eval(unc) {
-        q_unc += 1. ;
-        q_ent.add_unc(data, pred, unc) ?
-      } else {
-        nq_unc += 1. ;
-        nq_ent.add_unc(data, pred, unc) ?
+      match qual.eval(unc) {
+        Some(true) => {
+          q_unc += 1. ;
+          q_ent.add_unc(data, pred, unc) ?
+        },
+        Some(false) => {
+          nq_unc += 1. ;
+          nq_ent.add_unc(data, pred, unc) ?
+        },
+        None => return Ok(None),
       }
     }
     
@@ -1276,10 +1300,8 @@ impl CData {
     ) ;
 
     // Is this qualifier separating anything?
-    if q_pos + q_neg + q_unc == 0. {
-      return Ok(None)
-    }
-    if nq_pos + nq_neg + nq_unc == 0. {
+    if q_pos + q_neg + q_unc == 0.
+    || nq_pos + nq_neg + nq_unc == 0. {
       return Ok(None)
     }
 
@@ -1325,21 +1347,21 @@ impl CData {
     ) ;
 
     for pos in self.pos {
-      if qual.eval(& pos) {
+      if qual.eval(& pos).expect("error evaluating qualifier") {
         q.pos.push( pos )
       } else {
         nq.pos.push( pos )
       }
     }
     for neg in self.neg {
-      if qual.eval(& neg) {
+      if qual.eval(& neg).expect("error evaluating qualifier") {
         q.neg.push( neg )
       } else {
         nq.neg.push( neg )
       }
     }
     for unc in self.unc {
-      if qual.eval(& unc) {
+      if qual.eval(& unc).expect("error evaluating qualifier") {
         q.unc.push( unc )
       } else {
         nq.unc.push( unc )

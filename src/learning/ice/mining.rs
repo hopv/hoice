@@ -20,7 +20,7 @@ pub trait QualValuesExt {
   fn add(& mut self, HSample, bool) ;
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
-  fn eval(& mut self, & HSample) -> bool ;
+  fn eval(& mut self, & HSample) -> Option<bool> ;
   /// Checks whether the qualifier evaluates to false on a sample. Pure lazy,
   /// will not evaluate the qualifier if it has not already been cached.
   #[inline]
@@ -67,18 +67,15 @@ impl QualValuesExt for QualValues {
     } else { self.flse_set.insert(s) } ;
     ()
   }
-  fn eval(& mut self, s: & HSample) -> bool {
-    if let Some(b) = self.lazy_eval(s) { b } else {
+  fn eval(& mut self, s: & HSample) -> Option<bool> {
+    if let Some(b) = self.lazy_eval(s) { Some(b) } else {
       match self.qual.bool_eval(s) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
-          b
+          Some(b)
         },
         Ok(None) => panic!("[bug] incomplete arguments in learning data"),
-        Err(e) => {
-          print_err(e) ;
-          panic!("[bug] error during qualifier evaluation")
-        },
+        Err(_) => None,
       }
     }
   }
