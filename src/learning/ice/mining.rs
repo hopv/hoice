@@ -289,6 +289,18 @@ impl Qualifiers {
   // }
 
   /// Adds some qualifiers as qualifier values.
+  pub fn add_quals<Terms: IntoIterator<Item = Term>>(
+    & mut self, arity: Arity, quals: Terms
+  ) -> Res<()> {
+    for qual in quals.into_iter() {
+      if ! self.arity_map[arity].contains_key(& qual) {
+        self.arity_map[arity].insert(qual.clone(), QualValues::new(qual)) ;
+      }
+    }
+    Ok(())
+  }
+
+  /// Adds some qualifiers as qualifier values.
   pub fn add_qual_values(
     & mut self, qualss: & mut Quals
   ) -> Res<()> {

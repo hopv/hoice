@@ -117,10 +117,25 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
 pub fn add(kids: Vec<Term>) -> Term {
   app(Op::Add, kids)
 }
+/// Creates a subtraction.
+#[inline(always)]
+pub fn sub(kids: Vec<Term>) -> Term {
+  app(Op::Sub, kids)
+}
+/// Creates a unary minus.
+#[inline(always)]
+pub fn u_minus(kid: Term) -> Term {
+  app(Op::Sub, vec![kid])
+}
 /// Creates a multiplication.
 #[inline(always)]
 pub fn mul(kids: Vec<Term>) -> Term {
   app(Op::Mul, kids)
+}
+/// Creates a division.
+#[inline(always)]
+pub fn div(kids: Vec<Term>) -> Term {
+  app(Op::Div, kids)
 }
 
 
@@ -372,7 +387,7 @@ fn normalize_app(
     Op::Mul => {
       let mut cnt = 0 ;
       if args.is_empty() {
-        panic!("trying to construct an empty sum")
+        panic!("trying to construct an empty mul")
       }
       let mut mul: Int = 1.into() ;
       while cnt < args.len() {
@@ -394,6 +409,23 @@ fn normalize_app(
         args.push( int(mul) ) ;
         (op, args)
       }
+    },
+
+    Op::Div => {
+      if args.len() == 2 {
+        if let Some(i) = args[0].int() {
+          if i.is_zero() {
+            return Either::Left( int(i) )
+          }
+        }
+        if let Some(i) = args[1].int() {
+          use num::FromPrimitive ;
+          if Some(i) == Int::from_usize(1) {
+            return Either::Left( args[0].clone() )
+          }
+        }
+      }
+      (op, args)
     },
 
     Op::Ge => if args.len() == 2 {

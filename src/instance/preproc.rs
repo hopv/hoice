@@ -358,7 +358,6 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 /// # TODO
 ///
 /// - more doc with examples
-/// - try to reverse term before giving up and returning none
 pub fn terms_of_app<F: Fn(Term) -> Term>(
   instance: & Instance, pred: PrdIdx, args: & VarMap<Term>, f: F
 ) -> Res<
@@ -388,7 +387,7 @@ pub fn terms_of_app<F: Fn(Term) -> Term>(
         f( term::eq( term::var(index), term::int(i) ) )
       ) ;
     } else {
-      postponed.push( (* index, arg) )
+      postponed.push( (index, arg) )
     }
   }
 
@@ -397,6 +396,11 @@ pub fn terms_of_app<F: Fn(Term) -> Term>(
       terms.insert(
         f( term::eq(term::var(var), term) )
       ) ;
+    } else if let Some((v, inverted)) = arg.invert(var) {
+      let _prev = map.insert(v, inverted) ;
+      debug_assert_eq!( _prev, None ) ;
+      let is_new = app_vars.insert(v) ;
+      debug_assert!( is_new )
     } else {
       // This is where we give up, but we could try to reverse the term.
       return Ok(None)

@@ -549,6 +549,79 @@ impl RTerm {
   }
 
 
+
+  /// Attempts to invert a term.
+  ///
+  /// More precisely, if the term only mentions one variable `v`, attempts to
+  /// find a `f` that's a solution of `var = term <=> v = f(var)`.
+  ///
+  /// Currently, only works when `v` appears exactly once. That is, it will
+  /// fail on `var = 3.v + 7.v` for instance. (This would be fine if
+  /// normalization handled this kind cases though.)
+  ///
+  /// Also, only works when all operators are binary (expect for unary minus).
+  ///
+  /// ```
+  /// use hoice::term ;
+  ///
+  /// let term = term::u_minus( term::var(0) ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::u_minus( term::var(1) ) ) )
+  /// }
+  /// let term = term::sub( vec![ term::var(0), term::int(7) ] ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::add( vec![ term::var(1), term::int(7) ] ) ) )
+  /// }
+  /// let term = term::add( vec![ term::int(7), term::var(0) ] ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::sub( vec![ term::var(1), term::int(7) ] ) ) )
+  /// }
+  /// ```
+  pub fn invert(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
+    let mut solution = term::var(var) ;
+    let mut term = self ;
+
+    loop {
+      match * term {
+        RTerm::App { op, ref args } => {
+          let (po, symmetric) = match op {
+            Op::Add => (Op::Sub, true),
+            Op::Sub if args.len() == 1 => {
+              solution = term::u_minus( solution ) ;
+              term = & args[0] ;
+              continue
+            },
+            Op::Sub => (Op::Add, false),
+            Op::Div => (Op::Mul, false),
+            Op::Mul => (Op::Div, true),
+            _ => return None,
+          } ;
+          if args.len() != 2 { return None }
+
+          if let Some(i) = args[0].int() {
+            if symmetric {
+              solution = term::app( po, vec![ solution, term::int(i) ] )
+            } else {
+              solution = term::app( op, vec![ term::int(i), solution ] )
+            }
+            term = & args[1]
+          } else if let Some(i) = args[1].int() {
+            solution = term::app( po, vec![ solution, term::int(i) ] ) ;
+            term = & args[0]
+          } else {
+            return None
+          }
+        },
+        RTerm::Var(v) => return Some((v, solution)),
+        _ => return None,
+      }
+    }
+  }
+
+
 }
 impl_fmt!{
   RTerm(self, fmt) {

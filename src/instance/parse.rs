@@ -1544,18 +1544,8 @@ impl PTTerms {
         let mut tmp_lhs = Vec::with_capacity(nu_lhs.len()) ;
         for mut vec in multipliers {
           if let Some(last) = vec.pop() {
-            let last = if let Some(term) = last.term() {
-              TTerm::T( term::not( term.clone() ) )
-            } else {
-              last.clone()
-            } ;
             tmp_lhs.clear() ;
             for tterm in vec {
-              let tterm = if let Some(term) = tterm.term() {
-                TTerm::T( term::not( term.clone() ) )
-              } else {
-                tterm.clone()
-              } ;
               for lhs in & nu_lhs {
                 let mut lhs = lhs.clone() ;
                 lhs.push( tterm.clone() ) ;
