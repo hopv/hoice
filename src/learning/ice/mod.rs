@@ -8,8 +8,6 @@ use self::smt::* ;
 
 pub mod mining ;
 
-pub use self::svm::SvmSynth ;
-
 
 
 
@@ -98,8 +96,6 @@ pub struct IceLearner<'core, Slver> {
   new_quals: Quals,
   /// Profiler.
   _profiler: Profiler,
-  /// SVM synthesizer.
-  _svm_synth: SvmSynth,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
@@ -141,7 +137,6 @@ where Slver: Solver<'kid, Parser> {
         dec_mem, candidate, actlit: 0,
         new_quals,
         _profiler,
-        _svm_synth: SvmSynth::new(),
       }
     )
   }
@@ -668,24 +663,6 @@ where Slver: Solver<'kid, Parser> {
     & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<RTerm>
   ) -> Res< (Term, CData, CData) > {
 
-    // println!("running svm synthesis...") ;
-    // if let Some(plan_sum) = self._svm_synth.synthesize(
-    //   & self.instance[pred].sig, & data.pos, & data.neg
-    // ).chain_err(|| "during SVM synthesis") ? {
-    //   println!("  it works: {}", plan_sum) ;
-    //   if let Some(var) = plan_sum.highest_var() {
-    //     let arity: Arity = ( (* var) + 1 ).into() ;
-    //     self.qualifiers.add_quals(
-    //       arity, vec![
-    //         term::ge( plan_sum.clone(), term::int(0) ),
-    //         term::le( plan_sum, term::int(0) ),
-    //       ]
-    //     ) ?
-    //   }
-    // } else {
-    //   println!("  failed")
-    // }
-
     if let Some( (_gain, values) ) = Self::get_best_qualifier(
       & self._profiler, & self.data, pred, & data, self.qualifiers.of(pred),
       used_quals
@@ -747,15 +724,6 @@ where Slver: Solver<'kid, Parser> {
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
-
-      // // println!("running svm synthesis...") ;
-      // if let Some(plan_sum) = self.svm_synth.synthesize(
-      //   & self.instance[pred].sig, & data.pos, & data.neg
-      // ).chain_err(|| "during SVM synthesis") ? {
-      //   // println!("  it works: {}", plan_sum)
-      // } else {
-      //   // println!("  failed")
-      // }
 
       for sample in & data.pos {
         self.synthesize(sample)
@@ -1783,224 +1751,4 @@ pub mod smt {
       Ok(())
     }
   }
-}
-
-
-
-
-
-
-mod svm {
-
-
-
-  /// SVM types.
-  use rustlearn::svm::libsvm::svc::* ;
-  use rustlearn::prelude::* ;
-
-  use common::* ;
-  use common::data::* ;
-
-
-
-  /// Data used by SVM synthesis (avoids re-allocations).
-  pub struct SvmSynth {
-    /// Maps SVM variables to predicate variables.
-    var_map: Vec<VarIdx>,
-  }
-  impl SvmSynth {
-    /// Constructor.
-    pub fn new() -> SvmSynth {
-      SvmSynth {
-        var_map: Vec::with_capacity(17),
-      }
-    }
-    /// SVM-based qualifier synthesis.
-    ///
-    /// Returns the left-hand side (the sum part) of the hyperplan `a + a_1 *
-    /// v_1 + ... + a_n * v_n = 0` separating `pos` from `neg`.
-    ///
-    /// **NB**: automatically returns `None` if `pos.len() < 3 || neg.len() <
-    /// 3`. This is because in these cases, we consider there's not enough
-    /// samples for the result to be interesting.
-    pub fn synthesize(
-      & mut self, pred_sig: & VarMap<Typ>, pos: & HSamples, neg: & HSamples
-    ) -> Res< Option<Term> > {
-      if pos.is_empty() || neg.is_empty() || pos.len() + neg.len() < 5 {
-        // println!("  not enough data ({}/{})", pos.len(), neg.len()) ;
-        return Ok(None)
-      }
-      self.var_map.clear() ;
-
-      // All `f32` values will be multiplied by this coefficient.
-      let correction = 1f32 ; // 1_000_000f32 ;
-
-      // println!("  populating var_map...") ;
-
-      // Populate `var_map`.
-      for (var, typ) in pred_sig.index_iter() {
-        if let Typ::Int = * typ {
-          self.var_map.push(var)
-        }
-      }
-
-      // println!("  creating svm...") ;
-
-      // Create svm.
-      let mut params = Hyperparameters::new(
-        self.var_map.len(), KernelType::Linear, 2
-      ) ;
-      params.C(10.0) ;
-      let mut svm = params.build() ;
-
-      let mut data = Vec::with_capacity( pos.len() + neg.len() ) ;
-      let mut target = Vec::with_capacity( pos.len() + neg.len() ) ;
-
-      use num::ToPrimitive ;
-
-      // println!("  pos ({})...", pos.len()) ;
-
-      for pos in pos {
-        let mut these_vals = Vec::with_capacity( self.var_map.len() ) ;
-        for (var, val) in pos.index_iter() {
-          if let Typ::Int = pred_sig[var] {
-            match * val {
-              Val::N => these_vals.push(0f32),
-              Val::I(ref i) => if let Some(float) = i.to_f32() {
-                these_vals.push(float)
-              } else {
-                // println!("  conversion to f32 failed") ;
-                return Ok(None)
-              },
-              Val::B(_) => bail!("ill-typed learning data")
-            }
-          }
-        }
-        debug_assert_eq!( these_vals.len(), self.var_map.len() ) ;
-        data.push(these_vals) ;
-        target.push(0.)
-      }
-
-      // println!("  neg ({})...", neg.len()) ;
-
-      for neg in neg {
-        let mut these_vals = Vec::with_capacity( self.var_map.len() ) ;
-        for (var, val) in neg.index_iter() {
-          if let Typ::Int = pred_sig[var] {
-            match * val {
-              Val::N => these_vals.push(0f32),
-              Val::I(ref i) => if let Some(float) = i.to_f32() {
-                these_vals.push(float)
-              } else {
-                // println!("  conversion to f32 failed") ;
-                return Ok(None)
-              },
-              Val::B(_) => bail!("ill-typed learning data")
-            }
-          }
-        }
-        debug_assert_eq!( these_vals.len(), self.var_map.len() ) ;
-        data.push(these_vals) ;
-        target.push(1.)
-      }
-
-      let data: Array = (& data).into() ;
-      let target: Array = target.into() ;
-
-      // println!("  learning...") ;
-
-      // Learn...
-      svm.fit(& data, & target).map_err(
-        |e| format!("error during svm learning:\n{}", e)
-      ) ? ;
-
-      // Retrieve decision function.
-      // `a + a_1 * v_1 + ... + a_n * v_n = 0`
-      let mut sum = Vec::with_capacity( self.var_map.len() + 1 ) ;
-
-      // First, retrieve `a`.
-      // println!("  retrieving `a`...") ;
-      let mut array = Array::zeros( 1, self.var_map.len() ) ;
-      let res = svm.decision_function(& array).map_err(
-        |e| format!("error retrieving svm decision function (1):\n{}", e)
-      ) ? ;
-      let slice = res.as_slice() ;
-      debug_assert_eq!(slice.len(), 1) ;
-      let coef_f32 = slice[0] * correction ;
-      let constant = if let Some(coef) = to_i64( coef_f32 ) {
-        sum.push( term::int(coef.clone()) ) ;
-        // println!("  - {} ({})", coef, coef_f32) ;
-        coef_f32
-      } else {
-        // println!("  conversion to int failed: a = {}", coef_f32) ;
-        return Ok(None)
-      } ;
-
-      // Then retrieve all the other coefs.
-      //
-      // This is done by asking `svm` the value of the `a + a_1 * v_1 + ...`
-      // for `(1, 0, 0, ...)` to retrieve `a_1`, `(0, 1, 0, 0, ...)` to
-      // retrieve `a_2` *etc.*
-      //
-      // This yields `a_1 + a`, and we correct by `constant` (`a`) each time.
-      let mut prev = None ;
-      for n in 0..self.var_map.len() {
-        // println!("  retrieving `a_{}` (v_{})...", n, self.var_map[n]) ;
-        if let Some(prev) = prev {
-          debug_assert_eq!( array.get(0, prev), 1f32 ) ;
-          * array.get_mut(0, prev) = 0f32
-        }
-        prev = Some(n) ;
-        debug_assert_eq!( array.get(0, n), 0f32 ) ;
-        * array.get_mut(0, n) = 1f32 ;
-        let res = svm.decision_function(& array).map_err(
-          |e| format!("error retrieving svm decision function (2):\n{}", e)
-        ) ? ;
-        let slice = res.as_slice() ;
-        debug_assert_eq!(slice.len(), 1) ;
-        let coef_f32 = slice[0] * correction - constant ;
-        if let Some(coef) = to_i64( coef_f32 ) {
-          // println!("  - {} ({}, {})", coef, slice[0] * correction, coef_f32) ;
-          if let Some(1) = coef.to_isize() {
-            sum.push(
-              term::var(* self.var_map[n])
-            )
-          } else if ! coef.is_zero() {
-            sum.push(
-              term::mul(
-                vec![ term::int(coef), term::var(* self.var_map[n]) ]
-              )
-            )
-          }
-        } else {
-        // println!(
-        //   "  conversion to int failed: a + a_{} = {} (v_{})",
-        //   n, slice[0], self.var_map[n]
-        // ) ;
-          return Ok(None)
-        }
-      }
-
-      if sum.is_empty() || (
-        sum.len() == 1 && constant != 0f32
-      ) {
-        return Ok(None)
-      }
-
-      Ok( Some(term::add(sum)) )
-    }
-  }
-
-  /// Tries to convert an `f32` to an `Int`, `None` if `f32` is not an integer.
-  fn to_i64(float: f32) -> Option<Int> {
-    use num::FromPrimitive ;
-    let res = float as i64 ;
-    if let Some(res) = Int::from_i64(res) {
-      Some(res)
-    } else {
-      None
-    }
-  }
-
-
 }
