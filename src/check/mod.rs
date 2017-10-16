@@ -47,7 +47,7 @@ pub struct PredDef {
   /// Arguments.
   pub args: Args,
   /// Body.
-  pub body: Term,
+  pub body: Option<Term>,
 }
 
 /// A clause.
@@ -163,7 +163,7 @@ impl Output {
           cnt += 1
         }
         self.pred_defs.push(
-          PredDef { pred: pred.clone(), args, body: "true".into() }
+          PredDef { pred: pred.clone(), args, body: None }
         )
       }
     }
@@ -210,9 +210,19 @@ impl Data {
       for & PredDef {
         ref pred, ref args, ref body
       } in & self.output.pred_defs {
-        solver.define_fun(
-          pred, args, & "Bool".to_string(), body, & ()
-        ) ?
+        if let Some(body) = body.as_ref() {
+          solver.define_fun(
+            pred, args, & "Bool".to_string(), body, & ()
+          ) ?
+        } else {
+          solver.declare_fun(
+            pred,
+            & args.iter().map(
+              |& (_, ref typ)| typ.clone()
+            ).collect::<Vec<_>>(),
+            & "Bool".to_string(), & ()
+          ) ?
+        }
       }
 
       // Declare arguments.

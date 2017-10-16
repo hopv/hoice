@@ -1131,7 +1131,13 @@ impl Instance {
             } else {
               // Parameter's not a variable, store potential equality.
               let _prev = eq_quals.insert(pred_var, term) ;
-              debug_assert!( _prev.is_none() )
+              debug_assert!( _prev.is_none() ) ;
+              // Try to revert the term.
+              if let Some((var, term)) = term.invert(pred_var) {
+                if ! map.contains_key(& var) {
+                  map.insert(var, term) ;
+                }
+              }
             }
 
           }
