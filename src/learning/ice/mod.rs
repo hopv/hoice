@@ -1833,7 +1833,7 @@ mod svm {
       self.var_map.clear() ;
 
       // All `f32` values will be multiplied by this coefficient.
-      let correction = 1_000_000f32 ;
+      let correction = 1f32 ; // 1_000_000f32 ;
 
       // println!("  populating var_map...") ;
 
@@ -1850,7 +1850,7 @@ mod svm {
       let mut params = Hyperparameters::new(
         self.var_map.len(), KernelType::Linear, 2
       ) ;
-      params.C(0.1) ;
+      params.C(10.0) ;
       let mut svm = params.build() ;
 
       let mut data = Vec::with_capacity( pos.len() + neg.len() ) ;
@@ -1979,6 +1979,12 @@ mod svm {
         // ) ;
           return Ok(None)
         }
+      }
+
+      if sum.is_empty() || (
+        sum.len() == 1 && constant != 0f32
+      ) {
+        return Ok(None)
       }
 
       Ok( Some(term::add(sum)) )

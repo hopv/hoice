@@ -248,6 +248,20 @@ fn normalize_app(
 
   let (op, args) = match op {
 
+    Op::Ite => if args.len() == 3 {
+      if let Some(b) = args[0].bool() {
+        return Either::Left(
+          if b { args[1].clone() } else { args[2].clone() }
+        )
+      }
+      if args[1] == args[2] {
+        return Either::Left( args[1].clone() )
+      }
+      (op, args)
+    } else {
+      panic!("trying to apply ite operator to {} (!= 3) arguments", args.len())
+    },
+
     Op::And => {
       let mut cnt = 0 ;
       while cnt < args.len() {

@@ -965,7 +965,6 @@ impl Instance {
         self.clauses[clause].to_string_info(& self.preds).unwrap()
       )
     ) ? ;
-    // log_debug!{ "{}", self.clauses[clause].to_string_info(& self.preds) ? }
     if remove {
       self.forget_clause(clause) ? ;
     }
@@ -999,21 +998,28 @@ impl Instance {
       }
 
       // Split disjunctions.
-      for clause in self.clauses.iter_mut() {
+      'find_clause: for clause in self.clauses.iter_mut() {
         // Skip those for which the predicate in the rhs only appears in this
         // rhs.
         if let Some(pred) = clause.rhs.pred() {
           if self.pred_to_clauses[pred].1.len() == 1 {
-            continue
+            continue 'find_clause
           }
         }
 
+        // Skip if clause contains more than 2 disjunctions.
         let mut disj = None ;
+        let mut disj_count = 0 ;
         for term in & clause.lhs_terms {
           if let Some(args) = term.disj_inspect() {
-            disj = Some((term.clone(), args.clone())) ;
-            break
+            disj_count += 1 ;
+            if disj.is_none() {
+              disj = Some((term.clone(), args.clone()))
+            }
           }
+        }
+        if disj_count > 2 {
+          continue 'find_clause
         }
         if let Some((disj, mut kids)) = disj {
           log_debug!{

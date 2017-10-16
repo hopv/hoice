@@ -21,7 +21,7 @@ pub fn work(
       || ErrorKind::Z3SpawnError
     ) ? ;
     let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
-      || "while constructing the teacher's solver"
+      || "while constructing preprocessing's solver"
     ) ? ;
     if let Some(log) = conf.solver.log_file("preproc") ? {
       run(
@@ -76,6 +76,7 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     "preproc_000_original_instance", "Instance before pre-processing."
   ) ? ;
 
+  log_info!{ "starting basic simplifications" }
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
   let simplify = instance.simplify_clauses() ? ;
@@ -105,6 +106,8 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
 
   let mut changed = true ;
   'preproc: while changed {
+
+    log_info!{ "running simplification" }
 
     profile!{ |profiler| tick "pre-proc", "simplifying" }
     let red_info = reductor.run_simplification(instance, & profiler) ? ;

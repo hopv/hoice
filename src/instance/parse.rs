@@ -1537,28 +1537,51 @@ impl PTTerms {
           }
         }
 
-        let mut nu_lhs = Vec::with_capacity(
-          lhs.len() * (multipliers.len() + 1)
-        ) ;
-        nu_lhs.push(lhs) ;
-        let mut tmp_lhs = Vec::with_capacity(nu_lhs.len()) ;
-        for mut vec in multipliers {
-          if let Some(last) = vec.pop() {
-            tmp_lhs.clear() ;
-            for tterm in vec {
-              for lhs in & nu_lhs {
-                let mut lhs = lhs.clone() ;
-                lhs.push( tterm.clone() ) ;
+        let nu_lhs = if multipliers.len() <= 2 {
+
+          let mut nu_lhs = Vec::with_capacity(
+            multipliers.len() * 2
+          ) ;
+          nu_lhs.push(lhs) ;
+          let mut tmp_lhs = Vec::with_capacity(nu_lhs.len()) ;
+          for mut vec in multipliers {
+            if let Some(last) = vec.pop() {
+              tmp_lhs.clear() ;
+              for tterm in vec {
+                for lhs in & nu_lhs {
+                  let mut lhs = lhs.clone() ;
+                  lhs.push( tterm.clone() ) ;
+                  tmp_lhs.push( lhs )
+                }
+              }
+              for mut lhs in nu_lhs.drain(0..) {
+                lhs.push(last.clone()) ;
                 tmp_lhs.push( lhs )
               }
+              ::std::mem::swap(& mut nu_lhs, & mut tmp_lhs)
             }
-            for mut lhs in nu_lhs.drain(0..) {
-              lhs.push(last.clone()) ;
-              tmp_lhs.push( lhs )
-            }
-            ::std::mem::swap(& mut nu_lhs, & mut tmp_lhs)
           }
-        }
+
+          nu_lhs
+
+        } else {
+
+          for disj in multipliers {
+            let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+            for tterm in disj {
+              if let TTerm::T(term) = tterm {
+                nu_disj.push(term)
+              } else {
+                bail!("error during clause conversion")
+              }
+            }
+            lhs.push(
+              TTerm::T( term::or(nu_disj) )
+            )
+          }
+          vec![ lhs ]
+
+        } ;
 
         if let Some(rhs) = rhs {
           let mut res = Vec::with_capacity( rhs.len() ) ;
