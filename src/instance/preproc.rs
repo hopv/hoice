@@ -107,6 +107,8 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   let mut changed = true ;
   'preproc: while changed {
 
+    conf.check_mem() ? ;
+
     log_info!{ "running simplification" }
 
     profile!{ |profiler| tick "pre-proc", "simplifying" }
@@ -215,6 +217,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     while changed {
       changed = false ;
       for strat in & mut self.strats {
+        conf.check_mem() ? ;
         log_info!("applying {}", conf.emph( strat.name() )) ;
         profile!{ |_profiler| tick "pre-proc", "simplifying", strat.name() }
         let red_info = strat.apply(instance) ? ;
@@ -297,6 +300,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
         changed = false ;
 
         for strat in strats.iter_mut() {
+          conf.check_mem() ? ;
           log_info!("applying {}", conf.emph( strat.name() )) ;
           profile!{ |_profiler| tick "pre-proc", "reducing", strat.name() }
           let red_info = strat.apply(instance, solver) ? ;

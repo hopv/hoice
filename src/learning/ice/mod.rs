@@ -548,10 +548,15 @@ where Slver: Solver<'kid, Parser> {
     profile!{ |_profiler| tick "learning", "qual", "// gain" }
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
-      |(_, values)| match data.gain(pred, all_data, values) {
-        Ok( Some((gain, _, _)) ) => Ok( Some( (gain, values) ) ),
-        Ok( None ) => Ok(None),
-        Err(e) => Err(e),
+      |(_, values)| {
+        let gain = if conf.ice.simple_entropy {
+          data.simple_gain(values)
+        } else {
+          data.gain(pred, all_data, values)?.map(
+            |(gain, _, _)| gain
+          )
+        } ;
+        Ok( gain.map(|gain| (gain, values)) )
       }
     ).collect() ;
 
@@ -610,7 +615,7 @@ where Slver: Solver<'kid, Parser> {
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
     'search_qual: for (_, values) in quals {
-      let gain = if ! conf.ice.simple_entropy {
+      let gain = if conf.ice.simple_entropy {
         data.simple_gain(values)
       } else {
         data.gain(pred, all_data, values)?.map(

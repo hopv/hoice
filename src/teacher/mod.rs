@@ -69,6 +69,10 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
+
+    // Check that there's enough available memory on the system.
+    conf.check_mem() ? ;
+
     log_info!{
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()

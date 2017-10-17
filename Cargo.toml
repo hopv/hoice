@@ -34,3 +34,4 @@ num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 rayon = "*"
 either = "*"
+sys-info = "*"

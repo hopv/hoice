@@ -357,7 +357,8 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("1").takes_value(true)// .number_of_values(1)
+      ).default_value("1").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     // ).arg(
 
@@ -495,6 +496,10 @@ pub struct Config {
   /// Eldarica result checking flag.
   pub check_eld: bool,
 
+  /// Amount of memory that must be available for `hoice` to keep running, in
+  /// percents.
+  pub lo_mem_cap: u64,
+
   /// Instance and factory configuration.
   pub instance: InstanceConf,
   /// Pre-processing configuration.
@@ -581,6 +586,9 @@ impl Config {
       "unreachable(check_eld): default is provided and input validated in clap"
     ) ;
 
+    // Mem cap.
+    let lo_mem_cap = int_of_matches(& matches, "lo_mem_cap") as u64 ;
+
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
     let solver = SmtConf::new(& matches) ;
@@ -589,7 +597,7 @@ impl Config {
 
     Config {
       file, verb, stats, infer, out_dir, styles,
-      check, check_eld,
+      check, check_eld, lo_mem_cap,
       instance, preproc, solver, ice, teacher
     }
   }
@@ -654,6 +662,17 @@ impl Config {
         bool_format
       ).default_value("on").takes_value(true)//.number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("lo_mem_cap").long("--lo_mem_cap").help(
+        "amout of memory that must be free \
+        for hoice to keep running (percents)"
+      ).validator(
+        |s| bounded_int_validator(s, 0, 100)
+      ).value_name(
+        "percent"
+      ).default_value("3").takes_value(true)//.number_of_values(1)
+
     )
   }
 
@@ -717,6 +736,30 @@ impl Config {
     self.ice.init() ? ;
     self.teacher.init() ? ;
     Ok(())
+  }
+
+  /// Checks that the system has enough available memory left.
+  pub fn check_mem(& self) -> Res<()> {
+    if let Ok(
+      ::sys_info::MemInfo {
+        total, avail, ..
+      }
+    ) = ::sys_info::mem_info() {
+      fn percent(this: u64, total: u64) -> f64 {
+        (this * 100) as f64 / (total as f64)
+      }
+      if avail * 100 < total * self.lo_mem_cap  {
+        bail!(
+          "not enough memory left: {} avail, \
+          {} total, less than {}% ({:.2}%) left",
+          avail, total, self.lo_mem_cap, percent(avail, total)
+        )
+      } else {
+        Ok(())
+      }
+    } else {
+      Ok(())
+    }
   }
 }
 
@@ -926,6 +969,27 @@ pub fn int_validator(s: String) -> Result<(), String> {
   use std::str::FromStr ;
   match usize::from_str(& s) {
     Ok(_) => Ok(()),
+    Err(_) => Err(
+      format!("expected an integer, got `{}`", s)
+    ),
+  }
+}
+
+/// Validates integer input between some bounds.
+pub fn bounded_int_validator(
+  s: String, lo: usize, hi: usize
+) -> Result<(), String> {
+  use std::str::FromStr ;
+  match usize::from_str(& s) {
+    Ok(val) => if lo <= val && val <= hi {
+      Ok(())
+    } else {
+      Err(
+        format!(
+          "expected a value between {} and {}, got `{}`", lo , hi, val
+        )
+      )
+    },
     Err(_) => Err(
       format!("expected an integer, got `{}`", s)
     ),
