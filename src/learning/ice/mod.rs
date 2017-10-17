@@ -318,28 +318,30 @@ where Slver: Solver<'kid, Parser> {
       ))
     }
 
-    profile!{ self tick "learning", "predicate sorting" }
-    predicates.sort_by(
-      |
-        & (
-          unclassed_1, classed_1, _
-        ), & (
-          unclassed_2, classed_2, _
-        )
-      | {
-        use std::cmp::Ordering::* ;
-        match (unclassed_1, unclassed_2) {
-          (0, 0) => classed_1.cmp(& classed_2).reverse(),
-          (0, _) => Less,
-          (_, 0) => Greater,
-          (_, _) => match classed_1.cmp(& classed_2).reverse() {
-            Equal => unclassed_1.cmp(& unclassed_2),
-            res => res,
-          },
+    if conf.ice.sort_preds {
+      profile!{ self tick "learning", "predicate sorting" }
+      predicates.sort_by(
+        |
+          & (
+            unclassed_1, classed_1, _
+          ), & (
+            unclassed_2, classed_2, _
+          )
+        | {
+          use std::cmp::Ordering::* ;
+          match (unclassed_1, unclassed_2) {
+            (0, 0) => classed_1.cmp(& classed_2).reverse(),
+            (0, _) => Less,
+            (_, 0) => Greater,
+            (_, _) => match classed_1.cmp(& classed_2).reverse() {
+              Equal => unclassed_1.cmp(& unclassed_2),
+              res => res,
+            },
+          }
         }
-      }
-    ) ;
-    profile!{ self mark "learning", "predicate sorting" }
+      ) ;
+      profile!{ self mark "learning", "predicate sorting" }
+    }
 
     let mut used_quals = HConSet::with_capacity(107) ;
 
@@ -608,9 +610,14 @@ where Slver: Solver<'kid, Parser> {
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
     'search_qual: for (_, values) in quals {
-      if let Some(
-        (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
-      ) = data.gain(pred, all_data, values) ? {
+      let gain = if ! conf.ice.simple_entropy {
+        data.simple_gain(values)
+      } else {
+        data.gain(pred, all_data, values)?.map(
+          |(gain, _, _)| gain
+        )
+      } ;
+      if let Some(gain) = gain {
         let better = if let Some( (old_gain, _) ) = maybe_qual {
           old_gain < gain
         } else { true } ;
@@ -1290,6 +1297,9 @@ impl CData {
 
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
+  ///
+  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// is false.
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
@@ -1301,6 +1311,9 @@ impl CData {
   }
 
   /// Modified gain, uses `entropy`.
+  ///
+  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// is false.
   pub fn gain(
     & self, pred: PrdIdx, data: & Data, qual: & mut QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
