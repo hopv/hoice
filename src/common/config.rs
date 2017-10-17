@@ -254,7 +254,8 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -264,17 +265,20 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
       Arg::with_name("one_lhs").long("--one_lhs").help(
-        "(de)activates one lhs reduction"
+        "(de)activates reduction of predicate \
+        appearing in exactly one clause lhs"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -284,7 +288,8 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("off").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -372,7 +377,8 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("off").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -382,7 +388,8 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("50").takes_value(true)// .number_of_values(1)
+      ).default_value("50").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
