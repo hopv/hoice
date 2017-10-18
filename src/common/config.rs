@@ -737,30 +737,6 @@ impl Config {
     self.teacher.init() ? ;
     Ok(())
   }
-
-  /// Checks that the system has enough available memory left.
-  pub fn check_mem(& self) -> Res<()> {
-    if let Ok(
-      ::sys_info::MemInfo {
-        total, avail, ..
-      }
-    ) = ::sys_info::mem_info() {
-      fn percent(this: u64, total: u64) -> f64 {
-        (this * 100) as f64 / (total as f64)
-      }
-      if avail * 100 < total * self.lo_mem_cap  {
-        bail!(
-          "not enough memory left: {} avail, \
-          {} total, less than {}% ({:.2}%) left",
-          avail, total, self.lo_mem_cap, percent(avail, total)
-        )
-      } else {
-        Ok(())
-      }
-    } else {
-      Ok(())
-    }
-  }
 }
 
 
