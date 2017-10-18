@@ -549,7 +549,7 @@ impl Config {
 
     let matches = app.get_matches() ;
 
-    /// Input file.
+    // Input file.
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity

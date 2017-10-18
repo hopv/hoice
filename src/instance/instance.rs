@@ -2149,7 +2149,7 @@ impl ClauseSimplifier {
             let set_2 = if let Some(set) = self.rep_to_vars.remove(& rep_2) {
               set
             } else { bail!("simplification error (1)") } ;
-            let mut set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+            let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
               set
             } else { bail!("simplification error (2)") } ;
             // Drain `set_2`: update `var_to_rep` and `set_1`.
@@ -2170,7 +2170,7 @@ impl ClauseSimplifier {
           },
           // Only `v_1` has a rep.
           (Some(rep_1), None) => {
-            let mut set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+            let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
               set
             } else { panic!("simplification error (3)") } ;
             let _is_new = set_1.insert(v_2) ;
@@ -2180,7 +2180,7 @@ impl ClauseSimplifier {
           },
           // Only `v_2` has a rep.
           (None, Some(rep_2)) => {
-            let mut set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
+            let set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
               set
             } else { bail!("simplification error (4)") } ;
             let _is_new = set_2.insert(v_1) ;

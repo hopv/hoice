@@ -20,16 +20,20 @@ pub fn work(
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
-    let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
-      || "while constructing preprocessing's solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("preproc") ? {
-      run(
-        instance, profiler, Some( SolverWrapper::new(solver.tee(log)) )
-      )
-    } else {
-      run( instance, profiler, Some( SolverWrapper::new(solver) ) )
-    }
+    let res = {
+      let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
+        || "while constructing preprocessing's solver"
+      ) ? ;
+      if let Some(log) = conf.solver.log_file("preproc") ? {
+        run(
+          instance, profiler, Some( SolverWrapper::new(solver.tee(log)) )
+        )
+      } else {
+        run( instance, profiler, Some( SolverWrapper::new(solver) ) )
+      }
+    } ;
+    kid.kill() ? ;
+    res
   } else {
     run(
       instance, profiler,
