@@ -165,6 +165,8 @@ pub struct PreprocConf {
   pub dump: bool,
   /// Pre-processing flag.
   pub active: bool,
+  /// Reduction flag.
+  pub reduction: bool,
   /// Simple reduction flag.
   pub smt_red: bool,
   /// One rhs.
@@ -248,6 +250,17 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("reduction").long("--reduction").help(
+        "(de)activates Horn reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("one_rhs").long("--one_rhs").help(
         "(de)activates one rhs reduction"
       ).validator(
@@ -288,7 +301,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).hidden(true)
+      ).default_value("off").takes_value(true)
       // .number_of_values(1)
 
     ).arg(
@@ -308,6 +321,7 @@ impl PreprocConf {
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "pre_proc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
+    let reduction = bool_of_matches(matches, "reduction") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
@@ -315,7 +329,8 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
 
     PreprocConf {
-      dump, active, smt_red, one_rhs, one_rhs_full, one_lhs, mono_pred
+      dump, active, smt_red,
+      reduction, one_rhs, one_rhs_full, one_lhs, mono_pred
     }
   }
 }

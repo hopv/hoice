@@ -106,6 +106,10 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     "preproc_001_simplified_instance", "Instance after basic simplifications."
   ) ? ;
 
+  if ! conf.preproc.reduction {
+    return Ok(())
+  }
+
   let mut cnt = 2 ;
 
   let mut changed = true ;
