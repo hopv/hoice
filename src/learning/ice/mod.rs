@@ -1263,6 +1263,7 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0., 0., 0., 0., 0., 0.) ;
     for pos in & self.pos {
+      println!("evaluating {}", qual.qual) ;
       match qual.eval(pos) {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,

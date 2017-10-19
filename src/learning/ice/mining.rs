@@ -18,13 +18,16 @@ pub trait QualValuesExt {
   /// Adds a sample for the qualifier.
   #[inline]
   fn add(& mut self, HSample, bool) ;
+  /// Adds an irrelevant sample for the qualifier.
+  #[inline]
+  fn add_none(& mut self, HSample) ;
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
   fn eval(& mut self, & HSample) -> Option<bool> ;
   /// Checks whether the qualifier evaluates to false on a sample. Pure lazy,
   /// will not evaluate the qualifier if it has not already been cached.
   #[inline]
-  fn lazy_eval(& self, & HSample) -> Option<bool> ;
+  fn lazy_eval(& self, & HSample) -> Option< Option<bool> > ;
 }
 
 
@@ -39,6 +42,8 @@ pub struct QualValues {
   true_set: HConSet<Args>,
   /// Samples on which the qualifier evaluates to false.
   flse_set: HConSet<Args>,
+  /// Samples on which the qualifier evaluates to nothing.
+  none_set: HConSet<Args>,
 }
 impl ::std::hash::Hash for QualValues {
   fn hash<H: ::std::hash::Hasher>(& self, hasher: & mut H) {
@@ -57,6 +62,7 @@ impl QualValues {
       qual,
       true_set: HConSet::with_capacity(1003),
       flse_set: HConSet::with_capacity(1003),
+      none_set: HConSet::with_capacity(1003),
     }
   }
 }
@@ -67,23 +73,30 @@ impl QualValuesExt for QualValues {
     } else { self.flse_set.insert(s) } ;
     ()
   }
+  fn add_none(& mut self, s: HSample) {
+    self.none_set.insert(s) ;
+  }
   fn eval(& mut self, s: & HSample) -> Option<bool> {
-    if let Some(b) = self.lazy_eval(s) { Some(b) } else {
+    if let Some(res) = self.lazy_eval(s) { res } else {
       match self.qual.bool_eval(s) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
           Some(b)
         },
-        Ok(None) => panic!("[bug] incomplete arguments in learning data"),
-        Err(_) => None,
+        _ => {
+          self.add_none( s.clone() ) ;
+          None
+        },
       }
     }
   }
-  fn lazy_eval(& self, s: & HSample) -> Option<bool> {
+  fn lazy_eval(& self, s: & HSample) -> Option< Option<bool> > {
     if self.true_set.contains(s) {
-      Some(true)
+      Some( Some(true) )
     } else if self.flse_set.contains(s) {
-      Some(false)
+      Some( Some(false) )
+    } else if self.none_set.contains(s) {
+      Some( None )
     } else {
       None
     }

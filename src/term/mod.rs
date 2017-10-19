@@ -1297,17 +1297,21 @@ impl Op {
       },
       Eql => {
         let mem ;
+        let mut res = true ;
         for_first!{
           args.into_iter() => {
             |fst| mem = fst,
             then |nxt| {
+              if ! mem.same_type( & nxt ) {
+                return Ok(Val::N)
+              }
               if mem != nxt {
-                return Ok( Val::B(false) )
+                res = false
               }
             },
-            yild Ok( Val::B(true) )
           } else unreachable!()
         }
+        Ok( Val::B(res) )
       },
       Not => if args.len() != 1 {
         bail!(

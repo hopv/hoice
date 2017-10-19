@@ -31,6 +31,14 @@ impl Val {
       Val::N => Ok(None),
     }
   }
+  /// True if the two values have the same type, or if one of them is unknown.
+  pub fn same_type(& self, other: & Self) -> bool {
+    match (self, other) {
+      (& Val::N, _) | (_, & Val::N) |
+      (& Val::B(_), & Val::B(_)) | (& Val::I(_), & Val::I(_)) => true,
+      _ => false,
+    }
+  }
 }
 impl_fmt!{
   Val(self, fmt) {
