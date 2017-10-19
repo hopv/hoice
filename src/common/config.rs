@@ -496,10 +496,6 @@ pub struct Config {
   /// Eldarica result checking flag.
   pub check_eld: bool,
 
-  /// Amount of memory that must be available for `hoice` to keep running, in
-  /// percents.
-  pub lo_mem_cap: u64,
-
   /// Instance and factory configuration.
   pub instance: InstanceConf,
   /// Pre-processing configuration.
@@ -586,9 +582,6 @@ impl Config {
       "unreachable(check_eld): default is provided and input validated in clap"
     ) ;
 
-    // Mem cap.
-    let lo_mem_cap = int_of_matches(& matches, "lo_mem_cap") as u64 ;
-
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
     let solver = SmtConf::new(& matches) ;
@@ -597,7 +590,7 @@ impl Config {
 
     Config {
       file, verb, stats, infer, out_dir, styles,
-      check, check_eld, lo_mem_cap,
+      check, check_eld,
       instance, preproc, solver, ice, teacher
     }
   }
@@ -661,17 +654,6 @@ impl Config {
       ).value_name(
         bool_format
       ).default_value("on").takes_value(true)//.number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("lo_mem_cap").long("--lo_mem_cap").help(
-        "amout of memory that must be free \
-        for hoice to keep running (percents)"
-      ).validator(
-        |s| bounded_int_validator(s, 0, 100)
-      ).value_name(
-        "percent"
-      ).default_value("3").takes_value(true)//.number_of_values(1)
 
     )
   }

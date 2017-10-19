@@ -1777,7 +1777,7 @@ impl Instance {
       writeln!(w, " ) {}", Typ::Bool) ? ;
       let (ident, closing) = if let Some(ref qvars) = * qvars {
         writeln!(w, "    (exists") ? ;
-        writeln!(w, "      (") ? ;
+        write!(w, "      (") ? ;
         for (var, typ) in qvars {
           write!(w, " ({} {})", var.default_str(), typ) ?
         }
