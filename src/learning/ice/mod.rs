@@ -840,18 +840,18 @@ where Slver: Solver<'kid, Parser> {
     self.actlit += 1 ;
 
     // Declare and assert.
-    self.solver.declare_const(& actlit, & Typ::Bool, & ()) ? ;
-    self.solver.assert( & actlit, & () ) ? ;
+    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    self.solver.assert_u( & actlit ) ? ;
 
     let actlits = [actlit] ;
 
-    if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+    if self.solver.check_sat_assuming_u(& actlits) ? {
+      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
       profile!{ self mark "learning", "smt", "legal" }
       Ok(true)
     } else {
-      self.solver.assert(
-        & format!("(not {})", actlits[0].as_ident()), & ()
+      self.solver.assert_u(
+        & format!("(not {})", actlits[0].as_ident())
       ) ? ;
       profile!{ self mark "learning", "smt", "legal" }
       Ok(false)
@@ -880,18 +880,18 @@ where Slver: Solver<'kid, Parser> {
     self.actlit += 1 ;
 
     // Declare and assert.
-    self.solver.declare_const(& actlit, & Typ::Bool, & ()) ? ;
-    self.solver.assert( & actlit, & () ) ? ;
+    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    self.solver.assert_u( & actlit ) ? ;
 
     let actlits = [actlit] ;
 
-    if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+    if self.solver.check_sat_assuming_u(& actlits) ? {
+      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
       profile!{ self mark "learning", "smt", "all legal" }
       Ok(true)
     } else {
-      self.solver.assert(
-        & format!("(not {})", actlits[0].as_ident()), & ()
+      self.solver.assert_u(
+        & format!("(not {})", actlits[0].as_ident())
       ) ? ;
       profile!{ self mark "learning", "smt", "all legal" }
       Ok(false)
@@ -921,8 +921,8 @@ where Slver: Solver<'kid, Parser> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
-        self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "true", & ()
+        self.solver.define_fun_u(
+          & SWrap(pred, sample), & args, & Typ::Bool, & "true"
         ) ?
       }
     }
@@ -935,8 +935,8 @@ where Slver: Solver<'kid, Parser> {
           // Contradiction found.
           return Ok(true)
         }
-        self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "false", & ()
+        self.solver.define_fun_u(
+          & SWrap(pred, sample), & args, & Typ::Bool, & "false"
         ) ?
       }
     }
@@ -971,8 +971,8 @@ where Slver: Solver<'kid, Parser> {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
-            self.solver.declare_const(
-              & SWrap(pred, sample), & Typ::Bool, & ()
+            self.solver.declare_const_u(
+              & SWrap(pred, sample), & Typ::Bool
             ) ?
           }
         }
@@ -983,7 +983,7 @@ where Slver: Solver<'kid, Parser> {
     // Assert all constraints.
     for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
-        self.solver.assert( & CWrap(constraint), & () ) ?
+        self.solver.assert_u( & CWrap(constraint) ) ?
       }
     }
     profile!{ self mark "learning", "smt", "setup" }
@@ -1169,12 +1169,12 @@ where Slver: Solver<'kid, Parser> {
 
     solver.reset() ? ;
     // Declare coefs and constant.
-    solver.declare_const(& cst, & Typ::Int, & ()) ? ;
+    solver.declare_const_u(& cst, & Typ::Int) ? ;
     for coef in & coefs {
-      solver.declare_const(coef, & Typ::Int, & ()) ?
+      solver.declare_const_u(coef, & Typ::Int) ?
     }
-    solver.assert( & constraint_1, & () ) ? ;
-    solver.assert( & constraint_2, & () ) ? ;
+    solver.assert_u( & constraint_1 ) ? ;
+    solver.assert_u( & constraint_2 ) ? ;
 
     let model = if solver.check_sat() ? {
       solver.get_model_const() ?
@@ -1610,7 +1610,7 @@ pub mod smt {
   pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
   impl<'a> Expr2Smt<()> for SWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!( w, "|p_{} {}|", self.0, self.1.uid() ) ? ;
       Ok(())
@@ -1618,9 +1618,9 @@ pub mod smt {
   }
   impl<'a> Sym2Smt<()> for SWrap<'a> {
     fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
-      self.expr_to_smt2(w, & ())
+      self.expr_to_smt2(w, ())
     }
   }
 
@@ -1630,16 +1630,16 @@ pub mod smt {
   pub struct CWrap<'a>(pub & 'a Constraint) ;
   impl<'a> Expr2Smt<()> for CWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(w, "(=> (and") ? ;
       for lhs in & self.0.lhs {
         write!(w, " ", ) ? ;
-        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
+        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, ()) ?
       }
       write!(w, ") ") ? ;
       if let Some(rhs) = self.0.rhs.as_ref() {
-        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
+        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, ()) ?
       } else {
         write!(w, "false") ? ;
       }
@@ -1674,7 +1674,7 @@ pub mod smt {
   }
   impl<'a> Expr2Smt<()> for ActWrap<& 'a HSamples> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(
         w, "(=> act_{} ({}", self.actlit,
@@ -1682,7 +1682,7 @@ pub mod smt {
       ) ? ;
       for unc in self.unc {
         write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
       }
       write!(w, "))") ? ;
       if ! self.pos {
@@ -1695,7 +1695,7 @@ pub mod smt {
     & 'a HConMap<Args, T>
   > {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(
         w, "(=> act_{} ({}", self.actlit,
@@ -1703,7 +1703,7 @@ pub mod smt {
       ) ? ;
       for (unc, _) in self.unc {
         write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
       }
       write!(w, "))") ? ;
       if ! self.pos {
@@ -1714,7 +1714,7 @@ pub mod smt {
   }
   impl<Samples> Sym2Smt<()> for ActWrap<Samples> {
     fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
       write!(w, "act_{}", self.actlit) ? ;
       Ok(())
@@ -1757,12 +1757,12 @@ pub mod smt {
   }
   impl<'a> Expr2Smt<()> for ValCoefWrap<'a> {
     fn expr_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
       if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") } ? ;
       for (val, coef) in self.vals.iter().zip( self.coefs ) {
         write!(w, " (* {} ", val) ? ;
-        coef.sym_to_smt2(w, & ()) ? ;
+        coef.sym_to_smt2(w, ()) ? ;
         write!(w, ")") ?
       }
       write!(w, " {}) 0)", self.cst) ? ;

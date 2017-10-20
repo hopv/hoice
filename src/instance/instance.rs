@@ -319,11 +319,11 @@ impl ::std::ops::Index<VarIdx> for Clause {
     & self.vars[index]
   }
 }
-impl<'a> ::rsmt2::to_smt::Expr2Smt<
-  (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
+impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
 > for Clause {
   fn expr_to_smt2<Writer: Write>(
-    & self, writer: & mut Writer, info: & (
+    & self, writer: & mut Writer, info: & 'b (
       & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
     )
   ) -> SmtRes<()> {

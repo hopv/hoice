@@ -211,26 +211,26 @@ impl Data {
         ref pred, ref args, ref body
       } in & self.output.pred_defs {
         if let Some(body) = body.as_ref() {
-          solver.define_fun(
-            pred, args, & "Bool".to_string(), body, & ()
+          solver.define_fun_u(
+            pred, args, & "Bool".to_string(), body
           ) ?
         } else {
-          solver.declare_fun(
+          solver.declare_fun_u(
             pred,
             & args.iter().map(
               |& (_, ref typ)| typ.clone()
             ).collect::<Vec<_>>(),
-            & "Bool".to_string(), & ()
+            & "Bool".to_string()
           ) ?
         }
       }
 
       // Declare arguments.
       for & (ref ident, ref typ) in args {
-        solver.declare_const(ident, typ, & ()) ?
+        solver.declare_const_u(ident, typ) ?
       }
 
-      solver.assert( & format!("(not {})", body), & ()) ? ;
+      solver.assert_u( & format!("(not {})", body) ) ? ;
 
       if solver.check_sat() ? {
         okay = false ;

@@ -373,8 +373,8 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             let sig: Vec<_> = pred.sig.index_iter().map(
               |(var, typ)| (var, * typ)
             ).collect() ;
-            self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+            self.solver.define_fun_u(
+              & pred.name, & sig, & Typ::Bool, & TermWrap(term)
             ) ?
           },
         }
@@ -446,7 +446,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
     self.solver.assert(
@@ -484,7 +484,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 pub struct TermWrap<'a>( & 'a Term ) ;
 impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     self.0.write( w, |w, var| var.default_write(w) ) ? ;
     Ok(())

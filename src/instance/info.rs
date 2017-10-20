@@ -28,7 +28,7 @@ impl VarInfo {
 }
 impl ::rsmt2::to_smt::Sym2Smt<()> for VarInfo {
   fn sym_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> where Writer: Write {
     write!(w, "v{}", self.idx) ? ;
     Ok(())
@@ -63,7 +63,7 @@ impl_fmt!{
 }
 impl ::rsmt2::to_smt::Sym2Smt<()> for PrdInfo {
   fn sym_to_smt2<Writer: Write>(
-    &self, w: & mut Writer, _: & ()
+    &self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     write!(w, "p_{}", self.idx) ? ;
     Ok(())

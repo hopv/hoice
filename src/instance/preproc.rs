@@ -440,7 +440,7 @@ impl<'a, Terms> NegImplWrap<'a, Terms> {
 impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegImplWrap<'a, Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     let mut lhs = self.lhs.borrow_mut() ;
     write!(w, "(not ")? ;
@@ -480,7 +480,7 @@ impl<Terms> NegConj<Terms> {
 impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegConj<Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     let mut terms = self.terms.borrow_mut() ;
     write!(w, "(not ") ? ;
@@ -558,10 +558,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert( & NegConj::new(terms), & () ) ? ;
+    self.solver.assert_u( & NegConj::new(terms) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)
@@ -575,10 +575,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert( & NegImplWrap::new(lhs, rhs), & () ) ? ;
+    self.solver.assert_u( & NegImplWrap::new(lhs, rhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)

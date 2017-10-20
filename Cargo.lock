@@ -14,7 +14,7 @@ dependencies = [
  "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "rsmt2 0.9.0 (git+https://github.com/kino-mc/rsmt2)",
+ "rsmt2 0.9.1 (git+https://github.com/kino-mc/rsmt2)",
 ]
 
 [[package]]
@@ -346,8 +346,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "rsmt2"
-version = "0.9.0"
-source = "git+https://github.com/kino-mc/rsmt2#6de4f6da4aa0e985182527e62ae484935abf8144"
+version = "0.9.1"
+source = "git+https://github.com/kino-mc/rsmt2#c6630c095b4eeb90f63bb3d355af8bd18d217afb"
 dependencies = [
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -490,7 +490,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum redox_termios 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7e891cfe48e9100a70a3b6eb652fef28920c117d366339687bd5576160db0f76"
 "checksum regex 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1731164734096285ec2a5ec7fea5248ae2f5485b3feeb0115af4fda2183b2d1b"
 "checksum regex-syntax 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ad890a5eef7953f55427c50575c680c42841653abd2b028b68cd223d157f62db"
-"checksum rsmt2 0.9.0 (git+https://github.com/kino-mc/rsmt2)" = "<none>"
+"checksum rsmt2 0.9.1 (git+https://github.com/kino-mc/rsmt2)" = "<none>"
 "checksum rustc-demangle 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "aee45432acc62f7b9a108cc054142dac51f979e69e71ddce7d6fc7adf29e817e"
 "checksum rustc-serialize 0.3.24 (registry+https://github.com/rust-lang/crates.io-index)" = "dcf128d1287d2ea9d80910b5f1120d0b8eede3fbf1abe91c40d39ea7d51e6fda"
 "checksum scopeguard 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "94258f53601af11e6a49f722422f6e3425c52b06245a5cf9bc09908b174f5e27"
