@@ -347,7 +347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rsmt2"
 version = "0.9.1"
-source = "git+https://github.com/kino-mc/rsmt2#c6630c095b4eeb90f63bb3d355af8bd18d217afb"
+source = "git+https://github.com/kino-mc/rsmt2#201e44b959f9f30be3516822e99c4be8f8342584"
 dependencies = [
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
