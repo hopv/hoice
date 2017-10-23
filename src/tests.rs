@@ -10,6 +10,7 @@ use read_and_work ;
 fn sat() {
   if let Err(e) = run_sat() {
     for e in e.iter() {
+      println!("Error:") ;
       let mut pref = "> " ;
       for line in format!("{}", e).lines() {
         println!("{}{}", pref, line) ;
@@ -24,6 +25,7 @@ fn sat() {
 fn unsat() {
   if let Err(e) = run_unsat() {
     for e in e.iter() {
+      println!("Error:") ;
       let mut pref = "> " ;
       for line in format!("{}", e).lines() {
         println!("{}{}", pref, line) ;
