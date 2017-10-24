@@ -2,8 +2,8 @@
 
 It infers predicates verifying a set of horn clauses.
 
-| linux | windows |     |
-|:-----:|:-------:|:---:|
+| linux / macos | windows |     |
+|:-------------:|:-------:|:---:|
 | [![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice) | [![Build status](https://ci.appveyor.com/api/projects/status/db247pe2jp9uo9cs?svg=true)](https://ci.appveyor.com/project/hopv/rsmt2) | [![codecov](https://codecov.io/gh/hopv/hoice/branch/master/graph/badge.svg)](https://codecov.io/gh/hopv/hoice) |
 
 

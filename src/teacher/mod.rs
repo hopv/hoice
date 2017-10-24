@@ -69,6 +69,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
+
     log_info!{
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
@@ -372,110 +373,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             let sig: Vec<_> = pred.sig.index_iter().map(
               |(var, typ)| (var, * typ)
             ).collect() ;
-            self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
+            self.solver.define_fun_u(
+              & pred.name, & sig, & Typ::Bool, & TermWrap(term)
             ) ?
           },
         }
       }
     }
-
-    // // Define forced predicates in topological order.
-    // 'forced_preds: for pred in self.instance.sorted_forced_terms() {
-    //   let pred = * pred ;
-    //   let (
-    //     quals, tterms
-    //   ) = if let Some(tterms) = self.instance.forced_terms_of(pred) {
-    //     tterms
-    //   } else {
-    //     bail!(
-    //       "inconsistency between forced predicates and \
-    //       sorted forced predicates"
-    //     )
-    //   } ;
-
-    //   // Don't declare predicates with qualifiers to stay in a QF fragment.
-    //   if quals.is_some() { continue 'forced_preds }
-
-    //   match * tterms {
-    //     TTerms::True => {
-    //       true_preds.insert(pred) ;
-    //     },
-    //     TTerms::False => {
-    //       false_preds.insert(pred) ;
-    //     },
-    //     _ => {
-    //       let pred = & self.instance[pred] ;
-    //       let sig: Vec<_> = pred.sig.index_iter().map(
-    //         |(var, typ)| (var, * typ)
-    //       ).collect() ;
-    //       self.solver.define_fun(
-    //         & pred.name, & sig, & Typ::Bool, tterms,
-    //         & ( & true_preds, & false_preds, self.instance.preds() )
-    //       ) ?
-    //     },
-    //   }
-
-    // }
-
-    // // Define non-trivially true or false predicates.
-    // 'define_preds: for (pred, cand) in cands.index_iter() {
-    //   if let Some(term) = cand.as_ref() {
-    //     match term.bool() {
-    //       Some(true) => {
-    //         let _ =  true_preds.insert(pred) ;
-    //         clauses_to_ignore.extend(
-    //           self.instance.clauses_of(pred).1
-    //         )
-    //       },
-    //       Some(false) => {
-    //         let _ = false_preds.insert(pred) ;
-    //         clauses_to_ignore.extend(
-    //           self.instance.clauses_of(pred).0
-    //         )
-    //       },
-    //       None => {
-    //         let pred = & self.instance[pred] ;
-    //         let sig: Vec<_> = pred.sig.index_iter().map(
-    //           |(var, typ)| (var, * typ)
-    //         ).collect() ;
-    //         self.solver.define_fun(
-    //           & pred.name, & sig, & Typ::Bool, & TermWrap(term), & ()
-    //         ) ?
-    //       }
-    //     }
-    //   } else if let Some(tterms) = self.instance.forced_terms_of(pred) {
-    //     if tterms.len() == 1 {
-    //       match tterms[0].bool() {
-    //         Some(true)  => {
-    //           let _ =  true_preds.insert(pred) ;
-    //           clauses_to_ignore.extend(
-    //             self.instance.clauses_of(pred).1
-    //           ) ;
-    //           continue 'define_preds
-    //         },
-    //         Some(false) => {
-    //           let _ = false_preds.insert(pred) ;
-    //           clauses_to_ignore.extend(
-    //             self.instance.clauses_of(pred).0
-    //           ) ;
-    //           continue 'define_preds
-    //         },
-    //         None => (),
-    //       }
-    //     }
-    //     let pred = & self.instance[pred] ;
-    //     let sig: Vec<_> = pred.sig.index_iter().map(
-    //       |(var, typ)| (var, * typ)
-    //     ).collect() ;
-    //     self.solver.define_fun(
-    //       & pred.name, & sig, & Typ::Bool, & TTermsWrap(tterms),
-    //       self.instance.preds()
-    //     ) ?
-    //   } else {
-    //     bail!("illegal incomplete candidates")
-    //   }
-    // }
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
@@ -542,7 +446,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
     self.solver.assert(
@@ -580,7 +484,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 pub struct TermWrap<'a>( & 'a Term ) ;
 impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     self.0.write( w, |w, var| var.default_write(w) ) ? ;
     Ok(())

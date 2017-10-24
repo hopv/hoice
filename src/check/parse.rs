@@ -500,9 +500,11 @@ impl<'a> InParser<'a> {
     self.ws_cmt() ;
     self.tag("Bool") ? ;
     self.ws_cmt() ;
-    let body = self.sexpr().chain_err(
-      || "while parsing body"
-    ) ? ;
+    let body = Some(
+      self.sexpr().chain_err(
+        || "while parsing body"
+      ) ?
+    ) ;
     self.ws_cmt() ;
     self.pred_defs.push(
       PredDef { pred, args, body }

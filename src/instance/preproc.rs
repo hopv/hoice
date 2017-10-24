@@ -20,16 +20,20 @@ pub fn work(
     let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
       || ErrorKind::Z3SpawnError
     ) ? ;
-    let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
-      || "while constructing the teacher's solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("preproc") ? {
-      run(
-        instance, profiler, Some( SolverWrapper::new(solver.tee(log)) )
-      )
-    } else {
-      run( instance, profiler, Some( SolverWrapper::new(solver) ) )
-    }
+    let res = {
+      let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
+        || "while constructing preprocessing's solver"
+      ) ? ;
+      if let Some(log) = conf.solver.log_file("preproc") ? {
+        run(
+          instance, profiler, Some( SolverWrapper::new(solver.tee(log)) )
+        )
+      } else {
+        run( instance, profiler, Some( SolverWrapper::new(solver) ) )
+      }
+    } ;
+    kid.kill() ? ;
+    res
   } else {
     run(
       instance, profiler,
@@ -76,6 +80,7 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     "preproc_000_original_instance", "Instance before pre-processing."
   ) ? ;
 
+  log_info!{ "starting basic simplifications" }
 
   profile!{ |profiler| tick "pre-proc", "propagate" }
   let simplify = instance.simplify_clauses() ? ;
@@ -101,10 +106,16 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     "preproc_001_simplified_instance", "Instance after basic simplifications."
   ) ? ;
 
+  if ! conf.preproc.reduction {
+    return Ok(())
+  }
+
   let mut cnt = 2 ;
 
   let mut changed = true ;
   'preproc: while changed {
+
+    log_info!{ "running simplification" }
 
     profile!{ |profiler| tick "pre-proc", "simplifying" }
     let red_info = reductor.run_simplification(instance, & profiler) ? ;
@@ -331,7 +342,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
                   s
                 }
               ),
-              "Instance afte smt-based reduction"
+              "Instance after smt-based reduction"
           ) ? ;
           * cnt += 1 ;
 
@@ -358,7 +369,6 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 /// # TODO
 ///
 /// - more doc with examples
-/// - try to reverse term before giving up and returning none
 pub fn terms_of_app<F: Fn(Term) -> Term>(
   instance: & Instance, pred: PrdIdx, args: & VarMap<Term>, f: F
 ) -> Res<
@@ -388,7 +398,7 @@ pub fn terms_of_app<F: Fn(Term) -> Term>(
         f( term::eq( term::var(index), term::int(i) ) )
       ) ;
     } else {
-      postponed.push( (* index, arg) )
+      postponed.push( (index, arg) )
     }
   }
 
@@ -397,6 +407,11 @@ pub fn terms_of_app<F: Fn(Term) -> Term>(
       terms.insert(
         f( term::eq(term::var(var), term) )
       ) ;
+    } else if let Some((v, inverted)) = arg.invert(var) {
+      let _prev = map.insert(v, inverted) ;
+      debug_assert_eq!( _prev, None ) ;
+      let is_new = app_vars.insert(v) ;
+      debug_assert!( is_new )
     } else {
       // This is where we give up, but we could try to reverse the term.
       return Ok(None)
@@ -425,7 +440,7 @@ impl<'a, Terms> NegImplWrap<'a, Terms> {
 impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegImplWrap<'a, Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     let mut lhs = self.lhs.borrow_mut() ;
     write!(w, "(not ")? ;
@@ -465,7 +480,7 @@ impl<Terms> NegConj<Terms> {
 impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegConj<Terms>
 where Terms: Iterator<Item = & 'a Term> {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: & ()
+    & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     let mut terms = self.terms.borrow_mut() ;
     write!(w, "(not ") ? ;
@@ -543,10 +558,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert( & NegConj::new(terms), & () ) ? ;
+    self.solver.assert_u( & NegConj::new(terms) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)
@@ -560,10 +575,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const(& var.idx, & var.typ, & ()) ?
+        self.solver.declare_const_u(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert( & NegImplWrap::new(lhs, rhs), & () ) ? ;
+    self.solver.assert_u( & NegImplWrap::new(lhs, rhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)
@@ -604,7 +619,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       log_debug!{ "      terms:" }
       for term in & terms { log_debug!{ "      - {}", term } }
       log_debug!{ "      map:" }
-      for (var, trm) in & map { log_debug!{ "      - v_{} -> {}", var, trm } }
+      for (var, trm) in & map {
+        log_debug!{
+          "      - {} -> {}", var_info[* var], trm
+        }
+      }
     }
 
     let lhs_true = lhs.is_empty() || self.trivial_conj(
@@ -612,7 +631,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     ) ? ;
 
     if let Some(term) = rhs.term() {
-      terms.insert( term.clone() ) ;
+      if let Some((rhs, _)) = term.subst_total(& map) {
+        terms.insert(rhs) ;
+      } else {
+        return Ok( ExtractRes::Failed )
+      }
     } else if lhs_true && terms.is_empty() {
       if let Ok(rhs) = rhs.subst_total(& map) {
         return Ok( ExtractRes::Success( vec![rhs] ) )
@@ -1159,7 +1182,7 @@ where Slver: Solver<'kid, ()> {
       instance.forget_clause(clause_idx) ? ;
       red_info.clauses_rmed += 1 ;
 
-      log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
+      // log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
 
       log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
       use self::ExtractRes::* ;
@@ -1509,38 +1532,40 @@ where Slver: Solver<'kid, ()> {
         for term in clause.lhs_terms() {
           match term.bool() {
             Some(true) => (),
-            Some(false) => clauses_to_rm.push(clause_idx),
+            Some(false) => {
+              clauses_to_rm.push(clause_idx) ;
+              continue 'clause_iter
+            },
             _ => lhs.push(term),
           }
         }
 
-        let rhs = if let Some(term) = clause.rhs().term() {
+        let rhs = if let Some(rhs) = clause.rhs().term() {
 
-          if clause.lhs_is_empty() {
-            if let Some(b) = term.bool() {
-              if b {
-                clauses_to_rm.push(clause_idx) ;
-                continue 'clause_iter
-              } else {
-                log_debug!{
-                  "unsat because of {}",
-                  clause.to_string_info( instance.preds() ) ?
-                }
-                // Clause is true => false.
-                bail!( ErrorKind::Unsat )
-              }
-            } else if solver.trivial_impl(
-              clause.vars(), Some(term).into_iter(), & term::fls()
+          if let Some(true) = rhs.bool() {
+            clauses_to_rm.push(clause_idx) ;
+            continue 'clause_iter
+          }
+
+          // No predicate application?
+          if clause.lhs_preds().is_empty() {
+            // Either it is trivial, or falsifiablie regardless of the
+            // predicates.
+            if solver.trivial_impl(
+              clause.vars(), lhs.drain(0..), rhs
             ) ? {
+              clauses_to_rm.push(clause_idx) ;
+              continue 'clause_iter
+            } else {
               log_debug!{
                 "unsat because of {}",
                 clause.to_string_info( instance.preds() ) ?
               }
-              // Clause true => false.
               bail!( ErrorKind::Unsat )
             }
           }
-          term
+
+          rhs
 
         } else {
           if lhs.is_empty() {
@@ -1550,7 +1575,8 @@ where Slver: Solver<'kid, ()> {
         } ;
 
         if solver.trivial_impl(clause.vars(), lhs.drain(0..), rhs) ? {
-          clauses_to_rm.push(clause_idx)
+          clauses_to_rm.push(clause_idx) ;
+          continue 'clause_iter
         }
       }
     }

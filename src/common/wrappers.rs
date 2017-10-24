@@ -60,18 +60,18 @@ impl<T: fmt::Display> fmt::Display for VarMap<T> {
   }
 }
 
-impl<T> Sym2Smt<T> for VarIdx {
+impl<T: Copy> Sym2Smt<T> for VarIdx {
   fn sym_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & T
+    & self, w: & mut Writer, _: T
   ) -> SmtRes<()> where Writer: Write {
     self.default_write(w) ? ;
     Ok(())
   }
 }
 
-impl<T> Expr2Smt<T> for VarIdx {
+impl<T: Copy> Expr2Smt<T> for VarIdx {
   fn expr_to_smt2<Writer>(
-    & self, w: & mut Writer, _: & T
+    & self, w: & mut Writer, _: T
   ) -> SmtRes<()> where Writer: Write {
     self.sym_to_smt2(w, & ())
   }

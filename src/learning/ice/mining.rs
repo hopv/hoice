@@ -18,13 +18,16 @@ pub trait QualValuesExt {
   /// Adds a sample for the qualifier.
   #[inline]
   fn add(& mut self, HSample, bool) ;
+  /// Adds an irrelevant sample for the qualifier.
+  #[inline]
+  fn add_none(& mut self, HSample) ;
   /// Checks whether the qualifier evaluates to false on a sample.
   #[inline]
-  fn eval(& mut self, & HSample) -> bool ;
+  fn eval(& mut self, & HSample) -> Option<bool> ;
   /// Checks whether the qualifier evaluates to false on a sample. Pure lazy,
   /// will not evaluate the qualifier if it has not already been cached.
   #[inline]
-  fn lazy_eval(& self, & HSample) -> Option<bool> ;
+  fn lazy_eval(& self, & HSample) -> Option< Option<bool> > ;
 }
 
 
@@ -39,6 +42,8 @@ pub struct QualValues {
   true_set: HConSet<Args>,
   /// Samples on which the qualifier evaluates to false.
   flse_set: HConSet<Args>,
+  /// Samples on which the qualifier evaluates to nothing.
+  none_set: HConSet<Args>,
 }
 impl ::std::hash::Hash for QualValues {
   fn hash<H: ::std::hash::Hasher>(& self, hasher: & mut H) {
@@ -57,6 +62,7 @@ impl QualValues {
       qual,
       true_set: HConSet::with_capacity(1003),
       flse_set: HConSet::with_capacity(1003),
+      none_set: HConSet::with_capacity(1003),
     }
   }
 }
@@ -67,26 +73,30 @@ impl QualValuesExt for QualValues {
     } else { self.flse_set.insert(s) } ;
     ()
   }
-  fn eval(& mut self, s: & HSample) -> bool {
-    if let Some(b) = self.lazy_eval(s) { b } else {
+  fn add_none(& mut self, s: HSample) {
+    self.none_set.insert(s) ;
+  }
+  fn eval(& mut self, s: & HSample) -> Option<bool> {
+    if let Some(res) = self.lazy_eval(s) { res } else {
       match self.qual.bool_eval(s) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
-          b
+          Some(b)
         },
-        Ok(None) => panic!("[bug] incomplete arguments in learning data"),
-        Err(e) => {
-          print_err(e) ;
-          panic!("[bug] error during qualifier evaluation")
+        _ => {
+          self.add_none( s.clone() ) ;
+          None
         },
       }
     }
   }
-  fn lazy_eval(& self, s: & HSample) -> Option<bool> {
+  fn lazy_eval(& self, s: & HSample) -> Option< Option<bool> > {
     if self.true_set.contains(s) {
-      Some(true)
+      Some( Some(true) )
     } else if self.flse_set.contains(s) {
-      Some(false)
+      Some( Some(false) )
+    } else if self.none_set.contains(s) {
+      Some( None )
     } else {
       None
     }
@@ -157,6 +167,9 @@ impl Qualifiers {
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
     ) ;
+    let mut nullary_cands = HConMap::with_capacity(2) ;
+    nullary_cands.insert( term::tru(), QualValues::new(term::tru()) ) ;
+    nullary_cands.insert( term::fls(), QualValues::new(term::fls()) ) ;
     arity_map.push( HConMap::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
@@ -287,6 +300,18 @@ impl Qualifiers {
   //   }
   //   Ok(())
   // }
+
+  /// Adds some qualifiers as qualifier values.
+  pub fn add_quals<Terms: IntoIterator<Item = Term>>(
+    & mut self, arity: Arity, quals: Terms
+  ) -> Res<()> {
+    for qual in quals.into_iter() {
+      if ! self.arity_map[arity].contains_key(& qual) {
+        self.arity_map[arity].insert(qual.clone(), QualValues::new(qual)) ;
+      }
+    }
+    Ok(())
+  }
 
   /// Adds some qualifiers as qualifier values.
   pub fn add_qual_values(

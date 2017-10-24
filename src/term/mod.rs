@@ -549,6 +549,79 @@ impl RTerm {
   }
 
 
+
+  /// Attempts to invert a term.
+  ///
+  /// More precisely, if the term only mentions one variable `v`, attempts to
+  /// find a `f` that's a solution of `var = term <=> v = f(var)`.
+  ///
+  /// Currently, only works when `v` appears exactly once. That is, it will
+  /// fail on `var = 3.v + 7.v` for instance. (This would be fine if
+  /// normalization handled this kind cases though.)
+  ///
+  /// Also, only works when all operators are binary (expect for unary minus).
+  ///
+  /// ```
+  /// use hoice::term ;
+  ///
+  /// let term = term::u_minus( term::var(0) ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::u_minus( term::var(1) ) ) )
+  /// }
+  /// let term = term::sub( vec![ term::var(0), term::int(7) ] ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::add( vec![ term::var(1), term::int(7) ] ) ) )
+  /// }
+  /// let term = term::add( vec![ term::int(7), term::var(0) ] ) ;
+  /// assert_eq!{
+  ///   term.invert( 1.into() ),
+  ///   Some( (0.into(), term::sub( vec![ term::var(1), term::int(7) ] ) ) )
+  /// }
+  /// ```
+  pub fn invert(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
+    let mut solution = term::var(var) ;
+    let mut term = self ;
+
+    loop {
+      match * term {
+        RTerm::App { op, ref args } => {
+          let (po, symmetric) = match op {
+            Op::Add => (Op::Sub, true),
+            Op::Sub if args.len() == 1 => {
+              solution = term::u_minus( solution ) ;
+              term = & args[0] ;
+              continue
+            },
+            Op::Sub => (Op::Add, false),
+            Op::Div => (Op::Mul, false),
+            Op::Mul => (Op::Div, true),
+            _ => return None,
+          } ;
+          if args.len() != 2 { return None }
+
+          if let Some(i) = args[0].int() {
+            if symmetric {
+              solution = term::app( po, vec![ solution, term::int(i) ] )
+            } else {
+              solution = term::app( op, vec![ term::int(i), solution ] )
+            }
+            term = & args[1]
+          } else if let Some(i) = args[1].int() {
+            solution = term::app( po, vec![ solution, term::int(i) ] ) ;
+            term = & args[0]
+          } else {
+            return None
+          }
+        },
+        RTerm::Var(v) => return Some((v, solution)),
+        _ => return None,
+      }
+    }
+  }
+
+
 }
 impl_fmt!{
   RTerm(self, fmt) {
@@ -599,6 +672,11 @@ pub enum TTerm {
   T(Term),
 }
 impl TTerm {
+  /// The false top term.
+  pub fn fls() -> Self {
+    TTerm::T( term::fls() )
+  }
+
   /// True if the top term is a term with no variables and evaluates to true.
   pub fn is_true(& self) -> bool {
     self.bool() == Some(true)
@@ -702,7 +780,7 @@ impl TTerm {
           if let Some((term, _)) = term.subst_total(map) {
             new_args.push(term)
           } else {
-            bail!("total substitution failed")
+            bail!("total substitution failed (predicate)")
           }
         }
         Ok( TTerm::P { pred, args: new_args } )
@@ -710,7 +788,7 @@ impl TTerm {
       TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
         Ok( TTerm::T(term) )
       } else {
-        bail!("total substitution failed")
+        bail!("total substitution failed (term)")
       },
     }
   }
@@ -997,11 +1075,11 @@ impl_fmt!{
   }
 }
 
-impl<'a> ::rsmt2::to_smt::Expr2Smt<
-  (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
+impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
 > for TTerms {
   fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, info: & (
+    & self, w: & mut Writer, info: & 'b (
       & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<::instance::info::PrdInfo>
     )
   ) -> SmtRes<()> {
@@ -1065,6 +1143,8 @@ pub enum Op {
   And,
   /// Disjunction.
   Or,
+  /// If-then-else.
+  Ite,
 }
 impl Op {
   /// String representation.
@@ -1073,7 +1153,7 @@ impl Op {
     match * self {
       Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
-      Not => "not", And => "and", Or => "or", Impl => "=>",
+      Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
     }
   }
 
@@ -1217,17 +1297,21 @@ impl Op {
       },
       Eql => {
         let mem ;
+        let mut res = true ;
         for_first!{
           args.into_iter() => {
             |fst| mem = fst,
             then |nxt| {
+              if ! mem.same_type( & nxt ) {
+                return Ok(Val::N)
+              }
               if mem != nxt {
-                return Ok( Val::B(false) )
+                res = false
               }
             },
-            yild Ok( Val::B(true) )
           } else unreachable!()
         }
+        Ok( Val::B(res) )
       },
       Not => if args.len() != 1 {
         bail!(
@@ -1281,6 +1365,20 @@ impl Op {
           _ => Ok(Val::N),
         }
       },
+      Ite => if args.len() != 3 {
+        bail!(
+          format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
+        )
+      } else {
+        let (els, thn, cnd) = (
+          args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
+        ) ;
+        match cnd.to_bool() ? {
+          Some(true) => Ok(thn),
+          Some(false) => Ok(els),
+          _ => Ok(Val::N),
+        }
+      }
     }
   }
 }

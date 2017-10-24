@@ -165,6 +165,8 @@ pub struct PreprocConf {
   pub dump: bool,
   /// Pre-processing flag.
   pub active: bool,
+  /// Reduction flag.
+  pub reduction: bool,
   /// Simple reduction flag.
   pub smt_red: bool,
   /// One rhs.
@@ -248,13 +250,25 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("reduction").long("--reduction").help(
+        "(de)activates Horn reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("one_rhs").long("--one_rhs").help(
         "(de)activates one rhs reduction"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -264,17 +278,20 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
       Arg::with_name("one_lhs").long("--one_lhs").help(
-        "(de)activates one lhs reduction"
+        "(de)activates reduction of predicate \
+        appearing in exactly one clause lhs"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -284,7 +301,8 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("off").takes_value(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -303,6 +321,7 @@ impl PreprocConf {
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "pre_proc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
+    let reduction = bool_of_matches(matches, "reduction") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
@@ -310,7 +329,8 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
 
     PreprocConf {
-      dump, active, smt_red, one_rhs, one_rhs_full, one_lhs, mono_pred
+      dump, active, smt_red,
+      reduction, one_rhs, one_rhs_full, one_lhs, mono_pred
     }
   }
 }
@@ -331,6 +351,10 @@ pub struct IceConf {
   pub decay: bool,
   /// Maximum decay above which qualifiers are dropped.
   pub max_decay: usize,
+  /// Sort the predicates before building the decision trees.
+  pub sort_preds: bool,
+  /// Ignore unclassified data when computing entropy.
+  pub simple_entropy: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -348,7 +372,8 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("1").takes_value(true)// .number_of_values(1)
+      ).default_value("1").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     // ).arg(
 
@@ -368,7 +393,8 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("off").takes_value(true).hidden(true)
+      // .number_of_values(1)
 
     ).arg(
 
@@ -378,7 +404,28 @@ impl IceConf {
         int_validator
       ).value_name(
         "INT"
-      ).default_value("50").takes_value(true)// .number_of_values(1)
+      ).default_value("50").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("sort_preds").long("--sort_preds").help(
+        "sort the predicates before building the decision tree"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true)// .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("simple_entropy").long("--simple_entropy").help(
+        "ignore unclassified data when computing entropy"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -390,15 +437,16 @@ impl IceConf {
 
     let gain_threads = int_of_matches(matches, "gain_threads") ;
 
-    let decay = matches.value_of("decay").and_then(
-      |s| bool_of_str(& s)
-    ).expect(
-      "unreachable(decay): default is provided and input validated in clap"
-    ) ;
-
+    let decay = bool_of_matches(matches, "decay") ;
     let max_decay = int_of_matches(matches, "max_decay") ;
 
-    IceConf { fpice_synth, gain_threads, decay, max_decay }
+    let sort_preds = bool_of_matches(matches, "sort_preds") ;
+
+    let simple_entropy = bool_of_matches(matches, "simple_entropy") ;
+
+    IceConf {
+      fpice_synth, gain_threads, decay, max_decay, sort_preds, simple_entropy
+    }
   }
 }
 
@@ -512,7 +560,7 @@ impl Config {
 
     let matches = app.get_matches() ;
 
-    /// Input file.
+    // Input file.
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity
@@ -894,6 +942,27 @@ pub fn int_validator(s: String) -> Result<(), String> {
   use std::str::FromStr ;
   match usize::from_str(& s) {
     Ok(_) => Ok(()),
+    Err(_) => Err(
+      format!("expected an integer, got `{}`", s)
+    ),
+  }
+}
+
+/// Validates integer input between some bounds.
+pub fn bounded_int_validator(
+  s: String, lo: usize, hi: usize
+) -> Result<(), String> {
+  use std::str::FromStr ;
+  match usize::from_str(& s) {
+    Ok(val) => if lo <= val && val <= hi {
+      Ok(())
+    } else {
+      Err(
+        format!(
+          "expected a value between {} and {}, got `{}`", lo , hi, val
+        )
+      )
+    },
     Err(_) => Err(
       format!("expected an integer, got `{}`", s)
     ),

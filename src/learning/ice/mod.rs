@@ -318,28 +318,30 @@ where Slver: Solver<'kid, Parser> {
       ))
     }
 
-    profile!{ self tick "learning", "predicate sorting" }
-    predicates.sort_by(
-      |
-        & (
-          unclassed_1, classed_1, _
-        ), & (
-          unclassed_2, classed_2, _
-        )
-      | {
-        use std::cmp::Ordering::* ;
-        match (unclassed_1, unclassed_2) {
-          (0, 0) => classed_1.cmp(& classed_2).reverse(),
-          (0, _) => Less,
-          (_, 0) => Greater,
-          (_, _) => match classed_1.cmp(& classed_2).reverse() {
-            Equal => unclassed_1.cmp(& unclassed_2),
-            res => res,
-          },
+    if conf.ice.sort_preds {
+      profile!{ self tick "learning", "predicate sorting" }
+      predicates.sort_by(
+        |
+          & (
+            unclassed_1, classed_1, _
+          ), & (
+            unclassed_2, classed_2, _
+          )
+        | {
+          use std::cmp::Ordering::* ;
+          match (unclassed_1, unclassed_2) {
+            (0, 0) => classed_1.cmp(& classed_2).reverse(),
+            (0, _) => Less,
+            (_, 0) => Greater,
+            (_, _) => match classed_1.cmp(& classed_2).reverse() {
+              Equal => unclassed_1.cmp(& unclassed_2),
+              res => res,
+            },
+          }
         }
-      }
-    ) ;
-    profile!{ self mark "learning", "predicate sorting" }
+      ) ;
+      profile!{ self mark "learning", "predicate sorting" }
+    }
 
     let mut used_quals = HConSet::with_capacity(107) ;
 
@@ -546,10 +548,15 @@ where Slver: Solver<'kid, Parser> {
     profile!{ |_profiler| tick "learning", "qual", "// gain" }
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
-      |(_, values)| match data.gain(pred, all_data, values) {
-        Ok( Some((gain, _, _)) ) => Ok( Some( (gain, values) ) ),
-        Ok( None ) => Ok(None),
-        Err(e) => Err(e),
+      |(_, values)| {
+        let gain = if conf.ice.simple_entropy {
+          data.simple_gain(values)
+        } else {
+          data.gain(pred, all_data, values)?.map(
+            |(gain, _, _)| gain
+          )
+        } ;
+        Ok( gain.map(|gain| (gain, values)) )
       }
     ).collect() ;
 
@@ -608,9 +615,14 @@ where Slver: Solver<'kid, Parser> {
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
     'search_qual: for (_, values) in quals {
-      if let Some(
-        (gain, (_q_pos, _q_neg, _q_unc), (_nq_pos, _nq_neg, _nq_unc))
-      ) = data.gain(pred, all_data, values) ? {
+      let gain = if conf.ice.simple_entropy {
+        data.simple_gain(values)
+      } else {
+        data.gain(pred, all_data, values)?.map(
+          |(gain, _, _)| gain
+        )
+      } ;
+      if let Some(gain) = gain {
         let better = if let Some( (old_gain, _) ) = maybe_qual {
           old_gain < gain
         } else { true } ;
@@ -724,6 +736,7 @@ where Slver: Solver<'kid, Parser> {
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
+
       for sample in & data.pos {
         self.synthesize(sample)
       }
@@ -806,32 +819,6 @@ where Slver: Solver<'kid, Parser> {
     self.qualifiers.add_qual_values(& mut self.new_quals) ? ;
 
     res
-
-    // RECURSIVE CALL.
-    //
-    // It's fine, the next call is logically obligated to terminate.
-    // self.get_qualifier(pred, data, false)
-
-    // // Insert new qualifier.
-    // let (q_data, nq_data) = {
-    //   let values = self.qualifiers.add_qual(
-    //     qual.clone(), // & self.data.samples
-    //   ) ? ;
-    //   data.split(values)
-    // } ;
-    // msg!(
-    //   self =>
-    //     "  using synthetic qualifier {} | \
-    //     pos: ({},{},{}), neg: ({},{},{})",
-    //     qual,
-    //     q_data.pos.len(),
-    //     q_data.neg.len(),
-    //     q_data.unc.len(),
-    //     nq_data.pos.len(),
-    //     nq_data.neg.len(),
-    //     nq_data.unc.len(),
-    // ) ;
-    // Ok( (qual, q_data, nq_data) )
   }
 
 
@@ -853,18 +840,18 @@ where Slver: Solver<'kid, Parser> {
     self.actlit += 1 ;
 
     // Declare and assert.
-    self.solver.declare_const(& actlit, & Typ::Bool, & ()) ? ;
-    self.solver.assert( & actlit, & () ) ? ;
+    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    self.solver.assert_u( & actlit ) ? ;
 
     let actlits = [actlit] ;
 
-    if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+    if self.solver.check_sat_assuming_u(& actlits) ? {
+      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
       profile!{ self mark "learning", "smt", "legal" }
       Ok(true)
     } else {
-      self.solver.assert(
-        & format!("(not {})", actlits[0].as_ident()), & ()
+      self.solver.assert_u(
+        & format!("(not {})", actlits[0].as_ident())
       ) ? ;
       profile!{ self mark "learning", "smt", "legal" }
       Ok(false)
@@ -893,18 +880,18 @@ where Slver: Solver<'kid, Parser> {
     self.actlit += 1 ;
 
     // Declare and assert.
-    self.solver.declare_const(& actlit, & Typ::Bool, & ()) ? ;
-    self.solver.assert( & actlit, & () ) ? ;
+    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    self.solver.assert_u( & actlit ) ? ;
 
     let actlits = [actlit] ;
 
-    if self.solver.check_sat_assuming(& actlits, & ()) ? {
-      self.solver.assert( & actlits[0].as_ident(), & () ) ? ;
+    if self.solver.check_sat_assuming_u(& actlits) ? {
+      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
       profile!{ self mark "learning", "smt", "all legal" }
       Ok(true)
     } else {
-      self.solver.assert(
-        & format!("(not {})", actlits[0].as_ident()), & ()
+      self.solver.assert_u(
+        & format!("(not {})", actlits[0].as_ident())
       ) ? ;
       profile!{ self mark "learning", "smt", "all legal" }
       Ok(false)
@@ -934,8 +921,8 @@ where Slver: Solver<'kid, Parser> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
-        self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "true", & ()
+        self.solver.define_fun_u(
+          & SWrap(pred, sample), & args, & Typ::Bool, & "true"
         ) ?
       }
     }
@@ -948,8 +935,8 @@ where Slver: Solver<'kid, Parser> {
           // Contradiction found.
           return Ok(true)
         }
-        self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "false", & ()
+        self.solver.define_fun_u(
+          & SWrap(pred, sample), & args, & Typ::Bool, & "false"
         ) ?
       }
     }
@@ -984,8 +971,8 @@ where Slver: Solver<'kid, Parser> {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
-            self.solver.declare_const(
-              & SWrap(pred, sample), & Typ::Bool, & ()
+            self.solver.declare_const_u(
+              & SWrap(pred, sample), & Typ::Bool
             ) ?
           }
         }
@@ -996,7 +983,7 @@ where Slver: Solver<'kid, Parser> {
     // Assert all constraints.
     for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
-        self.solver.assert( & CWrap(constraint), & () ) ?
+        self.solver.assert_u( & CWrap(constraint) ) ?
       }
     }
     profile!{ self mark "learning", "smt", "setup" }
@@ -1009,57 +996,109 @@ where Slver: Solver<'kid, Parser> {
   pub fn synthesize(
     & mut self, sample: & HSample
   ) -> () {
-    let mut previous: Vec<(Term, _)> = Vec::with_capacity(
+    let mut previous_int: Vec<(Term, & Int)> = Vec::with_capacity(
+      sample.len()
+    ) ;
+    let mut previous_bool: Vec<(Term, bool)> = Vec::with_capacity(
       sample.len()
     ) ;
 
     for (var_idx, val) in sample.index_iter() {
       let arity: Arity = (1 + * var_idx).into() ;
       let var = term::var(var_idx) ;
-      let val = match * val {
-        Val::B(_) => continue,
-        Val::I(ref i) => i,
+      
+      match * val {
+        Val::B(val) => {
+          let term = if val {
+            var.clone()
+          } else {
+            term::not( var.clone() )
+          } ;
+          if ! self.qualifiers.is_known(arity, & term) {
+            self.new_quals.insert( arity, term.clone() )
+          }
+
+          for & (ref pre_var, pre_val) in & previous_bool {
+            let other_term = if pre_val {
+              pre_var.clone()
+            } else {
+              term::not( pre_var.clone() )
+            } ;
+            let and = term::and( vec![ term.clone(), other_term.clone() ] ) ;
+            if ! self.qualifiers.is_known(arity, & term) {
+              self.new_quals.insert( arity, and )
+            }
+
+          }
+
+          previous_bool.push( (var, val) )
+        },
+        
+        Val::I(ref val) => {
+          let val_term = term::int( val.clone() ) ;
+          let term = term::app(
+            Op::Ge, vec![ var.clone(), val_term.clone() ]
+          ) ;
+          if ! self.qualifiers.is_known(arity, & term) {
+            self.new_quals.insert( arity, term )
+          }
+          let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
+          if ! self.qualifiers.is_known(arity, & term) {
+            self.new_quals.insert( arity, term )
+          }
+
+          for & (ref pre_var, pre_val) in & previous_int {
+            if val == pre_val {
+              let eq = term::eq( pre_var.clone(), var.clone() ) ;
+              if ! self.qualifiers.is_known(arity, & eq) {
+                self.new_quals.insert( arity, eq )
+              }
+            }
+            if - val == * pre_val {
+              let eq = term::eq(
+                pre_var.clone(), term::not( var.clone() )
+              ) ;
+              if ! self.qualifiers.is_known(arity, & eq) {
+                self.new_quals.insert( arity, eq )
+              }
+            }
+            let add = term::app(
+              Op::Add, vec![ pre_var.clone(), var.clone() ]
+            ) ;
+            let add_val = term::int( pre_val + val ) ;
+            let term = term::app(
+              Op::Ge, vec![ add.clone(), add_val.clone() ]
+            ) ;
+            if ! self.qualifiers.is_known(arity, & term) {
+              self.new_quals.insert( arity, term )
+            }
+            let term = term::app( Op::Le, vec![ add, add_val ] ) ;
+            if ! self.qualifiers.is_known(arity, & term) {
+              self.new_quals.insert( arity, term )
+            }
+            let sub = term::app(
+              Op::Sub, vec![ pre_var.clone(), var.clone() ]
+            ) ;
+            let sub_val = term::int( pre_val - val ) ;
+            let term = term::app(
+              Op::Ge, vec![ sub.clone(), sub_val.clone() ]
+            ) ;
+            if ! self.qualifiers.is_known(arity, & term) {
+              self.new_quals.insert( arity, term )
+            }
+            let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
+            if ! self.qualifiers.is_known(arity, & term) {
+              self.new_quals.insert( arity, term )
+            }
+          }
+
+          previous_int.push( (var, val) )
+        },
+
         Val::N => continue,
-      } ;
 
-      let val_term = term::int( val.clone() ) ;
-      let term = term::app( Op::Ge, vec![ var.clone(), val_term.clone() ] ) ;
-      if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-        self.new_quals.insert( arity, term )
-      }
-      let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
-      if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-        self.new_quals.insert( arity, term )
       }
 
-      for & (ref pre_var, pre_val) in & previous {
-        let add = term::app(
-          Op::Add, vec![ pre_var.clone(), var.clone() ]
-        ) ;
-        let add_val = term::int( pre_val + val ) ;
-        let term = term::app( Op::Ge, vec![ add.clone(), add_val.clone() ] ) ;
-        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-          self.new_quals.insert( arity, term )
-        }
-        let term = term::app( Op::Le, vec![ add, add_val ] ) ;
-        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-          self.new_quals.insert( arity, term )
-        }
-        let sub = term::app(
-          Op::Sub, vec![ pre_var.clone(), var.clone() ]
-        ) ;
-        let sub_val = term::int( pre_val - val ) ;
-        let term = term::app( Op::Ge, vec![ sub.clone(), sub_val.clone() ] ) ;
-        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-          self.new_quals.insert( arity, term )
-        }
-        let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
-        if ! self.qualifiers.is_known((* var_idx).into(), & term) {
-          self.new_quals.insert( arity, term )
-        }
-      }
-
-      previous.push( (var, val) )
     }
   }
 
@@ -1130,12 +1169,12 @@ where Slver: Solver<'kid, Parser> {
 
     solver.reset() ? ;
     // Declare coefs and constant.
-    solver.declare_const(& cst, & Typ::Int, & ()) ? ;
+    solver.declare_const_u(& cst, & Typ::Int) ? ;
     for coef in & coefs {
-      solver.declare_const(coef, & Typ::Int, & ()) ?
+      solver.declare_const_u(coef, & Typ::Int) ?
     }
-    solver.assert( & constraint_1, & () ) ? ;
-    solver.assert( & constraint_2, & () ) ? ;
+    solver.assert_u( & constraint_1 ) ? ;
+    solver.assert_u( & constraint_2 ) ? ;
 
     let model = if solver.check_sat() ? {
       solver.get_model_const() ?
@@ -1224,13 +1263,25 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0., 0., 0., 0., 0., 0.) ;
     for pos in & self.pos {
-      if qual.eval(pos) { q_pos += 1. } else { nq_pos += 1. }
+      match qual.eval(pos) {
+        Some(true) => q_pos += 1.,
+        Some(false) => nq_pos += 1.,
+        None => return None,
+      }
     }
     for neg in & self.neg {
-      if qual.eval(neg) { q_neg += 1. } else { nq_neg += 1. }
+      match qual.eval(neg) {
+        Some(true) => q_neg += 1.,
+        Some(false) => nq_neg += 1.,
+        None => return None,
+      }
     }
     for unc in & self.unc {
-      if qual.eval(unc) { q_unc += 1. } else { nq_unc += 1. }
+      match qual.eval(unc) {
+        Some(true) => q_unc += 1.,
+        Some(false) => nq_unc += 1.,
+        None => return None,
+      }
     }
     if q_pos + q_neg + q_unc == 0. || nq_pos + nq_neg + nq_unc == 0. {
       None
@@ -1251,6 +1302,9 @@ impl CData {
 
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
+  ///
+  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// is false.
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
@@ -1262,6 +1316,9 @@ impl CData {
   }
 
   /// Modified gain, uses `entropy`.
+  ///
+  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// is false.
   pub fn gain(
     & self, pred: PrdIdx, data: & Data, qual: & mut QualValues
   ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
@@ -1276,24 +1333,36 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0, 0, 0., 0, 0, 0.) ;
     for pos in & self.pos {
-      if qual.eval(pos) { q_pos += 1 } else { nq_pos += 1 }
+      match qual.eval(pos) {
+        Some(true) => q_pos += 1,
+        Some(false) => nq_pos += 1,
+        None => return Ok(None),
+      }
     }
     q_ent.set_pos_count(q_pos) ;
     nq_ent.set_pos_count(nq_pos) ;
 
     for neg in & self.neg {
-      if qual.eval(neg) { q_neg += 1 } else { nq_neg += 1 }
+      match qual.eval(neg) {
+        Some(true) => q_neg += 1,
+        Some(false) => nq_neg += 1,
+        None => return Ok(None),
+      }
     }
     q_ent.set_neg_count(q_neg) ;
     nq_ent.set_neg_count(nq_neg) ;
 
     for unc in & self.unc {
-      if qual.eval(unc) {
-        q_unc += 1. ;
-        q_ent.add_unc(data, pred, unc) ?
-      } else {
-        nq_unc += 1. ;
-        nq_ent.add_unc(data, pred, unc) ?
+      match qual.eval(unc) {
+        Some(true) => {
+          q_unc += 1. ;
+          q_ent.add_unc(data, pred, unc) ?
+        },
+        Some(false) => {
+          nq_unc += 1. ;
+          nq_ent.add_unc(data, pred, unc) ?
+        },
+        None => return Ok(None),
       }
     }
     
@@ -1302,10 +1371,8 @@ impl CData {
     ) ;
 
     // Is this qualifier separating anything?
-    if q_pos + q_neg + q_unc == 0. {
-      return Ok(None)
-    }
-    if nq_pos + nq_neg + nq_unc == 0. {
+    if q_pos + q_neg + q_unc == 0.
+    || nq_pos + nq_neg + nq_unc == 0. {
       return Ok(None)
     }
 
@@ -1351,21 +1418,21 @@ impl CData {
     ) ;
 
     for pos in self.pos {
-      if qual.eval(& pos) {
+      if qual.eval(& pos).expect("error evaluating qualifier") {
         q.pos.push( pos )
       } else {
         nq.pos.push( pos )
       }
     }
     for neg in self.neg {
-      if qual.eval(& neg) {
+      if qual.eval(& neg).expect("error evaluating qualifier") {
         q.neg.push( neg )
       } else {
         nq.neg.push( neg )
       }
     }
     for unc in self.unc {
-      if qual.eval(& unc) {
+      if qual.eval(& unc).expect("error evaluating qualifier") {
         q.unc.push( unc )
       } else {
         nq.unc.push( unc )
@@ -1543,7 +1610,7 @@ pub mod smt {
   pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
   impl<'a> Expr2Smt<()> for SWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!( w, "|p_{} {}|", self.0, self.1.uid() ) ? ;
       Ok(())
@@ -1551,9 +1618,9 @@ pub mod smt {
   }
   impl<'a> Sym2Smt<()> for SWrap<'a> {
     fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
-      self.expr_to_smt2(w, & ())
+      self.expr_to_smt2(w, ())
     }
   }
 
@@ -1563,16 +1630,16 @@ pub mod smt {
   pub struct CWrap<'a>(pub & 'a Constraint) ;
   impl<'a> Expr2Smt<()> for CWrap<'a> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(w, "(=> (and") ? ;
       for lhs in & self.0.lhs {
         write!(w, " ", ) ? ;
-        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, & ()) ?
+        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, ()) ?
       }
       write!(w, ") ") ? ;
       if let Some(rhs) = self.0.rhs.as_ref() {
-        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, & ()) ?
+        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, ()) ?
       } else {
         write!(w, "false") ? ;
       }
@@ -1607,7 +1674,7 @@ pub mod smt {
   }
   impl<'a> Expr2Smt<()> for ActWrap<& 'a HSamples> {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(
         w, "(=> act_{} ({}", self.actlit,
@@ -1615,7 +1682,7 @@ pub mod smt {
       ) ? ;
       for unc in self.unc {
         write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
       }
       write!(w, "))") ? ;
       if ! self.pos {
@@ -1628,7 +1695,7 @@ pub mod smt {
     & 'a HConMap<Args, T>
   > {
     fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
       write!(
         w, "(=> act_{} ({}", self.actlit,
@@ -1636,7 +1703,7 @@ pub mod smt {
       ) ? ;
       for (unc, _) in self.unc {
         write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, & ()) ?
+        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
       }
       write!(w, "))") ? ;
       if ! self.pos {
@@ -1647,7 +1714,7 @@ pub mod smt {
   }
   impl<Samples> Sym2Smt<()> for ActWrap<Samples> {
     fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
       write!(w, "act_{}", self.actlit) ? ;
       Ok(())
@@ -1690,12 +1757,12 @@ pub mod smt {
   }
   impl<'a> Expr2Smt<()> for ValCoefWrap<'a> {
     fn expr_to_smt2<Writer>(
-      & self, w: & mut Writer, _: & ()
+      & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> where Writer: Write {
       if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") } ? ;
       for (val, coef) in self.vals.iter().zip( self.coefs ) {
         write!(w, " (* {} ", val) ? ;
-        coef.sym_to_smt2(w, & ()) ? ;
+        coef.sym_to_smt2(w, ()) ? ;
         write!(w, ")") ?
       }
       write!(w, " {}) 0)", self.cst) ? ;
