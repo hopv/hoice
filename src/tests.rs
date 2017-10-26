@@ -6,6 +6,9 @@ use std::fs::OpenOptions ;
 use common::* ;
 use read_and_work ;
 
+static sat_files_dir: & str = "tests/rsc/sat" ;
+static unsat_files_dir: & str = "tests/rsc/unsat" ;
+
 #[test]
 fn sat() {
   if let Err(e) = run_sat() {
@@ -48,7 +51,7 @@ macro_rules! map_err {
 fn run_sat() -> Res<()> {
 
   let files = map_err!(
-    read_dir("rsc/sat"), "while reading `rsc/sat`"
+    read_dir(sat_files_dir), format!("while reading `{}`", sat_files_dir)
   ) ;
 
   for entry in files {
@@ -85,7 +88,7 @@ fn run_sat() -> Res<()> {
 fn run_unsat() -> Res<()> {
 
   let files = map_err!(
-    read_dir("rsc/unsat"), "while reading `rsc/unsat`"
+    read_dir(unsat_files_dir), format!("while reading `{}`", unsat_files_dir)
   ) ;
 
   for entry in files {
