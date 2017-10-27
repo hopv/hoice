@@ -90,8 +90,6 @@ pub struct IceLearner<'core, Slver> {
   dec_mem: PrdMap< HashSet<u64> >,
   /// Current candidate, cleared at the beginning of each learning phase.
   candidate: PrdMap< Option<Term> >,
-  /// Activation literal counter.
-  actlit: usize,
   /// Set storing new qualifiers during synthesis (avoids allocation).
   new_quals: Quals,
   /// Profiler.
@@ -134,7 +132,7 @@ where Slver: Solver<'kid, Parser> {
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
-        dec_mem, candidate, actlit: 0,
+        dec_mem, candidate,
         new_quals,
         _profiler,
       }
@@ -827,8 +825,7 @@ where Slver: Solver<'kid, Parser> {
   ///
   /// **NB**: if assuming the data positive / negative is legal,
   /// the data will be forced to be positive / negative in the solver
-  /// automatically. Otherwise, the actlit is deactivated
-  /// (`assert (not <actlit>)`).
+  /// automatically. Otherwise, the actlit is deactivated.
   pub fn is_legal(
     & mut self, pred: PrdIdx, unc: & HSamples, pos: bool
   ) -> Res<bool> {
@@ -836,26 +833,20 @@ where Slver: Solver<'kid, Parser> {
     profile!{ self tick "learning", "smt", "legal" }
 
     // Wrap actlit and increment counter.
-    let actlit = ActWrap { actlit: self.actlit, pred, unc, pos } ;
-    self.actlit += 1 ;
-
-    // Declare and assert.
-    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    let actlit = self.solver.get_actlit() ? ;
+    let actlit = ActWrap { actlit, pred, unc, pos } ;
     self.solver.assert_u( & actlit ) ? ;
+    let actlit = actlit.destroy() ;
 
-    let actlits = [actlit] ;
-
-    if self.solver.check_sat_assuming_u(& actlits) ? {
-      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
+    let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
       profile!{ self mark "learning", "smt", "legal" }
-      Ok(true)
+      true
     } else {
-      self.solver.assert_u(
-        & format!("(not {})", actlits[0].as_ident())
-      ) ? ;
       profile!{ self mark "learning", "smt", "legal" }
-      Ok(false)
-    }
+      false
+    } ;
+    self.solver.set_actlit(actlit, legal) ? ;
+    Ok(legal)
   }
 
 
@@ -876,26 +867,20 @@ where Slver: Solver<'kid, Parser> {
     }
 
     // Wrap actlit and increment counter.
-    let actlit = ActWrap { actlit: self.actlit, pred, unc, pos } ;
-    self.actlit += 1 ;
-
-    // Declare and assert.
-    self.solver.declare_const_u(& actlit, & Typ::Bool) ? ;
+    let actlit = self.solver.get_actlit() ? ;
+    let actlit = ActWrap { actlit, pred, unc, pos } ;
     self.solver.assert_u( & actlit ) ? ;
+    let actlit = actlit.destroy() ;
 
-    let actlits = [actlit] ;
-
-    if self.solver.check_sat_assuming_u(& actlits) ? {
-      self.solver.assert_u( & actlits[0].as_ident() ) ? ;
+    let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
       profile!{ self mark "learning", "smt", "all legal" }
-      Ok(true)
+      true
     } else {
-      self.solver.assert_u(
-        & format!("(not {})", actlits[0].as_ident())
-      ) ? ;
       profile!{ self mark "learning", "smt", "all legal" }
-      Ok(false)
-    }
+      false
+    } ;
+    self.solver.set_actlit(actlit, legal) ? ;
+    Ok(legal)
   }
 
 
@@ -910,7 +895,6 @@ where Slver: Solver<'kid, Parser> {
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<bool> {
     profile!{ self tick "learning", "smt", "setup" }
-    self.actlit = 0 ;
     
     // Dummy arguments used in the `define_fun` for pos (neg) data.
     let args: [ (SWrap, Typ) ; 0 ] = [] ;
@@ -1558,6 +1542,7 @@ pub mod smt {
 
   use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
   use rsmt2::to_smt::* ;
+  use rsmt2::actlit::Actlit ;
 
   use common::* ;
   use common::data::* ;
@@ -1657,8 +1642,8 @@ pub mod smt {
   /// (=> <actlit> (and <samples>))
   /// ```
   pub struct ActWrap<Samples> {
-    /// Actlit counter.
-    pub actlit: usize,
+    /// Activation literal.
+    pub actlit: Actlit,
     /// Predicate.
     pub pred: PrdIdx,
     /// Samples.
@@ -1667,18 +1652,17 @@ pub mod smt {
     pub pos: bool,
   }
   impl<Samples> ActWrap<Samples> {
-    /// Identifier representation of the actlit.
-    pub fn as_ident(& self) -> String {
-      format!("act_{}", self.actlit)
-    }
+    /// Retrieve the actlit by destroying the wrapper.
+    pub fn destroy(self) -> Actlit { self.actlit }
   }
   impl<'a> Expr2Smt<()> for ActWrap<& 'a HSamples> {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
+      write!(w, "(=> ") ? ;
+      self.actlit.write(w) ? ;
       write!(
-        w, "(=> act_{} ({}", self.actlit,
-        if self.pos { "and" } else { "not (or" }
+        w, " ({}", if self.pos { "and" } else { "not (or" }
       ) ? ;
       for unc in self.unc {
         write!(w, " ", ) ? ;
@@ -1697,9 +1681,10 @@ pub mod smt {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: ()
     ) -> SmtRes<()> {
+      write!(w, "(=> ") ? ;
+      self.actlit.write(w) ? ;
       write!(
-        w, "(=> act_{} ({}", self.actlit,
-        if self.pos { "and" } else { "not (or" }
+        w, " ({}", if self.pos { "and" } else { "not (or" }
       ) ? ;
       for (unc, _) in self.unc {
         write!(w, " ", ) ? ;
@@ -1709,14 +1694,6 @@ pub mod smt {
       if ! self.pos {
         write!(w, ")") ?
       }
-      Ok(())
-    }
-  }
-  impl<Samples> Sym2Smt<()> for ActWrap<Samples> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> where Writer: Write {
-      write!(w, "act_{}", self.actlit) ? ;
       Ok(())
     }
   }
