@@ -36,7 +36,7 @@
 //!
 //! Terms are simplified (when possible) at creation. In particular, the order
 //! of the arguments can change, double negations will be simplified, *etc.*
-//! See [`simplify`](fn.simplify.html) for more details.
+//! See [`normalize`](fn.normalize.html) for more details.
 //!
 //! # Top-level terms
 //!

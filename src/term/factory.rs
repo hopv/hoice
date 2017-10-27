@@ -61,6 +61,12 @@ pub fn fls() -> Term {
   bool(false)
 }
 
+/// If-then-else.
+#[inline(always)]
+pub fn ite(c: Term, t: Term, e: Term) -> Term {
+  app(Op::Ite, vec![c, t, e])
+}
+
 /// Negates a term.
 #[inline(always)]
 pub fn not(term: Term) -> Term {
@@ -145,47 +151,103 @@ pub fn div(kids: Vec<Term>) -> Term {
 
 
 
-#[doc = r#"Tries to normalize an operator application.
+#[doc = r#"Simplifies operator applications.
 
-# Nullary / unary applications of `And` and `Or`
+This function is currently not strongly-normalizing.
 
 ```
 use hoice::term ;
-use hoice::term::Op::* ;
 
-let tru = term::bool(true) ;
-let fls = term::bool(false) ;
+let tru = term::tru() ;
+let fls = term::fls() ;
+
 let var_1 = term::var(7) ;
+let n_var_1 = term::not( var_1.clone() ) ;
 let var_2 = term::var(2) ;
+let n_var_2 = term::not( var_2.clone() ) ;
 
-assert_eq!( tru, term::normalize(And, vec![]) ) ;
-assert_eq!( fls, term::normalize(Or, vec![]) ) ;
-assert_eq!( var_2, term::normalize(And, vec![ var_2.clone() ]) ) ;
-assert_eq!( var_1, term::normalize(Or, vec![ var_1.clone() ]) ) ;
+let int_1 = term::int(3) ;
+let int_2 = term::int(42) ;
 
-let and = term::app(And, vec![ var_2.clone(), var_1.clone() ]) ;
+
+// |===| `And` and `Or`.
+
+// Nullary.
+assert_eq!( tru, term::and( vec![] ) ) ;
+assert_eq!( fls, term::or( vec![] ) ) ;
+
+// Unary.
+assert_eq!( var_2, term::and( vec![ var_2.clone() ] ) ) ;
+assert_eq!( var_1, term::or( vec![ var_1.clone() ] ) ) ;
+
+// Trivial.
 assert_eq!(
-  and, term::normalize(And, vec![ var_2.clone(), var_1.clone() ])
+  fls, term::and( vec![ var_1.clone(), fls.clone(), var_2.clone() ] )
 ) ;
-let or = term::app(Or, vec![ var_2.clone(), var_1.clone() ]) ;
 assert_eq!(
-  or, term::normalize(Or, vec![ var_2.clone(), var_1.clone() ])
+  tru, term::or( vec![ var_1.clone(), tru.clone(), var_2.clone() ] )
 ) ;
-```
 
-# Double negations
 
-```
-use hoice::term ;
-use hoice::term::Op::* ;
+// |===| `Ite`.
 
-let var_1 = term::var(7) ;
-let n_var_1 = term::app( Not, vec![ var_1.clone() ] ) ;
-assert_eq!( var_1, term::normalize(Not, vec![ n_var_1 ]) ) ;
+// Trivial.
+assert_eq!(
+  var_1, term::ite( tru.clone(), var_1.clone(), var_2.clone() )
+) ;
+assert_eq!(
+  var_2, term::ite( fls.clone(), var_1.clone(), var_2.clone() )
+) ;
+assert_eq!( // Same `then` and `else`.
+  var_1, term::ite( var_2.clone(), var_1.clone(), var_1.clone() )
+) ;
 
-let var_1 = term::var(7) ;
-let n_var_1 = term::app( Not, vec![ var_1.clone() ] ) ;
-assert_eq!( n_var_1, term::normalize(Not, vec![ var_1 ]) ) ;
+
+// |===| `Not`.
+
+// Double negation.
+assert_eq!( var_1, term::not( n_var_1.clone() ) ) ;
+assert_eq!( n_var_1, term::not( var_1.clone() ) ) ;
+
+// `And` and `Or` propagation.
+let and = term::and( vec![ var_1.clone(), var_2.clone() ] ) ;
+let or = term::or( vec![ var_1.clone(), var_2.clone() ] ) ;
+let n_and = term::not( and.clone() ) ;
+let n_or = term::not( or.clone() ) ;
+let and_n = term::and( vec![ n_var_1.clone(), n_var_2.clone() ] ) ;
+let or_n = term::or( vec![ n_var_1.clone(), n_var_2.clone() ] ) ;
+assert_eq!( n_and, or_n ) ;
+assert_eq!( n_or, and_n ) ;
+assert_eq!( and, term::not( or_n ) ) ;
+assert_eq!( and, term::not( n_and ) ) ;
+assert_eq!( or, term::not( and_n ) ) ;
+assert_eq!( or, term::not( n_or ) ) ;
+
+
+// |===| `Eql`.
+
+// `t_1 = t_1`.
+assert_eq!( tru, term::eq(var_1.clone(), var_1.clone()) ) ;
+assert_eq!( tru, term::eq(int_1.clone(), int_1.clone()) ) ;
+// `n != m` with `n` and `m` integers.
+assert_eq!( fls, term::eq(int_1.clone(), int_2.clone()) ) ;
+// `true = t`.
+assert_eq!( var_1, term::eq(tru.clone(), var_1.clone()) ) ;
+// `false = t`.
+assert_eq!( n_var_1, term::eq(fls.clone(), var_1.clone()) ) ;
+
+
+// |===| `Ge`, `Le`, `Lt` and `Gt`.
+
+assert_eq!( tru, term::ge(var_1.clone(), var_1.clone()) ) ;
+assert_eq!( tru, term::le(var_1.clone(), var_1.clone()) ) ;
+assert_eq!( fls, term::gt(var_1.clone(), var_1.clone()) ) ;
+assert_eq!( fls, term::lt(var_1.clone(), var_1.clone()) ) ;
+
+assert_eq!( fls, term::ge(int_1.clone(), int_2.clone()) ) ;
+assert_eq!( tru, term::le(int_1.clone(), int_2.clone()) ) ;
+assert_eq!( fls, term::gt(int_1.clone(), int_2.clone()) ) ;
+assert_eq!( tru, term::lt(int_1.clone(), int_2.clone()) ) ;
 ```
 "#]
 pub fn normalize(
