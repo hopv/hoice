@@ -892,14 +892,16 @@ impl Instance {
   /// Forget some clauses.
   ///
   /// Duplicates are handled as if they was only one.
-  pub fn forget_clauses(& mut self, mut clauses: Vec<ClsIdx>) -> Res<()> {
+  pub fn forget_clauses(
+    & mut self, clauses: & mut Vec<ClsIdx>
+  ) -> Res<()> {
     // Forgetting is done by swap remove, so we sort in DESCENDING order so
     // that indices always make sense.
     clauses.sort_unstable_by(
       |c_1, c_2| c_2.cmp(c_1)
     ) ;
     let mut prev = None ;
-    for clause in clauses {
+    for clause in clauses.drain(0..) {
       log_debug!{ "forgetting {}", self[clause].to_string_info(& self.preds) ? }
       if prev == Some(clause) { continue }
       prev = Some(clause) ;
@@ -1465,7 +1467,7 @@ impl Instance {
         }
         true
       }}
-      self.forget_clauses( clause_lhs.drain().collect() ) ?
+      self.forget_clauses( & mut clause_lhs.drain().collect() ) ?
     }
     self.check("force_false") ? ;
     Ok( (0, clauses_dropped, 0).into() )
@@ -1502,7 +1504,7 @@ impl Instance {
         self.clauses[clause].lhs_preds.remove(& pred) ;
       }
       clauses_dropped += clause_rhs.len() ;
-      self.forget_clauses( clause_rhs.drain().collect() ) ? ;
+      self.forget_clauses( & mut clause_rhs.drain().collect() ) ? ;
     }
     self.check("force_true") ? ;
     Ok( (0, clauses_dropped, 0).into() )
@@ -1702,7 +1704,7 @@ impl Instance {
         self.force_pred(pred, quals, tterms) ?
       }
       clauses_rmed += clauses_to_rm.len() ;
-      self.forget_clauses( clauses_to_rm.drain().collect() ) ? ;
+      self.forget_clauses( & mut clauses_to_rm.drain().collect() ) ? ;
       clauses_added += clauses_to_add.len() ;
       for clause in clauses_to_add.drain(0..) {
         self.push_clause(clause) ?

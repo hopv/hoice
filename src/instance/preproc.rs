@@ -922,7 +922,9 @@ pub trait RedStrat: HasName {
 }
 
 
-/// Forces to false predicates appearing only in the lhs of the clauses.
+/// Calls [`Instance::force_trivial`][force trivial].
+///
+/// [force trivial]: ../instance/struct.Instance.html#method.force_trivial (Instance's force_trivial method)
 pub struct Trivial {}
 impl HasName for Trivial {
   fn name(& self) -> & 'static str { "trivial" }
@@ -980,6 +982,7 @@ pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, ()> >: HasName {
 /// | `(v > 0)              => (p 7 v')` | `(v_0 = 7)`                 |
 /// | `(v > 0)              => (p v v )` | `(v_0 = v_1) and (v_0 > 0)` |
 /// | `(v > 0) and (v <= 0) => (p 7 v')` | `false` (by check-sat)      |
+///
 pub struct SimpleOneRhs {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1102,7 +1105,27 @@ where Slver: Solver<'kid, ()> {
 
 
 
-
+/// Tries to reduce predicates that appear as an antecedent in exactly one
+/// clause.
+///
+/// For a predicate `p`, if the clause in question is
+///
+/// ```bash
+/// lhs(v_1, ..., v_n) and p(v_1, ..., v_n) => rhs(v_1, ..., v_n)
+/// ```
+///
+/// then `p` is reduced to
+///
+/// ```bash
+/// (not lhs(v_1, ..., v_n)) or rhs(v_1, ..., v_n)
+/// ```
+///
+/// **iff** `p` is the only predicate application in the clause, `lhs` is sat
+/// and `(not rhs)` is sat.
+///
+/// If `lhs` or `(not rhs)` is unsat, then the clause is dropped and `p` is
+/// reduced to `true` since it does not appear as an antecedent anywhere
+/// anymore.
 pub struct SimpleOneLhs {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1243,8 +1266,20 @@ where Slver: Solver<'kid, ()> {
 
 /// Works on predicates that appear in only one rhs.
 ///
-/// Only works on predicates that need qualifiers to be reduced, it's the
-/// dual of `SimpleOneRhs` in a way.
+/// Only works on predicates that need qualifiers to be reduced, complements
+/// `SimpleOneRhs`.
+///
+/// If a predicate `p` appears as a rhs in only in one clause
+///
+/// ```bash
+/// lhs(v_1, ..., v_n, v_n+1, ..., v_k) => p(v_1, ..., v_n)
+/// ```
+///
+/// then it is forced to
+///
+/// ```bash
+/// p(v_1, ..., v_n) = exists (v_n+1, ..., v_k) . lhs(v_1, ..., v_k)
+/// ```
 pub struct OneRhs {
   /// Stores new variables discovered as we iterate over the lhs of clauses.
   new_vars: VarSet,
@@ -1379,6 +1414,8 @@ where Slver: Solver<'kid, ()> {
 
 
 /// Mono pred clause strengthening.
+///
+/// This reduction strategy is currently inactive.
 pub struct MonoPredClause {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1394,7 +1431,6 @@ impl MonoPredClause {
       true_preds: PrdSet::with_capacity(7),
       clauses_to_rm: Vec::with_capacity(7),
       known: PrdSet::with_capacity(29),
-      // preds: PrdHMap::with_capacity(7),
     }
   }
 }
@@ -1408,7 +1444,8 @@ where Slver: Solver<'kid, ()> {
   ) -> Res<RedInfo> {
     let mut nu_clause_count = 0 ;
     let mut known = PrdSet::with_capacity( instance.preds().len() ) ;
-    // let mut strength = PrdHMap::with_capacity( instance.preds().len() ) ;
+    debug_assert!{ self.clauses_to_rm.is_empty() }
+    debug_assert!{ self.true_preds.is_empty() }
 
     'clause_iter: for clause in instance.clause_indices() {
       log_debug!{ "looking at clause #{}", clause }
@@ -1484,7 +1521,7 @@ where Slver: Solver<'kid, ()> {
 
     let clauses = self.clauses_to_rm.len() ;
     let preds = self.true_preds.len() ;
-    instance.forget_clauses( self.clauses_to_rm.drain(0..).collect() ) ? ;
+    instance.forget_clauses( & mut self.clauses_to_rm ) ? ;
     let mut info: RedInfo = (preds, clauses, nu_clause_count).into() ;
     info += instance.force_true( self.true_preds.drain() ) ? ;
 
@@ -1498,14 +1535,20 @@ where Slver: Solver<'kid, ()> {
 
 
 /// Removes clauses that are trivially true by smt.
-pub struct SmtTrivial {}
+///
+/// A clause if removed if either
+///
+/// - `false and _ => _`: its lhs has atoms, and their conjunction is unsat, or
+/// - `_ => true`: its rhs is an atom and its negation is unsatisfiable.
+pub struct SmtTrivial {
+  /// Clauses to remove, avoids re-allocation.
+  clauses_to_rm: Vec<ClsIdx>,
+}
 impl SmtTrivial {
   /// Constructor.
   pub fn new() -> Self {
     SmtTrivial {
-      // true_preds: PrdSet::with_capacity(7),
-      // false_preds: PrdSet::with_capacity(7),
-      // preds: PrdHMap::with_capacity(7),
+      clauses_to_rm: Vec::with_capacity(10),
     }
   }
 }
@@ -1517,10 +1560,10 @@ where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
-    let mut clauses_to_rm = Vec::with_capacity(10) ;
+    debug_assert!{ self.clauses_to_rm.is_empty() }
 
     { // Push a scope so that `lhs` is dropped because it borrows `instance`.
-      // Remove when non-lexical lifetimes are implemented.
+      // Remove when non-lexical lifetimes land.
       let mut lhs = Vec::with_capacity(10) ;
       let fls = term::fls() ;
 
@@ -1533,7 +1576,7 @@ where Slver: Solver<'kid, ()> {
           match term.bool() {
             Some(true) => (),
             Some(false) => {
-              clauses_to_rm.push(clause_idx) ;
+              self.clauses_to_rm.push(clause_idx) ;
               continue 'clause_iter
             },
             _ => lhs.push(term),
@@ -1543,7 +1586,7 @@ where Slver: Solver<'kid, ()> {
         let rhs = if let Some(rhs) = clause.rhs().term() {
 
           if let Some(true) = rhs.bool() {
-            clauses_to_rm.push(clause_idx) ;
+            self.clauses_to_rm.push(clause_idx) ;
             continue 'clause_iter
           }
 
@@ -1554,7 +1597,7 @@ where Slver: Solver<'kid, ()> {
             if solver.trivial_impl(
               clause.vars(), lhs.drain(0..), rhs
             ) ? {
-              clauses_to_rm.push(clause_idx) ;
+              self.clauses_to_rm.push(clause_idx) ;
               continue 'clause_iter
             } else {
               log_debug!{
@@ -1575,14 +1618,14 @@ where Slver: Solver<'kid, ()> {
         } ;
 
         if solver.trivial_impl(clause.vars(), lhs.drain(0..), rhs) ? {
-          clauses_to_rm.push(clause_idx) ;
+          self.clauses_to_rm.push(clause_idx) ;
           continue 'clause_iter
         }
       }
     }
 
-    let clause_cnt = clauses_to_rm.len() ;
-    instance.forget_clauses(clauses_to_rm) ? ;
+    let clause_cnt = self.clauses_to_rm.len() ;
+    instance.forget_clauses(& mut self.clauses_to_rm) ? ;
     if clause_cnt > 0 {
       log_debug!{ "  dropped {} trivial clause(s)", clause_cnt }
     }
