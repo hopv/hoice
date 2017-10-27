@@ -356,7 +356,7 @@ mod smt {
 pub struct Parser ;
 
 
-  impl<'a> IdentParser<'a, Ident, (), & 'a str> for Parser {
+  impl<'a> IdentParser<Ident, (), & 'a str> for Parser {
     fn parse_ident(self, input: & 'a str) -> SmtRes< Ident > {
       Ok( input.into() )
     }
@@ -365,7 +365,7 @@ pub struct Parser ;
     }
   }
 
-  impl<'a> ValueParser<'a, Value, & 'a str> for Parser {
+  impl<'a> ValueParser<Value, & 'a str> for Parser {
     fn parse_value(self, input: & 'a str) -> SmtRes<Value> {
       Ok( input.into() )
     }

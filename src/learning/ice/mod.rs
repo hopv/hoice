@@ -1571,7 +1571,7 @@ pub mod smt {
   #[derive(Clone, Copy)]
   pub struct Parser ;
 
-  impl<'a> IdentParser<'a, Option<VarIdx>, (), & 'a str> for Parser {
+  impl<'a> IdentParser<Option<VarIdx>, (), & 'a str> for Parser {
     fn parse_ident(self, input: & 'a str) -> SmtRes< Option<VarIdx> > {
       if input ==  "v" { return Ok(None) }
 
@@ -1588,7 +1588,7 @@ pub mod smt {
     }
   }
 
-  impl<'a, Br> ValueParser<'a, Int, & 'a mut SmtParser<Br>> for Parser
+  impl<'a, Br> ValueParser<Int, & 'a mut SmtParser<Br>> for Parser
   where Br: BufRead {
     fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Int> {
       if let Some(val) = input.try_int::<

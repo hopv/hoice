@@ -510,7 +510,7 @@ mod smt {
   #[derive(Clone, Copy)]
   pub struct Parser ;
 
-  impl<'a> IdentParser<'a, VarIdx, (), & 'a str> for Parser {
+  impl<'a> IdentParser<VarIdx, (), & 'a str> for Parser {
     fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
       debug_assert_eq!( & input[0..2], "v_" ) ;
       match usize::from_str(& input[2..]) {
@@ -525,7 +525,7 @@ mod smt {
     }
   }
 
-  impl<'a, Br> ValueParser<'a, Val, & 'a mut SmtParser<Br>> for Parser
+  impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for Parser
   where Br: BufRead {
     fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
       if let Some(val) = input.try_int::<
