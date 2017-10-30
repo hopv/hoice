@@ -62,6 +62,13 @@ hoice --check <output_file> <horn_clause_file>
 ```
 
 
+# Latest version
+
+This repository hosts the latest stable version of hoice. See the [main
+developer's fork][main dev fork] for a cutting edge, although unstable,
+version.
+
+
 # Contributing
 
 We welcome any help, please the [contribution guidelines](https://github.com/hopv/hoice/wiki/Contributing) if you are not familiar with the github pull request workflow to get started.
@@ -70,3 +77,5 @@ We welcome any help, please the [contribution guidelines](https://github.com/hop
 # License
 
 `hoice` is released under the [Apache 2 license](./LICENSE.md). Please note in particular that the [`NOTICE.md`](./NOTICE.md) file from this repository must be available if you redistribute `hoice` in a source or binary format.
+
+[main dev fork]: https://github.com/AdrienChampion/hoice (AdrienChampion's fork of hoice on github)
