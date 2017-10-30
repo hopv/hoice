@@ -6,9 +6,9 @@ pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
 
 pub use mylib::common::hash::* ;
-pub use mylib::safe::int::CanNew ;
 
 pub use hashconsing::HashConsign ;
+pub use hashconsing::coll::* ;
 
 pub use rsmt2::SmtRes ;
 
@@ -67,9 +67,7 @@ pub fn pause(s: & str) {
 pub type Int = ::num::BigInt ;
 
 /// A trivially hashed set of variable maps.
-pub type VarMapSet<T> = HashSet<
-  VarMap<T>, hash::BuildHashU64
-> ;
+pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 
 /// Alias type for a map from arity to a map from terms to qualifier values.
 ///
@@ -87,7 +85,7 @@ pub type VarMapSet<T> = HashSet<
 /// - investigate whether it would be possible to remove the qualifier from
 ///   `QualValues` entirely
 pub type Quals = ArityMap<
-  HConMap<RTerm, ::learning::ice::mining::QualValues>
+  HConMap<Term, ::learning::ice::mining::QualValues>
 > ;
 /// Helpers for `Quals`.
 pub trait QualsExt {
@@ -110,12 +108,6 @@ pub type PredApps = PrdHMap< VarMapSet<Term> > ;
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
   fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
-}
-impl<T: Eq + ::std::hash::Hash> HConSetExt for VarMapSet<T> {
-  fn new() -> Self { Self::with_hasher( hash::BuildHashU64 {} ) }
-  fn with_capacity(capacity: usize) -> Self {
-    Self::with_capacity_and_hasher(capacity, hash::BuildHashU64 {})
-  }
 }
 impl PredAppsExt for PredApps {
   fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
@@ -148,15 +140,6 @@ pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
 
 impl<'kid, P, T> Solver<'kid, P> for T
 where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
-
-/// Custom hash set with trivial hashing.
-pub type HConSet<T> = HashSet<
-  ::hashconsing::HConsed<T>, hash::BuildHashU64
-> ;
-/// Custom hash map with trivial hashing.
-pub type HConMap<T,V> = HashMap<
-  ::hashconsing::HConsed<T>, V, hash::BuildHashU64
-> ;
 
 
 /// Information returned by
@@ -199,31 +182,6 @@ impl ::std::ops::AddAssign for RedInfo {
 
 
 // |===| Helper traits.
-
-
-
-/// Extension for `HConSet`.
-pub trait HConSetExt {
-  /// Creates a new thing.
-  #[inline]
-  fn new() -> Self ;
-  /// Creates a new thing with a capacity.
-  #[inline]
-  fn with_capacity(capacity: usize) -> Self ;
-}
-
-impl<T: Eq + ::std::hash::Hash> HConSetExt for HConSet<T> {
-  fn new() -> Self { Self::with_hasher( hash::BuildHashU64 {} ) }
-  fn with_capacity(capacity: usize) -> Self {
-    Self::with_capacity_and_hasher(capacity, hash::BuildHashU64 {})
-  }
-}
-impl<T: Eq + ::std::hash::Hash, V> HConSetExt for HConMap<T,V> {
-  fn new() -> Self { Self::with_hasher( hash::BuildHashU64 {} ) }
-  fn with_capacity(capacity: usize) -> Self {
-    Self::with_capacity_and_hasher(capacity, hash::BuildHashU64 {})
-  }
-}
 
 
 /// Provides user-friendly formatting: `pebcak_fmt`.

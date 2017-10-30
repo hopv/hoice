@@ -16,7 +16,7 @@ pub struct Clause {
   /// Variables of the clause.
   pub vars: VarMap<VarInfo>,
   /// Terms of the left-hand side.
-  lhs_terms: HConSet<RTerm>,
+  lhs_terms: HConSet<Term>,
   /// Predicate applications of the left-hand side.
   lhs_preds: PredApps,
   /// Single term right-hand side.
@@ -98,7 +98,7 @@ impl Clause {
   }
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
-  fn lhs_insert_term(lhs_terms: & mut HConSet<RTerm>, term: Term) -> bool {
+  fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
     if let Some(kids) = term.conj_inspect() {
       let mut new_stuff = false ;
       let mut stack = vec![] ;
@@ -152,7 +152,7 @@ impl Clause {
 
   /// LHS accessor (terms).
   #[inline(always)]
-  pub fn lhs_terms(& self) -> & HConSet<RTerm> {
+  pub fn lhs_terms(& self) -> & HConSet<Term> {
     & self.lhs_terms
   }
   /// LHS accessor (predicate applications).
@@ -394,7 +394,7 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
 /// do this is to never access an instance's fields directly from the outside.
 pub struct Instance {
   /// Constants constructed so far.
-  consts: HConSet<RTerm>,
+  consts: HConSet<Term>,
   /// Predicates.
   preds: PrdMap<PrdInfo>,
   /// Predicates for which a suitable term has been found.
@@ -665,7 +665,7 @@ impl Instance {
 
   /// Set of int constants **appearing in the predicates**. If more constants
   /// are created after the instance building step, they will not appear here.
-  pub fn consts(& self) -> & HConSet<RTerm> {
+  pub fn consts(& self) -> & HConSet<Term> {
     & self.consts
   }
 
@@ -1084,7 +1084,7 @@ impl Instance {
     let mut maps = vec![] ;
 
     // Qualifiers generated while looking at predicate applications.
-    let mut app_quals = HConSet::with_capacity(17) ;
+    let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;
 
     let rhs_opt = if let TTerm::P { ref pred, ref args } = clause.rhs {
       let mut set = VarMapSet::with_capacity(1) ;
@@ -1182,7 +1182,10 @@ impl Instance {
 
     // Build the conjunction of atoms.
     let mut conjs = vec![
-      ( HConSet::with_capacity( clause.lhs_terms.len() + 1 ), 0.into() ) ;
+      (
+        HConSet::<Term>::with_capacity( clause.lhs_terms.len() + 1 ),
+        0.into()
+      ) ;
       maps.len()
     ] ;
 

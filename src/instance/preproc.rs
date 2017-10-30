@@ -372,7 +372,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 pub fn terms_of_app<F: Fn(Term) -> Term>(
   instance: & Instance, pred: PrdIdx, args: & VarMap<Term>, f: F
 ) -> Res<
-  Option<(HConSet<RTerm>, VarHMap<Term>, VarSet)>
+  Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
 > {
   let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
   let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
@@ -593,7 +593,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   ///   `...rhs_app`
   pub fn terms_of_lhs_app(
     & mut self, instance: & Instance,
-    lhs: & HConSet<RTerm>, rhs: & TTerm,
+    lhs: & HConSet<Term>, rhs: & TTerm,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res<ExtractRes> {
@@ -691,7 +691,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// - move things allocated here to the struct above
   pub fn terms_of_rhs_app(
     & mut self, instance: & Instance,
-    lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
+    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res<ExtractRes> {
@@ -774,7 +774,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// - move things allocated here to the struct above
   pub fn qterms_of_rhs_app(
     & mut self, instance: & Instance,
-    lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
+    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res< ExtractRes< (Qualfed, Vec<TTerm>) > > {

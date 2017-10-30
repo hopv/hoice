@@ -39,11 +39,11 @@ pub struct QualValues {
   /// The qualifier.
   pub qual: Term,
   /// Samples on which the qualifier evaluates to true.
-  true_set: HConSet<Args>,
+  true_set: HConSet<HSample>,
   /// Samples on which the qualifier evaluates to false.
-  flse_set: HConSet<Args>,
+  flse_set: HConSet<HSample>,
   /// Samples on which the qualifier evaluates to nothing.
-  none_set: HConSet<Args>,
+  none_set: HConSet<HSample>,
 }
 impl ::std::hash::Hash for QualValues {
   fn hash<H: ::std::hash::Hasher>(& self, hasher: & mut H) {
@@ -106,7 +106,7 @@ impl QualValuesExt for QualValues {
 // #[cfg( not(debug) )]
 // pub struct QualValues {
 //   /// Samples on which the qualifier evaluates to true.
-//   true_set: HConSet<Args>,
+//   true_set: HConSet<HSample>,
 // }
 // #[cfg( not(debug) )]
 // impl QualValues {
@@ -153,11 +153,11 @@ pub struct Qualifiers {
   /// qualifier has **not** been used.
   ///
   /// Invariant: the keys are exactly the term stored in `arity_map`.
-  decay_map: HConMap<RTerm, (Arity, usize)>,
+  decay_map: HConMap<Term, (Arity, usize)>,
   /// Maps predicates to their arity.
   pred_to_arity: PrdMap<Arity>,
   /// Blacklisted qualifiers.
-  blacklist: HConSet<RTerm>,
+  blacklist: HConSet<Term>,
 }
 impl Qualifiers {
   /// Constructor.
@@ -167,10 +167,10 @@ impl Qualifiers {
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
     ) ;
-    let mut nullary_cands = HConMap::with_capacity(2) ;
+    let mut nullary_cands: HConMap<Term, _> = HConMap::with_capacity(2) ;
     nullary_cands.insert( term::tru(), QualValues::new(term::tru()) ) ;
     nullary_cands.insert( term::fls(), QualValues::new(term::fls()) ) ;
-    arity_map.push( HConMap::with_capacity(0) ) ;
+    arity_map.push( HConMap::<Term, _>::with_capacity(0) ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
       let term = term::ge( term::var(var_idx), term::int(0) ) ;
@@ -209,14 +209,14 @@ impl Qualifiers {
   }
 
   /// Accessor to the qualifiers.
-  pub fn qualifiers(& self) -> & ArityMap< HConMap<RTerm, QualValues> > {
+  pub fn qualifiers(& self) -> & ArityMap< HConMap<Term, QualValues> > {
     & self.arity_map
   }
 
   /// Updates qualifiers' decay given the qualifiers **chosen** at this
   /// iteration, and removes qualifiers with a decay strictly above some value.
   pub fn brush_quals(
-    & mut self, mut chosen_quals: HConSet<RTerm>, threshold: usize
+    & mut self, mut chosen_quals: HConSet<Term>, threshold: usize
   ) -> usize {
     let mut brushed = 0 ;
     // The borrow-checker does now want to capture `self.arity_map` in the
@@ -397,14 +397,14 @@ impl Qualifiers {
 #[doc = r#"Iterator over the qualifiers of a predicate."#]
 pub struct QualIter<'a> {
   /// Reference to the arity map.
-  arity_map: ::std::slice::IterMut< 'a, HConMap<RTerm, QualValues> >,
+  arity_map: ::std::slice::IterMut< 'a, HConMap<Term, QualValues> >,
   /// Current values.
   values: Option<
     ::std::collections::hash_map::IterMut<'a, Term, QualValues>
   >,
   // & 'a mut ArityMap< Vec<QualValues> >,
   /// Blacklisted terms.
-  blacklist: & 'a HConSet<RTerm>,
+  blacklist: & 'a HConSet<Term>,
   /// Arity of the predicate the qualifiers are for.
   pred_arity: Arity,
   /// Arity index of the next qualifier.
@@ -415,8 +415,8 @@ pub struct QualIter<'a> {
 impl<'a> QualIter<'a> {
   /// Constructor.
   pub fn new(
-    map: & 'a mut ArityMap< HConMap<RTerm, QualValues> >,
-    blacklist: & 'a HConSet<RTerm>, pred_arity: Arity
+    map: & 'a mut ArityMap< HConMap<Term, QualValues> >,
+    blacklist: & 'a HConSet<Term>, pred_arity: Arity
   ) -> Self {
     let mut arity_map = map.iter_mut() ;
     let values = arity_map.next().map( |v| v.iter_mut() ) ;

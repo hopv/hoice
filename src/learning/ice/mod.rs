@@ -402,7 +402,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<RTerm>
+    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -539,7 +539,7 @@ where Slver: Solver<'kid, Parser> {
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<RTerm>
+    used_quals: & mut HConSet<Term>
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     use rayon::prelude::* ;
 
@@ -641,7 +641,7 @@ where Slver: Solver<'kid, Parser> {
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<RTerm>,
+    used_quals: & mut HConSet<Term>,
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
@@ -670,7 +670,7 @@ where Slver: Solver<'kid, Parser> {
   /// The recursive call is logically guaranteed not cause further calls and
   /// terminate right away. Please be careful to preserve this.
   pub fn get_qualifier(
-    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<RTerm>
+    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>
   ) -> Res< (Term, CData, CData) > {
 
     if let Some( (_gain, values) ) = Self::get_best_qualifier(
@@ -1676,7 +1676,7 @@ pub mod smt {
     }
   }
   impl<'a, T> Expr2Smt<()> for ActWrap<
-    & 'a HConMap<Args, T>
+    & 'a HConMap<HSample, T>
   > {
     fn expr_to_smt2<Writer: Write>(
       & self, w: & mut Writer, _: ()

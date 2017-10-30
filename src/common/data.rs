@@ -36,7 +36,7 @@ impl Sample {
 
   /// Tests if a sample is about some predicate and its arguments belong
   /// to a set.
-  pub fn is_in(& self, pred: PrdIdx, samples: & HConSet<Args>) -> bool {
+  pub fn is_in(& self, pred: PrdIdx, samples: & HConSet<HSample>) -> bool {
     self.pred == pred && samples.contains(& self.args)
   }
 }
@@ -156,18 +156,18 @@ pub struct Data {
   /// Consign for hash consed samples.
   pub samples: HSampleConsign,
   /// Positive examples.
-  pub pos: PrdMap< HConSet<Args> >,
+  pub pos: PrdMap< HConSet<HSample> >,
   /// Negative examples.
-  pub neg: PrdMap< HConSet<Args> >,
+  pub neg: PrdMap< HConSet<HSample> >,
   /// Constraints.
   pub constraints: CstrMap<Constraint>,
   ///  Map from samples to contstraints.
-  pub map: PrdMap< HConMap<Args, CstrSet> >,
+  pub map: PrdMap< HConMap<HSample, CstrSet> >,
 
   /// Positive examples to add (used by propagation).
-  pos_to_add: PrdHMap< HConSet<Args> >,
+  pos_to_add: PrdHMap< HConSet<HSample> >,
   /// Negative examples to add (used by propagation).
-  neg_to_add: PrdHMap< HConSet<Args> >,
+  neg_to_add: PrdHMap< HConSet<HSample> >,
   /// Constraints that have changed since the last reset.
   modded_constraints: CstrSet,
   /// New samples since the last reset.

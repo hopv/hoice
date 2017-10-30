@@ -24,12 +24,12 @@ bench = [ ]
 lazy_static = "*"
 clap = "2.26.0"
 regex = "*"
-hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
+hashconsing = "*"
 error-chain = "*"
 log = "*"
 env_logger = "*"
 ansi_term = "*"
-rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
+rsmt2 = "*"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 rayon = "*"
