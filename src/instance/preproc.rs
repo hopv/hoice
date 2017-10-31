@@ -47,12 +47,21 @@ pub fn work(
   }
   match res {
     Err(ref e) if e.is_unsat() => {
-      instance.set_unsat() ;
-      Ok(())
+      instance.set_unsat()
     },
-    res => res
+    Err(e) => bail!(e),
+    Ok(()) => ()
   }
 
+  log_info!{ "building predicate dependency graph" }
+
+  use instance::graph::* ;
+
+  let graph = Graph::new(& instance) ;
+  graph.check(& instance) ? ;
+  graph.to_dot(& instance, "pred_dep") ? ;
+
+  Ok(())
 }
 
 pub fn run<'kid, S: Solver<'kid, ()>>(

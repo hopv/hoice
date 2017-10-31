@@ -1,4 +1,10 @@
 //! Values used in evaluation.
+//!
+//! Values can be automatically created (using `into`) to
+//!
+//! - `Val::B` from `bool`
+//! - `Val::I` from `Int`, `usize`, `isize`, `u32`, `i32`, `u64`, `i64`
+//! - `Val::N` from `()`
 
 use errors::* ;
 use common::{ Int, Signed } ;
@@ -91,5 +97,10 @@ impl From<u64> for Val {
 impl From<i64> for Val {
   fn from(i: i64) -> Val {
     Val::I( i.into() )
+  }
+}
+impl From<()> for Val {
+  fn from(_: ()) -> Val {
+    Val::N
   }
 }

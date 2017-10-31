@@ -67,6 +67,12 @@ pub fn ite(c: Term, t: Term, e: Term) -> Term {
   app(Op::Ite, vec![c, t, e])
 }
 
+/// Implication.
+#[inline(always)]
+pub fn implies(lhs: Term, rhs: Term) -> Term {
+  app(Op::Impl, vec![lhs, rhs])
+}
+
 /// Negates a term.
 #[inline(always)]
 pub fn not(term: Term) -> Term {
@@ -142,6 +148,11 @@ pub fn mul(kids: Vec<Term>) -> Term {
 #[inline(always)]
 pub fn div(kids: Vec<Term>) -> Term {
   app(Op::Div, kids)
+}
+/// Creates a modulo application.
+#[inline(always)]
+pub fn modulo(a: Term, b: Term) -> Term {
+  app(Op::Mod, vec![a, b])
 }
 
 
@@ -545,6 +556,20 @@ fn normalize_app(
         return Either::Left( fls() )
       } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
         return Either::Left( bool(lhs < rhs) )
+      } else {
+        (op, args)
+      }
+    } else {
+      (op, args)
+    },
+
+    Op::Mod => if args.len() == 2 {
+      if let Some(i) = args[1].int() {
+        if i == 1.into() {
+          return Either::Left( term::int(0) )
+        } else {
+          (op, args)
+        }
       } else {
         (op, args)
       }

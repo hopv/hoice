@@ -163,6 +163,8 @@ impl SmtConf {
 pub struct PreprocConf {
   /// Dump instance as smt2 flag.
   pub dump: bool,
+  /// Dump predicate dependency graph.
+  pub dump_pred_dep: bool,
   /// Pre-processing flag.
   pub active: bool,
   /// Reduction flag.
@@ -179,33 +181,42 @@ pub struct PreprocConf {
   pub mono_pred: bool,
 }
 impl SubConf for PreprocConf {
-  fn need_out_dir(& self) -> bool { self.dump && self.active }
+  fn need_out_dir(& self) -> bool {
+    self.dump && self.active || self.dump_pred_dep
+  }
   fn init(& self) -> Res<()> {
-    if self.active {
-      if let Some(path) = self.log_dir() {
-        ::std::fs::DirBuilder::new().recursive(true).create(
-          path
-        ).chain_err(
-          || format!(
-            "while creating preproc output directory in `{}`",
-            ::common::conf.out_dir
-          )
-       ) ?
-      }
+    let mut path = self.log_dir() ;
+    if self.dump && self.active {
+      ::std::fs::DirBuilder::new().recursive(true).create(
+        & path
+      ).chain_err(
+        || format!(
+          "while creating preproc output directory in `{}`",
+          ::common::conf.out_dir
+        )
+      ) ?
+    }
+    if self.dump_pred_dep {
+      path.push("pred_dep") ;
+      ::std::fs::DirBuilder::new().recursive(true).create(
+        & path
+      ).chain_err(
+        || format!(
+          "while creating preproc output directory in `{}`",
+          ::common::conf.out_dir
+        )
+      ) ? ;
+      path.pop() ;
     }
     Ok(())
   }
 }
 impl PreprocConf {
   /// Instance dump dir.
-  pub fn log_dir(& self) -> Option<PathBuf> {
-    if self.dump {
-      let mut path = ::common::conf.out_dir() ;
-      path.push("preproc") ;
-      Some(path)
-    } else {
-      None
-    }
+  pub fn log_dir(& self) -> PathBuf {
+    let mut path = ::common::conf.out_dir() ;
+    path.push("preproc") ;
+    path
   }
 
   /// Instance dump file.
@@ -213,12 +224,33 @@ impl PreprocConf {
     & self, name: S
   ) -> ::common::IoRes< Option<::std::fs::File> > {
     use std::fs::OpenOptions ;
-    if let Some(mut path) = self.log_dir() {
+    if self.dump && self.active {
+      let mut path = self.log_dir() ;
       path.push(name.as_ref()) ;
       path.set_extension("smt2") ;
       OpenOptions::new()
       .write(true).truncate(true).create(true)
       .open(& path).map(|f| Some(f))
+    } else {
+      Ok(None)
+    }
+  }
+
+  /// Predicate dependency file.
+  pub fn pred_dep_file<S: AsRef<str>>(
+    & self, name: S
+  ) -> ::common::IoRes<
+    Option< (::std::fs::File, ::std::path::PathBuf) >
+  > {
+    use std::fs::OpenOptions ;
+    if self.dump_pred_dep {
+      let mut path = self.log_dir() ;
+      path.push("pred_dep") ;
+      path.push(name.as_ref()) ;
+      path.set_extension("gv") ;
+      OpenOptions::new()
+      .write(true).truncate(true).create(true)
+      .open(& path).map(|f| Some((f, path)))
     } else {
       Ok(None)
     }
@@ -314,6 +346,16 @@ impl PreprocConf {
         bool_format
       ).default_value("off").takes_value(true)// .number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("dump_pred_dep").long("--dump_pred_dep").help(
+        "(de)activates predicate dependency dumps"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true)// .number_of_values(1)
+
     )
   }
 
@@ -327,9 +369,10 @@ impl PreprocConf {
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
     let mono_pred = bool_of_matches(matches, "mono_pred") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
+    let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
 
     PreprocConf {
-      dump, active, smt_red,
+      dump, dump_pred_dep, active, smt_red,
       reduction, one_rhs, one_rhs_full, one_lhs, mono_pred
     }
   }
@@ -806,7 +849,7 @@ impl Verb {
     match * self {
       Verb::Debug => ::log::LogLevelFilter::Debug,
       Verb::Verb => ::log::LogLevelFilter::Info,
-      Verb::Quiet => ::log::LogLevelFilter::Error,
+      Verb::Quiet => ::log::LogLevelFilter::Warn,
     }
   }
 
