@@ -62,17 +62,6 @@ impl_fmt!{
 }
 
 
-
-wrap_usize!{
-  #[doc = "Constraint index."]
-  CstrIdx
-  #[doc = "Constraint set."]
-  set: CstrSet
-  #[doc = "Constraint total map."]
-  map: CstrMap with iter: CstrMapIter
-}
-
-
 /// Constraints using hashconsed samples.
 ///
 /// A constraint is a tautology iff `lhs.is_empty()` and `rhs.is_none()`.

@@ -1265,7 +1265,7 @@ impl Instance {
         }
       }
       antecedents.shrink_to_fit() ;
-      
+
       log_debug!{ "    working on rhs..." }
       let consequent = match * clause.rhs() {
         TTerm::P { pred, ref args } => {

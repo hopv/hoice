@@ -7,16 +7,6 @@ use common::data::* ;
 
 use common::profiling::{ ProfileTree, Stats } ;
 
-wrap_usize!{
-  #[doc = "Learner index."]
-  LrnIdx
-  #[doc = "Map of learners"]
-  hash map: LrnHMap
-  #[doc = "Total map from learners to something."]
-  map: LrnMap with iter: LrnMapIter
-}
-unsafe impl Send for LrnIdx {}
-
 
 /// From one or more learners to the teacher.
 pub enum FromLearners {

@@ -15,6 +15,8 @@ use common::msg::* ;
 
 use self::smt::Parser ;
 
+// pub mod assistant ;
+
 
 /// Starts the teaching process.
 pub fn start_class(
