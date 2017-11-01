@@ -640,6 +640,29 @@ impl Instance {
     (& self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1)
   }
 
+  /// Adds a predicate application to a clause's lhs.
+  pub fn clause_add_lhs_pred(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarMap<Term>
+  ) {
+    self.clauses[clause].insert_pred_app(pred, args) ;
+    self.pred_to_clauses[pred].0.insert(clause) ;
+  }
+
+  /// Adds a term to a clause's lhs.
+  pub fn clause_add_lhs_term(
+    & mut self, clause: ClsIdx, term: Term
+  ) {
+    self.clauses[clause].insert_term(term) ;
+  }
+
+  /// Forces the rhs of a clause to a predicate application.
+  pub fn clause_force_rhs(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarMap<Term>
+  ) {
+    self.pred_to_clauses[pred].1.insert(clause) ;
+    self.clauses[clause].rhs = Some((pred, args))
+  }
+
   /// Adds some terms to the lhs of a clause.
   ///
   /// Updates `pred_to_clauses`.
@@ -674,10 +697,12 @@ impl Instance {
         let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
         debug_assert!( is_new )
       },
-      TTerm::T(term) => if term.bool() != Some(false) {
-        clause.lhs_terms.insert( term::not(term) ) ;
+      TTerm::T(term) => {
+        if term.bool() != Some(false) {
+          clause.lhs_terms.insert( term::not(term) ) ;
+        }
         clause.rhs = None
-      } else { () },
+      },
     }
   }
 
@@ -842,6 +867,138 @@ impl Instance {
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
     idx
+  }
+
+  /// Forces the rhs occurences of a predicate to be equal to something.
+  ///
+  /// If `pred` appears in `apps /\ trms => pred`, the clause will become
+  /// `apps /\ pred_apps /\ trms /\ terms => pred_app`.
+  ///
+  /// # Usage
+  ///
+  /// This function can only be called if `pred` appears exactly once as an
+  /// antecedent, say in clause `c`, and `c`'s consequent is not an application
+  /// of `pred`:
+  ///
+  /// - `self.clauses_of_pred(pred).0.len() == 1` and
+  /// - `self.preds_of_clauses( self.clauses_of_pred(pred).0.iter().next().unwrap() ).1.is_empty()`
+  ///
+  /// Otherwise, it will return an error.
+  ///
+  /// # Consequences
+  ///
+  /// - forgets the one clause `pred` is in the lhs of
+  /// - forces `pred` to be `pred_app \/ (not /\ pred_apps) \/ (not /\ terms)`
+  ///
+  /// # Used by
+  ///
+  /// - [`SimpleOneLhs`](../instance/preproc/struct.SimpleOneLhs.html)
+  pub fn force_pred_right<Preds>(
+    & mut self, pred: PrdIdx,
+    pred_app: Option< (PrdIdx, VarMap<Term>) >,
+    pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: Vec<Term>
+  ) -> Res<RedInfo> {
+    let (
+      mut clause_lhs, mut clause_rhs
+    ) = (ClsSet::new(), ClsSet::new()) ;
+    let mut clauses_to_rm = ClsSet::new() ;
+    let mut clauses_rmed = 0 ;
+
+    log_debug!{ "  force preds right {}...", conf.emph(& self[pred].name) }
+
+    self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
+
+
+    let mut clause_lhs = clause_lhs.into_iter() ;
+    if let Some(clause) = clause_lhs.next() {
+      if clause_lhs.next().is_some() {
+        bail!(
+          "illegal context for force_pred_right, \
+          {} appears in more than one lhs", conf.emph(& self[pred].name)
+        )
+      }
+      self.forget_clause(clause) ? ;
+      ()
+    } else {
+      bail!(
+        "illegal context for force_pred_right, \
+        {} appears in no lhs", conf.emph(& self[pred].name)
+      )
+    }
+
+    let mut rhs_swap ;
+
+    'clause_iter: for clause in clause_rhs {
+      log_debug!{ "    working on lhs of clause #{}", clause }
+
+      rhs_swap = None ;
+      ::std::mem::swap(& mut self.clauses[clause].rhs, & mut rhs_swap) ;
+
+      if let Some((prd, subst)) = rhs_swap {
+        if pred == prd {
+
+          // New rhs.
+          if let Some( & (ref prd, ref args) ) = pred_app.as_ref() {
+            let (prd, mut args) = (* prd, args.clone()) ;
+            for arg in & mut args {
+              if let Some((nu_arg, _)) = arg.subst_total(& subst) {
+                * arg = nu_arg
+              } else {
+                bail!("unexpected failure during total substitution")
+              }
+            }
+
+            self.clause_force_rhs(clause, prd, args)
+          }
+          // No `else`, clause's rhs is already `None`.
+
+          // New lhs predicate applications.
+          for & (pred, ref args) in & pred_apps {
+            let mut nu_args = VarMap::with_capacity( args.len() ) ;
+            for arg in args {
+              if let Some((nu_arg, _)) = arg.subst_total(& subst) {
+                nu_args.push(nu_arg)
+              } else {
+                bail!("unexpected failure during total substitution")
+              }
+            }
+            self.clause_add_lhs_pred(clause, pred, nu_args)
+          }
+
+          // New lhs terms.
+          for term in & terms {
+            if let Some((term, _)) = term.subst_total(& subst) {
+              match term.bool() {
+                Some(true) => (),
+                Some(false) => {
+                  clauses_to_rm.insert(clause) ;
+                  continue 'clause_iter
+                },
+                None => self.clause_add_lhs_term(clause, term),
+              }
+            }
+          }
+
+          // Explicitely continueing, otherwise the factored error message
+          // below will fire.
+          continue 'clause_iter
+        }
+      }
+
+      bail!(
+        "inconsistent instance state, \
+        `pred_to_clauses` and clauses out of sync"
+      )
+    }
+
+    clauses_rmed += clauses_to_rm.len() ;
+    self.forget_clauses( & mut clauses_to_rm.drain().collect() ) ? ;
+
+    let mut info: RedInfo = (0, clauses_rmed, 0).into() ;
+    info += self.force_trivial() ? ;
+    info += self.simplify_clauses() ? ;
+
+    Ok(info)
   }
 
   /// Forces a predicate to be equal to something.

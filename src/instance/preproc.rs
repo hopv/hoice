@@ -593,6 +593,85 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     Ok(! sat)
   }
 
+  /// Returns the weakest predicate `p` such that `(p args) /\ lhs_terms /\
+  /// lhs_preds => rhs`.
+  ///
+  /// The result is `(pred_app, pred_apps, terms)` which semantics is `pred_app
+  /// \/ (not /\ tterms) \/ (not /\ pred_apps)`.
+  pub fn nu_terms_of_lhs_app(
+    & mut self, instance: & Instance,
+    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
+    rhs: Option<(PrdIdx, & VarMap<Term>)>,
+    pred: PrdIdx, args: & VarMap<Term>,
+  ) -> Res< ExtractRes<(Option<PredApp>, Vec<PredApp>, Vec<Term>)> > {
+    log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
+
+    let (terms, map, app_vars) = if let Some(res) = terms_of_app(
+      instance, pred, args, |term| term
+    ) ? {
+      res
+    } else {
+      return Ok(ExtractRes::Failed)
+    } ;
+    let mut terms: Vec<_> = terms.into_iter().collect() ;
+
+    for term in lhs_terms {
+      let vars = term.vars() ;
+      if vars.is_subset(& app_vars) {
+        let (term, _) = term.subst_total(& map).ok_or::<Error>(
+          "failure during total substitution".into()
+        ) ? ;
+        terms.push(term)
+      } else if vars.is_disjoint(& app_vars) {
+        // Does not constrain the arguments as long as we don't later enter the
+        // next branch.
+        ()
+      } else {
+        return Ok(ExtractRes::Failed)
+      }
+    }
+
+    let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
+
+    for (pred, argss) in lhs_preds {
+      for args in argss {
+        let mut nu_args = VarMap::with_capacity( args.len() ) ;
+        for arg in args {
+          if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
+            nu_args.push(nu_arg)
+          } else {
+            // For all we know, `pred` is false and there's no constraint on
+            // the predicate we're resolving. Even if the variables are
+            // completely disjoint.
+            // Can't resolve without quantifiers.
+            return Ok(ExtractRes::Failed)
+          }
+        }
+        pred_apps.push( (* pred, nu_args) )
+      }
+    }
+
+    let pred_app = if let Some((pred, args)) = rhs {
+      let mut nu_args = VarMap::with_capacity( args.len() ) ;
+      for arg in args {
+        if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
+          nu_args.push(nu_arg)
+        } else {
+          // For all we know, `pred` is true and there's no constraint on
+          // the predicate we're resolving. Even if the variables are
+          // completely disjoint.
+            // Can't resolve without quantifiers.
+          return Ok(ExtractRes::Failed)
+        }
+      }
+      Some((pred, nu_args))
+    } else {
+      None
+    } ;
+
+    Ok( ExtractRes::Success( (pred_app, pred_apps, terms) ) )
+  }
+
 
   /// Returns the weakest predicate `p` such that `(p args) /\ lhs => false`.
   pub fn terms_of_lhs_app(
@@ -1160,36 +1239,36 @@ where Slver: Solver<'kid, ()> {
         continue
       } ;
 
+      // Skip if the clause mentions this predicate more than once.
+      if let Some( argss ) = instance[clause_idx].lhs_preds().get(& pred) {
+        if argss.len() > 1 { continue }
+      } else if let Some((rhs_pred, _)) = instance[clause_idx].rhs() {
+        if rhs_pred == pred { continue }
+      }
+
       log_debug!{
         "trying to unfold {}", instance[pred]
       }
 
       let res = {
-        if instance.preds_of_clause(clause_idx).1 == Some(pred) {
-          ExtractRes::SuccessTrue
-        } else if instance.preds_of_clause(clause_idx).0.len() > 1
-        || instance.preds_of_clause(clause_idx).1.is_some() {
-          continue
+        let clause = & instance[clause_idx] ;
+        // log_debug!{
+        //   "from {}", clause.to_string_info( instance.preds() ) ?
+        // }
+        let args = if let Some(argss) = clause.lhs_preds().get(& pred) {
+          let mut iter = argss.iter() ;
+          let res = iter.next().unwrap() ;
+          // Guaranteed by the check before the `log_debug`.
+          debug_assert!( iter.next().is_none() ) ;
+          res
         } else {
-          let clause = & instance[clause_idx] ;
-          // log_debug!{
-          //   "from {}", clause.to_string_info( instance.preds() ) ?
-          // }
-          let args = if let Some(argss) = clause.lhs_preds().get(& pred) {
-            if argss.len() != 1 { continue }
-            let mut iter = argss.iter() ;
-            let res = iter.next().unwrap() ;
-            debug_assert!( iter.next().is_none() ) ;
-            res
-          } else {
-            bail!("inconsistent instance state")
-          } ;
+          bail!("inconsistent instance state")
+        } ;
 
-          solver.terms_of_lhs_app(
-            instance, clause.lhs_terms(), pred, args,
-            clause.vars()
-          ) ?
-        }
+        solver.terms_of_lhs_app(
+          instance, clause.lhs_terms(), pred, args,
+          clause.vars()
+        ) ?
       } ;
 
       if res.is_failed() { continue }
