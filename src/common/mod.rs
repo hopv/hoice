@@ -102,8 +102,11 @@ impl QualsExt for Quals {
   }
 }
 
+/// A predicate application.
+pub type PredApp = (PrdIdx, VarMap<Term>) ;
+
 /// Some predicate applications.
-pub type PredApps = PrdHMap< VarMapSet<Term> > ;
+pub type PredApps = PrdHMap< Vec<VarMap<Term>>  > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
@@ -111,9 +114,14 @@ pub trait PredAppsExt {
 }
 impl PredAppsExt for PredApps {
   fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
-    self.entry(pred).or_insert_with(
-      || VarMapSet::with_capacity(4)
-    ).insert(args)
+    let vec = self.entry(pred).or_insert_with(
+      || Vec::with_capacity(4)
+    ) ;
+    for a in vec.iter() {
+      if * a == args { return false }
+    }
+    vec.push(args) ;
+    true
   }
 }
 

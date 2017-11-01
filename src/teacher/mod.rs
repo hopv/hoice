@@ -440,9 +440,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         }
         self.solver.comment(& format!("rhs:\n")) ? ;
-        self.solver.comment(
-          & format!("  {}", clause.rhs())
-        ) ?
+        if let Some((pred, args)) = clause.rhs() {
+          self.solver.comment(
+            & format!("  {}", TTerm::P { pred, args: args.clone() })
+          ) ?
+        } else {
+          self.solver.comment("  false") ?
+        }
       }
     }
     profile!{ self tick "cexs", "prep" }

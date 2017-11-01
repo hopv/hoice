@@ -20,12 +20,12 @@ pub struct Clause {
   /// Predicate applications of the left-hand side.
   lhs_preds: PredApps,
   /// Single term right-hand side.
-  rhs: TTerm,
+  rhs: Option<PredApp>,
 }
 impl Clause {
   /// Creates a clause.
   pub fn new(
-    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
+    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: Option<PredApp>
   ) -> Self {
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
@@ -49,7 +49,11 @@ impl Clause {
         }
       }
     }
-    vars.extend( self.rhs.vars() ) ;
+    if let Some((_, ref args)) = self.rhs {
+      for arg in args {
+        vars.extend( arg.vars() )
+      }
+    }
     for var in vars {
       if ! self.vars[var].active {
         bail!(
@@ -170,8 +174,12 @@ impl Clause {
   }
   /// RHS accessor.
   #[inline(always)]
-  pub fn rhs(& self) -> & TTerm {
-    & self.rhs
+  pub fn rhs(& self) -> Option<(PrdIdx, & VarMap<Term>)> {
+    if let Some((prd, ref args)) = self.rhs {
+      Some((prd, args))
+    } else {
+      None
+    }
   }
 
   /// Variables accessor.
@@ -183,9 +191,19 @@ impl Clause {
   /// Clones a clause but changes the rhs.
   #[inline(always)]
   pub fn clone_with_rhs(& self, rhs: TTerm) -> Self {
+    let mut lhs_terms = self.lhs_terms.clone() ;
+    let rhs = match rhs {
+      TTerm::P { pred, args } => Some((pred, args)),
+      TTerm::T(term) => {
+        if term.bool() != Some(false) {
+          lhs_terms.insert( term::not(term) ) ;
+        }
+        None
+      },
+    } ;
     Clause {
       vars: self.vars.clone(),
-      lhs_terms: self.lhs_terms.clone(),
+      lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
       rhs,
     }
@@ -209,21 +227,26 @@ impl Clause {
       self.insert_term(term) ;
       changed = changed || b
     }
-    let mut nu_argss = VarMapSet::with_capacity(7) ;
     for (_, argss) in & mut self.lhs_preds {
+      let mut nu_argss = Vec::with_capacity( argss.len() ) ;
       debug_assert!( nu_argss.is_empty() ) ;
-      for mut args in argss.drain() {
+      for mut args in argss.drain(0..) {
         for arg in args.iter_mut() {
           let (nu_arg, b) = arg.subst(map) ;
           * arg = nu_arg ;
           changed = changed || b
         }
-        nu_argss.insert(args) ;
+        nu_argss.push(args) ;
       }
       ::std::mem::swap(& mut nu_argss, argss)
     }
-    let rhs_changed = self.rhs.subst(map) ;
-    changed = changed || rhs_changed ;
+    if let Some(& mut (_, ref mut args)) = self.rhs.as_mut() {
+      for arg in args.iter_mut() {
+        let (nu_arg, b) = arg.subst(map) ;
+        * arg = nu_arg ;
+        changed = changed || b
+      }
+    }
     changed
   }
 
@@ -303,9 +326,11 @@ impl Clause {
     } ;
 
     write!(w, "{}", pref) ? ;
-    self.rhs.write(
-      w, |w, var| w.write_all( self.vars[var].as_bytes() ), & write_prd
-    ) ? ;
+    if let Some((pred, ref args)) = self.rhs {
+      write_prd(w, pred, args) ?
+    } else {
+      write!(w, "false") ?
+    }
     write!(w, "\n") ? ;
     if let Some(suff) = suff {
       write!(w, "{}\n", suff) ?
@@ -356,22 +381,22 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
     if ! self.lhs_is_empty() {
       write!(writer, ") ") ?
     }
-    self.rhs.write_smt2(
-      writer, |w, prd, args| {
-        if true_preds.contains(& prd) {
-          write!(w, "true")
-        } else if false_preds.contains(& prd) {
-          write!(w, "false")
-        } else {
-          write!(w, "({}", prd_info[prd].name) ? ;
-          for arg in args {
-            write!(w, " ") ? ;
-            arg.write(w, |w, var| var.default_write(w)) ?
-          }
-          write!(w, ")")
+    if let Some((prd, ref args)) = self.rhs {
+      if true_preds.contains(& prd) {
+        write!(writer, "true") ?
+      } else if false_preds.contains(& prd) {
+        write!(writer, "false") ?
+      } else {
+        write!(writer, "({}", prd_info[prd].name) ? ;
+        for arg in args {
+          write!(writer, " ") ? ;
+          arg.write(writer, |w, var| var.default_write(w)) ?
         }
+        write!(writer, ")") ?
       }
-    ) ? ;
+    } else {
+      write!(writer, "false") ?
+    }
     if ! self.lhs_is_empty() {
       write!(writer, ")") ?
     }
@@ -500,12 +525,14 @@ impl Instance {
   pub fn clauses_of_pred(& self, pred: PrdIdx) -> ( & ClsSet, & ClsSet ) {
     ( & self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1 )
   }
-  /// Clauses a predicate appears in. Lhs and rhs.
+  /// Lhs and rhs predicates of a clause.
   #[inline]
   pub fn preds_of_clause(
     & self, clause: ClsIdx
   ) -> (& PredApps, Option<PrdIdx>) {
-    (self[clause].lhs_preds(), self[clause].rhs().pred())
+    (
+      self[clause].lhs_preds(), self[clause].rhs().map(|(prd, _)| prd)
+    )
   }
 
 
@@ -641,12 +668,17 @@ impl Instance {
     & mut self, clause_idx: ClsIdx, tterm: TTerm
   ) {
     let clause = & mut self.clauses[clause_idx] ;
-    if let Some(pred) = tterm.pred() {
-      let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
-      log_debug!{ "clause_rhs_force: {}\n  {}", tterm, clause.to_string_info(& self.preds).unwrap() }
-      debug_assert!( is_new )
+    match tterm {
+      TTerm::P { pred, args } => {
+        clause.rhs = Some((pred, args)) ;
+        let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
+        debug_assert!( is_new )
+      },
+      TTerm::T(term) => if term.bool() != Some(false) {
+        clause.lhs_terms.insert( term::not(term) ) ;
+        clause.rhs = None
+      } else { () },
     }
-    clause.rhs = tterm
   }
 
   // /// Evaluates the term a predicate is forced to, if any.
@@ -865,7 +897,7 @@ impl Instance {
       let _ = self.pred_to_clauses[pred].0.insert(to) ;
       debug_assert!(was_there)
     }
-    if let Some(pred) = self.clauses[from].rhs().pred() {
+    if let Some((pred, _)) = self.clauses[from].rhs() {
       let was_there = self.pred_to_clauses[pred].1.remove(& from) ;
       let _ = self.pred_to_clauses[pred].1.insert(to) ;
       debug_assert!(was_there)
@@ -922,7 +954,7 @@ impl Instance {
         was_there || self.pred_terms[pred].is_some()
       )
     }
-    if let TTerm::P { pred, .. } = * self.clauses[clause].rhs() {
+    if let Some((pred, _)) = self.clauses[clause].rhs() {
       let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
       debug_assert!(
         was_there || self.pred_terms[pred].is_some()
@@ -948,7 +980,7 @@ impl Instance {
       let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
       debug_assert!(is_new)
     }
-    if let Some(pred) = clause.rhs.pred() {
+    if let Some((pred, _)) = clause.rhs() {
       let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
       debug_assert!(is_new)
     }
@@ -1003,7 +1035,7 @@ impl Instance {
       'find_clause: for clause in self.clauses.iter_mut() {
         // Skip those for which the predicate in the rhs only appears in this
         // rhs.
-        if let Some(pred) = clause.rhs.pred() {
+        if let Some((pred, _)) = clause.rhs() {
           if self.pred_to_clauses[pred].1.len() == 1 {
             continue 'find_clause
           }
@@ -1086,9 +1118,9 @@ impl Instance {
     // Qualifiers generated while looking at predicate applications.
     let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;
 
-    let rhs_opt = if let TTerm::P { ref pred, ref args } = clause.rhs {
-      let mut set = VarMapSet::with_capacity(1) ;
-      set.insert(args.clone()) ;
+    let rhs_opt = if let Some((ref pred, ref args)) = clause.rhs {
+      let mut set = Vec::with_capacity(1) ;
+      set.push(args.clone()) ;
       Some((pred, set))
     } else { None } ;
 
@@ -1189,20 +1221,16 @@ impl Instance {
       maps.len()
     ] ;
 
-    let rhs = clause.rhs().term() ;
     // Now look for atoms and try to apply the mappings above.
-    for term in clause.lhs_terms.iter().chain( clause.rhs().term() ) {
-      let push = rhs.is_none() || rhs == Some(& term) ;
+    for term in clause.lhs_terms.iter() {
 
       let mut cnt = 0 ;
       for map in & maps {
         if let Some( (term, true) ) = term.subst_total(map) {
           if let Some(max_var) = term.highest_var() {
             let arity: Arity = (1 + * max_var).into() ;
-            if push {
-              conjs[cnt].0.insert( term.clone() ) ;
-              if arity > conjs[cnt].1 { conjs[cnt].1 = arity }
-            }
+            conjs[cnt].0.insert( term.clone() ) ;
+            if arity > conjs[cnt].1 { conjs[cnt].1 = arity }
             cnt += 1 ;
             let term = if let Some(term) = term.rm_neg() {
               term
@@ -1267,23 +1295,22 @@ impl Instance {
       antecedents.shrink_to_fit() ;
 
       log_debug!{ "    working on rhs..." }
-      let consequent = match * clause.rhs() {
-        TTerm::P { pred, ref args } => {
-          log_debug!{
-            "        pred: {} / {} ({})",
-            pred, self.preds.len(), self.pred_terms.len()
-          }
-          let mut values = VarMap::with_capacity( args.len() ) ;
-          'pred_args: for arg in args {
-            values.push(
-              arg.eval(& cex).chain_err(
-                || "during argument evaluation to generate learning data"
-              ) ?
-            )
-          }
-          Some( (pred, values) )
-        },
-        _ => None,
+      let consequent = if let Some((pred, args)) = clause.rhs() {
+        log_debug!{
+          "        pred: {} / {} ({})",
+          pred, self.preds.len(), self.pred_terms.len()
+        }
+        let mut values = VarMap::with_capacity( args.len() ) ;
+        'pred_args: for arg in args {
+          values.push(
+            arg.eval(& cex).chain_err(
+              || "during argument evaluation to generate learning data"
+            ) ?
+          )
+        }
+        Some( (pred, values) )
+      } else {
+        None
       } ;
 
       log_debug!{ "    antecedent: {:?}", antecedents }
@@ -1366,7 +1393,7 @@ impl Instance {
           )
         }
       }
-      if let Some(pred) = clause.rhs.pred() {
+      if let Some((pred, _)) = clause.rhs() {
         if ! self.pred_to_clauses[pred].1.contains(& cls_idx) {
           bail!(
             "predicate {} appears in rhs of clause {} \
@@ -1412,7 +1439,7 @@ impl Instance {
             which is above the maximal clause index", self[pred], clause
           )
         }
-        if let Some(this_pred) = self.clauses[* clause].rhs.pred() {
+        if let Some((this_pred, _)) = self.clauses[* clause].rhs() {
           if this_pred == pred {
             continue
           }
@@ -1461,8 +1488,10 @@ impl Instance {
 
       clauses_dropped += clause_lhs.len() ;
       for clause in clause_rhs.drain() {
-        debug_assert_eq!{ self.clauses[clause].rhs.pred(), Some(pred) }
-        self.clauses[clause].rhs = TTerm::T( term::fls() )
+        debug_assert_eq!{
+          self.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
+        }
+        self.clauses[clause].rhs = None
       }
       debug_assert!{{
         for clause in & clause_lhs {
@@ -1643,9 +1672,9 @@ impl Instance {
 
           // debug_assert!( terms_to_add.is_empty() ) ;
 
-          let tterms = if let TTerm::P {
-            pred: _this_pred, ref args
-          } = self[clause].rhs {
+          let tterms = if let Some(
+            (_this_pred, ref args)
+          ) = self[clause].rhs() {
             debug_assert_eq!( _this_pred, pred ) ;
             tterms.subst_total(args) ?
           } else {
@@ -1658,7 +1687,7 @@ impl Instance {
               continue 'clause_iter_rhs
             },
             TTerms::False => {
-              self.clauses[clause].rhs = TTerm::T( term::fls() )
+              self.clauses[clause].rhs = None
             },
             TTerms::And(tterms) => {
               debug_assert!( ! tterms.is_empty() ) ;
@@ -1669,6 +1698,7 @@ impl Instance {
                     clauses_to_rm.insert(clause) ;
                   },
                   Some(false) => {
+
                     self.clause_rhs_force(
                       clause, TTerm::T( term::fls() )
                     ) ;
@@ -1690,7 +1720,6 @@ impl Instance {
                 } ;
                 let clause = self.clauses[clause].clone_with_rhs(tterm) ;
                 clauses_to_add.push(clause)
-                // self.push_clause(clause) ?
               }
             },
             TTerms::Or(_) => bail!(

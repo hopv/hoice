@@ -28,7 +28,7 @@ impl Graph {
     let mut pos = PrdSet::with_capacity(10) ;
 
     for clause in instance.clauses() {
-      if let Some(tgt) = clause.rhs().pred() {
+      if let Some((tgt, _)) = clause.rhs() {
         if clause.lhs_preds().is_empty() {
           pos.insert(tgt) ;
         } else {
@@ -93,7 +93,7 @@ impl Graph {
       self.dot_write(& mut pred_dep_file, instance) ? ;
       let mut pdf_path = path.clone() ;
       pdf_path.set_extension("pdf") ;
-      let output = match Command::new("fuck_this_shit").args(
+      let output = match Command::new("dot").args(
         & ["-Tpdf", "-o"]
       ).arg(pdf_path).arg(& path).output() {
         Ok(output) => output,

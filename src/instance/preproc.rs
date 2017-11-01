@@ -594,23 +594,17 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   }
 
 
-  /// Returns the weakest term such that `(p args) /\ lhs => rhs`.
-  ///
-  /// # TODO
-  ///
-  /// - this can fail for `(p v (- v))` although it shouldn't, same for
-  ///   `...rhs_app`
+  /// Returns the weakest predicate `p` such that `(p args) /\ lhs => false`.
   pub fn terms_of_lhs_app(
     & mut self, instance: & Instance,
-    lhs: & HConSet<Term>, rhs: & TTerm,
+    lhs: & HConSet<Term>,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res<ExtractRes> {
     log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
 
     // Implication trivial?
-    if rhs.bool() == Some(true)
-    || self.trivial_impl(var_info, lhs.iter(), & term::fls()) ? {
+    if self.trivial_impl(var_info, lhs.iter(), & term::fls()) ? {
       log_debug!{ "      implication is trivial" }
       return Ok( ExtractRes::Trivial )
     }
@@ -639,23 +633,12 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       var_info, lhs.iter()
     ) ? ;
 
-    if let Some(term) = rhs.term() {
-      if let Some((rhs, _)) = term.subst_total(& map) {
-        terms.insert(rhs) ;
-      } else {
-        return Ok( ExtractRes::Failed )
-      }
-    } else if lhs_true && terms.is_empty() {
-      if let Ok(rhs) = rhs.subst_total(& map) {
-        return Ok( ExtractRes::Success( vec![rhs] ) )
-      } else {
-        return Ok( ExtractRes::Failed )
-      }
-    } else {
-      return Ok( ExtractRes::Failed )
-    }
+    if lhs_true && terms.is_empty() {
 
-    if ! lhs_true {
+      return Ok( ExtractRes::Success( vec![ TTerm::T(term::fls()) ] ) )
+
+    } else if ! lhs_true {
+
       for term in lhs {
         if let Some(b) = term.bool() {
           // if `b` was false then `trivial_impl` above would have seen it
@@ -669,15 +652,20 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           ) ? ;
           terms.insert( term::not(term) ) ;
         } else if vars.is_disjoint(& app_vars) {
+          continue
         } else {
           return Ok(ExtractRes::Failed)
         }
       }
+
     }
 
     if terms.is_empty() {
+
       Ok( ExtractRes::SuccessTrue )
+
     } else {
+
       let res = term::or( terms.into_iter().collect() ) ;
       if res.bool() == Some(false) {
         Ok( ExtractRes::SuccessFalse )
@@ -688,6 +676,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           )
         )
       }
+
     }
 
   }
@@ -1032,9 +1021,7 @@ where Slver: Solver<'kid, ()> {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let TTerm::P {
-          pred: _this_pred, ref args
-        } = * instance[clause].rhs() {
+        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
           solver.terms_of_rhs_app(
             instance,
@@ -1180,7 +1167,8 @@ where Slver: Solver<'kid, ()> {
       let res = {
         if instance.preds_of_clause(clause_idx).1 == Some(pred) {
           ExtractRes::SuccessTrue
-        } else if instance.preds_of_clause(clause_idx).0.len() > 1 {
+        } else if instance.preds_of_clause(clause_idx).0.len() > 1
+        || instance.preds_of_clause(clause_idx).1.is_some() {
           continue
         } else {
           let clause = & instance[clause_idx] ;
@@ -1198,7 +1186,7 @@ where Slver: Solver<'kid, ()> {
           } ;
 
           solver.terms_of_lhs_app(
-            instance, clause.lhs_terms(), clause.rhs(), pred, args,
+            instance, clause.lhs_terms(), pred, args,
             clause.vars()
           ) ?
         }
@@ -1326,9 +1314,7 @@ where Slver: Solver<'kid, ()> {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let TTerm::P {
-          pred: _this_pred, ref args
-        } = * instance[clause].rhs() {
+        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
           solver.qterms_of_rhs_app(
             instance,
@@ -1460,13 +1446,13 @@ where Slver: Solver<'kid, ()> {
       log_debug!{ "looking at clause #{}", clause }
       let (lhs_pred_apps_len, rhs_is_pred_app) = (
         instance[clause].lhs_pred_apps_len(),
-        instance[clause].rhs().pred().is_some()
+        instance[clause].rhs().is_some()
       ) ;
 
       if lhs_pred_apps_len == 0 && rhs_is_pred_app {
-        let (pred, res) = if let TTerm::P {
-          pred, ref args
-        } = * instance.clauses()[clause].rhs() {
+        let (pred, res) = if let Some(
+          (pred, args)
+        ) = instance.clauses()[clause].rhs() {
           (
             pred, solver.terms_of_rhs_app(
               instance,
@@ -1592,41 +1578,27 @@ where Slver: Solver<'kid, ()> {
           }
         }
 
-        let rhs = if let Some(rhs) = clause.rhs().term() {
-
-          if let Some(true) = rhs.bool() {
+        if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+          // Either it is trivial, or falsifiable regardless of the predicates.
+          if solver.trivial_impl(
+            clause.vars(), lhs.drain(0..), & fls
+          ) ? {
             self.clauses_to_rm.push(clause_idx) ;
             continue 'clause_iter
-          }
-
-          // No predicate application?
-          if clause.lhs_preds().is_empty() {
-            // Either it is trivial, or falsifiablie regardless of the
-            // predicates.
-            if solver.trivial_impl(
-              clause.vars(), lhs.drain(0..), rhs
-            ) ? {
-              self.clauses_to_rm.push(clause_idx) ;
-              continue 'clause_iter
-            } else {
-              log_debug!{
-                "unsat because of {}",
-                clause.to_string_info( instance.preds() ) ?
-              }
-              bail!( ErrorKind::Unsat )
+          } else {
+            log_debug!{
+              "unsat because of {}",
+              clause.to_string_info( instance.preds() ) ?
             }
+            bail!( ErrorKind::Unsat )
           }
-
-          rhs
-
         } else {
           if lhs.is_empty() {
             continue 'clause_iter
           }
-          & fls
-        } ;
+        }
 
-        if solver.trivial_impl(clause.vars(), lhs.drain(0..), rhs) ? {
+        if solver.trivial_impl(clause.vars(), lhs.drain(0..), & fls) ? {
           self.clauses_to_rm.push(clause_idx) ;
           continue 'clause_iter
         }
