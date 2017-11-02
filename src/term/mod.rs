@@ -838,7 +838,7 @@ impl_fmt!{
 }
 
 
-/// Either true, false, a conjunction or a DNF of top terms.
+/// Either true, false, a conjunction or a disjunction of top terms.
 #[derive(Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
@@ -848,7 +848,7 @@ pub enum TTerms {
   /// Conjunction.
   And( Vec<TTerm> ),
   /// Disjunction.
-  Or( Vec<TTerm> ),
+  Or { pos: Vec<TTerm>, neg: Vec<TTerm> },
 }
 impl TTerms {
   /// True.
@@ -886,7 +886,9 @@ impl TTerms {
           if p == pred { return true }
         }
       },
-      TTerms::Or(ref tterms) => for tterm in tterms {
+      TTerms::Or { ref pos, ref neg } => for tterm in pos.iter().chain(
+        neg.iter()
+      ) {
         if let Some(p) = tterm.pred() {
           if p == pred { return true }
         }
@@ -926,21 +928,28 @@ impl TTerms {
   }
   /// Constructor for a DNF.
   #[inline]
-  pub fn disj(mut tterms: Vec<TTerm>) -> Self {
+  pub fn disj(mut pos: Vec<TTerm>, mut neg: Vec<TTerm>) -> Self {
     let mut cnt = 0 ;
-    while cnt < tterms.len() {
-      match tterms[cnt].bool() {
+    while cnt < pos.len() {
+      match pos[cnt].bool() {
         Some(true) => return TTerms::tru(),
-        Some(false) => { tterms.swap_remove(cnt) ; },
+        Some(false) => { pos.swap_remove(cnt) ; },
         None => cnt += 1,
       }
     }
-    if tterms.len() == 0 {
+    while cnt < neg.len() {
+      match neg[cnt].bool() {
+        Some(false) => return TTerms::tru(),
+        Some(true) => { neg.swap_remove(cnt) ; },
+        None => cnt += 1,
+      }
+    }
+    if pos.len() + neg.len() == 0 {
       TTerms::fls()
-    } else if tterms.len() == 1 {
-      TTerms::And(tterms)
+    } else if pos.len() == 1 && neg.len() == 0 {
+      TTerms::And(pos)
     } else {
-      TTerms::Or(tterms)
+      TTerms::Or { pos, neg }
     }
   }
 
@@ -951,7 +960,9 @@ impl TTerms {
       TTerms::And(ref tterms) => for tterm in tterms {
         if let Some(pred) = tterm.pred() { set.insert(pred) ; }
       },
-      TTerms::Or(ref tterms) => for tterm in tterms {
+      TTerms::Or { ref pos, ref neg } => for tterm in pos.iter().chain(
+        neg.iter()
+      ) {
         if let Some(pred) = tterm.pred() { set.insert(pred) ; }
       },
       _ => (),
@@ -982,23 +993,18 @@ impl TTerms {
           Ok( TTerms::And(nu_tterms) )
         }
       },
-      TTerms::Or(ref tterms) => {
-        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-        for tterm in tterms {
+      TTerms::Or { ref pos, ref neg } => {
+        let mut nu_pos = Vec::with_capacity( pos.len() ) ;
+        for tterm in pos {
           let tterm = tterm.subst_total(map) ? ;
-          if let Some(b) = tterm.bool() {
-            if b { return Ok( Self::tru() ) }
-          } else {
-            nu_tterms.push( tterm )
-          }
+          nu_pos.push( tterm )
         }
-        if nu_tterms.len() == 0 {
-          Ok( TTerms::fls() )
-        } else if nu_tterms.len() == 1 {
-          Ok( TTerms::And(nu_tterms) )
-        } else {
-          Ok( TTerms::Or(nu_tterms) )
+        let mut nu_neg = Vec::with_capacity( neg.len() ) ;
+        for tterm in neg {
+          let tterm = tterm.subst_total(map) ? ;
+          nu_neg.push( tterm )
         }
+        Ok( Self::disj(nu_pos, nu_neg) )
       },
       _ => Ok( self.clone() ),
     }
@@ -1024,11 +1030,16 @@ impl TTerms {
         }
         write!(w, ")")
       },
-      TTerms::Or(ref tterms) => {
+      TTerms::Or { ref pos, ref neg } => {
         write!(w, "(or") ? ;
-        for tterm in tterms {
+        for tterm in pos {
           write!(w, " ") ? ;
           tterm.write(w, & write_var, & write_prd) ?
+        }
+        for tterm in neg {
+          write!(w, " (not ") ? ;
+          tterm.write(w, & write_var, & write_prd) ? ;
+          write!(w, ")") ?
         }
         write!(w, ")")
       },
@@ -1063,11 +1074,16 @@ impl_fmt!{
         }
         write!(fmt, ")")
       },
-      TTerms::Or(ref tterms) => {
+      TTerms::Or { ref pos, ref neg } => {
         write!(fmt, "(or") ? ;
-        for tterm in tterms {
+        for tterm in pos {
           write!(fmt, " ") ? ;
           tterm.fmt(fmt) ?
+        }
+        for tterm in neg {
+          write!(fmt, " (not ") ? ;
+          tterm.fmt(fmt) ? ;
+          write!(fmt, ")") ?
         }
         write!(fmt, ")")
       },

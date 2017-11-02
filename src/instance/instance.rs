@@ -878,10 +878,7 @@ impl Instance {
   ///
   /// This function can only be called if `pred` appears exactly once as an
   /// antecedent, say in clause `c`, and `c`'s consequent is not an application
-  /// of `pred`:
-  ///
-  /// - `self.clauses_of_pred(pred).0.len() == 1` and
-  /// - `self.preds_of_clauses( self.clauses_of_pred(pred).0.iter().next().unwrap() ).1.is_empty()`
+  /// of `pred`.
   ///
   /// Otherwise, it will return an error.
   ///
@@ -893,7 +890,7 @@ impl Instance {
   /// # Used by
   ///
   /// - [`SimpleOneLhs`](../instance/preproc/struct.SimpleOneLhs.html)
-  pub fn force_pred_right<Preds>(
+  pub fn force_pred_right(
     & mut self, pred: PrdIdx,
     pred_app: Option< (PrdIdx, VarMap<Term>) >,
     pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: Vec<Term>
@@ -911,14 +908,21 @@ impl Instance {
 
     let mut clause_lhs = clause_lhs.into_iter() ;
     if let Some(clause) = clause_lhs.next() {
-      if clause_lhs.next().is_some() {
-        bail!(
-          "illegal context for force_pred_right, \
-          {} appears in more than one lhs", conf.emph(& self[pred].name)
-        )
+      if_not_bench!{
+        if clause_lhs.next().is_some() {
+          bail!(
+            "illegal context for force_pred_right, \
+            {} appears in more than one lhs", conf.emph(& self[pred].name)
+          )
+        }
+        if self.preds_of_clause(clause).1 == Some(pred) {
+          bail!(
+            "illegal context for force_pred_right, \
+            {} appears as both lhs and rhs", conf.emph(& self[pred].name)
+          )
+        }
       }
-      self.forget_clause(clause) ? ;
-      ()
+      clauses_to_rm.insert(clause) ;
     } else {
       bail!(
         "illegal context for force_pred_right, \
@@ -991,12 +995,40 @@ impl Instance {
       )
     }
 
+    // Actually force the predicate.
+    let mut neg_tterms = Vec::with_capacity(
+      pred_apps.len() + terms.len()
+    ) ;
+    for (pred, args) in pred_apps {
+      neg_tterms.push( TTerm::P { pred, args } )
+    }
+    for term in terms {
+      neg_tterms.push( TTerm::T(term) )
+    }
+
+    let tterms = TTerms::disj(
+      if let Some((pred, args)) = pred_app {
+        vec![ TTerm::P { pred, args } ]
+      } else { vec![] },
+      neg_tterms
+    ) ;
+
+    self.force_pred(pred, None, tterms) ? ;
+
+    // Remove useless clauses.
     clauses_rmed += clauses_to_rm.len() ;
     self.forget_clauses( & mut clauses_to_rm.drain().collect() ) ? ;
 
     let mut info: RedInfo = (0, clauses_rmed, 0).into() ;
-    info += self.force_trivial() ? ;
-    info += self.simplify_clauses() ? ;
+
+    let mut changed = true ;
+    while changed {
+      let mut nu_info = self.force_trivial() ? ;
+      nu_info += self.drop_trivial() ? ;
+      nu_info += self.simplify_clauses() ? ;
+      changed = nu_info.non_zero() ;
+      info += nu_info
+    }
 
     Ok(info)
   }
@@ -1702,9 +1734,60 @@ impl Instance {
 
 
 
+  /// Drops trivial clauses.
+  ///
+  /// - `... /\ (p args) /\ ... => (p args)`
+  /// - `... /\ atom /\ ... /\ (not atom) /\ ... => ...`
+  pub fn drop_trivial(& mut self) -> Res<RedInfo> {
+    log_debug!("  drop trivial") ;
+    let mut to_rm = vec![] ;
+
+    // 'clause_iter: for (idx, clause) in self.clauses.index_iter() {
+
+    //   // `atom /\ (not atom)`
+    //   let lhs_terms = clause.lhs_terms() ;
+    //   for term in lhs_terms {
+    //     if lhs_terms.contains( & term::not( term.clone() ) ) {
+    //       log_debug!(
+    //         "    dropping clause {}: {} /\\ (not {})",
+    //         idx, term, term
+    //       ) ;
+    //       to_rm.push(idx) ;
+    //       continue 'clause_iter
+    //     }
+    //   }
+
+    //   // `(p args) => (p args)`
+    //   if let Some((pred, args)) = clause.rhs() {
+    //     if let Some(lhs_argss) = clause.lhs_preds().get(& pred) {
+    //       for lhs_args in lhs_argss {
+    //         if args == lhs_args {
+    //           log_debug!(
+    //             "    dropping clause {}: ({} args) => ({} args)",
+    //             idx, self[pred], self[pred]
+    //           ) ;
+    //           to_rm.push(idx) ;
+    //           continue 'clause_iter
+    //         }
+    //       }
+    //     }
+    //   }
+
+    // }
+
+    let info = ( 0, to_rm.len(), 0 ).into() ;
+
+    self.forget_clauses(& mut to_rm) ? ;
+
+    Ok(info)
+  }
+
+
+
+
   /// Forces to false (true) all the predicates that only appear in clauses'
   /// lhs (rhs).
-  pub fn force_trivial( & mut self) -> Res< RedInfo > {
+  pub fn force_trivial(& mut self) -> Res< RedInfo > {
     let mut info: RedInfo = (0, 0, 0).into() ;
     let mut fixed_point = false ;
     while ! fixed_point {
@@ -1788,7 +1871,7 @@ impl Instance {
                   // }
                   self.clause_lhs_extend(clause, tterms)
                 },
-                TTerms::Or(mut _tterms) => {
+                _ => {
                   unimplemented!("disjunction of top terms in `force_preds`")
                 },
               }
@@ -1879,7 +1962,7 @@ impl Instance {
                 clauses_to_add.push(clause)
               }
             },
-            TTerms::Or(_) => bail!(
+            _ => bail!(
               "trying to force a rhs to a dnf"
             ),
           }
@@ -1901,8 +1984,16 @@ impl Instance {
     }
 
     let mut info: RedInfo = (0, clauses_rmed, clauses_added).into() ;
-    info += self.force_trivial() ? ;
-    info += self.simplify_clauses() ? ;
+
+    let mut changed = true ;
+    while changed {
+      let mut nu_info = self.force_trivial() ? ;
+      nu_info += self.drop_trivial() ? ;
+      nu_info += self.simplify_clauses() ? ;
+      changed = nu_info.non_zero() ;
+      info += nu_info
+    }
+
     Ok( info )
   }
 
