@@ -211,9 +211,6 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     if conf.preproc.one_rhs && conf.preproc.one_rhs_full {
       solver_strats.push( Box::new( OneRhs::new() ) )
     }
-    // if conf.preproc.mono_pred {
-    //   solver_strats.push( Box::new( MonoPredClause::new() ) )
-    // }
     let solver_strats = solver.map(
       |solver| (solver, solver_strats)
     ) ;
@@ -686,121 +683,66 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   }
 
 
-  /// Returns the strongest term such that `/\ lhs => (pred args)`.
-  ///
-  /// # TODO
-  ///
-  /// - move things allocated here to the struct above
+
   pub fn terms_of_rhs_app(
-    & mut self, instance: & Instance,
+    & mut self, quantifiers: bool,
+    instance: & Instance, var_info: & VarMap<VarInfo>,
     lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
-  ) -> Res<ExtractRes> {
-    log_debug!{ "    terms_of_rhs_app on {} {}", instance[pred], args }
-
-    let (terms, map, app_vars) = if let Some(res) = terms_of_app(
-      instance, pred, args, |term| term
-    ) ? { res } else {
-      return Ok(ExtractRes::Failed)
-    } ;
-
-    if_not_bench!{
-      log_debug!{ "      terms:" }
-      for term in & terms { log_debug!{ "      - {}", term } }
-      log_debug!{ "      map:" }
-      for (var, trm) in & map { log_debug!{ "      - v_{} -> {}", var, trm } }
-    }
-
-    let mut tterms: Vec<_> = terms.into_iter().map(|t| TTerm::T(t)).collect() ;
-
-    for term in lhs_terms {
-      if let Some(b) = term.bool() {
-        if ! b {
-          return Ok( ExtractRes::Trivial )
-        }
-        continue
-      }
-      let vars = term.vars() ;
-      if vars.is_subset( & app_vars ) {
-        let (term, _) = term.subst_total(& map).ok_or::<Error>(
-          "failure during total substitution".into()
-        ) ? ;
-        tterms.push( TTerm::T(term) )
-      } else if vars.is_disjoint(& app_vars) {
-        // Does not constrain the arguments, as long as we don't enter (later)
-        // the next branch of this `if`. In which case we fail.
-        ()
-      } else {
-        return Ok(ExtractRes::Failed)
-      }
-    }
-
-    for (pred, argss) in lhs_preds {
-      for args in argss {
-        let mut nu_args = VarMap::with_capacity( args.len() ) ;
-        for arg in args {
-          if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
-            // Total substitution succeeded, all variables are known.
-            nu_args.push(nu_arg)
-          } else {
-            // For all we know, `pred` is false and there's no constraint on
-            // the predicate we're resolving. Even if the variables are
-            // completely disjoint.
-            return Ok(ExtractRes::Failed)
-          }
-        }
-        tterms.push( TTerm::P { pred: * pred, args: nu_args } )
-      }
-    }
-
-    if tterms.is_empty() {
-      Ok(ExtractRes::SuccessTrue)
-    } else {
-      Ok(
-        ExtractRes::Success( tterms.into_iter().collect() )
-      )
-    }
-  }
-
-
-  /// Returns the strongest quantified term such that `/\ lhs => (pred args)`.
-  ///
-  /// # TODO
-  ///
-  /// - move things allocated here to the struct above
-  pub fn qterms_of_rhs_app(
-    & mut self, instance: & Instance,
-    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-    pred: PrdIdx, args: & VarMap<Term>,
-    var_info: & VarMap<VarInfo>
-  ) -> Res< ExtractRes< (Qualfed, Vec<TTerm>) > > {
-    log_debug!{ "    qterms_of_rhs_app on {} {}", instance[pred], args }
+  ) -> Res< ExtractRes<(Qualfed, Vec<TTerm>)> > {
+    log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
     let (terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
       instance, pred, args, |term| term
-    ) ? { res } else {
+    ) ? {
+      res
+    } else {
       return Ok(ExtractRes::Failed)
     } ;
-    let mut fresh = instance[pred].sig.next_index() ;
 
-    if_not_bench!{
-      log_debug!{ "      terms:" }
-      for term in & terms { log_debug!{ "      - {}", term } }
-      log_debug!{ "      map:" }
-      for (var, trm) in & map { log_debug!{ "      - v_{} -> {}", var, trm } }
+    if_not_bench! {
+      log_debug! { "    terms:" }
+      for term in & terms {
+        log_debug! { "    - {}", term }
+      }
+      log_debug! { "    map:" }
+      for (var, term) in & map {
+        log_debug! { "    - v_{} -> {}", var, term }
+      }
     }
 
-    let mut tterms: Vec<_> = terms.into_iter().map(|t| TTerm::T(t)).collect() ;
-    let mut qvars = VarHMap::with_capacity(7) ;
+    let mut tterms: Vec<_> = terms.into_iter().map(
+      |t| TTerm::T(t)
+    ).collect() ;
+    let mut qvars = VarHMap::with_capacity(
+      if quantifiers { var_info.len() - app_vars.len() } else { 0 }
+    ) ;
 
+    // Index of the first quantified variable: fresh for `pred`'s variables.
+    let mut fresh = instance[pred].sig.next_index() ;
+
+    // Creates fresh (quantified) variables for the variables that are not
+    // currently known.
+    //
+    // - `$quantifiers` if `false` and quantified variables are needed, early
+    //   return with `ExtractRes::Failed` instead of creating fresh variables
+    // - `$vars` the variables we're considering
+    // - `$app_vars` currently known variables
+    // - `$map` map from clause variables to predicate variables
+    // - `$qvars` map from quantified variables to their `VarInfo`
+    // - `$info` the clause's `VarInfo`s (used to retrieve types)
+    // - `$fresh` the next fresh variable for the predicate
     macro_rules! add_vars {
       (
-        $vars:expr => $app_vars:ident
+        if $quantifiers:ident : $vars:expr => $app_vars:ident
         |> $map:expr, $qvars:expr, $info:expr, $fresh:expr
       ) => (
         for var in $vars {
           let is_new = $app_vars.insert(var) ;
           if is_new {
+            if ! quantifiers {
+              return Ok(ExtractRes::Failed)
+            }
             let _prev = $qvars.insert($fresh, $info[var].typ) ;
             debug_assert_eq!( None, _prev ) ;
             let _prev = $map.insert( var, term::var($fresh) ) ;
@@ -811,15 +753,21 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       ) ;
     }
 
+    log_debug! {
+      "    working on lhs predicate applications ({})", lhs_preds.len()
+    }
+
+    // Predicate applications need to be in the resulting term. Depending on
+    // the definition they end up having, the constraint might be trivial.
     for (pred, argss) in lhs_preds {
       for args in argss {
         let mut nu_args = VarMap::with_capacity( args.len() ) ;
         for arg in args {
           add_vars!{
-            arg.vars() => app_vars |> map, qvars, var_info, fresh
+            if quantifiers: arg.vars() =>
+              app_vars |> map, qvars, var_info, fresh
           }
           if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
-            // Total substitution succeeded, all variables are known.
             nu_args.push(nu_arg)
           } else {
             // Unreacheable as we just made sure all variables in the argument
@@ -831,57 +779,89 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       }
     }
 
-    let mut lhs_terms: Vec<_> = lhs_terms.iter().collect() ;
-    let mut lhs_terms_buf: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
-    let mut fixed_point = false ;
-
-    while ! fixed_point {
-      fixed_point = true ;
-
-      if_not_bench!{
-        log_debug!("    app vars:") ;
-        for var in & app_vars {
-          log_debug!("    - {}", var_info[* var])
-        }
-      }
-
-      for term in lhs_terms.drain(0..) {
-        log_debug!("    {}", term.to_string_info(var_info) ?) ;
-        if let Some(b) = term.bool() {
-          if ! b {
-            return Ok( ExtractRes::Trivial )
-          }
-          log_debug!{"    - trivial"}
-          continue
-        }
-        let vars = term.vars() ;
-        if vars.is_subset( & app_vars ) {
-          let (term, _) = term.subst_total(& map).ok_or::<Error>(
-            "failure during total substitution".into()
-          ) ? ;
-          log_debug!("    - pushing") ;
-          log_debug!("      {}", term) ;
-          tterms.push( TTerm::T(term) )
-        } else if vars.is_disjoint(& app_vars) {
-          log_debug!("    - disjoint") ;
-          lhs_terms_buf.push(term)
-        } else {
-          fixed_point = false ;
-          add_vars!{
-            vars => app_vars |> map, qvars, var_info, fresh
-          }
-          let (term, _) = term.subst_total(& map).ok_or::<Error>(
-            "failure during total substitution".into()
-          ) ? ;
-          log_debug!("    - intersects") ;
-          log_debug!("      {}", term) ;
-
-          tterms.push( TTerm::T(term) )
-        }
-      }
-
-      ::std::mem::swap( & mut lhs_terms, & mut lhs_terms_buf )
+    log_debug! {
+      "    working on lhs terms ({})", lhs_terms.len()
     }
+
+    // This last step finds terms which variables are related to the ones from
+    // the predicate applications.
+
+    // The terms we're currently looking at.
+    let mut lhs_terms_vec: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
+    for term in lhs_terms {
+      match term.bool() {
+        Some(true) => (),
+        Some(false) => return Ok(ExtractRes::Trivial),
+        _ => lhs_terms_vec.push(term),
+      }
+    }
+    // Terms which variables are disjoint from `app_vars` **for now**. This
+    // might change as we generate quantified variables.
+    let mut postponed: Vec<_> = Vec::with_capacity( lhs_terms_vec.len() ) ;
+
+
+    // A fixed point is reached when we go through the terms in `lhs_terms_vec`
+    // and don't generate quantified variables.
+    loop {
+      let mut fixed_point = true ;
+
+      if_not_bench! {
+        log_debug! { "      app vars:" }
+        for var in & app_vars {
+          log_debug! { "      - {}", var_info[* var] }
+        }
+      }
+
+      for term in lhs_terms_vec.drain(0..) {
+        log_debug! { "      {}", term.to_string_info(var_info) ? }
+        let vars = term.vars() ;
+
+        if app_vars.len() == var_info.len()
+        || vars.is_subset(& app_vars) {
+          let term = if let Some((term, _)) = term.subst_total(& map) {
+            term
+          } else {
+            bail!("[unreachable] failure during total substitution")
+          } ;
+          log_debug! { "      sub {}", term }
+          tterms.push( TTerm::T(term) )
+
+        } else if vars.is_disjoint(& app_vars) {
+          log_debug! { "      disjoint" }
+          postponed.push(term)
+
+        } else {
+          // The term mentions variables from `app_vars` and other variables.
+          // We generate quantified variables to account for them and
+          // invalidate `fixed_point` since terms that were previously disjoint
+          // might now intersect.
+          fixed_point = false ;
+          add_vars! {
+            if quantifiers: vars =>
+              app_vars |> map, qvars, var_info, fresh
+          }
+          let term = if let Some((term, _)) = term.subst_total(& map) {
+            term
+          } else {
+            bail!("[unreachable] failure during total substitution")
+          } ;
+          tterms.push( TTerm::T(term) )
+        }
+
+      }
+
+      if fixed_point || postponed.is_empty() {
+        break
+      } else {
+        // Iterating over posponed terms next.
+        ::std::mem::swap(
+          & mut lhs_terms_vec, & mut postponed
+        )
+      }
+
+    }
+
+    debug_assert! { quantifiers || qvars.is_empty() }
 
     if tterms.is_empty() {
       Ok(ExtractRes::SuccessTrue)
@@ -1020,7 +1000,7 @@ where Slver: Solver<'kid, ()> {
         let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
           solver.terms_of_rhs_app(
-            instance,
+            false, instance, instance[clause].vars(),
             instance[clause].lhs_terms(), instance[clause].lhs_preds(),
             pred, args
           ) ?
@@ -1049,8 +1029,9 @@ where Slver: Solver<'kid, ()> {
             log_info!("  => true") ;
             red_info += instance.force_true(Some(pred)) ? ;
           },
-          Success(tterms) => {
-            if_not_bench!{
+          Success((_quants, tterms)) => {
+            debug_assert! { _quants.is_empty() } ;
+            if_not_bench! {
               for tterm in & tterms {
                 log_debug!("  => {}", tterm ) ;
                 if let Some(pred) = tterm.pred() {
@@ -1334,10 +1315,10 @@ where Slver: Solver<'kid, ()> {
 
         let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
-          solver.qterms_of_rhs_app(
-            instance,
+          solver.terms_of_rhs_app(
+            true, instance, instance[clause].vars(),
             instance[clause].lhs_terms(), instance[clause].lhs_preds(),
-            pred, args, instance[clause].vars()
+            pred, args
           ) ?
         } else {
           bail!("inconsistent instance state")
@@ -1414,130 +1395,6 @@ where Slver: Solver<'kid, ()> {
     }
 
     Ok( red_info )
-  }
-}
-
-
-
-
-
-
-
-
-
-
-/// Mono pred clause strengthening.
-///
-/// This reduction strategy is currently inactive.
-pub struct MonoPredClause {
-  /// Predicates found to be equivalent to true, but not propagated yet.
-  true_preds: PrdSet,
-  /// Clauses to remove.
-  clauses_to_rm: Vec<ClsIdx>,
-  /// Remembers predicate that where already strengthened.
-  known: PrdSet,
-}
-impl MonoPredClause {
-  /// Constructor.
-  pub fn new() -> Self {
-    MonoPredClause {
-      true_preds: PrdSet::with_capacity(7),
-      clauses_to_rm: Vec::with_capacity(7),
-      known: PrdSet::with_capacity(29),
-    }
-  }
-}
-impl HasName for MonoPredClause {
-  fn name(& self) -> & 'static str { "mono pred clause" }
-}
-impl<'kid, Slver> SolverRedStrat<'kid, Slver> for MonoPredClause
-where Slver: Solver<'kid, ()> {
-  fn apply(
-    & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
-  ) -> Res<RedInfo> {
-    let mut nu_clause_count = 0 ;
-    let mut known = PrdSet::with_capacity( instance.preds().len() ) ;
-    debug_assert!{ self.clauses_to_rm.is_empty() }
-    debug_assert!{ self.true_preds.is_empty() }
-
-    'clause_iter: for clause in instance.clause_indices() {
-      log_debug!{ "looking at clause #{}", clause }
-      let (lhs_pred_apps_len, rhs_is_pred_app) = (
-        instance[clause].lhs_pred_apps_len(),
-        instance[clause].rhs().is_some()
-      ) ;
-
-      if lhs_pred_apps_len == 0 && rhs_is_pred_app {
-        let (pred, res) = if let Some(
-          (pred, args)
-        ) = instance.clauses()[clause].rhs() {
-          (
-            pred, solver.terms_of_rhs_app(
-              instance,
-              instance.clauses()[clause].lhs_terms(),
-              instance.clauses()[clause].lhs_preds(), pred, args
-            ) ?
-          )
-        } else {
-          bail!("inconsistent instance state")
-        } ;
-
-        if self.known.contains(& pred) { continue 'clause_iter }
-
-        log_debug!{ "  rhs only ({})", instance[pred] }
-
-        match res {
-          ExtractRes::Failed => {
-            log_debug!{ "  failed..." }
-            continue
-          },
-          ExtractRes::Success(tterms) => {
-            if_not_bench!{
-              log_debug!{ "  success" }
-              for tterm in & tterms {
-                log_debug!{ "  - {}", tterm }
-              }
-              log_debug!{
-                "  strengthening ({})...",
-                instance.clauses_of_pred(pred).0.len()
-              }
-            }
-            known.insert(pred) ;
-            // strength.entry(pred).insert_or_with(
-            //   || Vec::with_capacity(10)
-            // ).push(tterms)
-            nu_clause_count += instance.strengthen_in_lhs(pred, tterms) ?
-          }
-          ExtractRes::Trivial => {
-            log_debug!{ "  clause is trivial..." }
-            self.clauses_to_rm.push(clause)
-          },
-          ExtractRes::SuccessTrue => {
-            log_debug!{ "  forcing {} to true", instance[pred] }
-            self.true_preds.insert(pred) ;
-            self.clauses_to_rm.push(clause)
-          },
-          // `terms_of_rhs_app` cannot return false.
-          ExtractRes::SuccessFalse => unreachable!(),
-        }
-
-      } else if lhs_pred_apps_len == 1 && ! rhs_is_pred_app {
-        log_debug!{ "  lhs only" }
-
-
-      }
-    }
-
-    use std::iter::Extend ;
-    self.known.extend( known ) ;
-
-    let clauses = self.clauses_to_rm.len() ;
-    let preds = self.true_preds.len() ;
-    instance.forget_clauses( & mut self.clauses_to_rm ) ? ;
-    let mut info: RedInfo = (preds, clauses, nu_clause_count).into() ;
-    info += instance.force_true( self.true_preds.drain() ) ? ;
-
-    Ok( info )
   }
 }
 

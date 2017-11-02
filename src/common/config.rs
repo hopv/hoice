@@ -177,8 +177,6 @@ pub struct PreprocConf {
   pub one_rhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
-  /// Mono-predicate.
-  pub mono_pred: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -327,17 +325,6 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("mono_pred").long("--mono_pred").help(
-        "(de)activates mono-predicate reduction"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("off").takes_value(true)
-      // .number_of_values(1)
-
-    ).arg(
-
       Arg::with_name("dump_preproc").long("--dump_preproc").help(
         "(de)activates instance dumping during preprocessing"
       ).validator(
@@ -367,13 +354,12 @@ impl PreprocConf {
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
-    let mono_pred = bool_of_matches(matches, "mono_pred") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
-      reduction, one_rhs, one_rhs_full, one_lhs, mono_pred
+      reduction, one_rhs, one_rhs_full, one_lhs,
     }
   }
 }
