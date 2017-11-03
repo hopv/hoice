@@ -1231,7 +1231,7 @@ where Slver: Solver<'kid, ()> {
             }
           }
           red_info += instance.force_pred_right(
-            pred, pred_app, pred_apps, terms
+            pred, Qualfed::new(), pred_app, pred_apps, terms
           ) ? ;
 
           instance.check("after unfolding") ?

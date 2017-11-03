@@ -425,7 +425,7 @@ pub struct Instance {
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates for which a suitable quantified term has been found.
-  pred_qterms: PrdMap< Option< (VarHMap<Typ>, TTerms) > >,
+  pred_qterms: PrdMap< Option< (Qualf, TTerms) > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
@@ -496,8 +496,8 @@ impl Instance {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push( (pred, None, tterms.clone()) )
-      } else if let Some((ref qualfed, ref tterms)) = self.pred_qterms[pred] {
-        model.push( (pred, Some(qualfed.clone()), tterms.clone()) )
+      } else if let Some((ref qualf, ref tterms)) = self.pred_qterms[pred] {
+        model.push( (pred, Some( qualf.clone() ), tterms.clone()) )
       } else {
         bail!("inconsistency in sorted forced predicates")
       }
@@ -542,7 +542,7 @@ impl Instance {
   /// printed as `v_<var_idx>`.
   pub fn print_tterms_as_model<W: Write>(
     & self, w: & mut W, tterms: & TTerms
-  ) -> ::std::io::Result<()> {
+  ) -> IoRes<()> {
     tterms.write(
       w, |w, var| var.default_write(w),
       |w, pred, args| {
@@ -610,7 +610,7 @@ impl Instance {
 
   /// Returns the term we already know works for a predicate, if any.
   pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<(
-    Option<& Qualfed>, & TTerms
+    Option<& Qualf>, & TTerms
   )> {
     if let Some(tterms) = self.pred_terms[pred].as_ref() {
       Some( (None, tterms) )
@@ -873,26 +873,26 @@ impl Instance {
   ///
   /// Does not impact `pred_to_clauses`.
   fn force_pred(
-    & mut self, pred: PrdIdx, quals: Qualfed, tterms: TTerms
+    & mut self, pred: PrdIdx, qualf: Option<Qualf>, tterms: TTerms
   ) -> Res<()> {
     if let Some(_) = self.pred_terms[pred].as_ref() {
       bail!(
         "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
         conf.sad(& self[pred].name),
-        tterms, quals.len()
+        tterms, qualf.map(|q| q.len()).unwrap_or(0)
       )
     }
     if let Some(_) = self.pred_qterms[pred].as_ref() {
       bail!(
         "trying to force predicate {} twice\n{}\n{} qualifier(s)",
         conf.sad(& self[pred].name),
-        tterms, quals.len()
+        tterms, qualf.map(|q| q.len()).unwrap_or(0)
       )
     }
-    if quals.is_empty() {
-      self.pred_terms[pred] = Some(tterms)
+    if let Some(qualf) = qualf {
+      self.pred_qterms[pred] = Some( (qualf, tterms) )
     } else {
-      self.pred_qterms[pred] = Some( (quals, tterms) )
+      self.pred_terms[pred] = Some(tterms)
     }
     Ok(())
   }
@@ -1133,7 +1133,7 @@ impl Instance {
   /// # Consequences
   ///
   /// - forgets the one clause `pred` is in the rhs of
-  /// - forces `pred` to be `pred_apps /\ terms`
+  /// - forces `pred` to be `exists qvars, pred_apps /\ terms`
   ///
   /// # Used by
   ///
@@ -1239,7 +1239,7 @@ impl Instance {
     }
 
     let tterms = TTerms::conj(tterms) ;
-    self.force_pred(pred, qvars, tterms) ? ;
+    self.force_pred(pred, Qualf::exists(qvars), tterms) ? ;
 
     // Remove obsolete clauses.
     let mut info: RedInfo = (0, clauses_to_rm.len(), 0).into() ;
@@ -1256,6 +1256,8 @@ impl Instance {
   /// If `pred` appears in `apps /\ trms => pred`, the clause will become
   /// `apps /\ pred_apps /\ trms /\ terms => pred_app`.
   ///
+  /// Quantified variables are understood as universally quantified.
+  ///
   /// # Usage
   ///
   /// This function can only be called if `pred` appears exactly once as an
@@ -1267,13 +1269,15 @@ impl Instance {
   /// # Consequences
   ///
   /// - forgets the one clause `pred` is in the lhs of
-  /// - forces `pred` to be `pred_app \/ (not /\ pred_apps) \/ (not /\ terms)`
+  /// - forces `pred` to be `forall qvars, pred_app \/ (not /\ pred_apps) \/
+  ///   (not /\ terms)`
   ///
   /// # Used by
   ///
   /// - [`SimpleOneLhs`](../instance/preproc/struct.SimpleOneLhs.html)
   pub fn force_pred_right(
     & mut self, pred: PrdIdx,
+    qvars: Qualfed,
     pred_app: Option< (PrdIdx, VarMap<Term>) >,
     pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: Vec<Term>
   ) -> Res<RedInfo> {
@@ -1393,7 +1397,7 @@ impl Instance {
       neg_tterms
     ) ;
 
-    self.force_pred(pred, Qualfed::new(), tterms) ? ;
+    self.force_pred(pred, Qualf::forall(qvars), tterms) ? ;
 
 
     // Remove obsolete clauses.
@@ -1803,7 +1807,7 @@ impl Instance {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
 
-      self.force_pred( pred, Qualfed::new(), fls.clone() ) ? ;
+      self.force_pred( pred, None, fls.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
       clauses_dropped += clause_lhs.len() ;
@@ -1849,7 +1853,7 @@ impl Instance {
       debug_assert!( clause_lhs.is_empty() ) ;
       debug_assert!( clause_rhs.is_empty() ) ;
 
-      self.force_pred( pred, Qualfed::new(), tru.clone() ) ? ;
+      self.force_pred( pred, None, tru.clone() ) ? ;
       self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
 
       for clause in clause_lhs.drain(0..) {
@@ -2019,12 +2023,7 @@ impl Instance {
       }
       writeln!(w, " ) {}", Typ::Bool) ? ;
       let (ident, closing) = if let Some(ref qvars) = * qvars {
-        writeln!(w, "    (exists") ? ;
-        write!(w, "      (") ? ;
-        for (var, typ) in qvars {
-          write!(w, " ({} {})", var.default_str(), typ) ?
-        }
-        writeln!(w, " )") ? ;
+        qvars.write_pref(w, "    ", |w, var| var.default_write(w)) ? ;
         ("      ", "\n    )")
       } else {
         ("    ", "")
@@ -2132,11 +2131,8 @@ impl<'a> PebcakFmt<'a> for Instance {
           write!(w, " (v_{} {})", var, typ) ?
         }
         write!(w, " ) Bool\n") ? ;
-        write!(w, "  (exists (") ? ;
-        for (var, typ) in quals {
-          write!(w, " ({} {})", var.default_str(), typ) ?
-        }
-        write!(w, " )\n    ") ? ;
+        quals.write_pref(w, "  ", |w, var| var.default_write(w)) ? ;
+        write!(w, "    ") ? ;
         tterms.expr_to_smt2(
           w, & (& empty_prd_set, & empty_prd_set, & self.preds)
         ).unwrap() ;

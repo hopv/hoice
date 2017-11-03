@@ -1427,3 +1427,69 @@ impl_fmt!{
     fmt.write_str( self.as_str() )
   }
 }
+
+
+
+/// Existential or universal qualifier.
+///
+/// Always use the constructors to avoid falsifying the invariant.
+///
+/// # Invariant
+///
+/// The variable partial maps are never empty.
+#[derive(Clone)]
+pub enum Qualf {
+  /// Exists.
+  Exists( VarHMap<Typ> ),
+  /// Forall.
+  Forall( VarHMap<Typ> ),
+}
+impl Qualf {
+  /// Creates an existential qualifier.
+  pub fn exists(map: VarHMap<Typ>) -> Option<Self> {
+    if map.is_empty() { None } else { Some( Qualf::Exists(map) ) }
+  }
+  /// Creates an existential qualifier.
+  pub fn forall(map: VarHMap<Typ>) -> Option<Self> {
+    if map.is_empty() { None } else { Some( Qualf::Forall(map) ) }
+  }
+
+  /// Number of quantified variables.
+  pub fn len(& self) -> usize {
+    let map = match * self {
+      Qualf::Exists(ref map) => map,
+      Qualf::Forall(ref map) => map,
+    } ;
+    debug_assert! { ! map.is_empty() }
+    map.len()
+  }
+
+  /// Writes the opening part of the qualifier as a line.
+  ///
+  /// Basically `"{}(<quantified> ( <qvars> )\n", prefix`.
+  pub fn write_pref<W, WVar>(
+    & self, w: & mut W, pref: & str, write_var: WVar
+  ) -> IoRes<()>
+  where
+  W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
+    w.write( pref.as_bytes() ) ? ;
+    let map = match * self {
+      Qualf::Exists(ref map) => {
+        write!(w, "(exists (") ? ;
+        map
+      },
+      Qualf::Forall(ref map) => {
+        write!(w, "(forall (") ? ;
+        map
+      },
+    } ;
+    for (var, typ) in map {
+      write!(w, " (") ? ;
+      write_var(w, * var) ? ;
+      write!(w, " {})", typ) ?
+    }
+    writeln!(w, " )")
+  }
+}
+
+

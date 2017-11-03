@@ -18,7 +18,7 @@ pub use either::Either ;
 
 pub use errors::* ;
 pub use term ;
-pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
+pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ, Qualf } ;
 pub use instance::Instance ;
 
 mod wrappers ;
@@ -133,7 +133,7 @@ unsafe impl<T: Send> Send for PrdMap<T> {}
 pub type Qualfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
-pub type Model = Vec< (PrdIdx, Option<Qualfed>, TTerms) > ;
+pub type Model = Vec< (PrdIdx, Option<Qualf>, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
