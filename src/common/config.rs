@@ -175,6 +175,8 @@ pub struct PreprocConf {
   pub one_rhs: bool,
   /// Allow to introduce quantifiers.
   pub one_rhs_full: bool,
+  /// Allow to introduce quantifiers.
+  pub one_lhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
 }
@@ -325,6 +327,17 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("one_lhs_full").long("--one_lhs_full").help(
+        "(de)activates full one lhs reduction (might introduce quantifiers)"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("dump_preproc").long("--dump_preproc").help(
         "(de)activates instance dumping during preprocessing"
       ).validator(
@@ -354,12 +367,13 @@ impl PreprocConf {
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
+    let one_lhs_full = bool_of_matches(matches, "one_lhs_full") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
-      reduction, one_rhs, one_rhs_full, one_lhs,
+      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full,
     }
   }
 }

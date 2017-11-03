@@ -211,6 +211,9 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     if conf.preproc.one_rhs && conf.preproc.one_rhs_full {
       solver_strats.push( Box::new( OneRhs::new() ) )
     }
+    if conf.preproc.one_lhs && conf.preproc.one_lhs_full {
+      solver_strats.push( Box::new( OneLhs::new() ) )
+    }
     let solver_strats = solver.map(
       |solver| (solver, solver_strats)
     ) ;
@@ -1514,6 +1517,194 @@ where Slver: Solver<'kid, ()> {
         // We did something, stop there in case more simple stuff can be done.
         break 'all_preds
 
+      }
+    }
+
+    Ok( red_info )
+  }
+}
+
+
+
+
+
+/// Tries to reduce predicates that appear as an antecedent in exactly one
+/// clause.
+///
+/// For a predicate `p`, if the clause in question is
+///
+/// ```bash
+/// lhs(v_1, ..., v_n) and p(v_1, ..., v_n) => rhs(v_1, ..., v_n)
+/// ```
+///
+/// then `p` is reduced to
+///
+/// ```bash
+/// (not lhs(v_1, ..., v_n)) or rhs(v_1, ..., v_n)
+/// ```
+///
+/// **iff** `p` is the only predicate application in the clause, `lhs` is sat
+/// and `(not rhs)` is sat.
+///
+/// If `lhs` or `(not rhs)` is unsat, then the clause is dropped and `p` is
+/// reduced to `true` since it does not appear as an antecedent anywhere
+/// anymore.
+pub struct OneLhs {
+  /// Predicates found to be equivalent to true, but not propagated yet.
+  true_preds: PrdSet,
+  /// Predicates found to be equivalent to false, but not propagated yet.
+  false_preds: PrdSet,
+  /// Predicates to propagate.
+  preds: PrdHMap< Vec<TTerm> >,
+}
+impl OneLhs {
+  /// Constructor.
+  pub fn new() -> Self {
+    OneLhs {
+      true_preds: PrdSet::with_capacity(7),
+      false_preds: PrdSet::with_capacity(7),
+      preds: PrdHMap::with_capacity(7),
+    }
+  }
+}
+impl HasName for OneLhs {
+  fn name(& self) -> & 'static str { "one lhs" }
+}
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for OneLhs
+where Slver: Solver<'kid, ()> {
+  fn apply(
+    & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
+  ) -> Res<RedInfo> {
+    debug_assert!( self.true_preds.is_empty() ) ;
+    debug_assert!( self.false_preds.is_empty() ) ;
+    debug_assert!( self.preds.is_empty() ) ;
+    let mut red_info: RedInfo = (0,0,0).into() ;
+
+    for pred in instance.pred_indices() {
+      let clause_idx = {
+        let mut lhs_clauses = instance.clauses_of_pred(pred).0.iter() ;
+        if let Some(clause) = lhs_clauses.next() {
+          if lhs_clauses.next().is_none() {
+            * clause
+          } else {
+            continue
+          }
+        } else {
+          continue
+        }
+      } ;
+
+      // Skip if the clause mentions this predicate more than once.
+      if let Some( argss ) = instance[clause_idx].lhs_preds().get(& pred) {
+        if argss.len() > 1 { continue }
+      }
+
+      log_debug!{
+        "trying to unfold {}", instance[pred]
+      }
+
+      let res = {
+        let clause = & instance[clause_idx] ;
+        // log_debug!{
+        //   "from {}", clause.to_string_info( instance.preds() ) ?
+        // }
+        let args = if let Some(argss) = clause.lhs_preds().get(& pred) {
+          let mut iter = argss.iter() ;
+          let res = iter.next().unwrap() ;
+          // Guaranteed by the check before the `log_debug`.
+          debug_assert!( iter.next().is_none() ) ;
+          res
+        } else {
+          bail!("inconsistent instance state")
+        } ;
+
+        // Is the rhs an application of `pred`?
+        match clause.rhs() {
+          Some((p, _)) if p == pred => {
+            ExtractRes::SuccessTrue
+          },
+          _ => solver.terms_of_lhs_app(
+            true, instance, clause.vars(),
+            clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
+            pred, args
+          ) ?,
+        }
+      } ;
+
+      if res.is_failed() { continue }
+
+      log_debug!{
+        "from {}",
+        instance.clauses()[clause_idx].to_string_info( instance.preds() ) ?
+      }
+
+      // instance.forget_clause(clause_idx) ? ;
+      // red_info.clauses_rmed += 1 ;
+
+      // log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
+
+      log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
+      use self::ExtractRes::* ;
+      match res {
+        SuccessTrue => {
+          log_info!("  => true") ;
+          red_info += instance.force_true(Some(pred)) ?
+        },
+        SuccessFalse => {
+          log_info!("  => false") ;
+          red_info += instance.force_false(Some(pred)) ?
+        },
+        Success((qvars, pred_app, pred_apps, terms)) => {
+          if_not_bench!{
+            log_debug!("  {} quantified variables", qvars.len()) ;
+            for (var, typ) in & qvars {
+              log_debug!("  - v_{}: {}", var, typ)
+            }
+            log_debug!{ "  => (or" }
+            if let Some((pred, ref args)) = pred_app {
+              let mut s = format!("({}", instance[pred]) ;
+              for arg in args {
+                s = format!("{} {}", s, arg)
+              }
+              log_debug!{ "    {})", s }
+            }
+            log_debug!{ "    (not" }
+            log_debug!{ "      (and" }
+            for & (pred, ref args) in & pred_apps {
+              let mut s = format!("({}", instance[pred]) ;
+              for arg in args {
+                s = format!("{} {}", s, arg)
+              }
+              log_debug!{ "        {})", s }
+            }
+            for term in & terms {
+              log_debug!{ "        {}", term }
+            }
+          }
+          red_info += instance.force_pred_right(
+            pred, qvars, pred_app, pred_apps, terms
+          ) ? ;
+
+          instance.check("after unfolding") ?
+        },
+        // Failed is caught before this match, and the rest is not possible for
+        // the function generating `res`.
+        _ => unreachable!(),
+      }
+
+      if instance.is_known(pred) {
+        red_info.preds += 1
+      } else {
+        if_verb!{
+          log_debug!{ "  did not remove, still appears in lhs of" }
+          for clause in instance.clauses_of_pred(pred).0 {
+            log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+          }
+          log_debug!{ "  and rhs of" }
+          for clause in instance.clauses_of_pred(pred).1 {
+            log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
+          }
+        }
       }
     }
 

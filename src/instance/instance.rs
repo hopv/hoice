@@ -1317,19 +1317,25 @@ impl Instance {
     let mut rhs_swap ;
 
     'clause_iter: for clause in clause_rhs {
-      log_debug!{ "    working on lhs of clause #{}", clause }
+      log_debug!{ "    working on clause #{}", clause }
 
       rhs_swap = None ;
       ::std::mem::swap(& mut self.clauses[clause].rhs, & mut rhs_swap) ;
 
       if let Some((prd, subst)) = rhs_swap {
+        let qual_map = self.clauses[clause].fresh_vars_for(& qvars) ;
+
         if pred == prd {
+
+          log_debug! { "      generating new rhs" }
 
           // New rhs.
           if let Some( & (ref prd, ref args) ) = pred_app.as_ref() {
             let (prd, mut args) = (* prd, args.clone()) ;
             for arg in & mut args {
-              if let Some((nu_arg, _)) = arg.subst_total(& subst) {
+              if let Some((nu_arg, _)) = arg.subst_total(
+                & (& subst, & qual_map)
+              ) {
                 * arg = nu_arg
               } else {
                 bail!("unexpected failure during total substitution")
@@ -1340,11 +1346,15 @@ impl Instance {
           }
           // No `else`, clause's rhs is already `None`.
 
+          log_debug! { "      generating new lhs pred apps" }
+
           // New lhs predicate applications.
           for & (pred, ref args) in & pred_apps {
             let mut nu_args = VarMap::with_capacity( args.len() ) ;
             for arg in args {
-              if let Some((nu_arg, _)) = arg.subst_total(& subst) {
+              if let Some((nu_arg, _)) = arg.subst_total(
+                & (& subst, & qual_map)
+              ) {
                 nu_args.push(nu_arg)
               } else {
                 bail!("unexpected failure during total substitution")
@@ -1352,10 +1362,14 @@ impl Instance {
             }
             self.clause_add_lhs_pred(clause, pred, nu_args)
           }
+          
+          log_debug! { "      generating new lhs terms" }
 
           // New lhs terms.
           for term in & terms {
-            if let Some((term, _)) = term.subst_total(& subst) {
+            if let Some((term, _)) = term.subst_total(
+              & (& subst, & qual_map)
+            ) {
               match term.bool() {
                 Some(true) => (),
                 Some(false) => {
