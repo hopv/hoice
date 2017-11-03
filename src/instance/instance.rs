@@ -1279,7 +1279,7 @@ impl Instance {
     & mut self, pred: PrdIdx,
     qvars: Qualfed,
     pred_app: Option< (PrdIdx, VarMap<Term>) >,
-    pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: Vec<Term>
+    pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: HConSet<Term>
   ) -> Res<RedInfo> {
     self.check("before `force_pred_right`") ? ;
 

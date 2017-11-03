@@ -537,6 +537,52 @@ impl<T: PartialEq + Eq> ExtractRes<T> {
 
 
 
+/// Creates fresh (quantified) variables for the variables that are not
+/// currently known.
+///
+/// - `$quantifiers` if `false` and quantified variables are needed, early
+///   return with `ExtractRes::Failed` instead of creating fresh variables
+/// - `$vars` the variables we're considering
+/// - `$app_vars` currently known variables
+/// - `$map` map from clause variables to predicate variables
+/// - `$qvars` map from quantified variables to their `VarInfo`
+/// - `$info` the clause's `VarInfo`s (used to retrieve types)
+/// - `$fresh` the next fresh variable for the predicate
+macro_rules! add_vars {
+  (
+    if $quantifiers:ident : $vars:expr => $app_vars:ident
+    |> $map:expr, $qvars:expr, $info:expr, $fresh:expr
+  ) => (
+    for var in $vars {
+      let is_new = $app_vars.insert(var) ;
+      if is_new {
+        if ! $quantifiers {
+          return Ok( TExtractRes::Failed )
+        }
+        let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
+        debug_assert_eq!( None, _prev ) ;
+        log_info! { "    adding fresh v_{} for {}", $fresh, $info[var] }
+        let _prev = $map.insert( var, term::var(* $fresh) ) ;
+        debug_assert_eq!( None, _prev ) ;
+        $fresh.inc()
+      }
+    }
+  ) ;
+}
+
+
+
+
+/// Results of term extraction.
+enum TExtractRes<T> {
+  /// Success.
+  Success(T),
+  /// Failure: need qualifiers.
+  Failed,
+}
+
+
+
 /// Wraps a solver to provide helper functions.
 pub struct SolverWrapper<S> {
   /// The solver.
@@ -586,97 +632,278 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     Ok(! sat)
   }
 
+
+
+  /// Applies a map to some predicate applications, generating quantifiers if
+  /// necessary and `quantifiers` is true.
+  ///
+  /// Returns `None` on failure. Failure happens when some quantifiers are
+  /// needed but `quantifiers` is false.
+  fn args_of_pred_app(
+    quantifiers: bool, var_info: & VarMap<VarInfo>,
+    args: & VarMap<Term>,
+    app_vars: & mut VarSet, map: & mut VarHMap<Term>,
+    qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
+  ) -> Res< TExtractRes<VarMap<Term>> > {
+    let mut nu_args = VarMap::with_capacity( args.len() ) ;
+    for arg in args {
+      add_vars! {
+        if quantifiers: arg.vars() =>
+          app_vars |> map, qvars, var_info, fresh
+      }
+      if let Some((nu_arg, _)) = arg.subst_total(map) {
+        nu_args.push(nu_arg)
+      } else {
+        bail!("unreachable, substitution was not total")
+      }
+    }
+    Ok( TExtractRes::Success( nu_args ) )
+  }
+
+
+  /// Applies a map to some predicate applications, generating quantifiers if
+  /// necessary and `quantifiers` is true.
+  ///
+  /// The `pred` argument is a special predicate that will be skipped when
+  /// handling `src`, but it's arguments will be returned.
+  fn terms_of_pred_apps<'a>(
+    quantifiers: bool, var_info: & VarMap<VarInfo>,
+    src: & 'a PredApps, tgt: & mut Vec<PredApp>,
+    pred: PrdIdx, app_vars: & mut VarSet,
+    map: & mut VarHMap<Term>,
+    qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
+  ) -> Res< TExtractRes< Option<& 'a Vec<VarMap<Term>> > > > {
+    let mut res = None ;
+    for (prd, argss) in src {
+
+      let prd = * prd ;
+      if prd == pred {
+        res = Some(argss) ;
+        continue
+      }
+
+      for args in argss {
+        match Self::args_of_pred_app(
+          quantifiers, var_info, args, app_vars, map, qvars, fresh
+        ) ? {
+          TExtractRes::Success(nu_args) => tgt.push( (prd, nu_args) ),
+          TExtractRes::Failed => return Ok(TExtractRes::Failed),
+        }
+      }
+    }
+    Ok( TExtractRes::Success(res) )
+  }
+
+
+  /// Applies a map to some terms, generating quantifiers if necessary and
+  /// `quantifiers` is true.
+  ///
+  /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
+  fn terms_of_terms(
+    quantifiers: bool, var_info: & VarMap<VarInfo>,
+    src: & HConSet<Term>, tgt: & mut HConSet<Term>,
+    app_vars: & mut VarSet, map: & mut VarHMap<Term>,
+    qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
+  ) -> Res< TExtractRes<bool> > {
+
+    // Finds terms which variables are related to the ones from the predicate
+    // applications.
+
+    // The terms we're currently looking at.
+    let mut lhs_terms_vec: Vec<_> = Vec::with_capacity( src.len() ) ;
+    for term in src {
+      match term.bool() {
+        Some(true) => (),
+        Some(false) => return Ok( TExtractRes::Success(true) ),
+        _ => lhs_terms_vec.push(term),
+      }
+    }
+    // Terms which variables are disjoint from `app_vars` **for now**. This
+    // might change as we generate quantified variables.
+    let mut postponed: Vec<_> = Vec::with_capacity( lhs_terms_vec.len() ) ;
+
+
+    // A fixed point is reached when we go through the terms in `lhs_terms_vec`
+    // and don't generate quantified variables.
+    loop {
+      let mut fixed_point = true ;
+
+      if_not_bench! {
+        log_debug! { "      app vars:" }
+        for var in app_vars.iter() {
+          log_debug! { "      - {}", var_info[* var] }
+        }
+        log_debug! { "      map:" }
+        for (var, term) in map.iter() {
+          log_debug! { "      - v_{} -> {}", var, term }
+        }
+      }
+
+      for term in lhs_terms_vec.drain(0..) {
+        log_debug! { "      {}", term.to_string_info(var_info) ? }
+        let vars = term.vars() ;
+
+        if app_vars.len() == var_info.len()
+        || vars.is_subset(& app_vars) {
+          let term = if let Some((term, _)) = term.subst_total(map) {
+            term
+          } else {
+            bail!("[unreachable] failure during total substitution (1)")
+          } ;
+          log_debug! { "      sub {}", term }
+          tgt.insert(term) ;
+
+        } else if vars.is_disjoint(& app_vars) {
+          log_debug! { "      disjoint" }
+          postponed.push(term)
+
+        } else {
+          // The term mentions variables from `app_vars` and other variables.
+          // We generate quantified variables to account for them and
+          // invalidate `fixed_point` since terms that were previously disjoint
+          // might now intersect.
+          fixed_point = false ;
+          add_vars! {
+            if quantifiers: vars =>
+              app_vars |> map, qvars, var_info, fresh
+          }
+          let term = if let Some((term, _)) = term.subst_total(map) {
+            term
+          } else {
+            bail!("[unreachable] failure during total substitution (2)")
+          } ;
+          tgt.insert(term) ;
+        }
+
+      }
+
+      if fixed_point || postponed.is_empty() {
+        break
+      } else {
+        // Iterating over posponed terms next.
+        ::std::mem::swap(
+          & mut lhs_terms_vec, & mut postponed
+        )
+      }
+
+    }    
+
+    Ok( TExtractRes::Success(false) )
+  }
+
+
+
   /// Returns the weakest predicate `p` such that `(p args) /\ lhs_terms /\
   /// {lhs_preds \ (p args)} => rhs`.
+  ///
+  /// Quantified variables are understood as universally quantified.
   ///
   /// The result is `(pred_app, pred_apps, terms)` which semantics is `pred_app
   /// \/ (not /\ tterms) \/ (not /\ pred_apps)`.
   pub fn terms_of_lhs_app(
-    & mut self, instance: & Instance,
+    & mut self, quantifiers: bool,
+    instance: & Instance, var_info: & VarMap<VarInfo>,
     lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     rhs: Option<(PrdIdx, & VarMap<Term>)>,
     pred: PrdIdx, args: & VarMap<Term>,
-  ) -> Res< ExtractRes<(Option<PredApp>, Vec<PredApp>, Vec<Term>)> > {
+  ) -> Res<
+    ExtractRes<(Qualfed, Option<PredApp>, Vec<PredApp>, HConSet<Term>)>
+  > {
     log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
 
-    let (terms, map, app_vars) = if let Some(res) = terms_of_app(
+    let (mut terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
       instance, pred, args, |term| term
     ) ? {
       res
     } else {
       return Ok(ExtractRes::Failed)
     } ;
-    let mut terms: Vec<_> = terms.into_iter().collect() ;
 
-    for term in lhs_terms {
-      let vars = term.vars() ;
-      if vars.is_subset(& app_vars) {
-        let (term, _) = term.subst_total(& map).ok_or::<Error>(
-          "failure during total substitution".into()
-        ) ? ;
-        terms.push(term)
-      } else if vars.is_disjoint(& app_vars) {
-        // Does not constrain the arguments as long as we don't later enter the
-        // next branch.
-        ()
-      } else {
-        return Ok(ExtractRes::Failed)
+    if_not_bench! {
+      log_debug! { "    terms:" }
+      for term in & terms {
+        log_debug!{ "    - {}", term }
       }
+      log_debug! { "    map:" }
+      for (var, term) in & map {
+        log_debug! { "    - v_{} -> {}", var, term }
+      }
+    }
+
+    let mut qvars = VarHMap::with_capacity(
+      if quantifiers { var_info.len() - app_vars.len() } else { 0 }
+    ) ;
+
+    // Index of the first quantified variable: fresh for `pred`'s variables.
+    let fresh = & mut instance[pred].sig.next_index() ;
+
+    log_debug! {
+      "    working on lhs predicate applications ({})", lhs_preds.len()
     }
 
     let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
 
-    for (prd, argss) in lhs_preds {
-      if * prd == pred {
-        match argss.len() {
-          1 => continue,
-          len => bail!(
-            "illegal call to `terms_of_lhs_app`, \
-            predicate {} is applied {} time(s), expected 1",
-            instance[pred], len
-          ),
-        }
-      }
-      for args in argss {
-        let mut nu_args = VarMap::with_capacity( args.len() ) ;
-        for arg in args {
-          if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
-            nu_args.push(nu_arg)
-          } else {
-            // For all we know, `prd` is false and there's no constraint on
-            // the predicate we're resolving. Even if the variables are
-            // completely disjoint.
-            // Can't resolve without quantifiers.
-            return Ok(ExtractRes::Failed)
-          }
-        }
-        pred_apps.push( (* prd, nu_args) )
-      }
+    // Predicate applications need to be in the resulting term. Depending on
+    // the definition they end up having, the constraint might be trivial.
+    match Self::terms_of_pred_apps(
+      quantifiers, var_info, lhs_preds, & mut pred_apps,
+      pred, & mut app_vars, & mut map, & mut qvars, fresh
+    ) ? {
+      TExtractRes::Success( Some(pred_argss) ) => match pred_argss.len() {
+        1 => (),
+        len => bail!(
+          "illegal call to `terms_of_lhs_app`, \
+          predicate {} is applied {} time(s), expected 1",
+          instance[pred], len
+        ),
+      },
+      TExtractRes::Success(None) => (),
+      TExtractRes::Failed => return Ok( ExtractRes::Failed ),
     }
 
     let pred_app = if let Some((pred, args)) = rhs {
-      let mut nu_args = VarMap::with_capacity( args.len() ) ;
-      for arg in args {
-        if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
-          nu_args.push(nu_arg)
-        } else {
-          // For all we know, `pred` is true and there's no constraint on
-          // the predicate we're resolving. Even if the variables are
-          // completely disjoint.
-            // Can't resolve without quantifiers.
-          return Ok(ExtractRes::Failed)
-        }
+      log_debug! {
+        "    working on rhs predicate application"
       }
-      Some((pred, nu_args))
+      if let TExtractRes::Success(nu_args) = Self::args_of_pred_app(
+        quantifiers, var_info, args, & mut app_vars,
+        & mut map, & mut qvars, fresh
+      ) ? {
+        Some((pred, nu_args))
+      } else {
+        return Ok( ExtractRes::Failed )
+      }
     } else {
+      log_debug! { "    no rhs predicate application" }
       None
     } ;
 
-    Ok( ExtractRes::Success( (pred_app, pred_apps, terms) ) )
+    log_debug! {
+      "    working on lhs terms ({})", lhs_terms.len()
+    }
+
+    if let TExtractRes::Success(trivial) = Self::terms_of_terms(
+      quantifiers, var_info, lhs_terms, & mut terms,
+      & mut app_vars, & mut map, & mut qvars, fresh
+    ) ? {
+      if trivial { return Ok( ExtractRes::Trivial ) }
+    } else {
+      return Ok( ExtractRes::Failed )
+    }
+
+    debug_assert! { quantifiers || qvars.is_empty() }
+
+    Ok( ExtractRes::Success( (qvars, pred_app, pred_apps, terms) ) )
   }
 
 
-
+  /// Returns the weakest predicate `p` such that `lhs_terms /\ lhs_preds => (p
+  /// args)`.
+  ///
+  /// Quantified variables are understood as existentially quantified.
+  ///
+  /// The result is `(pred_apps, terms)` which semantics is `pred_app /\
+  /// tterms`.
   pub fn terms_of_rhs_app(
     & mut self, quantifiers: bool,
     instance: & Instance, var_info: & VarMap<VarInfo>,
@@ -684,8 +911,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     pred: PrdIdx, args: & VarMap<Term>,
   ) -> Res< ExtractRes<(Qualfed, Vec<PredApp>, HConSet<Term>)> > {
     log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
-
-    let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
 
     let (mut terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
       instance, pred, args, |term| term
@@ -711,156 +936,42 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     ) ;
 
     // Index of the first quantified variable: fresh for `pred`'s variables.
-    let mut fresh = instance[pred].sig.next_index() ;
-
-    // Creates fresh (quantified) variables for the variables that are not
-    // currently known.
-    //
-    // - `$quantifiers` if `false` and quantified variables are needed, early
-    //   return with `ExtractRes::Failed` instead of creating fresh variables
-    // - `$vars` the variables we're considering
-    // - `$app_vars` currently known variables
-    // - `$map` map from clause variables to predicate variables
-    // - `$qvars` map from quantified variables to their `VarInfo`
-    // - `$info` the clause's `VarInfo`s (used to retrieve types)
-    // - `$fresh` the next fresh variable for the predicate
-    macro_rules! add_vars {
-      (
-        if $quantifiers:ident : $vars:expr => $app_vars:ident
-        |> $map:expr, $qvars:expr, $info:expr, $fresh:expr
-      ) => (
-        for var in $vars {
-          let is_new = $app_vars.insert(var) ;
-          if is_new {
-            if ! quantifiers {
-              return Ok(ExtractRes::Failed)
-            }
-            let _prev = $qvars.insert($fresh, $info[var].typ) ;
-            debug_assert_eq!( None, _prev ) ;
-            let _prev = $map.insert( var, term::var($fresh) ) ;
-            debug_assert_eq!( None, _prev ) ;
-            $fresh.inc()
-          }
-        }
-      ) ;
-    }
+    let fresh = & mut instance[pred].sig.next_index() ;
 
     log_debug! {
       "    working on lhs predicate applications ({})", lhs_preds.len()
     }
 
+    let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
+
     // Predicate applications need to be in the resulting term. Depending on
     // the definition they end up having, the constraint might be trivial.
-    for (prd, argss) in lhs_preds {
-      if * prd == pred {
-        match argss.len() {
-          1 => continue,
-          len => bail!(
-            "illegal call to `terms_of_lhs_app`, \
-            predicate {} is applied {} time(s), expected 1",
-            instance[pred], len
-          ),
-        }
-      }
-      for args in argss {
-        let mut nu_args = VarMap::with_capacity( args.len() ) ;
-        for arg in args {
-          add_vars!{
-            if quantifiers: arg.vars() =>
-              app_vars |> map, qvars, var_info, fresh
-          }
-          if let Some( (nu_arg, _) ) = arg.subst_total(& map) {
-            nu_args.push(nu_arg)
-          } else {
-            // Unreacheable as we just made sure all variables in the argument
-            // are in the map.
-            bail!("unreachable, rhs substitution was not total")
-          }
-        }
-        pred_apps.push( (* prd, nu_args) )
-      }
+    match Self::terms_of_pred_apps(
+      quantifiers, var_info, lhs_preds, & mut pred_apps,
+      pred, & mut app_vars, & mut map, & mut qvars, fresh
+    ) ? {
+      TExtractRes::Success( Some(pred_argss) ) => if ! pred_argss.is_empty() {
+        bail!(
+          "illegal call to `terms_of_rhs_app`, \
+          predicate {} appears in the lhs",
+          instance[pred]
+        )
+      },
+      TExtractRes::Success(None) => (),
+      TExtractRes::Failed => return Ok( ExtractRes::Failed ),
     }
 
     log_debug! {
       "    working on lhs terms ({})", lhs_terms.len()
     }
 
-    // This last step finds terms which variables are related to the ones from
-    // the predicate applications.
-
-    // The terms we're currently looking at.
-    let mut lhs_terms_vec: Vec<_> = Vec::with_capacity( lhs_terms.len() ) ;
-    for term in lhs_terms {
-      match term.bool() {
-        Some(true) => (),
-        Some(false) => return Ok(ExtractRes::Trivial),
-        _ => lhs_terms_vec.push(term),
-      }
-    }
-    // Terms which variables are disjoint from `app_vars` **for now**. This
-    // might change as we generate quantified variables.
-    let mut postponed: Vec<_> = Vec::with_capacity( lhs_terms_vec.len() ) ;
-
-
-    // A fixed point is reached when we go through the terms in `lhs_terms_vec`
-    // and don't generate quantified variables.
-    loop {
-      let mut fixed_point = true ;
-
-      if_not_bench! {
-        log_debug! { "      app vars:" }
-        for var in & app_vars {
-          log_debug! { "      - {}", var_info[* var] }
-        }
-      }
-
-      for term in lhs_terms_vec.drain(0..) {
-        log_debug! { "      {}", term.to_string_info(var_info) ? }
-        let vars = term.vars() ;
-
-        if app_vars.len() == var_info.len()
-        || vars.is_subset(& app_vars) {
-          let term = if let Some((term, _)) = term.subst_total(& map) {
-            term
-          } else {
-            bail!("[unreachable] failure during total substitution")
-          } ;
-          log_debug! { "      sub {}", term }
-          terms.insert(term) ;
-
-        } else if vars.is_disjoint(& app_vars) {
-          log_debug! { "      disjoint" }
-          postponed.push(term)
-
-        } else {
-          // The term mentions variables from `app_vars` and other variables.
-          // We generate quantified variables to account for them and
-          // invalidate `fixed_point` since terms that were previously disjoint
-          // might now intersect.
-          fixed_point = false ;
-          add_vars! {
-            if quantifiers: vars =>
-              app_vars |> map, qvars, var_info, fresh
-          }
-          let term = if let Some((term, _)) = term.subst_total(& map) {
-            term
-          } else {
-            bail!("[unreachable] failure during total substitution")
-          } ;
-          terms.insert(term) ;
-        }
-
-      }
-
-      if fixed_point || postponed.is_empty() {
-        break
-      } else {
-        // Iterating over posponed terms next.
-        ::std::mem::swap(
-          & mut lhs_terms_vec, & mut postponed
-        )
-      }
-
+    if let TExtractRes::Success(trivial) = Self::terms_of_terms(
+      quantifiers, var_info, lhs_terms, & mut terms,
+      & mut app_vars, & mut map, & mut qvars, fresh
+    ) ? {
+      if trivial { return Ok( ExtractRes::Trivial ) }
+    } else {
+      return Ok( ExtractRes::Failed )
     }
 
     debug_assert! { quantifiers || qvars.is_empty() }
@@ -1178,7 +1289,8 @@ where Slver: Solver<'kid, ()> {
             ExtractRes::SuccessTrue
           },
           _ => solver.terms_of_lhs_app(
-            instance, clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
+            false, instance, clause.vars(),
+            clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
             pred, args
           ) ?,
         }
@@ -1207,7 +1319,8 @@ where Slver: Solver<'kid, ()> {
           log_info!("  => false") ;
           red_info += instance.force_false(Some(pred)) ?
         },
-        Success((pred_app, pred_apps, terms)) => {
+        Success((qualfed, pred_app, pred_apps, terms)) => {
+          debug_assert! { qualfed.is_empty() }
           if_not_bench!{
             log_debug!{ "  => (or" }
             if let Some((pred, ref args)) = pred_app {
@@ -1231,7 +1344,7 @@ where Slver: Solver<'kid, ()> {
             }
           }
           red_info += instance.force_pred_right(
-            pred, Qualfed::new(), pred_app, pred_apps, terms
+            pred, qualfed, pred_app, pred_apps, terms
           ) ? ;
 
           instance.check("after unfolding") ?
