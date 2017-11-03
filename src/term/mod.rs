@@ -1022,7 +1022,7 @@ impl TTerms {
     match * self {
       TTerms::True => return write!(w, "true"),
       TTerms::False => return write!(w, "false"),
-      TTerms::And(ref tterms) => {
+      TTerms::And(ref tterms) if tterms.len() > 1 => {
         write!(w, "(and") ? ;
         for tterm in tterms {
           write!(w, " ") ? ;
@@ -1030,6 +1030,9 @@ impl TTerms {
         }
         write!(w, ")")
       },
+      TTerms::And(ref tterms) => tterms[0].write(
+        w, & write_var, & write_prd
+      ),
       TTerms::Or { ref pos, ref neg } => {
         write!(w, "(or") ? ;
         for tterm in pos {
