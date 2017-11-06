@@ -466,9 +466,17 @@ fn normalize_app(
       } else if args.len() == 1 && sum.is_zero() {
         return Either::Left( args.pop().unwrap() )
       } else {
-        args.push( int(sum) ) ;
+        if ! sum.is_zero() {
+          args.push( int(sum) )
+        }
         (op, args)
       }
+    },
+
+    Op::Sub if args.len() == 1 => if let Some(i) = args[0].int() {
+      return Either::Left( int(- i) )
+    } else {
+      (op, args)
     },
 
     Op::Mul => {
@@ -488,12 +496,14 @@ fn normalize_app(
           cnt += 1
         }
       }
-      if args.len() == 0 {
+      if args.len() == 0 || mul.is_zero() {
         return Either::Left( int(mul) )
-      } else if args.len() == 1 && mul.is_zero() {
+      } else if args.len() == 1 && mul == 1.into() {
         return Either::Left( args.pop().unwrap() )
       } else {
-        args.push( int(mul) ) ;
+        if mul != 1.into() {
+          args.push( int(mul) )
+        }
         (op, args)
       }
     },

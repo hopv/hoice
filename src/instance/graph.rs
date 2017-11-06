@@ -4,7 +4,7 @@
 use common::* ;
 
 /// Maps predicates to the predicates they depend on.
-pub type Dep = PrdMap< PrdSet > ;
+pub type Dep = PrdMap< PrdMap<usize> > ;
 
 /// Graph of dependencies.
 pub struct Graph {
@@ -13,33 +13,33 @@ pub struct Graph {
   /// Backward dependencies.
   bakward: Dep,
   /// Predicates appearing in a negative constraint.
-  neg: PrdSet,
+  neg: PrdMap<usize>,
   /// Predicates appearing in a positive constraint.
-  pos: PrdSet,
+  pos: PrdMap<usize>,
 }
 impl Graph {
   /// Constructor.
   pub fn new(instance: & Instance) -> Self {
-    let mut forward: PrdMap<_> = vec![
-      PrdSet::with_capacity(10) ; instance.preds().len()
+    let mut forward: Dep = vec![
+      vec![ 0 ; instance.preds().len() ].into() ; instance.preds().len()
     ].into() ;
     let mut bakward = forward.clone() ;
-    let mut neg = PrdSet::with_capacity(10) ;
-    let mut pos = PrdSet::with_capacity(10) ;
+    let mut neg: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    let mut pos: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
 
     for clause in instance.clauses() {
       if let Some((tgt, _)) = clause.rhs() {
         if clause.lhs_preds().is_empty() {
-          pos.insert(tgt) ;
+          pos[tgt] += 1 ;
         } else {
           for (prd, _) in clause.lhs_preds() {
-            bakward[tgt].insert(* prd) ;
-            forward[* prd].insert(tgt) ;
+            bakward[tgt][* prd] += 1 ;
+            forward[* prd][tgt] += 1 ;
           }
         }
       } else {
         for (prd, _) in clause.lhs_preds() {
-          neg.insert(* prd) ;
+          neg[* prd] += 1 ;
         }
       }
     }
@@ -53,28 +53,46 @@ impl Graph {
   ) -> Res<()> {
     writeln!(w, "digraph blah {{", ) ? ;
     writeln!(w, "  rankdir=LR ;") ? ;
+    writeln!(w, "  edge [arrowhead=onormal] ;") ? ;
     writeln!(
-      w, "  top[label=\"\\top\", peripheries=2, color=darkolivegreen3] ;"
+      w, "  top[\
+        label = \"top\", peripheries = 2, color = darkolivegreen3, \
+        style = filled, fontcolor = white
+      ] ;"
     ) ? ;
     writeln!(
-      w, "  bot[label=\"\\bot\", peripheries=2, color=indianred1] ;"
+      w, "  bot[\
+        label = \"bot\", peripheries = 2, color = indianred1, \
+        style = filled, fontcolor = white
+      ] ;"
     ) ? ;
-    for prd in & self.neg {
-      writeln!(w, "  p_{} -> bot ;", prd) ?
-    }
-    for prd in & self.pos {
-      writeln!(w, "  top -> p_{} ;", prd) ?
-    }
     for (prd, info) in instance.preds().index_iter() {
-      if ! (
-        self.bakward[prd].is_empty() && self.forward[prd].is_empty()
-      ) {
-        writeln!(w, "  p_{}[label=\"{}\"] ;", prd, info.name) ?
+      if instance.forced_terms_of(prd).is_none() {
+        writeln!(w, "  p_{} [label = \"{}\"] ;", prd, info.name) ?
+      }
+    }
+    for (prd, count) in self.pos.index_iter() {
+      if * count > 0 {
+        writeln!(
+          w, "  top -> p_{} [color = darkolivegreen3, label = \"{}\"] ;",
+          prd, count
+        ) ?
+      }
+    }
+    for (prd, count) in self.neg.index_iter() {
+      if * count > 0 {
+        writeln!(
+          w, "  p_{} -> bot [color = indianred1, label = \"{}\"] ;",
+          prd, count
+        ) ?
       }
     }
     for (prd, targets) in self.forward.index_iter() {
-      for tgt in targets {
-        writeln!(w, "  p_{} -> p_{} ;", prd, tgt) ?
+      for (tgt, count) in targets.index_iter() {
+        let count = * count ;
+        if count > 0 {
+          writeln!(w, "  p_{} -> p_{} [label = \"{}\"] ;", prd, tgt, count) ?
+        }
       }
     }
     writeln!(w, "}}\n") ? ;
@@ -132,25 +150,27 @@ impl Graph {
   pub fn check(& self, instance: & Instance) -> Res<()> {
     fn sub_check(slf: & Graph, instance: & Instance) -> Res<()> {
       for (prd, targets) in slf.forward.index_iter() {
-        for tgt in targets {
-          if ! slf.bakward[* tgt].contains(& prd) {
+        for (tgt, count) in targets.index_iter() {
+          let bak_count = & slf.bakward[tgt][prd] ;
+          if bak_count != count {
             bail!(
               "\
-                found `{} -> {}` in forward dependencies, \
-                but not in backward dependencies\
-              ", instance[prd], instance[* tgt]
+                found {} forward dependencies for `{} -> {}`, \
+                but {} (!= {}) backward dependencies\
+              ", count, instance[prd], instance[tgt], bak_count, count
             )
           }
         }
       }
       for (prd, targets) in slf.bakward.index_iter() {
-        for tgt in targets {
-          if ! slf.forward[* tgt].contains(& prd) {
+        for (tgt, count) in targets.index_iter() {
+          let for_count = & slf.forward[tgt][prd] ;
+          if for_count != count {
             bail!(
               "\
-                found `{} -> {}` in backward dependencies, \
-                but not in forward dependencies\
-              ", instance[prd], instance[* tgt]
+                found {} backward dependencies for `{} -> {}`, \
+                but {} (!= {}) forward dependencies\
+              ", count, instance[prd], instance[tgt], for_count, count
             )
           }
         }
@@ -163,12 +183,12 @@ impl Graph {
   }
 
   /// Predicates that directly depend on this predicate.
-  pub fn forward_dep(& self, pred: PrdIdx) -> & PrdSet {
+  pub fn forward_dep(& self, pred: PrdIdx) -> & PrdMap<usize> {
     & self.forward[pred]
   }
 
   /// Predicates this predicate directly depends on.
-  pub fn bakward_dep(& self, pred: PrdIdx) -> & PrdSet {
+  pub fn bakward_dep(& self, pred: PrdIdx) -> & PrdMap<usize> {
     & self.bakward[pred]
   }
 }

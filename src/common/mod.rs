@@ -60,6 +60,9 @@ pub fn pause(s: & str) {
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 
+/// Identity function.
+pub fn identity<T>(t: T) -> T { t }
+
 
 // |===| Type and traits aliases.
 

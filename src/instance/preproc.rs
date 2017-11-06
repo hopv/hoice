@@ -374,68 +374,6 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 
 
 
-/// Given a predicate application, returns the constraints on the input and a
-/// map from the variables used in the arguments to the variables of the
-/// predicate.
-///
-/// # TODO
-///
-/// - more doc with examples
-pub fn terms_of_app<F: Fn(Term) -> Term>(
-  instance: & Instance, pred: PrdIdx, args: & VarMap<Term>, f: F
-) -> Res<
-  Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
-> {
-  let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
-  let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
-  let mut terms = HConSet::with_capacity( 7 ) ;
-
-  let mut postponed = Vec::with_capacity( args.len() ) ;
-
-  for (index, arg) in args.index_iter() {
-    if let Some(var) = arg.var_idx() {
-      let _ = app_vars.insert(var) ;
-      if let Some(pre) = map.insert(var, term::var(index)) {
-        terms.insert(
-          f( term::eq( term::var(index), pre ) )
-        ) ;
-      }
-    } else if let Some(b) = arg.bool() {
-      let var = term::var(index) ;
-      terms.insert(
-        f( if b { var } else { term::not(var) } )
-      ) ;
-    } else if let Some(i) = arg.int() {
-      terms.insert(
-        f( term::eq( term::var(index), term::int(i) ) )
-      ) ;
-    } else {
-      postponed.push( (index, arg) )
-    }
-  }
-
-  for (var, arg) in postponed {
-    if let Some( (term, _) ) = arg.subst_total(& map) {
-      terms.insert(
-        f( term::eq(term::var(var), term) )
-      ) ;
-    } else if let Some((v, inverted)) = arg.invert(var) {
-      let _prev = map.insert(v, inverted) ;
-      debug_assert_eq!( _prev, None ) ;
-      let is_new = app_vars.insert(v) ;
-      debug_assert!( is_new )
-    } else {
-      // This is where we give up, but we could try to reverse the term.
-      return Ok(None)
-    }
-  }
-
-  Ok( Some( (terms, map, app_vars) ) )
-}
-
-
-
-
 /// Wrapper around a negated implication for smt printing.
 struct NegImplWrap<'a, Terms> {
   /// Lhs.
@@ -701,16 +639,25 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// Applies a map to some terms, generating quantifiers if necessary and
   /// `quantifiers` is true.
   ///
+  /// Argument `even_if_disjoint` forces to add terms even if its variables
+  /// are disjoint from `app_vars`.
+  ///
   /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
-  fn terms_of_terms(
+  fn terms_of_terms<'a, TermIter, Terms, F>(
     quantifiers: bool, var_info: & VarMap<VarInfo>,
-    src: & HConSet<Term>, tgt: & mut HConSet<Term>,
+    src: Terms, tgt: & mut HConSet<Term>,
     app_vars: & mut VarSet, map: & mut VarHMap<Term>,
-    qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-  ) -> Res< TExtractRes<bool> > {
+    qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx,
+    even_if_disjoint: bool, f: F
+  ) -> Res< TExtractRes<bool> >
+  where
+  TermIter: Iterator<Item = & 'a Term> + ExactSizeIterator,
+  Terms: IntoIterator<IntoIter = TermIter, Item = & 'a Term>,
+  F: Fn(Term) -> Term {
 
     // Finds terms which variables are related to the ones from the predicate
     // applications.
+    let src = src.into_iter() ;
 
     // The terms we're currently looking at.
     let mut lhs_terms_vec: Vec<_> = Vec::with_capacity( src.len() ) ;
@@ -754,9 +701,9 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
             bail!("[unreachable] failure during total substitution (1)")
           } ;
           log_debug! { "      sub {}", term }
-          tgt.insert(term) ;
+          tgt.insert( f(term) ) ;
 
-        } else if vars.is_disjoint(& app_vars) {
+        } else if ! even_if_disjoint && vars.is_disjoint(& app_vars) {
           log_debug! { "      disjoint" }
           postponed.push(term)
 
@@ -775,7 +722,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           } else {
             bail!("[unreachable] failure during total substitution (2)")
           } ;
-          tgt.insert(term) ;
+          tgt.insert( f(term) ) ;
         }
 
       }
@@ -792,6 +739,76 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     }    
 
     Ok( TExtractRes::Success(false) )
+  }
+
+
+
+
+  /// Given a predicate application, returns the constraints on the input and a
+  /// map from the variables used in the arguments to the variables of the
+  /// predicate.
+  ///
+  /// # TODO
+  ///
+  /// - more doc with examples
+  pub fn terms_of_app(
+    quantifiers: bool, var_info: & VarMap<VarInfo>,
+    instance: & Instance, pred: PrdIdx, args: & VarMap<Term>,
+    fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
+  ) -> Res<
+    Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
+  > {
+    let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
+    let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
+    let mut terms = HConSet::with_capacity( 7 ) ;
+
+    // Will store the arguments that are not a variable or a constant.
+    let mut postponed = Vec::with_capacity( args.len() ) ;
+
+    for (index, arg) in args.index_iter() {
+      if let Some(var) = arg.var_idx() {
+        let _ = app_vars.insert(var) ;
+        if let Some(pre) = map.insert(var, term::var(index)) {
+          terms.insert(
+            term::eq( term::var(index), pre )
+          ) ;
+        }
+      } else if let Some(b) = arg.bool() {
+        let var = term::var(index) ;
+        terms.insert(
+          if b { var } else { term::not(var) }
+        ) ;
+      } else if let Some(i) = arg.int() {
+        terms.insert(
+          term::eq( term::var(index), term::int(i) )
+        ) ;
+      } else {
+        postponed.push( (index, arg) ) ;
+      }
+    }
+
+    for (var, arg) in postponed {
+      if let Some( (term, _) ) = arg.subst_total(& map) {
+        terms.insert(
+          term::eq(term::var(var), term)
+        ) ;
+      } else if let Some((v, inverted)) = arg.invert(var) {
+        let _prev = map.insert(v, inverted) ;
+        debug_assert_eq!( _prev, None ) ;
+        let is_new = app_vars.insert(v) ;
+        debug_assert!( is_new )
+      } else {
+        if let TExtractRes::Failed = Self::terms_of_terms(
+          quantifiers, var_info, Some(arg), & mut terms,
+          & mut app_vars, & mut map, qvars, fresh,
+          true, |term| term::eq( term::var(var), term )
+        ) ? {
+          return Ok(None)
+        }
+      }
+    }
+
+    Ok( Some( (terms, map, app_vars) ) )
   }
 
 
@@ -814,11 +831,25 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   > {
     log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
 
-    let (mut terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
-      instance, pred, args, |term| term
+    // Index of the first quantified variable: fresh for `pred`'s variables.
+    let fresh = & mut instance[pred].sig.next_index() ;
+
+    let mut qvars = VarHMap::with_capacity(
+      if quantifiers { var_info.len() } else { 0 }
+    ) ;
+
+    log_debug!{
+      "    extracting application's terms"
+    }
+
+    let (
+      mut terms, mut map, mut app_vars
+    ) = if let Some(res) = Self::terms_of_app(
+      quantifiers, var_info, instance, pred, args, fresh, & mut qvars
     ) ? {
       res
     } else {
+      log_debug!{ "    failed to extract terms of application" }
       return Ok(ExtractRes::Failed)
     } ;
 
@@ -832,13 +863,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
         log_debug! { "    - v_{} -> {}", var, term }
       }
     }
-
-    let mut qvars = VarHMap::with_capacity(
-      if quantifiers { var_info.len() - app_vars.len() } else { 0 }
-    ) ;
-
-    // Index of the first quantified variable: fresh for `pred`'s variables.
-    let fresh = & mut instance[pred].sig.next_index() ;
 
     log_debug! {
       "    working on lhs predicate applications ({})", lhs_preds.len()
@@ -861,7 +885,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
         ),
       },
       TExtractRes::Success(None) => (),
-      TExtractRes::Failed => return Ok( ExtractRes::Failed ),
+      TExtractRes::Failed => {
+        log_debug!{ "    qualifiers required for lhs pred apps" }
+        return Ok( ExtractRes::Failed )
+      },
     }
 
     let pred_app = if let Some((pred, args)) = rhs {
@@ -874,6 +901,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       ) ? {
         Some((pred, nu_args))
       } else {
+        log_debug!{ "    qualifiers required for rhs pred app" }
         return Ok( ExtractRes::Failed )
       }
     } else {
@@ -887,10 +915,11 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
 
     if let TExtractRes::Success(trivial) = Self::terms_of_terms(
       quantifiers, var_info, lhs_terms, & mut terms,
-      & mut app_vars, & mut map, & mut qvars, fresh
+      & mut app_vars, & mut map, & mut qvars, fresh, false, identity
     ) ? {
       if trivial { return Ok( ExtractRes::Trivial ) }
     } else {
+      log_debug!{ "    qualifiers required for lhs terms" }
       return Ok( ExtractRes::Failed )
     }
 
@@ -915,8 +944,21 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   ) -> Res< ExtractRes<(Qualfed, Vec<PredApp>, HConSet<Term>)> > {
     log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
-    let (mut terms, mut map, mut app_vars) = if let Some(res) = terms_of_app(
-      instance, pred, args, |term| term
+    // Index of the first quantified variable: fresh for `pred`'s variables.
+    let fresh = & mut instance[pred].sig.next_index() ;
+
+    let mut qvars = VarHMap::with_capacity(
+      if quantifiers { var_info.len() } else { 0 }
+    ) ;
+
+    log_debug!{
+      "    extracting application's terms"
+    }
+
+    let (
+      mut terms, mut map, mut app_vars
+    ) = if let Some(res) = Self::terms_of_app(
+      quantifiers, var_info, instance, pred, args, fresh, & mut qvars
     ) ? {
       res
     } else {
@@ -933,13 +975,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
         log_debug! { "    - v_{} -> {}", var, term }
       }
     }
-
-    let mut qvars = VarHMap::with_capacity(
-      if quantifiers { var_info.len() - app_vars.len() } else { 0 }
-    ) ;
-
-    // Index of the first quantified variable: fresh for `pred`'s variables.
-    let fresh = & mut instance[pred].sig.next_index() ;
 
     log_debug! {
       "    working on lhs predicate applications ({})", lhs_preds.len()
@@ -970,7 +1005,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
 
     if let TExtractRes::Success(trivial) = Self::terms_of_terms(
       quantifiers, var_info, lhs_terms, & mut terms,
-      & mut app_vars, & mut map, & mut qvars, fresh
+      & mut app_vars, & mut map, & mut qvars, fresh, false, identity
     ) ? {
       if trivial { return Ok( ExtractRes::Trivial ) }
     } else {
