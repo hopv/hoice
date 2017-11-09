@@ -47,12 +47,21 @@ pub fn work(
   }
   match res {
     Err(ref e) if e.is_unsat() => {
-      instance.set_unsat() ;
-      Ok(())
+      instance.set_unsat()
     },
-    res => res
+    Err(e) => bail!(e),
+    Ok(()) => ()
   }
 
+  log_info!{ "building predicate dependency graph" }
+
+  use instance::graph::* ;
+
+  let graph = Graph::new(& instance) ;
+  graph.check(& instance) ? ;
+  graph.to_dot(& instance, "pred_dep") ? ;
+
+  Ok(())
 }
 
 pub fn run<'kid, S: Solver<'kid, ()>>(
@@ -372,7 +381,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 pub fn terms_of_app<F: Fn(Term) -> Term>(
   instance: & Instance, pred: PrdIdx, args: & VarMap<Term>, f: F
 ) -> Res<
-  Option<(HConSet<RTerm>, VarHMap<Term>, VarSet)>
+  Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
 > {
   let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
   let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
@@ -585,23 +594,17 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   }
 
 
-  /// Returns the weakest term such that `(p args) /\ lhs => rhs`.
-  ///
-  /// # TODO
-  ///
-  /// - this can fail for `(p v (- v))` although it shouldn't, same for
-  ///   `...rhs_app`
+  /// Returns the weakest predicate `p` such that `(p args) /\ lhs => false`.
   pub fn terms_of_lhs_app(
     & mut self, instance: & Instance,
-    lhs: & HConSet<RTerm>, rhs: & TTerm,
+    lhs: & HConSet<Term>,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res<ExtractRes> {
     log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
 
     // Implication trivial?
-    if rhs.bool() == Some(true)
-    || self.trivial_impl(var_info, lhs.iter(), & term::fls()) ? {
+    if self.trivial_impl(var_info, lhs.iter(), & term::fls()) ? {
       log_debug!{ "      implication is trivial" }
       return Ok( ExtractRes::Trivial )
     }
@@ -630,23 +633,12 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
       var_info, lhs.iter()
     ) ? ;
 
-    if let Some(term) = rhs.term() {
-      if let Some((rhs, _)) = term.subst_total(& map) {
-        terms.insert(rhs) ;
-      } else {
-        return Ok( ExtractRes::Failed )
-      }
-    } else if lhs_true && terms.is_empty() {
-      if let Ok(rhs) = rhs.subst_total(& map) {
-        return Ok( ExtractRes::Success( vec![rhs] ) )
-      } else {
-        return Ok( ExtractRes::Failed )
-      }
-    } else {
-      return Ok( ExtractRes::Failed )
-    }
+    if lhs_true && terms.is_empty() {
 
-    if ! lhs_true {
+      return Ok( ExtractRes::Success( vec![ TTerm::T(term::fls()) ] ) )
+
+    } else if ! lhs_true {
+
       for term in lhs {
         if let Some(b) = term.bool() {
           // if `b` was false then `trivial_impl` above would have seen it
@@ -660,15 +652,20 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           ) ? ;
           terms.insert( term::not(term) ) ;
         } else if vars.is_disjoint(& app_vars) {
+          continue
         } else {
           return Ok(ExtractRes::Failed)
         }
       }
+
     }
 
     if terms.is_empty() {
+
       Ok( ExtractRes::SuccessTrue )
+
     } else {
+
       let res = term::or( terms.into_iter().collect() ) ;
       if res.bool() == Some(false) {
         Ok( ExtractRes::SuccessFalse )
@@ -679,6 +676,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
           )
         )
       }
+
     }
 
   }
@@ -691,7 +689,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// - move things allocated here to the struct above
   pub fn terms_of_rhs_app(
     & mut self, instance: & Instance,
-    lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
+    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res<ExtractRes> {
@@ -774,7 +772,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// - move things allocated here to the struct above
   pub fn qterms_of_rhs_app(
     & mut self, instance: & Instance,
-    lhs_terms: & HConSet<RTerm>, lhs_preds: & PredApps,
+    lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
     pred: PrdIdx, args: & VarMap<Term>,
     var_info: & VarMap<VarInfo>
   ) -> Res< ExtractRes< (Qualfed, Vec<TTerm>) > > {
@@ -922,7 +920,9 @@ pub trait RedStrat: HasName {
 }
 
 
-/// Forces to false predicates appearing only in the lhs of the clauses.
+/// Calls [`Instance::force_trivial`][force trivial].
+///
+/// [force trivial]: ../instance/struct.Instance.html#method.force_trivial (Instance's force_trivial method)
 pub struct Trivial {}
 impl HasName for Trivial {
   fn name(& self) -> & 'static str { "trivial" }
@@ -980,6 +980,7 @@ pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, ()> >: HasName {
 /// | `(v > 0)              => (p 7 v')` | `(v_0 = 7)`                 |
 /// | `(v > 0)              => (p v v )` | `(v_0 = v_1) and (v_0 > 0)` |
 /// | `(v > 0) and (v <= 0) => (p 7 v')` | `false` (by check-sat)      |
+///
 pub struct SimpleOneRhs {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1020,9 +1021,7 @@ where Slver: Solver<'kid, ()> {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let TTerm::P {
-          pred: _this_pred, ref args
-        } = * instance[clause].rhs() {
+        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
           solver.terms_of_rhs_app(
             instance,
@@ -1102,7 +1101,27 @@ where Slver: Solver<'kid, ()> {
 
 
 
-
+/// Tries to reduce predicates that appear as an antecedent in exactly one
+/// clause.
+///
+/// For a predicate `p`, if the clause in question is
+///
+/// ```bash
+/// lhs(v_1, ..., v_n) and p(v_1, ..., v_n) => rhs(v_1, ..., v_n)
+/// ```
+///
+/// then `p` is reduced to
+///
+/// ```bash
+/// (not lhs(v_1, ..., v_n)) or rhs(v_1, ..., v_n)
+/// ```
+///
+/// **iff** `p` is the only predicate application in the clause, `lhs` is sat
+/// and `(not rhs)` is sat.
+///
+/// If `lhs` or `(not rhs)` is unsat, then the clause is dropped and `p` is
+/// reduced to `true` since it does not appear as an antecedent anywhere
+/// anymore.
 pub struct SimpleOneLhs {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1148,7 +1167,8 @@ where Slver: Solver<'kid, ()> {
       let res = {
         if instance.preds_of_clause(clause_idx).1 == Some(pred) {
           ExtractRes::SuccessTrue
-        } else if instance.preds_of_clause(clause_idx).0.len() > 1 {
+        } else if instance.preds_of_clause(clause_idx).0.len() > 1
+        || instance.preds_of_clause(clause_idx).1.is_some() {
           continue
         } else {
           let clause = & instance[clause_idx] ;
@@ -1166,7 +1186,7 @@ where Slver: Solver<'kid, ()> {
           } ;
 
           solver.terms_of_lhs_app(
-            instance, clause.lhs_terms(), clause.rhs(), pred, args,
+            instance, clause.lhs_terms(), pred, args,
             clause.vars()
           ) ?
         }
@@ -1243,8 +1263,20 @@ where Slver: Solver<'kid, ()> {
 
 /// Works on predicates that appear in only one rhs.
 ///
-/// Only works on predicates that need qualifiers to be reduced, it's the
-/// dual of `SimpleOneRhs` in a way.
+/// Only works on predicates that need qualifiers to be reduced, complements
+/// `SimpleOneRhs`.
+///
+/// If a predicate `p` appears as a rhs in only in one clause
+///
+/// ```bash
+/// lhs(v_1, ..., v_n, v_n+1, ..., v_k) => p(v_1, ..., v_n)
+/// ```
+///
+/// then it is forced to
+///
+/// ```bash
+/// p(v_1, ..., v_n) = exists (v_n+1, ..., v_k) . lhs(v_1, ..., v_k)
+/// ```
 pub struct OneRhs {
   /// Stores new variables discovered as we iterate over the lhs of clauses.
   new_vars: VarSet,
@@ -1282,9 +1314,7 @@ where Slver: Solver<'kid, ()> {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let TTerm::P {
-          pred: _this_pred, ref args
-        } = * instance[clause].rhs() {
+        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
           debug_assert_eq!( pred, _this_pred ) ;
           solver.qterms_of_rhs_app(
             instance,
@@ -1379,6 +1409,8 @@ where Slver: Solver<'kid, ()> {
 
 
 /// Mono pred clause strengthening.
+///
+/// This reduction strategy is currently inactive.
 pub struct MonoPredClause {
   /// Predicates found to be equivalent to true, but not propagated yet.
   true_preds: PrdSet,
@@ -1394,7 +1426,6 @@ impl MonoPredClause {
       true_preds: PrdSet::with_capacity(7),
       clauses_to_rm: Vec::with_capacity(7),
       known: PrdSet::with_capacity(29),
-      // preds: PrdHMap::with_capacity(7),
     }
   }
 }
@@ -1408,19 +1439,20 @@ where Slver: Solver<'kid, ()> {
   ) -> Res<RedInfo> {
     let mut nu_clause_count = 0 ;
     let mut known = PrdSet::with_capacity( instance.preds().len() ) ;
-    // let mut strength = PrdHMap::with_capacity( instance.preds().len() ) ;
+    debug_assert!{ self.clauses_to_rm.is_empty() }
+    debug_assert!{ self.true_preds.is_empty() }
 
     'clause_iter: for clause in instance.clause_indices() {
       log_debug!{ "looking at clause #{}", clause }
       let (lhs_pred_apps_len, rhs_is_pred_app) = (
         instance[clause].lhs_pred_apps_len(),
-        instance[clause].rhs().pred().is_some()
+        instance[clause].rhs().is_some()
       ) ;
 
       if lhs_pred_apps_len == 0 && rhs_is_pred_app {
-        let (pred, res) = if let TTerm::P {
-          pred, ref args
-        } = * instance.clauses()[clause].rhs() {
+        let (pred, res) = if let Some(
+          (pred, args)
+        ) = instance.clauses()[clause].rhs() {
           (
             pred, solver.terms_of_rhs_app(
               instance,
@@ -1484,7 +1516,7 @@ where Slver: Solver<'kid, ()> {
 
     let clauses = self.clauses_to_rm.len() ;
     let preds = self.true_preds.len() ;
-    instance.forget_clauses( self.clauses_to_rm.drain(0..).collect() ) ? ;
+    instance.forget_clauses( & mut self.clauses_to_rm ) ? ;
     let mut info: RedInfo = (preds, clauses, nu_clause_count).into() ;
     info += instance.force_true( self.true_preds.drain() ) ? ;
 
@@ -1498,14 +1530,20 @@ where Slver: Solver<'kid, ()> {
 
 
 /// Removes clauses that are trivially true by smt.
-pub struct SmtTrivial {}
+///
+/// A clause if removed if either
+///
+/// - `false and _ => _`: its lhs has atoms, and their conjunction is unsat, or
+/// - `_ => true`: its rhs is an atom and its negation is unsatisfiable.
+pub struct SmtTrivial {
+  /// Clauses to remove, avoids re-allocation.
+  clauses_to_rm: Vec<ClsIdx>,
+}
 impl SmtTrivial {
   /// Constructor.
   pub fn new() -> Self {
     SmtTrivial {
-      // true_preds: PrdSet::with_capacity(7),
-      // false_preds: PrdSet::with_capacity(7),
-      // preds: PrdHMap::with_capacity(7),
+      clauses_to_rm: Vec::with_capacity(10),
     }
   }
 }
@@ -1517,10 +1555,10 @@ where Slver: Solver<'kid, ()> {
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
-    let mut clauses_to_rm = Vec::with_capacity(10) ;
+    debug_assert!{ self.clauses_to_rm.is_empty() }
 
     { // Push a scope so that `lhs` is dropped because it borrows `instance`.
-      // Remove when non-lexical lifetimes are implemented.
+      // Remove when non-lexical lifetimes land.
       let mut lhs = Vec::with_capacity(10) ;
       let fls = term::fls() ;
 
@@ -1533,56 +1571,42 @@ where Slver: Solver<'kid, ()> {
           match term.bool() {
             Some(true) => (),
             Some(false) => {
-              clauses_to_rm.push(clause_idx) ;
+              self.clauses_to_rm.push(clause_idx) ;
               continue 'clause_iter
             },
             _ => lhs.push(term),
           }
         }
 
-        let rhs = if let Some(rhs) = clause.rhs().term() {
-
-          if let Some(true) = rhs.bool() {
-            clauses_to_rm.push(clause_idx) ;
+        if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+          // Either it is trivial, or falsifiable regardless of the predicates.
+          if solver.trivial_impl(
+            clause.vars(), lhs.drain(0..), & fls
+          ) ? {
+            self.clauses_to_rm.push(clause_idx) ;
             continue 'clause_iter
-          }
-
-          // No predicate application?
-          if clause.lhs_preds().is_empty() {
-            // Either it is trivial, or falsifiablie regardless of the
-            // predicates.
-            if solver.trivial_impl(
-              clause.vars(), lhs.drain(0..), rhs
-            ) ? {
-              clauses_to_rm.push(clause_idx) ;
-              continue 'clause_iter
-            } else {
-              log_debug!{
-                "unsat because of {}",
-                clause.to_string_info( instance.preds() ) ?
-              }
-              bail!( ErrorKind::Unsat )
+          } else {
+            log_debug!{
+              "unsat because of {}",
+              clause.to_string_info( instance.preds() ) ?
             }
+            bail!( ErrorKind::Unsat )
           }
-
-          rhs
-
         } else {
           if lhs.is_empty() {
             continue 'clause_iter
           }
-          & fls
-        } ;
+        }
 
-        if solver.trivial_impl(clause.vars(), lhs.drain(0..), rhs) ? {
-          clauses_to_rm.push(clause_idx) ;
+        if solver.trivial_impl(clause.vars(), lhs.drain(0..), & fls) ? {
+          self.clauses_to_rm.push(clause_idx) ;
           continue 'clause_iter
         }
       }
     }
 
-    let clause_cnt = clauses_to_rm.len() ;
-    instance.forget_clauses(clauses_to_rm) ? ;
+    let clause_cnt = self.clauses_to_rm.len() ;
+    instance.forget_clauses(& mut self.clauses_to_rm) ? ;
     if clause_cnt > 0 {
       log_debug!{ "  dropped {} trivial clause(s)", clause_cnt }
     }

@@ -429,6 +429,82 @@ fn models() {
 
 
 
+#[test]
+fn partial_eval() {
+  let v_1 = term::var(0) ;
+  let v_2 = term::var(1) ;
+  let v_3 = term::var(2) ;
+
+  println!("and") ;
+  let term = term::and(
+    vec![ v_1.clone(), v_2.clone(), v_3.clone() ]
+  ) ;
+  let model = model!( (), true, false ) ;
+  assert_eval!{ bool not model => term }
+  let term = term::and(
+    vec![ term::fls(), v_1.clone() ]
+  ) ;
+  assert_eval!{ bool not model => term }
+  let term = term::and(
+    vec![
+      term::eq( term::int(2), term::add(vec![v_1.clone(), term::int(7)]) ),
+      term::tru(),
+      v_3.clone()
+    ]
+  ) ;
+  assert_eval!{ bool not model => term }
+
+  println!("or") ;
+  let term = term::or(
+    vec![ v_1.clone(), v_2.clone(), v_3.clone() ]
+  ) ;
+  let model = model!( (), true, false ) ;
+  assert_eval!{ bool model => term }
+  let term = term::or(
+    vec![ term::tru(), v_1.clone() ]
+  ) ;
+  assert_eval!{ bool model => term }
+  let term = term::or(
+    vec![
+      term::eq( term::int(2), term::add(vec![v_1.clone(), term::int(7)]) ),
+      term::tru(),
+      v_3.clone()
+    ]
+  ) ;
+  assert_eval!{ bool model => term }
+
+  println!("ite") ;
+  let term = term::ite(
+    v_1.clone(), v_2.clone(), v_3.clone()
+  ) ;
+  let model = model!( true, 7, () ) ;
+  assert_eval!{ int model => term, 7 }
+  let model = model!( false, (), 3 ) ;
+  assert_eval!{ int model => term, 3 }
+
+  println!("=>") ;
+  let term = term::implies(
+    v_1.clone(), v_2.clone()
+  ) ;
+  let model = model!( false, ()) ;
+  assert_eval!{ bool model => term }
+  let model = model!( (), true) ;
+  assert_eval!{ bool model => term }
+
+  println!("mul") ;
+  let term = term::mul(
+    vec![ v_1.clone(), v_2.clone(), v_3.clone() ]
+  ) ;
+  let model = model!( 3, (), 0 ) ;
+  assert_eval!{ int model => term, 0 }
+
+  println!("mod") ;
+  let term = term::modulo( v_1.clone(), v_2.clone() ) ;
+  let model = model!( (), 1 ) ;
+  assert_eval!{ int model => term, 0 }
+}
+
+
 
 
 use term::{ tru, fls } ;

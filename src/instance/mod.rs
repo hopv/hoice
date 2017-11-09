@@ -7,5 +7,6 @@ pub mod info ;
 mod instance ;
 pub mod parse ;
 pub mod preproc ;
+pub mod graph ;
 
 pub use self::instance::{ Clause, Instance } ;

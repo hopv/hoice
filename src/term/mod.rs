@@ -36,7 +36,7 @@
 //!
 //! Terms are simplified (when possible) at creation. In particular, the order
 //! of the arguments can change, double negations will be simplified, *etc.*
-//! See [`simplify`](fn.simplify.html) for more details.
+//! See [`normalize`](fn.normalize.html) for more details.
 //!
 //! # Top-level terms
 //!
@@ -1192,14 +1192,20 @@ impl Op {
         }
       },
       Mul => {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res * try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
+        let mut unknown = false ;
+        let mut res: Int = 1.into() ;
+        for arg in args.into_iter() {
+          if let Some(i) = arg.to_int() ? {
+            if i.is_zero() {
+              return Ok( 0.into() )
+            } else {
+              res = res * i
+            }
+          } else {
+            unknown = true
+          }
         }
+        if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
       },
       Div => {
         if args.len() != 2 {
@@ -1219,6 +1225,7 @@ impl Op {
         }
         Ok( Val::I(res) )
       },
+
       Mod => if args.len() != 2 {
         bail!(
           format!("evaluating `Div` with {} (!= 2) arguments", args.len())
@@ -1226,11 +1233,12 @@ impl Op {
       } else {
         use num::Integer ;
         let b = try_val!( int args.pop().unwrap() ) ;
-        let a = try_val!( int args.pop().unwrap() ) ;
-        debug_assert!( args.is_empty() ) ;
-        Ok(
-          Val::I( a.mod_floor(& b) )
-        )
+        if b == 1.into() {
+          Ok( 0.into() )
+        } else {
+          let a = try_val!( int args.pop().unwrap() ) ;
+          Ok( Val::I( a.mod_floor(& b) ) )
+        }
       },
 
       // Bool operators.
@@ -1250,6 +1258,7 @@ impl Op {
           } else unreachable!()
         }
       },
+
       Ge => {
         let mut last ;
         for_first!{
@@ -1265,6 +1274,7 @@ impl Op {
           } else unreachable!()
         }
       },
+
       Le => {
         let mut last ;
         for_first!{
@@ -1280,6 +1290,7 @@ impl Op {
           } else unreachable!()
         }
       },
+
       Lt => {
         let mut last ;
         for_first!{
@@ -1295,6 +1306,7 @@ impl Op {
           } else unreachable!()
         }
       },
+
       Eql => {
         let mem ;
         let mut res = true ;
@@ -1313,14 +1325,19 @@ impl Op {
         }
         Ok( Val::B(res) )
       },
+
       Not => if args.len() != 1 {
         bail!(
           format!("evaluating `Not` with {} (!= 1) arguments", args.len())
         )
       } else {
-        let b = try_val!( bool args.pop().unwrap() ) ;
-        Ok( Val::B(! b) )
+        if let Some(b) = args.pop().unwrap().to_bool() ? {
+          Ok( Val::B(! b) )
+        } else {
+          Ok(Val::N)
+        }
       },
+
       And => {
         let mut unknown = false ;
         for arg in args {
@@ -1336,6 +1353,7 @@ impl Op {
           Ok( Val::B(true) )
         }
       },
+
       Or => {
         let mut unknown = false ;
         for arg in args {
@@ -1351,6 +1369,7 @@ impl Op {
           Ok( Val::B(false) )
         }
       },
+
       Impl => if args.len() != 2 {
         bail!(
           format!("evaluating `Impl` with {} (!= 2) arguments", args.len())
@@ -1365,6 +1384,7 @@ impl Op {
           _ => Ok(Val::N),
         }
       },
+
       Ite => if args.len() != 3 {
         bail!(
           format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
@@ -1379,6 +1399,7 @@ impl Op {
           _ => Ok(Val::N),
         }
       }
+
     }
   }
 }

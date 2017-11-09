@@ -15,6 +15,8 @@ use common::msg::* ;
 
 use self::smt::Parser ;
 
+// pub mod assistant ;
+
 
 /// Starts the teaching process.
 pub fn start_class(
@@ -438,9 +440,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         }
         self.solver.comment(& format!("rhs:\n")) ? ;
-        self.solver.comment(
-          & format!("  {}", clause.rhs())
-        ) ?
+        if let Some((pred, args)) = clause.rhs() {
+          self.solver.comment(
+            & format!("  {}", TTerm::P { pred, args: args.clone() })
+          ) ?
+        } else {
+          self.solver.comment("  false") ?
+        }
       }
     }
     profile!{ self tick "cexs", "prep" }
@@ -510,7 +516,7 @@ mod smt {
   #[derive(Clone, Copy)]
   pub struct Parser ;
 
-  impl<'a> IdentParser<'a, VarIdx, (), & 'a str> for Parser {
+  impl<'a> IdentParser<VarIdx, (), & 'a str> for Parser {
     fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
       debug_assert_eq!( & input[0..2], "v_" ) ;
       match usize::from_str(& input[2..]) {
@@ -525,7 +531,7 @@ mod smt {
     }
   }
 
-  impl<'a, Br> ValueParser<'a, Val, & 'a mut SmtParser<Br>> for Parser
+  impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for Parser
   where Br: BufRead {
     fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
       if let Some(val) = input.try_int::<

@@ -100,3 +100,35 @@ wrap_usize!{
   #[doc = "Total map from variables to something."]
   map: ClsMap with iter: ClsMapIter
 }
+
+
+wrap_usize!{
+  #[doc = "Constraint index."]
+  CstrIdx
+  #[doc = "Constraint set."]
+  set: CstrSet
+  #[doc = "Constraint total map."]
+  map: CstrMap with iter: CstrMapIter
+}
+
+
+wrap_usize!{
+  #[doc = "Learner index."]
+  LrnIdx
+  #[doc = "Map of learners"]
+  hash map: LrnHMap
+  #[doc = "Total map from learners to something."]
+  map: LrnMap with iter: LrnMapIter
+}
+unsafe impl Send for LrnIdx {}
+
+
+wrap_usize!{
+  #[doc = "Teacher Assistant index."]
+  TAsIdx
+  #[doc = "Map of TAs."]
+  hash map: TAsHMap
+  #[doc = "Total map from TAs to something."]
+  map: TAsMap with iter: TAsMapIter
+}
+unsafe impl Send for TAsIdx {}

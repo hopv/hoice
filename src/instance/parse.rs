@@ -1053,9 +1053,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
       }
     }
+    let rhs = match rhs {
+      TTerm::P { pred, args } => Some((pred, args)),
+      TTerm::T(t) => {
+        if t.bool() != Some(false) {
+          nu_lhs.push( TTerm::T( term::not(t) ) )
+        }
+        None
+      },
+    } ;
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::new(var_map.clone(), nu_lhs.clone(), rhs)
+        Clause::new(var_map.clone(), nu_lhs, rhs)
       ) ?
     }
     Ok(())
@@ -1214,7 +1223,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       for (lhs, rhs) in clauses {
         self.add_clause(instance, var_map.clone(), lhs, rhs) ?
       }
-      self.add_clause(instance, var_map.clone(), last_lhs, last_rhs) ?
+      self.add_clause(instance, var_map, last_lhs, last_rhs) ?
     }
     Ok(())
   }
