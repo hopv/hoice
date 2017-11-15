@@ -153,7 +153,7 @@ impl Output {
           count += 1
         }
       } else {
-        println!(
+        warn!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;
@@ -234,9 +234,12 @@ impl Data {
 
       if solver.check_sat() ? {
         okay = false ;
-        let model = solver.get_model_const() ? ;
+        let exprs: Vec<_> = args.iter().map(
+          |& (ref id, _)| id.clone()
+        ).collect() ;
+        let model = solver.get_values_u(& exprs) ? ;
         println!("") ;
-        println!("(error \"") ;
+        println!("({} \"", conf.bad("error")) ;
         println!("  clause {} is falsifiable with {{", count) ;
         // print!(  "   ") ;
         // for & (ref id, ref ty) in args {
@@ -251,7 +254,7 @@ impl Data {
         // println!("      ) {}", rhs) ;
         // println!("    )") ;
         // println!("  is falsifiable with {{") ;
-        for (ident, _, value) in model {
+        for (ident, value) in model {
           println!("    {}: {},", ident, value)
         }
         println!("  }}") ;
@@ -343,10 +346,10 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
 
 
 mod smt {
-  use rsmt2::parse::{ IdentParser, ValueParser } ;
+  use rsmt2::parse::{ IdentParser, ValueParser, ExprParser } ;
   use rsmt2::SmtRes ;
 
-  use check::{ Ident, Value } ;
+  use check::{ Ident, Value, Term } ;
 
 
 /// Parser for the output of the SMT solver.
@@ -362,6 +365,12 @@ pub struct Parser ;
     }
     fn parse_type(self, _: & 'a str) -> SmtRes<()> {
       Ok(())
+    }
+  }
+
+  impl<'a> ExprParser<Term, (), & 'a str> for Parser {
+    fn parse_expr(self, input: & 'a str, _: ()) -> SmtRes<Term> {
+      Ok( input.into() )
     }
   }
 
