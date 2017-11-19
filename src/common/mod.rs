@@ -1,4 +1,4 @@
-//! Base types and functions.
+  //! Base types and functions.
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
@@ -132,8 +132,8 @@ impl PredAppsExt for PredApps {
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 
-/// Qualified variables for a top term.
-pub type Qualfed = VarHMap<Typ> ;
+/// Quantified variables for a top term.
+pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, Option<Qualf>, TTerms) > ;
@@ -346,3 +346,13 @@ mod hash {
   }
 }
 
+
+
+/// Prints some text and reads a line.
+pub fn read_line(blah: & str) -> String {
+  let mut line = String::new() ;
+  println!("") ;
+  println!( "; {} {}", conf.emph("press return"), blah ) ;
+  let _ = ::std::io::stdin().read_line(& mut line) ;
+  line
+}

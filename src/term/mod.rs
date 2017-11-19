@@ -849,6 +849,10 @@ pub enum TTerms {
   And( Vec<TTerm> ),
   /// Disjunction.
   Or { pos: Vec<TTerm>, neg: Vec<TTerm> },
+  /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
+  ///
+  /// Quantified variables are quantified **existentially**.
+  Dnf( Vec< (Quantfed, Vec<TTerm>) > ),
 }
 impl TTerms {
   /// True.
@@ -893,6 +897,13 @@ impl TTerms {
           if p == pred { return true }
         }
       },
+      TTerms::Dnf( ref disj ) => for & (_, ref conj) in disj {
+        for tterm in conj {
+          if tterm.pred() == Some(pred) {
+            return true
+          }
+        }
+      },
       TTerms::True | TTerms::False => (),
     }
     false
@@ -926,7 +937,7 @@ impl TTerms {
       TTerms::And(tterms)
     }
   }
-  /// Constructor for a DNF.
+  /// Constructor for a disjunction.
   #[inline]
   pub fn disj(mut pos: Vec<TTerm>, mut neg: Vec<TTerm>) -> Self {
     let mut cnt = 0 ;
@@ -952,6 +963,43 @@ impl TTerms {
       TTerms::Or { pos, neg }
     }
   }
+  /// Constructor for a DNF.
+  #[inline]
+  pub fn dnf(mut disj: Vec< (Quantfed, Vec<TTerm>) >) -> Self {
+    if disj.is_empty() { return TTerms::fls() }
+    if disj.len() == 1 && disj[0].0.is_empty() {
+      let (_, conj) = disj.pop().unwrap() ;
+      return Self::conj(conj)
+    }
+    let mut disj_cnt = 0 ;
+    'disj: while disj_cnt < disj.len() {
+      let mut conj_cnt = 0 ;
+      'conj: while conj_cnt < disj[disj_cnt].1.len() {
+        if let Some(b) = disj[disj_cnt].1[conj_cnt].bool() {
+          if b {
+            disj[disj_cnt].1.swap_remove(conj_cnt) ;
+            continue 'conj
+          } else {
+            disj.swap_remove(disj_cnt) ;
+            continue 'disj
+          }
+        } else {
+          conj_cnt += 1
+        }
+      }
+      if disj[disj_cnt].1.is_empty() {
+        // Everyting was true, dnf is trivially true.
+        return TTerms::True
+      } else {
+        disj_cnt += 1
+      }
+    }
+    if disj.is_empty() {
+      TTerms::False
+    } else {
+      TTerms::Dnf(disj)
+    }
+  }
 
   /// The predicates appearing in some top terms.
   pub fn preds(& self) -> PrdSet {
@@ -965,7 +1013,14 @@ impl TTerms {
       ) {
         if let Some(pred) = tterm.pred() { set.insert(pred) ; }
       },
-      _ => (),
+      TTerms::Dnf( ref disj ) => for & (_, ref conj) in disj {
+        for tterm in conj {
+          if let Some(pred) = tterm.pred() {
+            set.insert(pred) ;
+          }
+        }
+      },
+      TTerms::True | TTerms::False => (),
     }
     set
   }
@@ -1006,7 +1061,18 @@ impl TTerms {
         }
         Ok( Self::disj(nu_pos, nu_neg) )
       },
-      _ => Ok( self.clone() ),
+      TTerms::Dnf(ref disj) => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        for & (ref qvars, ref conj) in disj {
+          let mut nu_conj = Vec::with_capacity( conj.len() ) ;
+          for tterm in conj {
+            nu_conj.push( tterm.subst_total(map) ? )
+          }
+          nu_disj.push( (qvars.clone(), nu_conj) )
+        }
+        Ok( Self::dnf(nu_disj) )
+      },
+      TTerms::True | TTerms::False => Ok( self.clone() ),
     }
   }
 
@@ -1043,6 +1109,26 @@ impl TTerms {
           write!(w, " (not ") ? ;
           tterm.write(w, & write_var, & write_prd) ? ;
           write!(w, ")") ?
+        }
+        write!(w, ")")
+      },
+      TTerms::Dnf(ref disj) => {
+        write!(w, "(or ") ? ;
+        for & (ref qvars, ref conj) in disj {
+          let suff = if qvars.is_empty() { "" } else {
+            write!(w, "(exists (") ? ;
+            for (var, typ) in qvars {
+              write!(w, " ({} {})", var.default_str(), typ) ?
+            }
+            write!(w, " )") ? ;
+            ")"
+          } ;
+          write!(w, " (and") ? ;
+          for tterm in conj {
+            write!(w, " ") ? ;
+            tterm.write(w, & write_var, & write_prd) ?
+          }
+          write!(w, "){}", suff) ?
         }
         write!(w, ")")
       },
@@ -1087,6 +1173,26 @@ impl_fmt!{
           write!(fmt, " (not ") ? ;
           tterm.fmt(fmt) ? ;
           write!(fmt, ")") ?
+        }
+        write!(fmt, ")")
+      },
+      TTerms::Dnf(ref disj) => {
+        write!(fmt, "(or ") ? ;
+        for & (ref qvars, ref conj) in disj {
+          let suff = if qvars.is_empty() { "" } else {
+            write!(fmt, "(exists (") ? ;
+            for (var, typ) in qvars {
+              write!(fmt, " ({} {})", var.default_str(), typ) ?
+            }
+            write!(fmt, " )") ? ;
+            " )"
+          } ;
+          write!(fmt, " (and") ? ;
+          for tterm in conj {
+            write!(fmt, " ") ? ;
+            tterm.fmt(fmt) ?
+          }
+          write!(fmt, "){}", suff) ?
         }
         write!(fmt, ")")
       },

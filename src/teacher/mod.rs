@@ -79,10 +79,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
     }
 
     if conf.teacher.step {
-      let mut dummy = String::new() ;
-      println!("") ;
-      println!( "; {} to broadcast data...", conf.emph("press return") ) ;
-      let _ = ::std::io::stdin().read_line(& mut dummy) ;
+      read_line("to broadcast data (--step on)...") ;
     }
 
     let one_alive = teacher.broadcast() ;

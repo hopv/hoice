@@ -232,7 +232,9 @@ impl Data {
 
       solver.assert_u( & format!("(not {})", body) ) ? ;
 
-      if solver.check_sat() ? {
+      let res = solver.check_sat_or_unknown() ? ;
+
+      if let & Some(true) = & res {
         okay = false ;
         let exprs: Vec<_> = args.iter().map(
           |& (ref id, _)| id.clone()
@@ -260,8 +262,12 @@ impl Data {
         println!("  }}") ;
         println!("\")") ;
         println!("")
-      } else {
+      } else if let & Some(false) = & res {
         info!("clause {} is fine", count)
+      } else {
+        warn!(
+          "clause {}'s check resulted in unknown, assuming it's fine", count
+        )
       }
     }
 

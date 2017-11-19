@@ -175,10 +175,12 @@ pub struct PreprocConf {
   pub one_rhs: bool,
   /// Allow to introduce quantifiers.
   pub one_rhs_full: bool,
-  /// Allow to introduce quantifiers.
-  pub one_lhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
+  /// Allow to introduce quantifiers.
+  pub one_lhs_full: bool,
+  /// Allow cfg reduction.
+  pub cfg_red: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -338,6 +340,17 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("cfg_red").long("--cfg_red").help(
+        "(de)activates control flow graph reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("dump_preproc").long("--dump_preproc").help(
         "(de)activates instance dumping during preprocessing"
       ).validator(
@@ -368,12 +381,13 @@ impl PreprocConf {
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
     let one_lhs_full = bool_of_matches(matches, "one_lhs_full") ;
+    let cfg_red = bool_of_matches(matches, "cfg_red") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
-      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full,
+      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red
     }
   }
 }

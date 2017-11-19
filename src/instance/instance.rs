@@ -254,7 +254,7 @@ impl Clause {
   /// Returns a map from the input variables to the fresh ones (as terms).
   ///
   /// Used when inlining a predicate with quantified variables.
-  fn fresh_vars_for(& mut self, vars: & Qualfed) -> VarHMap<Term> {
+  fn fresh_vars_for(& mut self, vars: & Quantfed) -> VarHMap<Term> {
     let mut map = VarHMap::with_capacity( vars.len() ) ;
     for (var, typ) in vars {
       let fresh = self.vars.next_index() ;
@@ -408,6 +408,117 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
 
 
 
+/// A cluster linking several clauses.
+///
+/// Some of the predicates may already been forced and should only be
+/// `declare-fun`-ed when checking candidates. The rest of the predicates will
+/// be used to create learning data.
+pub struct Cluster {
+  /// Predicates used to create learning data.
+  pub preds: PrdSet,
+  /// Predicates which are already known but should be declared.
+  pub pred_decs: PrdSet,
+  /// Clauses in the cluster.
+  pub clauses: ClsSet,
+}
+impl Cluster {
+  /// Creates a cluster from a single clause, with all predicates being
+  /// explicit.
+  pub fn of_clause(idx: ClsIdx, clause: & Clause) -> Self {
+    let mut clauses = ClsSet::new() ;
+    clauses.insert(idx) ;
+    let mut preds = PrdSet::new() ;
+    for (pred, _) in clause.lhs_preds() {
+      preds.insert(* pred) ;
+    }
+    Cluster {
+      preds, pred_decs: PrdSet::new(), clauses
+    }
+  }
+
+  // /// Extracts the predicate applications from the lhs of a clause.
+  // pub fn extract_apps(
+  //   clause: & Clause, interesting: PrdSet, cex: Cex
+  // ) -> Res<(PrdSet, Vec<(PrdIdx, Args)>)> {
+  //   let mut all_preds = PrdSet::new() ;
+  //   let mut apps = Vec::new() ;
+  //   for (pred, argss) in clause.lhs_preds() {
+  //     if interesting.contains(pred) {
+  //       for args in argss {
+  //         let vals = cex.apply_to(args) ? ;
+  //         apps.push( (* pred, vals) )
+  //       }
+  //     } else {
+  //       all_preds.insert(* pred) ;
+  //     }
+  //   }
+  //   Ok((all_preds, apps))
+  // }
+
+  // /// Transforms a model on a cluster into some learning data.
+  // pub fn cex_to_data(
+  //   & self, instance: & Instance, data: & mut ::common::data::Data,
+  //   candidate: & Candidates, cex: & Cex
+  // ) -> Res<bool> {
+  //   let mut changed = false ;
+
+  //   // First, find which clause is falsifiable.
+  //   let mut falsified = Vec::with_capacity(3) ;
+  //   'clauses: for clause in & self.clauses {
+  //     let clause = * clause ;
+
+  //     if let Some((prd, args)) = instance[clause].rhs() {
+  //       // Predicate application, checking if we care about `prd`.
+  //       if let Some(ref pred) = candidate[prd] {
+  //         // Evaluate it.
+  //         let lhs_vals = cex.apply_to(args) ? ;
+  //         // If rhs is false/don't care the problem does not come from this
+  //         // clause.
+  //         if pred.eval(& lhs_vals)?.to_bool() ? != Some(true) {
+  //           continue 'clauses
+  //         }
+
+  //         // Lhs terms true?
+  //         for term in instance[clause].lhs_terms() {
+  //           if term.eval(& cex)?.to_bool()?.unwrap_or(true) {
+  //             continue 'clauses
+  //           }
+  //         }
+  //         // Lhs pred apps true? Constructing rhs dependency at the same time.
+  //         let mut rhs_preds = PrdSet::with_capacity(
+  //           instance[clause].lhs_preds().len()
+  //         ) ;
+  //         for (pred, argss) in instance[clause].lhs_preds() {
+  //           for args in argss {
+  //             let vals = cex.apply_to(args) ? ;
+  //             // if 
+  //           }
+  //         }
+
+  //         bail!("unimplemented")
+
+  //       } else {
+  //         // Don't care, next clause.
+  //         continue 'clauses
+  //       }
+
+  //     } else {
+  //       // Negative clause, is the whole lhs true?
+  //     }
+  //   }
+  //   if falsified.is_empty() {
+  //     bail!("cex_to_data: none of the clauses in my cluster are falsified")
+  //   } ;
+
+  //   let mut known = PrdSet::new() ;
+
+  //   Ok(changed)
+  // }
+}
+
+
+
+
 /// Stores the instance: the clauses, the factory and so on.
 ///
 /// # NB
@@ -434,6 +545,10 @@ pub struct Instance {
   pub max_pred_arity: Arity,
   /// Clauses.
   clauses: ClsMap<Clause>,
+  /// Clause clusters.
+  ///
+  /// This is what the teacher actually works on. It is filled either by graph analysis or by [`finalize`](#method.finalize).
+  clusters: CtrMap<Cluster>,
   /// Maps predicates to the clauses where they appear in the lhs and rhs
   /// respectively.
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
@@ -455,6 +570,7 @@ impl Instance {
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clause_capa),
+      clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       simplifier: ClauseSimplifier::new(),
       is_unsat: false,
@@ -604,7 +720,15 @@ impl Instance {
       }
     }
 
-    self.sorted_pred_terms.shrink_to_fit()
+    self.sorted_pred_terms.shrink_to_fit() ;
+
+    // If there are no clusters just create one cluster per clause.
+    if self.clusters.is_empty() {
+      log_info! { "instance has no clusters, creating single clause clusters" }
+      for (idx, clause) in self.clauses.index_iter() {
+        self.clusters.push( Cluster::of_clause(idx, clause) )
+      }
+    }
   }
 
 
@@ -1141,7 +1265,7 @@ impl Instance {
   /// - [`OneRhs`](../instance/preproc/struct.OneRhs.html)
   pub fn force_pred_left(
     & mut self, pred: PrdIdx,
-    qvars: Qualfed,
+    qvars: Quantfed,
     pred_apps: Vec<(PrdIdx, VarMap<Term>)>,
     terms: HConSet<Term>,
   ) -> Res<RedInfo> {
@@ -1251,9 +1375,107 @@ impl Instance {
     Ok(info)
   }
 
-  /// Forces the rhs occurences of a predicate to be equal to something.
+
+  /// Forces all lhs occurrences of a predicate to be replaced by a DNF.
   ///
-  /// If `pred` appears in `apps /\ trms => pred`, the clause will become
+  /// - only legal if `pred` does not appear in any rhs
+  /// - in general, will create new clauses
+  /// - if `def` is empty, equivalent to `force_false`
+  pub fn force_dnf_left(
+    & mut self, pred: PrdIdx, def: Vec< (Quantfed, Vec<TTerm>) >
+  ) -> Res<RedInfo> {
+    if def.is_empty() {
+      return self.force_false( Some(pred) )
+    }
+
+    self.check("before `force_dnf_left`") ? ;
+    let mut red: RedInfo = (0, 0, 0).into() ;
+
+    let (mut clause_lhs, mut clause_rhs) = ( Vec::new(), Vec::new() ) ;
+    let (mut clauses_to_add, mut clauses_to_rm) = (
+      Vec::new(), Vec::new()
+    ) ;
+
+    self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
+
+    if ! clause_rhs.is_empty() {
+      bail!("can't force dnf {}, it appears in some rhs", self[pred])
+    }
+
+    for clause in clause_lhs {
+      clauses_to_rm.push(clause) ;
+
+      let pred_argss = if let Some(
+        argss
+      ) = self.clauses[clause].lhs_preds.remove(& pred) {
+        argss
+      } else {
+        bail!("inconsistent instance state")
+      } ;
+
+      // This vector maps indices from `pred_argss` to the disjuncts of `def`.
+      let mut def_indices = vec![ 0 ; pred_argss.len() ] ;
+
+      let mut is_done = false ;
+
+      while ! is_done {
+        let mut clause = self.clauses[clause].clone() ;
+
+        for arg_idx in 0..def_indices.len() {
+          let def_idx = def_indices[arg_idx] ;
+          let args = & pred_argss[arg_idx] ;
+          let (ref qvars, ref conj) = def[def_idx] ;
+
+          let quant_map = clause.fresh_vars_for(& qvars) ;
+
+          for tterm in conj {
+            let tterm = tterm.subst_total( & (args, & quant_map) ) ? ;
+            clause.lhs_insert(tterm) ;
+          }
+        }
+
+        clauses_to_add.push(clause) ;
+
+        // Increment.
+        let mut n = def_indices.len() ;
+        let mut increase = false ;
+        while n > 0 {
+          n -= 1 ;
+          if def_indices[n] + 1 < def.len() {
+            def_indices[n] += 1 ;
+            increase = false ;
+            break
+          } else {
+            def_indices[n] = 0 ;
+            increase = true
+          }
+        }
+        // If we still need to increase at this point, we went over the max
+        // index of the first application, meaning we went over everything.
+        is_done = increase
+
+      }
+
+    }
+
+    red.clauses_rmed += clauses_to_rm.len() ;
+    self.forget_clauses( & mut clauses_to_rm ) ? ;
+    red.clauses_added += clauses_to_add.len() ;
+    for clause in clauses_to_add {
+      self.push_clause(clause) ?
+    }
+
+    self.force_pred(pred, None, TTerms::dnf(def)) ? ;
+
+    self.check("after `force_dnf_left`") ? ;
+
+    Ok(red)
+  }
+
+
+  /// Forces the rhs occurrences of a predicate to be equal to something.
+  ///
+  /// If `pred` appears in `args /\ trms => pred`, the clause will become
   /// `apps /\ pred_apps /\ trms /\ terms => pred_app`.
   ///
   /// Quantified variables are understood as universally quantified.
@@ -1277,7 +1499,7 @@ impl Instance {
   /// - [`SimpleOneLhs`](../instance/preproc/struct.SimpleOneLhs.html)
   pub fn force_pred_right(
     & mut self, pred: PrdIdx,
-    qvars: Qualfed,
+    qvars: Quantfed,
     pred_app: Option< (PrdIdx, VarMap<Term>) >,
     pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: HConSet<Term>
   ) -> Res<RedInfo> {

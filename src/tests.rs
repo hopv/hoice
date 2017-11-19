@@ -50,6 +50,13 @@ macro_rules! map_err {
 
 fn run_sat() -> Res<()> {
 
+  use std::fs::OpenOptions ;
+  let mut log_file = OpenOptions::new().create(
+    true
+  ).write(true).truncate(true).open(
+    "test_log"
+  ).unwrap() ;
+
   let files = map_err!(
     read_dir(sat_files_dir), format!("while reading `{}`", sat_files_dir)
   ) ;
@@ -59,6 +66,7 @@ fn run_sat() -> Res<()> {
       entry, "while reading entry"
     ) ;
     let file_name = format!("{}", entry.file_name().to_string_lossy()) ;
+    writeln!(log_file, "working on {}", file_name).unwrap() ;
     if map_err!(
       entry.file_type(), "while reading entry (file type of `{}`)", file_name
     ).is_file() {
@@ -71,8 +79,9 @@ fn run_sat() -> Res<()> {
         let mut buff: Vec<u8> = vec![] ;
         instance.write_model(& model, & mut buff) ? ;
         let buff = map_err!(
-          String::from_utf8(buff), "convering model from bytes to utf8"
+          String::from_utf8(buff), "converting model from bytes to utf8"
         ) ;
+        writeln!(log_file, "checking...").unwrap() ;
         ::check::do_it_from_str(entry.path(), & buff) ? ;
         println!("- is okay")
       } else {
