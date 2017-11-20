@@ -1314,11 +1314,14 @@ where Slver: Solver<'kid, ()> {
 
 
 /// Detects cycles and keeps a minimal set of predicates to infer.
-pub struct GraphRed {}
+pub struct GraphRed {
+  // Internal counter for log files.
+  cnt: usize,
+}
 impl GraphRed {
   /// Constructor.
   pub fn new() -> Self {
-    GraphRed {}
+    GraphRed { cnt: 0 }
   }
 }
 impl HasName for GraphRed {
@@ -1331,10 +1334,13 @@ impl RedStrat for GraphRed {
     let mut graph = graph::new(instance) ;
     graph.check(& instance) ? ;
     let (to_keep, to_rm) = graph.break_cycles(instance) ? ;
-    graph.to_dot(& instance, "pred_dep", & to_keep) ? ;
+    graph.to_dot(
+      & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
+    ) ? ;
     red.preds += to_rm.len() ;
 
     let pred_defs = graph.inline(instance, & to_keep) ? ;
+    graph.check(& instance) ? ;
     log_info! { "{} predicates inlined", pred_defs.len() }
 
 
@@ -1386,15 +1392,18 @@ impl RedStrat for GraphRed {
         log_info! { ")" }
       }
 
-      if conf.preproc.dump_pred_dep {
-        let graph = graph::new(instance) ;
-        graph.check(& instance) ? ;
-        graph.to_dot(& instance, "pred_dep_reduced", & to_keep) ? ;
-      }
-
-
-      red += instance.force_dnf_left(pred, def) ?
+      red += instance.force_dnf_left(pred, def) ? ;
     }
+
+    if conf.preproc.dump_pred_dep {
+      let graph = graph::new(instance) ;
+      graph.check(& instance) ? ;
+      graph.to_dot(
+        & instance, format!("{}_pred_dep_reduced", self.cnt), & to_keep
+      ) ? ;
+    }
+
+    self.cnt += 1 ;
 
     Ok(red)
   }

@@ -1467,6 +1467,7 @@ impl Instance {
 
     self.force_pred(pred, None, TTerms::dnf(def)) ? ;
 
+    red += self.simplify() ? ;
     self.check("after `force_dnf_left`") ? ;
 
     Ok(red)
