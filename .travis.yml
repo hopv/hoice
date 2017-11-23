@@ -6,7 +6,7 @@ os:
 
 rust:
   - stable
-  - beta
+  # - beta
 
 sudo: false
 
