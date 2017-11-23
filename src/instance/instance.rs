@@ -999,6 +999,7 @@ impl Instance {
   fn force_pred(
     & mut self, pred: PrdIdx, qualf: Option<Qualf>, tterms: TTerms
   ) -> Res<()> {
+    log_debug!("forcing {}", self[pred]) ;
     if let Some(_) = self.pred_terms[pred].as_ref() {
       bail!(
         "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
@@ -1385,7 +1386,7 @@ impl Instance {
     & mut self, pred: PrdIdx, def: Vec< (Quantfed, Vec<TTerm>) >
   ) -> Res<RedInfo> {
     if def.is_empty() {
-      return self.force_false( Some(pred) )
+      return self.internal_force_false( Some(pred) )
     }
 
     self.check("before `force_dnf_left`") ? ;
@@ -1465,9 +1466,8 @@ impl Instance {
       self.push_clause(clause) ?
     }
 
-    self.force_pred(pred, None, TTerms::dnf(def)) ? ;
+    self.force_pred( pred, None, TTerms::dnf(def) ) ? ;
 
-    red += self.simplify() ? ;
     self.check("after `force_dnf_left`") ? ;
 
     Ok(red)
@@ -1916,6 +1916,24 @@ impl Instance {
     ).chain_err(
       || format!("instance consistency check failed: {}", conf.emph(s))
     ) ? ;
+    
+    for clause in & self.clauses {
+      for pred in clause.lhs_preds().iter().map(
+        |(pred, _)| * pred
+      ).chain( clause.rhs().into_iter().map(|(pred, _)| pred) ) {
+        if let Some((_, term)) = self.forced_terms_of(pred) {
+          bail! {
+            "predicate {} is forced{} but appears in a clause",
+            conf.bad( & self[pred].name ),
+            match term.bool() {
+              Some(true) => " to true",
+              Some(false) => " to false",
+              None => "",
+            }
+          }
+        }
+      }
+    }
 
     Ok(())
   }

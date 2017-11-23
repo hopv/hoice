@@ -46,9 +46,9 @@ pub fn work(
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
 
-  log_info!{
-    "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
-  }
+  // log_info!{
+  //   "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+  // }
   match res {
     Err(ref e) if e.is_unsat() => {
       instance.set_unsat()
@@ -102,9 +102,9 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
   }
   total += simplify ;
 
-  log_debug!{
-    "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
-  }
+  // log_debug!{
+  //   "|===| after propagation:\n{}\n\n", instance.to_string_info(()) ?
+  // }
 
   preproc_dump!(
     instance =>
@@ -127,9 +127,9 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     total += red_info ;
     profile!{ |profiler| mark "pre-proc", "simplifying" }
 
-    log_debug!{
-      "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
-    }
+    // log_debug!{
+    //   "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
+    // }
 
     preproc_dump!(
       instance =>
@@ -651,7 +651,7 @@ impl RedStrat for SimpleOneRhs {
         use self::ExtractRes::* ;
         match res {
           Trivial => {
-            log_info!("  => false") ;
+            log_info!("  => trivial") ;
             red_info += instance.force_false(Some(pred)) ?
           },
           SuccessTrue => {
@@ -676,8 +676,7 @@ impl RedStrat for SimpleOneRhs {
               pred, qvars, pred_apps, terms
             ) ?
           },
-          // Failed is caught before this match, and false is not possible for
-          // the function generating `res`.
+          // Failed is caught before this match.
           Failed => unreachable!(),
         }
 
@@ -833,6 +832,10 @@ impl RedStrat for SimpleOneLhs {
           log_info!("  => false") ;
           red_info += instance.force_false(Some(pred)) ?
         },
+        Trivial => {
+          log_info! { "  => trivial" }
+          red_info += instance.force_true( Some(pred) ) ?
+        },
         Success((qualfed, pred_app, pred_apps, terms)) => {
           debug_assert! { qualfed.is_empty() }
           if_not_bench!{
@@ -863,9 +866,8 @@ impl RedStrat for SimpleOneLhs {
 
           instance.check("after unfolding") ?
         },
-        // Failed is caught before this match, and the rest is not possible for
-        // the function generating `res`.
-        _ => unreachable!(),
+        // Failed is caught before this match.
+        Failed => unreachable!(),
       }
 
       if instance.is_known(pred) {
@@ -977,12 +979,16 @@ impl RedStrat for OneRhs {
         use self::ExtractRes::* ;
         match res {
           Trivial => {
-            log_info!("  => false") ;
+            log_info!("  => trivial") ;
             red_info += instance.force_false(Some(pred)) ?
           },
           SuccessTrue => {
             log_info!("  => true") ;
             red_info += instance.force_true(Some(pred)) ? ;
+          },
+          SuccessFalse => {
+            log_info!("  => false") ;
+            red_info += instance.force_false(Some(pred)) ? ;
           },
           Success( (qvars, pred_apps, terms) ) => {
             if_not_bench! {
@@ -1006,7 +1012,7 @@ impl RedStrat for OneRhs {
           },
           // Failed is caught before this match, and false is not possible for
           // the function generating `res`.
-          Failed | SuccessFalse => unreachable!(),
+          Failed => unreachable!(),
         }
 
         if instance.is_known(pred) {
@@ -1163,6 +1169,10 @@ impl RedStrat for OneLhs {
           log_info!("  => false") ;
           red_info += instance.force_false(Some(pred)) ?
         },
+        Trivial => {
+          log_info!("  => trivial") ;
+          red_info += instance.force_true(Some(pred)) ?
+        },
         Success((qvars, pred_app, pred_apps, terms)) => {
           if_not_bench!{
             log_debug!("  {} quantified variables", qvars.len()) ;
@@ -1196,9 +1206,8 @@ impl RedStrat for OneLhs {
 
           instance.check("after unfolding") ?
         },
-        // Failed is caught before this match, and the rest is not possible for
-        // the function generating `res`.
-        _ => unreachable!(),
+        // Failed is caught before this match.
+        Failed => unreachable!(),
       }
 
       if instance.is_known(pred) {
@@ -1392,8 +1401,10 @@ impl RedStrat for GraphRed {
         log_info! { ")" }
       }
 
-      red += instance.force_dnf_left(pred, def) ? ;
+      red += instance.force_dnf_left(pred, def) ?
     }
+
+    red += instance.simplify() ? ;
 
     if conf.preproc.dump_pred_dep {
       let graph = graph::new(instance) ;
