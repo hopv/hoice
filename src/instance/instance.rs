@@ -1184,48 +1184,48 @@ impl Instance {
         }
       }
 
-      // Split disjunctions.
-      'find_clause: for clause in self.clauses.iter_mut() {
-        // Skip those for which the predicate in the rhs only appears in this
-        // rhs.
-        if let Some((pred, _)) = clause.rhs() {
-          if self.pred_to_clauses[pred].1.len() == 1 {
-            continue 'find_clause
-          }
-        }
+      // // Split disjunctions.
+      // 'find_clause: for clause in self.clauses.iter_mut() {
+      //   // Skip those for which the predicate in the rhs only appears in this
+      //   // rhs.
+      //   if let Some((pred, _)) = clause.rhs() {
+      //     if self.pred_to_clauses[pred].1.len() == 1 {
+      //       continue 'find_clause
+      //     }
+      //   }
 
-        // Skip if clause contains more than 2 disjunctions.
-        let mut disj = None ;
-        let mut disj_count = 0 ;
-        for term in & clause.lhs_terms {
-          if let Some(args) = term.disj_inspect() {
-            disj_count += 1 ;
-            if disj.is_none() {
-              disj = Some((term.clone(), args.clone()))
-            }
-          }
-        }
-        if disj_count > 2 {
-          continue 'find_clause
-        }
-        if let Some((disj, mut kids)) = disj {
-          log_debug!{
-            "splitting clause {}", clause.to_string_info(& self.preds) ?
-          }
-          let _was_there = clause.lhs_terms.remove(& disj) ;
-          debug_assert!(_was_there) ;
-          if let Some(kid) = kids.pop() {
-            for kid in kids {
-              let mut clause = clause.clone() ;
-              clause.insert_term(kid) ;
-              nu_clauses.push(clause)
-            }
-            clause.insert_term(kid) ;
-          } else {
-            bail!("illegal empty disjunction")
-          }
-        }
-      }
+      //   // Skip if clause contains more than 2 disjunctions.
+      //   let mut disj = None ;
+      //   let mut disj_count = 0 ;
+      //   for term in & clause.lhs_terms {
+      //     if let Some(args) = term.disj_inspect() {
+      //       disj_count += 1 ;
+      //       if disj.is_none() {
+      //         disj = Some((term.clone(), args.clone()))
+      //       }
+      //     }
+      //   }
+      //   if disj_count > 2 {
+      //     continue 'find_clause
+      //   }
+      //   if let Some((disj, mut kids)) = disj {
+      //     log_debug!{
+      //       "splitting clause {}", clause.to_string_info(& self.preds) ?
+      //     }
+      //     let _was_there = clause.lhs_terms.remove(& disj) ;
+      //     debug_assert!(_was_there) ;
+      //     if let Some(kid) = kids.pop() {
+      //       for kid in kids {
+      //         let mut clause = clause.clone() ;
+      //         clause.insert_term(kid) ;
+      //         nu_clauses.push(clause)
+      //       }
+      //       clause.insert_term(kid) ;
+      //     } else {
+      //       bail!("illegal empty disjunction")
+      //     }
+      //   }
+      // }
 
       if ! nu_clauses.is_empty() {
         changed = true ;
@@ -1779,6 +1779,10 @@ impl Instance {
       maps.len()
     ] ;
 
+    // Stores the subterms of `lhs_terms` that are disjunctions or
+    // conjunctions.
+    let mut subterms = Vec::with_capacity(7) ;
+
     // Now look for atoms and try to apply the mappings above.
     for term in clause.lhs_terms.iter() {
 
@@ -1795,6 +1799,29 @@ impl Instance {
             } else { term } ;
             // println!("- {}", term) ;
             quals.insert(arity, term)
+          }
+        }
+        // Is it a disjunction? If yes, add disjuncts as qualifiers.
+        debug_assert!( subterms.is_empty() ) ;
+        subterms.push(term) ;
+        while let Some(subterm) = subterms.pop() {
+          match subterm.app_inspect() {
+            Some( (Op::Or, terms) ) |
+            Some( (Op::And, terms) ) => for term in terms {
+              subterms.push(term) ;
+              if let Some( (qual, true) ) = term.subst_total(map) {
+                if let Some(max_var) = term.highest_var() {
+                  let arity: Arity = (1 + * max_var).into() ;
+                  let qual = if let Some(qual) = qual.rm_neg() {
+                    qual
+                  } else {
+                    qual
+                  } ;
+                  quals.insert(arity, qual)
+                }
+              }
+            },
+            _ => (),
           }
         }
       }
