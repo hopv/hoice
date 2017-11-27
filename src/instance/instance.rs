@@ -691,12 +691,16 @@ impl Instance {
 
     // Populate `tmp`.
     let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
+    self.max_pred_arity = 0.into() ;
     for pred in self.pred_indices() {
       if let Some(ref tterms) = self.pred_terms[pred] {
         tmp.push( (pred, tterms.preds()) )
       } else if let Some((_, ref tterms)) = self.pred_qterms[pred] {
         tmp.push( (pred, tterms.preds()) )
       } else {
+        self.max_pred_arity = ::std::cmp::max(
+          self.max_pred_arity, (self[pred].sig.len() + 1).into()
+        ) ;
         known_preds.insert(pred) ;
       }
     }
@@ -981,7 +985,7 @@ impl Instance {
     & mut self, name: String, sig: VarMap<Typ>
   ) -> PrdIdx {
     self.max_pred_arity = ::std::cmp::max(
-      self.max_pred_arity, sig.len().into()
+      self.max_pred_arity, (sig.len() + 1).into()
     ) ;
     let idx = self.preds.next_index() ;
     self.preds.push( PrdInfo { name, idx, sig } ) ;
@@ -1810,7 +1814,7 @@ impl Instance {
             Some( (Op::And, terms) ) => for term in terms {
               subterms.push(term) ;
               if let Some( (qual, true) ) = term.subst_total(map) {
-                if let Some(max_var) = term.highest_var() {
+                if let Some(max_var) = qual.highest_var() {
                   let arity: Arity = (1 + * max_var).into() ;
                   let qual = if let Some(qual) = qual.rm_neg() {
                     qual

@@ -86,6 +86,7 @@ fn args_of_pred_app(
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
 ) -> Res< TExtractRes<VarMap<Term>> > {
+  log_debug! { "      args_of_pred_app ({})", quantifiers }
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
   for arg in args {
     add_vars! {
@@ -115,6 +116,7 @@ fn terms_of_pred_apps<'a>(
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
 ) -> Res< TExtractRes< Option<& 'a Vec<VarMap<Term>> > > > {
+  log_debug! { "    terms_of_pred_apps" }
   let mut res = None ;
   for (prd, argss) in src {
 
@@ -129,7 +131,10 @@ fn terms_of_pred_apps<'a>(
         quantifiers, var_info, args, app_vars, map, qvars, fresh
       ) ? {
         TExtractRes::Success(nu_args) => tgt.push( (prd, nu_args) ),
-        TExtractRes::Failed => return Ok(TExtractRes::Failed),
+        TExtractRes::Failed => {
+          log_debug! { "    failed to extract argument {}", args }
+          return Ok(TExtractRes::Failed)
+        },
       }
     }
   }
@@ -155,6 +160,7 @@ where
 TermIter: Iterator<Item = & 'a Term> + ExactSizeIterator,
 Terms: IntoIterator<IntoIter = TermIter, Item = & 'a Term>,
 F: Fn(Term) -> Term {
+  log_debug! { "    terms_of_terms" }
 
   // Finds terms which variables are related to the ones from the predicate
   // applications.
@@ -329,7 +335,9 @@ pub fn terms_of_lhs_app(
 ) -> Res<
   ExtractRes<(Quantfed, Option<PredApp>, Vec<PredApp>, HConSet<Term>)>
 > {
-  log_debug!{ "    terms_of_lhs_app on {} {}", instance[pred], args }
+  log_debug!{
+    "    terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
+  }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
   let fresh = & mut instance[pred].sig.next_index() ;
@@ -461,6 +469,7 @@ pub fn terms_of_rhs_app(
   ) ? {
     res
   } else {
+    log_debug! { "  could not extract terms of app" }
     return Ok(ExtractRes::Failed)
   } ;
 
@@ -495,7 +504,12 @@ pub fn terms_of_rhs_app(
       )
     },
     TExtractRes::Success(None) => (),
-    TExtractRes::Failed => return Ok( ExtractRes::Failed ),
+    TExtractRes::Failed => {
+      log_debug! {
+        "  could not extract terms of predicate app ({})", instance[pred]
+      }
+      return Ok( ExtractRes::Failed )
+    },
   }
 
   log_debug! {
@@ -508,6 +522,7 @@ pub fn terms_of_rhs_app(
   ) ? {
     if trivial { return Ok( ExtractRes::Trivial ) }
   } else {
+    log_debug! { "  could not extract terms of terms" }
     return Ok( ExtractRes::Failed )
   }
 

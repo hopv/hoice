@@ -94,6 +94,8 @@ pub struct IceLearner<'core, Slver> {
   new_quals: Quals,
   /// Profiler.
   _profiler: Profiler,
+  /// Vector used during learning, avoids re-allocation.
+  predicates: Vec<(usize, usize, PrdIdx)>,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
@@ -110,9 +112,10 @@ where Slver: Solver<'kid, Parser> {
     let mut new_quals = Quals::with_capacity(
       qualifiers.qualifiers().len()
     ) ;
-    for map in qualifiers.qualifiers() {
-      new_quals.push( HConMap::with_capacity( map.len() ) )
+    for _ in ArityRange::zero_to( instance.max_pred_arity ) {
+      new_quals.push( HConMap::with_capacity(107) )
     }
+
     profile!{ |_profiler| mark "mining" }
     if_verb!{
       log_info!{ "qualifiers:" } ;
@@ -126,6 +129,7 @@ where Slver: Solver<'kid, Parser> {
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
     let candidate = vec![ None ; instance.preds().len() ].into() ;
+    let predicates = Vec::with_capacity( instance.preds().len() ) ;
     Ok(
       IceLearner {
         instance, qualifiers, data, solver, synth_solver, core,
@@ -135,6 +139,7 @@ where Slver: Solver<'kid, Parser> {
         dec_mem, candidate,
         new_quals,
         _profiler,
+        predicates,
       }
     )
   }
@@ -240,8 +245,8 @@ where Slver: Solver<'kid, Parser> {
   pub fn learn(
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
-    profile!{ self tick "learning" }
-    profile!{ self tick "learning", "setup" }
+    profile! { self tick "learning" }
+    profile! { self tick "learning", "setup" }
     let _new_samples = data.drain_new_samples() ;
     self.data = data ;
     self.qualifiers.clear_blacklist() ;
@@ -267,7 +272,7 @@ where Slver: Solver<'kid, Parser> {
       okay
     }}
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
-    let mut predicates = Vec::with_capacity(prd_count) ;
+    debug_assert! { self.predicates.is_empty() }
 
     for pred in PrdRange::zero_to(prd_count) {
       // msg!{
@@ -311,14 +316,14 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
-      predicates.push((
+      self.predicates.push((
         unc_len, pos_len + neg_len, pred
       ))
     }
 
     if conf.ice.sort_preds {
       profile!{ self tick "learning", "predicate sorting" }
-      predicates.sort_by(
+      self.predicates.sort_unstable_by(
         |
           & (
             unclassed_1, classed_1, _
@@ -343,7 +348,9 @@ where Slver: Solver<'kid, Parser> {
 
     let mut used_quals = HConSet::with_capacity(107) ;
 
-    'pred_iter: for (_unc, _cla, pred) in predicates {
+    'pred_iter: while let Some(
+      (_unc, _cla, pred)
+    ) = self.predicates.pop() {
       msg!(
         self => "{}: {} unclassified, {} classified",
                 self.instance[pred], _unc, _cla
@@ -700,6 +707,7 @@ where Slver: Solver<'kid, Parser> {
       return Ok( (values.qual.clone(), q_data, nq_data) )
     }
 
+
     // Reachable only if none of our qualifiers can split the data.
 
     // if_verb!{
@@ -1024,12 +1032,13 @@ where Slver: Solver<'kid, Parser> {
             Op::Ge, vec![ var.clone(), val_term.clone() ]
           ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term )
+            self.new_quals.insert( arity, term ) ;
           }
           let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term )
+            self.new_quals.insert( arity, term ) ;
           }
+
 
           for & (ref pre_var, pre_val) in & previous_int {
             if val == pre_val {
@@ -1040,7 +1049,7 @@ where Slver: Solver<'kid, Parser> {
             }
             if - val == * pre_val {
               let eq = term::eq(
-                pre_var.clone(), term::not( var.clone() )
+                pre_var.clone(), term::sub( vec![var.clone()] )
               ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
                 self.new_quals.insert( arity, eq )

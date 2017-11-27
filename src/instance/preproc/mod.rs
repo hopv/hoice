@@ -228,7 +228,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     let mut total: RedInfo = (0,0,0).into() ;
     
     let mut changed = true ;
-    while changed {
+    'run_all: while changed {
       changed = false ;
       for strat in & mut self.strats {
         log_info!("applying {}", conf.emph( strat.name() )) ;
@@ -254,9 +254,13 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
           }
         }
 
+        // let restart = red_info.non_zero() ;
         total += red_info ;
         instance.check( strat.name() ) ? ;
 
+        // if restart { continue 'run_all }
+
+        // read_line(& format!("to continue ({}, {})", changed, strat.name())) ;
         // let mut dummy = String::new() ;
         // println!("") ;
         // println!( "; waiting..." ) ;
@@ -613,7 +617,13 @@ impl RedStrat for SimpleOneRhs {
     let mut red_info: RedInfo = (0,0,0).into() ;
 
     for pred in instance.pred_indices() {
-      log_debug!{ "looking at {}", instance[pred] }
+      log_debug! {
+        "looking at {} ({}, {})",
+        instance[pred],
+        instance.clauses_of_pred(pred).0.len(),
+        instance.clauses_of_pred(pred).1.len(),
+      }
+
       if instance.clauses_of_pred(pred).1.len() == 1 {
         let clause = * instance.clauses_of_pred(
           pred
@@ -759,6 +769,13 @@ impl RedStrat for SimpleOneLhs {
     let mut red_info: RedInfo = (0,0,0).into() ;
 
     for pred in instance.pred_indices() {
+      log_debug! {
+        "looking at {} ({}, {})",
+        instance[pred],
+        instance.clauses_of_pred(pred).0.len(),
+        instance.clauses_of_pred(pred).1.len(),
+      }
+
       let clause_idx = {
         let mut lhs_clauses = instance.clauses_of_pred(pred).0.iter() ;
         if let Some(clause) = lhs_clauses.next() {
@@ -934,6 +951,13 @@ impl RedStrat for OneRhs {
     let mut red_info: RedInfo = (0,0,0).into() ;
 
     'all_preds: for pred in instance.pred_indices() {
+      log_debug! {
+        "looking at {} ({}, {})",
+        instance[pred],
+        instance.clauses_of_pred(pred).0.len(),
+        instance.clauses_of_pred(pred).1.len(),
+      }
+
       if instance.clauses_of_pred(pred).1.len() == 1 {
         let clause =
           * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
@@ -1096,6 +1120,13 @@ impl RedStrat for OneLhs {
     let mut red_info: RedInfo = (0,0,0).into() ;
 
     for pred in instance.pred_indices() {
+      log_debug! {
+        "looking at {} ({}, {})",
+        instance[pred],
+        instance.clauses_of_pred(pred).0.len(),
+        instance.clauses_of_pred(pred).1.len(),
+      }
+
       let clause_idx = {
         let mut lhs_clauses = instance.clauses_of_pred(pred).0.iter() ;
         if let Some(clause) = lhs_clauses.next() {
@@ -1111,6 +1142,7 @@ impl RedStrat for OneLhs {
 
       // Skip if the clause mentions this predicate more than once.
       if let Some( argss ) = instance[clause_idx].lhs_preds().get(& pred) {
+        log_debug! { "skipping {}, more than one application", instance[pred] }
         if argss.len() > 1 { continue }
       }
 

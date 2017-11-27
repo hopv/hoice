@@ -210,7 +210,7 @@ impl Graph {
   /// Follows a forward map. Returns the predicates it encountered and how many
   /// times it encountered them.
   pub fn follow(
-    instance: & Instance, start: PrdIdx, forward: & PrdHMap<PrdSet>
+    _instance: & Instance, start: PrdIdx, forward: & PrdHMap<PrdSet>
   ) -> Res< PrdHMap<usize> > {
     let mut known = PrdSet::new() ;
     let mut to_do = PrdSet::new() ;
@@ -238,9 +238,9 @@ impl Graph {
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
         if_not_bench! {
-          log_debug! { "    following {}", instance[pred] } ;
+          log_debug! { "    following {}", _instance[pred] } ;
           for pred in tgts {
-            log_debug! { "    - {}", instance[* pred] }
+            log_debug! { "    - {}", _instance[* pred] }
           }
         }
 
@@ -299,11 +299,13 @@ impl Graph {
           debug_assert!( prev.is_none() ) ;
           curr_qvar.inc()
         }
-        log_debug! { "    map {{" }
-        for (var, term) in & map {
-          log_debug! { "    - {} -> {}", var.default_str(), term }
+        if_not_bench! {
+          log_debug! { "    map {{" }
+          for (var, term) in & map {
+            log_debug! { "    - {} -> {}", var.default_str(), term }
+          }
+          log_debug! { "    }}" }
         }
-        log_debug! { "    }}" }
         let mut conj = r_conj.clone() ;
         conj.reserve( l_conj.len() ) ;
         for tterm in l_conj {
@@ -398,7 +400,7 @@ impl Graph {
               def.push( (qvars, conj) )
             } else {
 
-              if_not_bench! {
+              if_verb! {
                 log_info! { "  qvars {{" }
                 for (var, typ) in & qvars {
                   log_info! { "    {}: {}", var.default_str(), typ }
@@ -412,9 +414,9 @@ impl Graph {
               }
 
               let mut curr = vec![ (qvars, conj) ] ;
-              for (this_pred, args, p_def) in to_merge.drain(0..) {
-                if_not_bench! {
-                  log_info! { "  args for {} {{", instance[this_pred] }
+              for (_this_pred, args, p_def) in to_merge.drain(0..) {
+                if_verb! {
+                  log_info! { "  args for {} {{", instance[_this_pred] }
                   for (var, arg) in args.index_iter() {
                     log_info! { "    {} -> {}", var.default_str(), arg }
                   }
