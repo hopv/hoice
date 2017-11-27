@@ -212,9 +212,16 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::GetModel if ! conf.infer => (),
 
       // Print model if available.
-      Parsed::GetModel => if let Some(ref model) = model {
+      Parsed::GetModel => if let Some(model) = model.as_mut() {
+        // Simplify model before writing it.
+        let mut nu_model = Vec::with_capacity( model.len() ) ;
+        for & (pred, ref qvars, ref def) in model.iter() {
+          let nu_def = def.simplify_pred_apps(& nu_model) ;
+          nu_model.push( (pred, qvars.clone(), nu_def) )
+        }
         let stdout = & mut ::std::io::stdout() ;
-        instance.write_model(model, stdout) ?
+        instance.write_model(& nu_model, stdout) ? ;
+        * model = nu_model
       } else {
         bail!("no model available")
       },

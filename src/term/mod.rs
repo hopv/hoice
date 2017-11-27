@@ -882,6 +882,83 @@ impl TTerms {
     }
   }
 
+  /// Simplifies some top terms given some definitions for the predicates.
+  pub fn simplify_pred_apps<'a>(& self, model: & 'a Model) -> Self {
+    macro_rules! def_of {
+      ($pred:ident in $model:expr) => ({
+        let mut res = None ;
+        for & (ref idx, _, ref tterms) in $model {
+          if * idx == $pred { res = Some(tterms) }
+        }
+        res
+      })
+    }
+    match * self {
+      TTerms::True |
+      TTerms::False => self.clone(),
+      TTerms::And(ref tterms) => {
+        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
+        for tterm in tterms {
+          if let Some(pred) = tterm.pred() {
+            match def_of!(pred in model).and_then(|t| t.bool()) {
+              Some(true) => continue,
+              Some(false) => return TTerms::False,
+              None => (),
+            }
+          }
+          nu_tterms.push( tterm.clone() )
+        }
+        Self::conj(nu_tterms)
+      },
+      TTerms::Or { ref pos, ref neg } => {
+        let (mut nu_pos, mut nu_neg) = (
+          Vec::with_capacity( pos.len() ), Vec::with_capacity( neg.len() )
+        ) ;
+        for tterm in pos {
+          if let Some(pred) = tterm.pred() {
+            match def_of!(pred in model).and_then(|t| t.bool()) {
+              Some(false) => continue,
+              Some(true) => return TTerms::True,
+              None => (),
+            }
+          }
+          nu_pos.push( tterm.clone() )
+        }
+        for tterm in neg {
+          if let Some(pred) = tterm.pred() {
+            match def_of!(pred in model).and_then(|t| t.bool()) {
+              Some(true) => continue,
+              Some(false) => return TTerms::True,
+              None => (),
+            }
+          }
+          nu_neg.push( tterm.clone() )
+        }
+        nu_pos.shrink_to_fit() ;
+        nu_neg.shrink_to_fit() ;
+        Self::disj(nu_pos, nu_neg)
+      },
+      TTerms::Dnf(ref disj) => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        'build_disj: for & (ref qvars, ref conj) in disj {
+          let mut nu_conj = Vec::with_capacity( conj.len() ) ;
+          'build_conj: for tterm in conj {
+            if let Some(pred) = tterm.pred() {
+              match def_of!(pred in model).and_then(|t| t.bool()) {
+                Some(true) => continue 'build_conj,
+                Some(false) => continue 'build_disj,
+                None => (),
+              }
+            }
+            nu_conj.push( tterm.clone() )
+          }
+          nu_disj.push( (qvars.clone(), nu_conj) )
+        }
+        Self::dnf(nu_disj)
+      },
+    }
+  }
+
   /// True if the top terms contain an application of `pred`.
   pub fn mention_pred(& self, pred: PrdIdx) -> bool {
     match * self {
