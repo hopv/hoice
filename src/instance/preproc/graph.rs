@@ -162,6 +162,14 @@ impl Graph {
   }
 
   /// Checks that the graph makes sense.
+  #[cfg(not(debug_assertions))]
+  #[inline(always)]
+  pub fn check(& self, _: & Instance) -> Res<()> {
+    Ok(())
+  }
+
+  /// Checks that the graph makes sense.
+  #[cfg(debug_assertions)]
   pub fn check(& self, instance: & Instance) -> Res<()> {
     fn sub_check(slf: & Graph, instance: & Instance) -> Res<()> {
       for (prd, targets) in slf.forward.index_iter() {
@@ -237,7 +245,7 @@ impl Graph {
       let pred = * to_do.iter().next().unwrap() ;
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
-        if_not_bench! {
+        if_debug! {
           log_debug! { "    following {}", _instance[pred] } ;
           for pred in tgts {
             log_debug! { "    - {}", _instance[* pred] }
@@ -299,7 +307,7 @@ impl Graph {
           debug_assert!( prev.is_none() ) ;
           curr_qvar.inc()
         }
-        if_not_bench! {
+        if_debug! {
           log_debug! { "    map {{" }
           for (var, term) in & map {
             log_debug! { "    - {} -> {}", var.default_str(), term }
@@ -400,7 +408,7 @@ impl Graph {
               def.push( (qvars, conj) )
             } else {
 
-              if_verb! {
+              if_debug! {
                 log_info! { "  qvars {{" }
                 for (var, typ) in & qvars {
                   log_info! { "    {}: {}", var.default_str(), typ }
@@ -415,7 +423,7 @@ impl Graph {
 
               let mut curr = vec![ (qvars, conj) ] ;
               for (_this_pred, args, p_def) in to_merge.drain(0..) {
-                if_verb! {
+                if_debug! {
                   log_info! { "  args for {} {{", instance[_this_pred] }
                   for (var, arg) in args.index_iter() {
                     log_info! { "    {} -> {}", var.default_str(), arg }
@@ -432,7 +440,7 @@ impl Graph {
                 }
                 curr = Self::merge(instance, pred, & args, p_def, & curr) ;
               }
-              if_not_bench! {
+              if_debug! {
                 log_info! { "  finally {{" }
                 let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
                 log_info! { "    {}", TTerms::dnf(dnf) }
@@ -494,7 +502,7 @@ impl Graph {
 
     'break_cycles: while ! forward.is_empty() {
 
-      if_not_bench! {
+      if_debug! {
         log_debug! { "  looking for a starting point with" }
         log_debug! { "  - pos {{" }
         for prd in & pos {
@@ -519,8 +527,6 @@ impl Graph {
       if let Some(pred) = start {
         log_debug! { "  found one in `pos`" }
         // There was something in `pos`, remove it and move on.
-        let was_there = pos.remove(& pred) ;
-        debug_assert!( was_there ) ;
         start = Some(pred)
       } else {
         log_debug! { "  no preds in `pos`, looking in `forward`" }
