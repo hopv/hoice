@@ -216,8 +216,13 @@ pub fn read_and_work<R: ::std::io::Read>(
         // Simplify model before writing it.
         let mut nu_model = Vec::with_capacity( model.len() ) ;
         for & (pred, ref qvars, ref def) in model.iter() {
-          let nu_def = def.simplify_pred_apps(& nu_model) ;
-          nu_model.push( (pred, qvars.clone(), nu_def) )
+          let (nu_def, vars) = def.simplify_pred_apps(& nu_model) ;
+          let qvars = qvars.as_ref().and_then(
+            |qvars| qvars.filter(
+              |var| vars.contains(var)
+            )
+          ) ;
+          nu_model.push( (pred, qvars, nu_def) )
         }
         let stdout = & mut ::std::io::stdout() ;
         instance.write_model(& nu_model, stdout) ? ;

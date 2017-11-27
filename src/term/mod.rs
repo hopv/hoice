@@ -883,7 +883,10 @@ impl TTerms {
   }
 
   /// Simplifies some top terms given some definitions for the predicates.
-  pub fn simplify_pred_apps<'a>(& self, model: & 'a Model) -> Self {
+  ///
+  /// Also returns all the variables the terms mention (to reduce the number of
+  /// quantified variables).
+  pub fn simplify_pred_apps<'a>(& self, model: & 'a Model) -> (Self, VarSet) {
     macro_rules! def_of {
       ($pred:ident in $model:expr) => ({
         let mut res = None ;
@@ -893,22 +896,25 @@ impl TTerms {
         res
       })
     }
+    use std::iter::Extend ;
+    let mut vars = VarSet::new() ;
     match * self {
       TTerms::True |
-      TTerms::False => self.clone(),
+      TTerms::False => (self.clone(), vars),
       TTerms::And(ref tterms) => {
         let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
         for tterm in tterms {
           if let Some(pred) = tterm.pred() {
             match def_of!(pred in model).and_then(|t| t.bool()) {
               Some(true) => continue,
-              Some(false) => return TTerms::False,
+              Some(false) => return (TTerms::False, VarSet::new()),
               None => (),
             }
           }
+          vars.extend( tterm.vars() ) ;
           nu_tterms.push( tterm.clone() )
         }
-        Self::conj(nu_tterms)
+        (Self::conj(nu_tterms), vars)
       },
       TTerms::Or { ref pos, ref neg } => {
         let (mut nu_pos, mut nu_neg) = (
@@ -918,29 +924,32 @@ impl TTerms {
           if let Some(pred) = tterm.pred() {
             match def_of!(pred in model).and_then(|t| t.bool()) {
               Some(false) => continue,
-              Some(true) => return TTerms::True,
+              Some(true) => return (TTerms::True, VarSet::new()),
               None => (),
             }
           }
+          vars.extend( tterm.vars() ) ;
           nu_pos.push( tterm.clone() )
         }
         for tterm in neg {
           if let Some(pred) = tterm.pred() {
             match def_of!(pred in model).and_then(|t| t.bool()) {
               Some(true) => continue,
-              Some(false) => return TTerms::True,
+              Some(false) => return (TTerms::True, VarSet::new()),
               None => (),
             }
           }
+          vars.extend( tterm.vars() ) ;
           nu_neg.push( tterm.clone() )
         }
         nu_pos.shrink_to_fit() ;
         nu_neg.shrink_to_fit() ;
-        Self::disj(nu_pos, nu_neg)
+        (Self::disj(nu_pos, nu_neg), vars)
       },
       TTerms::Dnf(ref disj) => {
         let mut nu_disj = Vec::with_capacity( disj.len() ) ;
         'build_disj: for & (ref qvars, ref conj) in disj {
+          let mut conj_vars = VarSet::new() ;
           let mut nu_conj = Vec::with_capacity( conj.len() ) ;
           'build_conj: for tterm in conj {
             if let Some(pred) = tterm.pred() {
@@ -950,11 +959,20 @@ impl TTerms {
                 None => (),
               }
             }
+            conj_vars.extend( tterm.vars() ) ;
             nu_conj.push( tterm.clone() )
           }
-          nu_disj.push( (qvars.clone(), nu_conj) )
+          let mut nu_qvars = VarHMap::with_capacity( qvars.len() ) ;
+          for (var, typ) in qvars {
+            if conj_vars.contains(var) {
+              let _prev = nu_qvars.insert(* var, * typ) ;
+              debug_assert_eq!( _prev, None )
+            }
+          }
+          vars.extend( conj_vars ) ;
+          nu_disj.push( (nu_qvars, nu_conj) )
         }
-        Self::dnf(nu_disj)
+        (Self::dnf(nu_disj), vars)
       },
     }
   }
@@ -1645,6 +1663,44 @@ impl Qualf {
     } ;
     debug_assert! { ! map.is_empty() }
     map.len()
+  }
+
+  /// Filters some quantified variables.
+  ///
+  /// Keeps all quantified variables such that `f(var)`.
+  ///
+  /// Returns `None` if the mapping ends up being empty.
+  pub fn filter<F: Fn(& VarIdx) -> bool>(& self, f: F) -> Option<Self> {
+    macro_rules! filter {
+      ($map:expr, $f:expr) => ({
+        let mut nu_map = VarHMap::with_capacity( $map.len() ) ;
+        for (var, typ) in $map {
+          if $f(var) {
+            let _prev = nu_map.insert(* var, * typ) ;
+            debug_assert_eq!( _prev, None )
+          }
+        }
+        nu_map
+      })
+    }
+    match * self {
+      Qualf::Exists(ref map) => {
+        let map = filter! { map, f } ;
+        if map.is_empty() {
+          None
+        } else {
+          Some(Qualf::Exists(map))
+        }
+      },
+      Qualf::Forall(ref map) => {
+        let map = filter! { map, f } ;
+        if map.is_empty() {
+          None
+        } else {
+          Some(Qualf::Forall(map))
+        }
+      },
+    }
   }
 
   /// Writes the opening part of the qualifier as a line.
