@@ -290,7 +290,9 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
         log_info!("applying {}", conf.emph( strat.name() )) ;
         profile!{ |_profiler| tick "pre-proc", "simplifying", strat.name() }
         let red_info = strat.apply(instance) ? ;
-        changed = changed || red_info.non_zero() ;
+        changed = changed || (
+          red_info.non_zero() && strat.causes_restart()
+        ) ;
         if_not_bench!{
           profile!{ |_profiler| mark "pre-proc", "simplifying", strat.name() }
           profile!{
@@ -584,6 +586,9 @@ pub trait RedStrat: HasName {
   /// Applies the reduction strategy. Returns the number of predicates reduced
   /// and the number of clauses forgotten.
   fn apply(& mut self, & mut Instance) -> Res<RedInfo> ;
+  /// If true, then a non-zero application (something happened) of this
+  /// strategy will cause to re-run all other strategies.
+  fn causes_restart(& self) -> bool ;
 }
 
 
@@ -598,6 +603,9 @@ impl RedStrat for Trivial {
 
   fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
     instance.simplify()
+  }
+  fn causes_restart(& self) -> bool {
+    true
   }
 }
 
@@ -669,6 +677,9 @@ impl HasName for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
 }
 impl RedStrat for SimpleOneRhs {
+  fn causes_restart(& self) -> bool {
+    true
+  }
   fn apply(
     & mut self, instance: & mut Instance
   ) -> Res<RedInfo> {
@@ -821,6 +832,9 @@ impl HasName for SimpleOneLhs {
   fn name(& self) -> & 'static str { "simple one lhs" }
 }
 impl RedStrat for SimpleOneLhs {
+  fn causes_restart(& self) -> bool {
+    true
+  }
   fn apply(
     & mut self, instance: & mut Instance
   ) -> Res<RedInfo> {
@@ -1005,6 +1019,9 @@ impl HasName for OneRhs {
   fn name(& self) -> & 'static str { "one rhs" }
 }
 impl RedStrat for OneRhs {
+  fn causes_restart(& self) -> bool {
+    true
+  }
   fn apply(
     & mut self, instance: & mut Instance
   ) -> Res<RedInfo> {
@@ -1172,6 +1189,9 @@ impl HasName for OneLhs {
   fn name(& self) -> & 'static str { "one lhs" }
 }
 impl RedStrat for OneLhs {
+  fn causes_restart(& self) -> bool {
+    true
+  }
   fn apply(
     & mut self, instance: & mut Instance
   ) -> Res<RedInfo> {
@@ -1430,6 +1450,9 @@ impl HasName for GraphRed {
   fn name(& self) -> & 'static str { "graph red" }
 }
 impl RedStrat for GraphRed {
+  fn causes_restart(& self) -> bool {
+    false
+  }
   fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
     let mut red: RedInfo = (0, 0, 0).into() ;
 
