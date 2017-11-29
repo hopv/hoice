@@ -96,6 +96,8 @@ pub struct IceLearner<'core, Slver> {
   _profiler: Profiler,
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
+  /// Rng to decide when to sort predicates.
+  rng: ::rand::StdRng,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
@@ -140,6 +142,10 @@ where Slver: Solver<'kid, Parser> {
         new_quals,
         _profiler,
         predicates,
+        rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 42 ])
+        },
       }
     )
   }
@@ -321,7 +327,9 @@ where Slver: Solver<'kid, Parser> {
       ))
     }
 
-    if conf.ice.sort_preds {
+    // Sort the predicates 70% of the time.
+    use ::rand::Rng ;
+    if self.rng.next_f64() <= 0.70 {
       profile!{ self tick "learning", "predicate sorting" }
       self.predicates.sort_unstable_by(
         |

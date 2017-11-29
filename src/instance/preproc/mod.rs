@@ -285,14 +285,11 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     
     let mut changed = true ;
     'run_all: while changed {
-      changed = false ;
       for strat in & mut self.post_smt_strats {
         log_info!("applying {}", conf.emph( strat.name() )) ;
         profile!{ |_profiler| tick "pre-proc", "simplifying", strat.name() }
         let red_info = strat.apply(instance) ? ;
-        changed = changed || (
-          red_info.non_zero() && strat.causes_restart()
-        ) ;
+        changed = red_info.non_zero() && strat.causes_restart() ;
         if_not_bench!{
           profile!{ |_profiler| mark "pre-proc", "simplifying", strat.name() }
           profile!{
@@ -312,11 +309,10 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
           }
         }
 
-        // let restart = red_info.non_zero() ;
         total += red_info ;
         instance.check( strat.name() ) ? ;
 
-        // if restart { continue 'run_all }
+        if changed { continue 'run_all }
 
         // read_line(& format!("to continue ({}, {})", changed, strat.name())) ;
         // let mut dummy = String::new() ;

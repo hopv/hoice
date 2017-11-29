@@ -24,6 +24,7 @@ extern crate rsmt2 ;
 extern crate num ;
 extern crate rayon ;
 extern crate either ;
+extern crate rand ;
 
 pub mod errors ;
 #[macro_use]

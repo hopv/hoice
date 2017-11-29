@@ -408,8 +408,6 @@ pub struct IceConf {
   pub decay: bool,
   /// Maximum decay above which qualifiers are dropped.
   pub max_decay: usize,
-  /// Sort the predicates before building the decision trees.
-  pub sort_preds: bool,
   /// Ignore unclassified data when computing entropy.
   pub simple_entropy: bool,
 }
@@ -466,16 +464,6 @@ impl IceConf {
 
     ).arg(
 
-      Arg::with_name("sort_preds").long("--sort_preds").help(
-        "sort the predicates before building the decision tree"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
-
-    ).arg(
-
       Arg::with_name("simple_entropy").long("--simple_entropy").help(
         "ignore unclassified data when computing entropy"
       ).validator(
@@ -497,12 +485,10 @@ impl IceConf {
     let decay = bool_of_matches(matches, "decay") ;
     let max_decay = int_of_matches(matches, "max_decay") ;
 
-    let sort_preds = bool_of_matches(matches, "sort_preds") ;
-
     let simple_entropy = bool_of_matches(matches, "simple_entropy") ;
 
     IceConf {
-      fpice_synth, gain_threads, decay, max_decay, sort_preds, simple_entropy
+      fpice_synth, gain_threads, decay, max_decay, simple_entropy
     }
   }
 }
