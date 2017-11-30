@@ -211,11 +211,11 @@ impl Data {
         ref pred, ref args, ref body
       } in & self.output.pred_defs {
         if let Some(body) = body.as_ref() {
-          solver.define_fun_u(
+          solver.define_fun(
             pred, args, & "Bool".to_string(), body
           ) ?
         } else {
-          solver.declare_fun_u(
+          solver.declare_fun(
             pred,
             & args.iter().map(
               |& (_, ref typ)| typ.clone()
@@ -227,10 +227,10 @@ impl Data {
 
       // Declare arguments.
       for & (ref ident, ref typ) in args {
-        solver.declare_const_u(ident, typ) ?
+        solver.declare_const(ident, typ) ?
       }
 
-      solver.assert_u( & format!("(not {})", body) ) ? ;
+      solver.assert( & format!("(not {})", body) ) ? ;
 
       let res = solver.check_sat_or_unknown() ? ;
 
@@ -239,7 +239,7 @@ impl Data {
         let exprs: Vec<_> = args.iter().map(
           |& (ref id, _)| id.clone()
         ).collect() ;
-        let model = solver.get_values_u(& exprs) ? ;
+        let model = solver.get_values(& exprs) ? ;
         println!("") ;
         println!("({} \"", conf.bad("error")) ;
         println!("  clause {} is falsifiable with {{", count) ;

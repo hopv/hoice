@@ -538,10 +538,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const_u(& var.idx, & var.typ) ?
+        self.solver.declare_const(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert_u( & NegConj::new(terms) ) ? ;
+    self.solver.assert( & NegConj::new(terms) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)
@@ -555,10 +555,10 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
-        self.solver.declare_const_u(& var.idx, & var.typ) ?
+        self.solver.declare_const(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert_u( & NegImplWrap::new(lhs, rhs) ) ? ;
+    self.solver.assert( & NegImplWrap::new(lhs, rhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)

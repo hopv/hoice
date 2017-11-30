@@ -851,7 +851,7 @@ where Slver: Solver<'kid, Parser> {
     // Wrap actlit and increment counter.
     let actlit = self.solver.get_actlit() ? ;
     let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert_u( & actlit ) ? ;
+    self.solver.assert( & actlit ) ? ;
     let actlit = actlit.destroy() ;
 
     let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
@@ -885,7 +885,7 @@ where Slver: Solver<'kid, Parser> {
     // Wrap actlit and increment counter.
     let actlit = self.solver.get_actlit() ? ;
     let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert_u( & actlit ) ? ;
+    self.solver.assert( & actlit ) ? ;
     let actlit = actlit.destroy() ;
 
     let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
@@ -921,7 +921,7 @@ where Slver: Solver<'kid, Parser> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
-        self.solver.define_fun_u(
+        self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "true"
         ) ?
       }
@@ -935,7 +935,7 @@ where Slver: Solver<'kid, Parser> {
           // Contradiction found.
           return Ok(true)
         }
-        self.solver.define_fun_u(
+        self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "false"
         ) ?
       }
@@ -971,7 +971,7 @@ where Slver: Solver<'kid, Parser> {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
-            self.solver.declare_const_u(
+            self.solver.declare_const(
               & SWrap(pred, sample), & Typ::Bool
             ) ?
           }
@@ -983,7 +983,7 @@ where Slver: Solver<'kid, Parser> {
     // Assert all constraints.
     for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
-        self.solver.assert_u( & CWrap(constraint) ) ?
+        self.solver.assert( & CWrap(constraint) ) ?
       }
     }
     profile!{ self mark "learning", "smt", "setup" }
@@ -1170,12 +1170,12 @@ where Slver: Solver<'kid, Parser> {
 
     solver.reset() ? ;
     // Declare coefs and constant.
-    solver.declare_const_u(& cst, & Typ::Int) ? ;
+    solver.declare_const(& cst, & Typ::Int) ? ;
     for coef in & coefs {
-      solver.declare_const_u(coef, & Typ::Int) ?
+      solver.declare_const(coef, & Typ::Int) ?
     }
-    solver.assert_u( & constraint_1 ) ? ;
-    solver.assert_u( & constraint_2 ) ? ;
+    solver.assert( & constraint_1 ) ? ;
+    solver.assert( & constraint_2 ) ? ;
 
     let model = if solver.check_sat() ? {
       solver.get_model_const() ?

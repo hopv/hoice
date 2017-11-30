@@ -372,7 +372,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             let sig: Vec<_> = pred.sig.index_iter().map(
               |(var, typ)| (var, * typ)
             ).collect() ;
-            self.solver.define_fun_u(
+            self.solver.define_fun(
               & pred.name, & sig, & Typ::Bool, & TermWrap(term)
             ) ?
           },
@@ -449,10 +449,10 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       if var.active {
-        self.solver.declare_const_u(& var.idx, & var.typ) ?
+        self.solver.declare_const(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert(
+    self.solver.assert_with(
       clause, & (true_preds, false_preds, self.instance.preds())
     ) ? ;
     profile!{ self mark "cexs", "prep" }
