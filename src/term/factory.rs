@@ -8,11 +8,54 @@ use term::{ RTerm, Term, Op } ;
 /// Type of the term factory.
 type Factory = RwLock< HashConsign<RTerm> > ;
 
-lazy_static!{
+lazy_static! {
   /// Term factory.
   static ref factory: Factory = RwLock::new(
     HashConsign::with_capacity( conf.instance.term_capa )
   ) ;
+}
+
+lazy_static! {
+  /// Cache for terms' variables.
+  static ref var_cache: RwLock< HConMap<Term, VarSet> > = RwLock::new(
+    HConMap::with_capacity( conf.instance.term_capa )
+  ) ;
+}
+
+
+/// Scans a term to extract the variables that appear in it.
+fn scan_vars(t: & Term) -> VarSet {
+  let mut to_do = vec![ t ] ;
+  let mut set = VarSet::with_capacity(11) ;
+  while let Some(term) = to_do.pop() {
+    match ** term {
+      RTerm::Var(i) => {
+        let _ = set.insert(i) ; ()
+      },
+      RTerm::Int(_) => (),
+      RTerm::Bool(_) => (),
+      RTerm::App{ ref args, .. } => for arg in args {
+        to_do.push(arg)
+      },
+    }
+  }
+  set.shrink_to_fit() ;
+  set
+}
+
+/// Variables appearing in a term (cached).
+#[inline]
+pub fn vars(t: & Term) -> VarSet {
+  if let Some(vars) = var_cache.read().expect(
+    "variable cache is corrupted..."
+  ).get(t) {
+    return vars.clone()
+  }
+  var_cache.write().expect(
+    "variable cache is corrupted..."
+  ).entry( t.clone() ).or_insert_with(
+    || scan_vars(t)
+  ).clone()
 }
 
 /// Creates a term.

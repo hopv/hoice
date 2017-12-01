@@ -506,9 +506,12 @@ where Slver: Solver<'kid, Parser> {
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
-      msg!{ self => "looking for qualifier..." } ;
+      use rand::Rng ;
+      // Use simple entropy 20% of the time.
+      let simple = self.rng.next_f64() <= 0.30 ;
+      msg!{ self => "looking for qualifier (simple: {})...", simple } ;
       let (qual, q_data, nq_data) = self.get_qualifier(
-        pred, data, used_quals
+        pred, data, used_quals, simple
       ) ? ;
       profile!{ self mark "learning", "qual" }
       // msg!{ self => "qual: {}", qual } ;
@@ -547,6 +550,8 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any, parallel version using `rayon`.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_para<
     'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
       Item = (Key, & 'a mut QualValues)
@@ -554,7 +559,8 @@ where Slver: Solver<'kid, Parser> {
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<Term>
+    used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     use rayon::prelude::* ;
 
@@ -562,7 +568,7 @@ where Slver: Solver<'kid, Parser> {
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
       |(_, values)| {
-        let gain = if conf.ice.simple_entropy {
+        let gain = if simple {
           data.simple_gain(values)
         } else {
           data.gain(pred, all_data, values)?.map(
@@ -618,17 +624,20 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any, sequential version.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_seq<
     'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
     'search_qual: for (_, values) in quals {
-      let gain = if conf.ice.simple_entropy {
+      let gain = if simple {
         data.simple_gain(values)
       } else {
         data.gain(pred, all_data, values)?.map(
@@ -651,16 +660,19 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier<
     'a, Key: Send, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
-        profiler, all_data, pred, data, quals.into_iter()
+        profiler, all_data, pred, data, quals.into_iter(), simple
       ) {
         Ok( Some( (gain, qual) ) ) => {
           let _ = used_quals.insert( qual.qual.clone() ) ;
@@ -671,7 +683,7 @@ where Slver: Solver<'kid, Parser> {
     } else {
       let quals: Vec<_> = quals.into_iter().collect() ;
       Self::get_best_qualifier_para(
-        profiler, all_data, pred, data, quals, used_quals
+        profiler, all_data, pred, data, quals, used_quals, simple
       )
     }
   }
@@ -684,13 +696,16 @@ where Slver: Solver<'kid, Parser> {
   /// Be careful when modifying this function as it as a (tail-)recursive call.
   /// The recursive call is logically guaranteed not cause further calls and
   /// terminate right away. Please be careful to preserve this.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_qualifier(
-    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>
+    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< (Term, CData, CData) > {
 
     if let Some( (_gain, values) ) = Self::get_best_qualifier(
       & self._profiler, & self.data, pred, & data, self.qualifiers.of(pred),
-      used_quals
+      used_quals, simple
     ) ? {
       let (q_data, nq_data) = data.split(values) ;
       // msg!(
@@ -803,7 +818,7 @@ where Slver: Solver<'kid, Parser> {
       self.new_quals.iter_mut().flat_map(
         |map| map.iter_mut()
       ),
-      used_quals
+      used_quals, simple
     ) ? {
       let (q_data, nq_data) = data.split(values) ;
       // msg!(

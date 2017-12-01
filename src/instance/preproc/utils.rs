@@ -90,7 +90,7 @@ fn args_of_pred_app(
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
   for arg in args {
     add_vars! {
-      if quantifiers: arg.vars() =>
+      if quantifiers: term::vars(arg) =>
         app_vars |> map, qvars, var_info, fresh
     }
     if let Some((nu_arg, _)) = arg.subst_total(map) {
@@ -198,7 +198,7 @@ F: Fn(Term) -> Term {
 
     for term in lhs_terms_vec.drain(0..) {
       log_debug! { "      {}", term.to_string_info(var_info) ? }
-      let vars = term.vars() ;
+      let vars = term::vars(term) ;
 
       if app_vars.len() == var_info.len()
       || vars.is_subset(& app_vars) {

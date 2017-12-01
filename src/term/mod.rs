@@ -400,26 +400,6 @@ impl RTerm {
     max
   }
 
-  /// All the variables appearing in a term.
-  pub fn vars(& self) -> VarSet {
-    let mut to_do = vec![ self ] ;
-    let mut set = VarSet::with_capacity(11) ;
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(i) => {
-          let _ = set.insert(i) ; ()
-        },
-        RTerm::Int(_) => (),
-        RTerm::Bool(_) => (),
-        RTerm::App{ ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-      }
-    }
-    set.shrink_to_fit() ;
-    set
-  }
-
   /// Returns the variable index if the term is a variable.
   pub fn var_idx(& self) -> Option<VarIdx> {
     match * self {
@@ -735,11 +715,11 @@ impl TTerm {
         use std::iter::Extend ;
         let mut vars = VarSet::with_capacity(17) ;
         for term in args {
-          vars.extend( term.vars() )
+          vars.extend( term::vars(term) )
         }
         vars
       },
-      TTerm::T(ref term) => term.vars(),
+      TTerm::T(ref term) => term::vars(term),
     }
   }
 

@@ -40,18 +40,18 @@ impl Clause {
     use std::iter::Extend ;
     let mut vars = VarSet::with_capacity( self.vars.len() ) ;
     for term in & self.lhs_terms {
-      vars.extend( term.vars() )
+      vars.extend( term::vars( term ) )
     }
     for (_, argss) in & self.lhs_preds {
       for args in argss {
         for arg in args {
-          vars.extend( arg.vars() )
+          vars.extend( term::vars(arg) )
         }
       }
     }
     if let Some((_, ref args)) = self.rhs {
       for arg in args {
-        vars.extend( arg.vars() )
+        vars.extend( term::vars(arg) )
       }
     }
     for var in vars {
@@ -2823,7 +2823,7 @@ impl ClauseSimplifier {
     let mut to_rm = vec![] ;
     for (rep, term) in & self.rep_to_term {
       log_debug!{ "    {} -> {}", rep, term }
-      if term.vars().contains(rep) {
+      if term::vars(term).contains(rep) {
         log_debug!{ "      -> recursive, putting equality back." }
         to_rm.push(* rep)
       }
