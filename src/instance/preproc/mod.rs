@@ -197,23 +197,23 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
       Box::new( Trivial {} ),
       // Box::new( ForcedImplies::new() ),
     ] ;
-    let smt_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
+    let mut smt_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
       Box::new( SmtTrivial::new() ),
     ] ;
     let mut post_smt_strats: Vec<
       Box<RedStrat>
     > = vec![] ;
     if conf.preproc.one_rhs {
-      post_smt_strats.push( Box::new( SimpleOneRhs::new() ) )
+      smt_strats.push( Box::new( SimpleOneRhs::new() ) )
     }
     if conf.preproc.one_lhs {
-      post_smt_strats.push( Box::new( SimpleOneLhs::new() ) )
+      smt_strats.push( Box::new( SimpleOneLhs::new() ) )
     }
     if conf.preproc.one_rhs && conf.preproc.one_rhs_full {
-      post_smt_strats.push( Box::new( OneRhs::new() ) )
+      smt_strats.push( Box::new( OneRhs::new() ) )
     }
     if conf.preproc.one_lhs && conf.preproc.one_lhs_full {
-      post_smt_strats.push( Box::new( OneLhs::new() ) )
+      smt_strats.push( Box::new( OneLhs::new() ) )
     }
     if conf.preproc.cfg_red {
       post_smt_strats.push( Box::new( GraphRed::new() ) )
@@ -618,6 +618,9 @@ pub trait SolverRedStrat< 'kid, Slver: Solver<'kid, ()> >: HasName {
   fn apply(
     & mut self, & mut Instance, & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> ;
+  /// If true, then a non-zero application (something happened) of this
+  /// strategy will cause to re-run all other strategies.
+  fn causes_restart(& self) -> bool ;
 }
 
 
@@ -672,12 +675,13 @@ impl SimpleOneRhs {
 impl HasName for SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple one rhs" }
 }
-impl RedStrat for SimpleOneRhs {
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SimpleOneRhs
+where Slver: Solver<'kid, ()> {
   fn causes_restart(& self) -> bool {
     true
   }
   fn apply(
-    & mut self, instance: & mut Instance
+    & mut self, instance: & mut Instance, _: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
@@ -759,7 +763,8 @@ impl RedStrat for SimpleOneRhs {
         }
 
         if instance.is_known(pred) {
-          red_info.preds += 1
+          red_info.preds += 1 ;
+          break
         } else {
           if_verb!{
             log_debug!{ "  did not remove, still appears in lhs of" }
@@ -771,6 +776,7 @@ impl RedStrat for SimpleOneRhs {
               log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
             }
           }
+          bail!("failed to force predicate")
         }
       }
     }
@@ -827,12 +833,13 @@ impl SimpleOneLhs {
 impl HasName for SimpleOneLhs {
   fn name(& self) -> & 'static str { "simple one lhs" }
 }
-impl RedStrat for SimpleOneLhs {
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SimpleOneLhs
+where Slver: Solver<'kid, ()> {
   fn causes_restart(& self) -> bool {
     true
   }
   fn apply(
-    & mut self, instance: & mut Instance
+    & mut self, instance: & mut Instance, _: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
@@ -959,7 +966,8 @@ impl RedStrat for SimpleOneLhs {
       }
 
       if instance.is_known(pred) {
-        red_info.preds += 1
+        red_info.preds += 1 ;
+        break
       } else {
         if_verb!{
           log_debug!{ "  did not remove, still appears in lhs of" }
@@ -971,6 +979,7 @@ impl RedStrat for SimpleOneLhs {
             log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
           }
         }
+        bail!("failed to force predicate")
       }
     }
 
@@ -1014,12 +1023,13 @@ impl OneRhs {
 impl HasName for OneRhs {
   fn name(& self) -> & 'static str { "one rhs" }
 }
-impl RedStrat for OneRhs {
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for OneRhs
+where Slver: Solver<'kid, ()> {
   fn causes_restart(& self) -> bool {
     true
   }
   fn apply(
-    & mut self, instance: & mut Instance
+    & mut self, instance: & mut Instance, _: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
     debug_assert!( self.new_vars.is_empty() ) ;
     let mut red_info: RedInfo = (0,0,0).into() ;
@@ -1114,7 +1124,8 @@ impl RedStrat for OneRhs {
         }
 
         if instance.is_known(pred) {
-          red_info.preds += 1
+          red_info.preds += 1 ;
+          break
         } else {
           if_verb!{
             log_debug!{ "  did not remove, still appears in lhs of" }
@@ -1126,10 +1137,8 @@ impl RedStrat for OneRhs {
               log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
             }
           }
+          bail!("failed to force predicate")
         }
-
-        // We did something, stop there in case more simple stuff can be done.
-        break 'all_preds
 
       }
     }
@@ -1184,12 +1193,13 @@ impl OneLhs {
 impl HasName for OneLhs {
   fn name(& self) -> & 'static str { "one lhs" }
 }
-impl RedStrat for OneLhs {
+impl<'kid, Slver> SolverRedStrat<'kid, Slver> for OneLhs
+where Slver: Solver<'kid, ()> {
   fn causes_restart(& self) -> bool {
     true
   }
   fn apply(
-    & mut self, instance: & mut Instance
+    & mut self, instance: & mut Instance, _: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
@@ -1320,7 +1330,8 @@ impl RedStrat for OneLhs {
       }
 
       if instance.is_known(pred) {
-        red_info.preds += 1
+        red_info.preds += 1 ;
+        break
       } else {
         if_verb!{
           log_debug!{ "  did not remove, still appears in lhs of" }
@@ -1332,6 +1343,7 @@ impl RedStrat for OneLhs {
             log_debug!{ "  {}", instance.clauses()[* clause].to_string_info( instance.preds() ) ? }
           }
         }
+        bail!("failed to force predicate")
       }
     }
 
@@ -1367,6 +1379,7 @@ impl HasName for SmtTrivial {
 }
 impl<'kid, Slver> SolverRedStrat<'kid, Slver> for SmtTrivial
 where Slver: Solver<'kid, ()> {
+  fn causes_restart(& self) -> bool { true }
   fn apply(
     & mut self, instance: & mut Instance, solver: & mut SolverWrapper<Slver>
   ) -> Res<RedInfo> {

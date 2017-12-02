@@ -507,7 +507,7 @@ where Slver: Solver<'kid, Parser> {
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
       use rand::Rng ;
-      // Use simple entropy 20% of the time.
+      // Use simple entropy 30% of the time.
       let simple = self.rng.next_f64() <= 0.30 ;
       msg!{ self => "looking for qualifier (simple: {})...", simple } ;
       let (qual, q_data, nq_data) = self.get_qualifier(
