@@ -181,6 +181,8 @@ pub struct PreprocConf {
   pub one_lhs_full: bool,
   /// Allow cfg reduction.
   pub cfg_red: bool,
+  /// Allow argument reduction.
+  pub arg_red: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -295,6 +297,17 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("arg_red").long("--arg_red").help(
+        "(de)activates argument reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("one_rhs").long("--one_rhs").help(
         "(de)activates one rhs reduction"
       ).validator(
@@ -377,6 +390,7 @@ impl PreprocConf {
     let active = bool_of_matches(matches, "pre_proc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
     let reduction = bool_of_matches(matches, "reduction") ;
+    let arg_red = bool_of_matches(matches, "arg_red") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
@@ -387,7 +401,8 @@ impl PreprocConf {
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
-      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red
+      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
+      arg_red
     }
   }
 }

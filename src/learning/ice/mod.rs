@@ -27,25 +27,25 @@ impl Launcher {
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
-      || "while spawning the teacher's synthesis solver"
-    ) ? ;
-    let synth_solver = solver(& mut synth_kid, Parser).chain_err(
-      || "while constructing the teacher's synthesis solver"
-    ) ? ;
+    // let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
+    //   || "while spawning the teacher's synthesis solver"
+    // ) ? ;
+    // let synth_solver = solver(& mut synth_kid, Parser).chain_err(
+    //   || "while constructing the teacher's synthesis solver"
+    // ) ? ;
     if let Some(log) = conf.solver.log_file("ice_learner") ? {
-      let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
-        "[unreachable] log mod is active"
-      ) ;
+      // let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
+      //   "[unreachable] log mod is active"
+      // ) ;
       IceLearner::new(
         & core, instance, data,
-        conflict_solver.tee(log), synth_solver.tee(synth_log)
+        conflict_solver.tee(log), // synth_solver.tee(synth_log)
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
-        & core, instance, data, conflict_solver, synth_solver
+        & core, instance, data, conflict_solver, // synth_solver
       ).chain_err(
         || "while creating ice learner"
       )?.run()
@@ -75,8 +75,8 @@ pub struct IceLearner<'core, Slver> {
   data: Data,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
-  /// Solver used to synthesize an hyperplane separating two points.
-  synth_solver: Slver,
+  // /// Solver used to synthesize an hyperplane separating two points.
+  // synth_solver: Slver,
   /// Learner core.
   core: & 'core LearnerCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -104,7 +104,7 @@ where Slver: Solver<'kid, Parser> {
   /// Ice learner constructor.
   pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
-    solver: Slver, synth_solver: Slver
+    solver: Slver, // synth_solver: Slver
   ) -> Res<Self> {
     let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
@@ -134,7 +134,8 @@ where Slver: Solver<'kid, Parser> {
     let predicates = Vec::with_capacity( instance.preds().len() ) ;
     Ok(
       IceLearner {
-        instance, qualifiers, data, solver, synth_solver, core,
+        instance, qualifiers, data, solver, // synth_solver,
+        core,
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
@@ -554,7 +555,7 @@ where Slver: Solver<'kid, Parser> {
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_para<
     'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
-      Item = (Key, & 'a mut QualValues)
+      Item = (Key, & 'a mut (QualValues, PrdSet))
     >
   >(
     _profiler: & Profiler, all_data: & Data,
@@ -567,7 +568,8 @@ where Slver: Solver<'kid, Parser> {
     profile!{ |_profiler| tick "learning", "qual", "// gain" }
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
-      |(_, values)| {
+      |(_, & mut (ref mut values, ref preds))| {
+        if ! preds.contains(& pred) { return Ok(None) }
         let gain = if simple {
           data.simple_gain(values)
         } else {
@@ -627,7 +629,7 @@ where Slver: Solver<'kid, Parser> {
   ///
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_seq<
-    'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
+    'a, Key, I: IntoIterator<Item = (Key, & 'a mut (QualValues, PrdSet))>
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -636,7 +638,8 @@ where Slver: Solver<'kid, Parser> {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
-    'search_qual: for (_, values) in quals {
+    'search_qual: for (_, & mut (ref mut values, ref preds)) in quals {
+      if ! preds.contains(& pred) { continue 'search_qual }
       let gain = if simple {
         data.simple_gain(values)
       } else {
@@ -663,7 +666,8 @@ where Slver: Solver<'kid, Parser> {
   ///
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier<
-    'a, Key: Send, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
+    'a, Key: Send,
+    I: IntoIterator<Item = (Key, & 'a mut (QualValues, PrdSet))>
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -672,7 +676,7 @@ where Slver: Solver<'kid, Parser> {
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
-        profiler, all_data, pred, data, quals.into_iter(), simple
+        profiler, all_data, pred, data, quals, simple
       ) {
         Ok( Some( (gain, qual) ) ) => {
           let _ = used_quals.insert( qual.qual.clone() ) ;
@@ -761,55 +765,55 @@ where Slver: Solver<'kid, Parser> {
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    if conf.ice.fpice_synth {
+    // if conf.ice.fpice_synth {
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
 
       for sample in & data.pos {
-        self.synthesize(sample)
+        self.synthesize(pred, sample)
       }
       for sample in & data.neg {
-        self.synthesize(sample)
+        self.synthesize(pred, sample)
       }
       for sample in & data.unc {
-        self.synthesize(sample)
+        self.synthesize(pred, sample)
       }
 
       profile!{ self "qualifier synthesized" => add self.new_quals.len() }
-    } else {
-      let qual = match (
-        data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
-      ) {
-        (false, false, _) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
-        ) ?,
-        (false, _, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
-        ) ?,
-        (true, false, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
-        ) ?,
-        (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
-          & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
-        ) ?,
-        _ => bail!(
-          "[unreachable] illegal status reached on predicate {}:\n\
-          cannot synthesize candidate for data\n\
-          pos: {:?}\n\
-          neg: {:?}\n\
-          unc: {:?}\n",
-          self.instance[pred], data.pos, data.neg, data.unc
-        ),
-      } ;
-      profile!{ self "qualifier synthesized" => add 1 }
-      let arity: Arity = if let Some(max_var) = qual.highest_var() {
-        (1 + * max_var).into()
-      } else {
-        bail!("[bug] trying to add constant qualifier")
-      } ;
-      self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
-    } ;
+    // } else {
+    //   let qual = match (
+    //     data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
+    //   ) {
+    //     (false, false, _) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
+    //     ) ?,
+    //     (false, _, false) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
+    //     ) ?,
+    //     (true, false, false) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
+    //     ) ?,
+    //     (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
+    //     ) ?,
+    //     _ => bail!(
+    //       "[unreachable] illegal status reached on predicate {}:\n\
+    //       cannot synthesize candidate for data\n\
+    //       pos: {:?}\n\
+    //       neg: {:?}\n\
+    //       unc: {:?}\n",
+    //       self.instance[pred], data.pos, data.neg, data.unc
+    //     ),
+    //   } ;
+    //   profile!{ self "qualifier synthesized" => add 1 }
+    //   let arity: Arity = if let Some(max_var) = qual.highest_var() {
+    //     (1 + * max_var).into()
+    //   } else {
+    //     bail!("[bug] trying to add constant qualifier")
+    //   } ;
+    //   self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
+    // } ;
     profile!{ self mark "learning", "qual", "synthesis" }
 
     
@@ -1009,7 +1013,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    & mut self, sample: & HSample
+    & mut self, pred: PrdIdx, sample: & HSample
   ) -> () {
     let mut previous_int: Vec<(Term, & Int)> = Vec::with_capacity(
       sample.len()
@@ -1019,6 +1023,10 @@ where Slver: Solver<'kid, Parser> {
     ) ;
 
     for (var_idx, val) in sample.index_iter() {
+      if ! self.instance[pred].var_active[var_idx] {
+        continue
+      }
+
       let arity: Arity = (1 + * var_idx).into() ;
       let var = term::var(var_idx) ;
       
@@ -1030,7 +1038,9 @@ where Slver: Solver<'kid, Parser> {
             term::not( var.clone() )
           } ;
           if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term.clone() )
+            if let Some((preds, _)) = self.instance.relevant_preds_of(& term) {
+              self.new_quals.insert( arity, term.clone(), preds )
+            }
           }
 
           for & (ref pre_var, pre_val) in & previous_bool {
@@ -1041,7 +1051,11 @@ where Slver: Solver<'kid, Parser> {
             } ;
             let and = term::and( vec![ term.clone(), other_term.clone() ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, and )
+              if let Some(
+                (preds, _)
+              ) = self.instance.relevant_preds_of(& term) {
+                self.new_quals.insert( arity, and, preds )
+              }
             }
 
           }
@@ -1055,11 +1069,19 @@ where Slver: Solver<'kid, Parser> {
             Op::Ge, vec![ var.clone(), val_term.clone() ]
           ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term ) ;
+            if let Some(
+              (preds, _)
+            ) = self.instance.relevant_preds_of(& term) {
+              self.new_quals.insert( arity, term, preds ) ;
+            }
           }
           let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term ) ;
+            if let Some(
+              (preds, _)
+            ) = self.instance.relevant_preds_of(& term) {
+              self.new_quals.insert( arity, term, preds ) ;
+            }
           }
 
 
@@ -1067,7 +1089,11 @@ where Slver: Solver<'kid, Parser> {
             if val == pre_val {
               let eq = term::eq( pre_var.clone(), var.clone() ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
-                self.new_quals.insert( arity, eq )
+                if let Some(
+                  (preds, _)
+                ) = self.instance.relevant_preds_of(& eq) {
+                  self.new_quals.insert( arity, eq, preds )
+                }
               }
             }
             if - val == * pre_val {
@@ -1075,7 +1101,11 @@ where Slver: Solver<'kid, Parser> {
                 pre_var.clone(), term::sub( vec![var.clone()] )
               ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
-                self.new_quals.insert( arity, eq )
+                if let Some(
+                  (preds, _)
+                ) = self.instance.relevant_preds_of(& eq) {
+                  self.new_quals.insert( arity, eq, preds )
+                }
               }
             }
             let add = term::app(
@@ -1086,11 +1116,19 @@ where Slver: Solver<'kid, Parser> {
               Op::Ge, vec![ add.clone(), add_val.clone() ]
             ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
+              if let Some(
+                (preds, _)
+              ) = self.instance.relevant_preds_of(& term) {
+                self.new_quals.insert( arity, term, preds )
+              }
             }
             let term = term::app( Op::Le, vec![ add, add_val ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
+              if let Some(
+                (preds, _)
+              ) = self.instance.relevant_preds_of(& term) {
+                self.new_quals.insert( arity, term, preds )
+              }
             }
             let sub = term::app(
               Op::Sub, vec![ pre_var.clone(), var.clone() ]
@@ -1100,11 +1138,19 @@ where Slver: Solver<'kid, Parser> {
               Op::Ge, vec![ sub.clone(), sub_val.clone() ]
             ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
+              if let Some(
+                (preds, _)
+              ) = self.instance.relevant_preds_of(& term) {
+                self.new_quals.insert( arity, term, preds )
+              }
             }
             let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
+              if let Some(
+                (preds, _)
+              ) = self.instance.relevant_preds_of(& term) {
+                self.new_quals.insert( arity, term, preds )
+              }
             }
           }
 

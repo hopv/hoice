@@ -88,19 +88,19 @@ pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 /// - investigate whether it would be possible to remove the qualifier from
 ///   `QualValues` entirely
 pub type Quals = ArityMap<
-  HConMap<Term, ::learning::ice::mining::QualValues>
+  HConMap<Term, (::learning::ice::mining::QualValues, PrdSet)>
 > ;
 /// Helpers for `Quals`.
 pub trait QualsExt {
   /// Treats the `HConMap` as sets for inserting qualifiers.
   ///
   /// Returns true if the term was not there (think `is_new`).
-  fn insert(& mut self, arity: Arity, term: Term) ;
+  fn insert(& mut self, arity: Arity, term: Term, preds: PrdSet) ;
 }
 impl QualsExt for Quals {
-  fn insert(& mut self, arity: Arity, term: Term) {
+  fn insert(& mut self, arity: Arity, term: Term, preds: PrdSet) {
     self[arity].entry( term.clone() ).or_insert_with(
-      || ::learning::ice::mining::QualValues::new(term)
+      || ( ::learning::ice::mining::QualValues::new(term), preds )
     ) ;
   }
 }

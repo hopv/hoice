@@ -2,6 +2,7 @@
 
 The strategies are attached `struct`s so that they can be put in a
 vector using single dispatch. That way, they can be combined however we want.
+
 "#]
 
 use common::* ;
@@ -10,6 +11,7 @@ use instance::* ;
 pub mod utils ;
 use self::utils::{ ExtractRes } ;
 pub mod graph ;
+pub mod args ;
 
 
 /// Runs pre-processing
@@ -45,10 +47,14 @@ pub fn work(
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
+  
+  if conf.preproc.arg_red {
+    instance.arg_reduce() ?
+  }
 
-  // log_info!{
-  //   "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
-  // }
+  log_info!{
+    "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+  }
   match res {
     Err(ref e) if e.is_unsat() => {
       instance.set_unsat()
@@ -180,6 +186,17 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
 
 
 /// Reductor, stores the reduction strategies and a solver.
+///
+/// Be careful that the reduction techniques `SimpleOneRhs`, `OneRhs`,
+/// `SimpleOneLhs`, and `OneLhs` are actually *unsafe* by themselves in
+/// general. These techniques assume that `SmtTrivial` ran before them. In
+/// particular, it is necessary to run `SmtTrivial` between each predicate
+/// reduction. The reason is that the LHS of a clause might be unsat, which is
+/// detected by `SmtTrivial` but not the techniques mentioned above. Applying
+/// them on a clause with an unsat LHS will yield a spurious reduction. This is
+/// why all these techniques return right away as soon as they have performed
+/// one reduction, causing a restart of the `smt_strats` the first technique of
+/// which is `SmtTrivial`.
 pub struct Reductor<'kid, S: Solver<'kid, ()>> {
   /// Strategies.
   strats: Vec< Box<RedStrat> >,

@@ -163,7 +163,7 @@ impl Qualifiers {
   /// Constructor.
   #[allow(unused_mut)]
   pub fn new(instance: & Instance) -> Res<Self> {
-    let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
+    let mut arity_map = Quals::with_capacity( * instance.max_pred_arity ) ;
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
     ) ;
@@ -174,9 +174,11 @@ impl Qualifiers {
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
       let term = term::ge( term::var(var_idx), term::int(0) ) ;
-      terms.insert(
-        term.clone(), QualValues::new(term)
-      ) ;
+      if let Some((preds, _)) = instance.relevant_preds_of(& term) {
+        terms.insert(
+          term.clone(), ( QualValues::new(term), preds )
+        ) ;
+      }
       arity_map.push(terms)
     }
 
@@ -209,9 +211,7 @@ impl Qualifiers {
   }
 
   /// Accessor to the qualifiers.
-  pub fn qualifiers(& self) -> & ArityMap< HConMap<Term, QualValues> > {
-    & self.arity_map
-  }
+  pub fn qualifiers(& self) -> & Quals { & self.arity_map }
 
   /// Updates qualifiers' decay given the qualifiers **chosen** at this
   /// iteration, and removes qualifiers with a decay strictly above some value.
@@ -303,11 +303,16 @@ impl Qualifiers {
 
   /// Adds some qualifiers as qualifier values.
   pub fn add_quals<Terms: IntoIterator<Item = Term>>(
-    & mut self, arity: Arity, quals: Terms
+    & mut self, instance: & Instance, quals: Terms
   ) -> Res<()> {
     for qual in quals.into_iter() {
-      if ! self.arity_map[arity].contains_key(& qual) {
-        self.arity_map[arity].insert(qual.clone(), QualValues::new(qual)) ;
+      if let Some((preds, max_var)) = instance.relevant_preds_of(& qual) {
+        let arity: Arity = (* max_var + 1).into() ;
+        if ! self.arity_map[arity].contains_key(& qual) {
+          self.arity_map[arity].insert(
+            qual.clone(), (QualValues::new(qual), preds)
+          ) ;
+        }
       }
     }
     Ok(())
@@ -397,12 +402,15 @@ impl Qualifiers {
 #[doc = r#"Iterator over the qualifiers of a predicate."#]
 pub struct QualIter<'a> {
   /// Reference to the arity map.
-  arity_map: ::std::slice::IterMut< 'a, HConMap<Term, QualValues> >,
+  arity_map: ::std::slice::IterMut<
+    'a, HConMap<Term, (QualValues, PrdSet)>
+  >,
   /// Current values.
   values: Option<
-    ::std::collections::hash_map::IterMut<'a, Term, QualValues>
+    ::std::collections::hash_map::IterMut<
+      'a, Term, (QualValues, PrdSet)
+    >
   >,
-  // & 'a mut ArityMap< Vec<QualValues> >,
   /// Blacklisted terms.
   blacklist: & 'a HConSet<Term>,
   /// Arity of the predicate the qualifiers are for.
@@ -415,7 +423,7 @@ pub struct QualIter<'a> {
 impl<'a> QualIter<'a> {
   /// Constructor.
   pub fn new(
-    map: & 'a mut ArityMap< HConMap<Term, QualValues> >,
+    map: & 'a mut Quals,
     blacklist: & 'a HConSet<Term>, pred_arity: Arity
   ) -> Self {
     let mut arity_map = map.iter_mut() ;
@@ -430,14 +438,14 @@ impl<'a> QualIter<'a> {
 //   type Item = & 'a mut QualValues ;
 // }
 impl<'a> ::std::iter::Iterator for QualIter<'a> {
-  type Item = ((), & 'a mut QualValues) ;
-  fn next(& mut self) -> Option<((), & 'a mut QualValues)> {
+  type Item = ((), & 'a mut (QualValues,  PrdSet)) ;
+  fn next(& mut self) -> Option<((), & 'a mut (QualValues, PrdSet))> {
     while self.curr_arity <= self.pred_arity {
       if let Some( ref mut iter ) = self.values {
         // Consume the elements until a non-blacklisted one is found.
-        while let Some( (term, values) ) = iter.next() {
+        while let Some( (term, val) ) = iter.next() {
           if ! self.blacklist.contains(term) {
-            return Some(((), values))
+            return Some(((), val))
           }
         }
       } else {

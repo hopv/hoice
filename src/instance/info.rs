@@ -48,7 +48,11 @@ pub struct PrdInfo {
   /// Predicate's index.
   pub idx: PrdIdx,
   /// Signature.
-  pub sig: VarMap<Typ>
+  pub sig: VarMap<Typ>,
+  /// Maps arguments to an `active` flag. If it's true, it means the argument
+  /// is relevant for the predicate in question. Used to restrict the
+  /// qualifiers considered for each predicate.
+  pub var_active: VarMap<bool>,
 }
 impl PrdInfo {
   /// Name of the variable as bytes.

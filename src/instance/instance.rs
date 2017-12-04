@@ -988,7 +988,13 @@ impl Instance {
       self.max_pred_arity, (sig.len() + 1).into()
     ) ;
     let idx = self.preds.next_index() ;
-    self.preds.push( PrdInfo { name, idx, sig } ) ;
+    let mut var_active = VarMap::with_capacity( sig.len() ) ;
+    for _ in & sig {
+      var_active.push(true)
+    }
+    self.preds.push( PrdInfo {
+      name, idx, sig, var_active
+    } ) ;
     self.pred_terms.push(None) ;
     self.pred_qterms.push(None) ;
     self.pred_to_clauses.push(
@@ -1659,6 +1665,43 @@ impl Instance {
     }
   }
 
+  /// Given a term `t`, returns the predicates for which `t`'s variables are
+  /// all active. Also returns the maximal variable of the term.
+  ///
+  /// Returns nothing if the term has no variables **or** if there is no
+  /// predicate for which `t`'s variables are all active.
+  ///
+  /// Mostly used when creating qualifiers.
+  pub fn relevant_preds_of(& self, term: & Term) -> Option<(PrdSet, VarIdx)> {
+    let vars = term::vars(& term) ;
+    let mut max_var = None ;
+    for var in & vars {
+      max_var = Some(
+        ::std::cmp::max( max_var.unwrap_or(* var), * var )
+      )
+    }
+    let max_var = if let Some(max_var) = max_var {
+      max_var
+    } else {
+      return None
+    } ;
+
+    let mut preds = PrdSet::new() ;
+    'all_preds: for pred in self.pred_indices() {
+      for var in & vars {
+        if * var >= self[pred].sig.len()
+        || ! self[pred].var_active[* var] {
+          continue 'all_preds
+        }
+      }
+      let is_new = preds.insert( pred ) ;
+      debug_assert!( is_new )
+    }
+    if preds.is_empty() { None } else {
+      Some( (preds, max_var) )
+    }
+  }
+
   /// Extracts some qualifiers from a clause.
   ///
   /// # TO DO
@@ -1746,26 +1789,21 @@ impl Instance {
           }
 
           if ! app_quals.is_empty() {
-            let mut highest_var: VarIdx = 0.into() ;
             let build_conj = app_quals.len() > 1 ;
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
-              if let Some(max_var) = term.highest_var() {
+              if let Some((preds, max_var)) = self.relevant_preds_of(& term) {
                 if build_conj { conj.push(term.clone()) }
                 let arity: Arity = (1 + * max_var).into() ;
                 // println!("- {}", term) ;
-                quals.insert(arity, term) ;
-                if max_var > highest_var { highest_var = max_var }
-              } else {
-                // Unreachable because all the elements of `app_quals` are
-                // equalities between a variable and something else.
-                unreachable!()
+                quals.insert(arity, term, preds) ;
               }
             }
             if build_conj {
               let term = term::and(conj) ;
-              // println!("- {}", term) ;
-              quals.insert( (1 + * highest_var).into(), term )
+              if let Some((preds, max_var)) = self.relevant_preds_of(& term) {
+                quals.insert( (1 + * max_var).into(), term, preds )
+              }
             }
           }
 
@@ -1776,10 +1814,7 @@ impl Instance {
 
     // Build the conjunction of atoms.
     let mut conjs = vec![
-      (
-        HConSet::<Term>::with_capacity( clause.lhs_terms.len() + 1 ),
-        0.into()
-      ) ;
+      HConSet::<Term>::with_capacity( clause.lhs_terms.len() + 1 ) ;
       maps.len()
     ] ;
 
@@ -1793,16 +1828,15 @@ impl Instance {
       let mut cnt = 0 ;
       for map in & maps {
         if let Some( (term, true) ) = term.subst_total(map) {
-          if let Some(max_var) = term.highest_var() {
+          if let Some((preds, max_var)) = self.relevant_preds_of(& term) {
             let arity: Arity = (1 + * max_var).into() ;
-            conjs[cnt].0.insert( term.clone() ) ;
-            if arity > conjs[cnt].1 { conjs[cnt].1 = arity }
+            conjs[cnt].insert( term.clone() ) ;
             cnt += 1 ;
             let term = if let Some(term) = term.rm_neg() {
               term
             } else { term } ;
             // println!("- {}", term) ;
-            quals.insert(arity, term)
+            quals.insert(arity, term, preds)
           }
         }
         // Is it a disjunction? If yes, add disjuncts as qualifiers.
@@ -1814,14 +1848,16 @@ impl Instance {
             Some( (Op::And, terms) ) => for term in terms {
               subterms.push(term) ;
               if let Some( (qual, true) ) = term.subst_total(map) {
-                if let Some(max_var) = qual.highest_var() {
+                if let Some(
+                  (preds, max_var)
+                ) = self.relevant_preds_of(& qual) {
                   let arity: Arity = (1 + * max_var).into() ;
                   let qual = if let Some(qual) = qual.rm_neg() {
                     qual
                   } else {
                     qual
                   } ;
-                  quals.insert(arity, qual)
+                  quals.insert(arity, qual, preds)
                 }
               }
             },
@@ -1832,11 +1868,16 @@ impl Instance {
 
     }
 
-    for (conj, max_arity) in conjs {
+    for conj in conjs {
       if conj.len() > 1 {
         let term = term::and( conj.into_iter().collect() ) ;
         // println!("- {}", term) ;
-        quals.insert( max_arity, term )
+        if let Some(
+          (preds, max_var)
+        ) = self.relevant_preds_of(& term) {
+          let arity: Arity = (1 + * max_var).into() ;
+          quals.insert( arity, term, preds )
+        }
       }
     }
 
@@ -2231,6 +2272,18 @@ impl Instance {
   }
 
 
+  /// Removes irrelevant predicate arguments.
+  pub fn arg_reduce(& mut self) -> Res<()> {
+    let reductions = ::instance::preproc::args::reductions(self) ? ;
+    for (pred, vars) in reductions {
+      for var in vars {
+        self.preds[pred].var_active[var] = false
+      }
+    }
+    Ok(())
+  }
+
+
   /// Applies various clause simplifications.
   pub fn simplify(& mut self) -> Res<RedInfo> {
     let mut info: RedInfo = (0, 0, 0).into() ;
@@ -2400,7 +2453,14 @@ impl<'a> PebcakFmt<'a> for Instance {
         for typ in & pred.sig {
           write!(w, " {}", typ) ?
         }
-        write!(w, " ) Bool\n)\n") ?
+        write!(w, " ) Bool\n)\n") ? ;
+        write!(w, "; inactive:") ? ;
+        for (var, active) in self[pred_idx].var_active.index_iter() {
+          if ! active {
+            write!(w, " {}", var.default_str()) ?
+          }
+        }
+        writeln!(w, "") ?
       }
     }
 
