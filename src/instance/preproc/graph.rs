@@ -338,7 +338,8 @@ impl Graph {
     let mut to_check: Vec<_> = self.pos.index_iter().map(
       |(prd, count)| (prd, * count)
     ).collect() ;
-    let mut total = 0 ;
+    let clause_count = instance.clauses().len() ;
+    let mut total = clause_count ;
 
     while let Some((prd, count)) = to_check.pop() {
       debug_assert!( known.difference( keep ).next().is_none() ) ;
@@ -362,13 +363,14 @@ impl Graph {
 
     }
 
-    let clause_count = instance.clauses().len() ;
     if clause_count <= 10 {
-      total <= clause_count * 5
+      total > clause_count * 10
     } else if clause_count <= 100 {
-      total <= clause_count * 2
+      total > clause_count * 3
+    } else if clause_count <= 500 {
+      total > clause_count * 2
     } else {
-      total <= clause_count + clause_count / 2
+      total > clause_count + clause_count / 2
     }
   }
 
