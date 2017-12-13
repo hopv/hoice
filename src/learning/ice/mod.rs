@@ -328,8 +328,12 @@ where Slver: Solver<'kid, Parser> {
       ))
     }
 
+    use rand::Rng ;
+    // Use simple entropy 30% of the time.
+    let simple = self.rng.next_f64() <= 0.30 ;
+    msg!{ self => "looking for qualifier (simple: {})...", simple } ;
+
     // Sort the predicates 70% of the time.
-    use ::rand::Rng ;
     if self.rng.next_f64() <= 0.70 {
       profile!{ self tick "learning", "predicate sorting" }
       self.predicates.sort_unstable_by(
@@ -365,7 +369,9 @@ where Slver: Solver<'kid, Parser> {
                 self.instance[pred], _unc, _cla
       ) ;
       let data = self.data.data_of(pred) ;
-      if let Some(term) = self.pred_learn(pred, data, & mut used_quals) ? {
+      if let Some(term) = self.pred_learn(
+        pred, data, & mut used_quals, simple
+      ) ? {
         self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
@@ -418,7 +424,8 @@ where Slver: Solver<'kid, Parser> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>
+    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -507,10 +514,6 @@ where Slver: Solver<'kid, Parser> {
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
-      use rand::Rng ;
-      // Use simple entropy 30% of the time.
-      let simple = self.rng.next_f64() <= 0.30 ;
-      msg!{ self => "looking for qualifier (simple: {})...", simple } ;
       let (qual, q_data, nq_data) = self.get_qualifier(
         pred, data, used_quals, simple
       ) ? ;

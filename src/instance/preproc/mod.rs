@@ -1488,6 +1488,9 @@ impl RedStrat for GraphRed {
     graph.to_dot(
       & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
     ) ? ;
+
+    // if graph.inlining_blows_up(& to_keep, instance) { return Ok(red) }
+
     red.preds += to_rm.len() ;
 
     let pred_defs = graph.inline(instance, & to_keep) ? ;

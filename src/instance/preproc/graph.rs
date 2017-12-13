@@ -329,6 +329,50 @@ impl Graph {
   }
 
 
+  /// Estimates wether inlining the predicates in `keep` would cause an
+  /// exponential blow-up.
+  pub fn inlining_blows_up(
+    & self, keep: & PrdSet, instance: & Instance
+  ) -> bool {
+    let mut known = PrdSet::with_capacity( keep.len() ) ;
+    let mut to_check: Vec<_> = self.pos.index_iter().map(
+      |(prd, count)| (prd, * count)
+    ).collect() ;
+    let mut total = 0 ;
+
+    while let Some((prd, count)) = to_check.pop() {
+      debug_assert!( known.difference( keep ).next().is_none() ) ;
+
+      let (is_keep, is_known) = (
+        keep.contains(& prd), known.contains(& prd)
+      ) ;
+      if is_keep {
+        total += count        
+      }
+      if is_known { continue }
+      if is_keep { known.insert(prd) ; }
+
+      for (pred, cnt) in self.forward[prd].index_iter() {
+        if prd != pred && * cnt > 0 {
+          to_check.push( (pred, cnt * count) )
+        }
+      }
+
+      total += count * self.neg[prd]
+
+    }
+
+    let clause_count = instance.clauses().len() ;
+    if clause_count <= 10 {
+      total <= clause_count * 5
+    } else if clause_count <= 100 {
+      total <= clause_count * 2
+    } else {
+      total <= clause_count + clause_count / 2
+    }
+  }
+
+
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
