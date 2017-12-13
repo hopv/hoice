@@ -408,113 +408,113 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
 
 
 
-/// A cluster linking several clauses.
-///
-/// Some of the predicates may already been forced and should only be
-/// `declare-fun`-ed when checking candidates. The rest of the predicates will
-/// be used to create learning data.
-pub struct Cluster {
-  /// Predicates used to create learning data.
-  pub preds: PrdSet,
-  /// Predicates which are already known but should be declared.
-  pub pred_decs: PrdSet,
-  /// Clauses in the cluster.
-  pub clauses: ClsSet,
-}
-impl Cluster {
-  /// Creates a cluster from a single clause, with all predicates being
-  /// explicit.
-  pub fn of_clause(idx: ClsIdx, clause: & Clause) -> Self {
-    let mut clauses = ClsSet::new() ;
-    clauses.insert(idx) ;
-    let mut preds = PrdSet::new() ;
-    for (pred, _) in clause.lhs_preds() {
-      preds.insert(* pred) ;
-    }
-    Cluster {
-      preds, pred_decs: PrdSet::new(), clauses
-    }
-  }
+// /// A cluster linking several clauses.
+// ///
+// /// Some of the predicates may already been forced and should only be
+// /// `declare-fun`-ed when checking candidates. The rest of the predicates will
+// /// be used to create learning data.
+// pub struct Cluster {
+//   /// Predicates used to create learning data.
+//   pub preds: PrdSet,
+//   /// Predicates which are already known but should be declared.
+//   pub pred_decs: PrdSet,
+//   /// Clauses in the cluster.
+//   pub clauses: ClsSet,
+// }
+// impl Cluster {
+//   /// Creates a cluster from a single clause, with all predicates being
+//   /// explicit.
+//   pub fn of_clause(idx: ClsIdx, clause: & Clause) -> Self {
+//     let mut clauses = ClsSet::new() ;
+//     clauses.insert(idx) ;
+//     let mut preds = PrdSet::new() ;
+//     for (pred, _) in clause.lhs_preds() {
+//       preds.insert(* pred) ;
+//     }
+//     Cluster {
+//       preds, pred_decs: PrdSet::new(), clauses
+//     }
+//   }
 
-  // /// Extracts the predicate applications from the lhs of a clause.
-  // pub fn extract_apps(
-  //   clause: & Clause, interesting: PrdSet, cex: Cex
-  // ) -> Res<(PrdSet, Vec<(PrdIdx, Args)>)> {
-  //   let mut all_preds = PrdSet::new() ;
-  //   let mut apps = Vec::new() ;
-  //   for (pred, argss) in clause.lhs_preds() {
-  //     if interesting.contains(pred) {
-  //       for args in argss {
-  //         let vals = cex.apply_to(args) ? ;
-  //         apps.push( (* pred, vals) )
-  //       }
-  //     } else {
-  //       all_preds.insert(* pred) ;
-  //     }
-  //   }
-  //   Ok((all_preds, apps))
-  // }
+//   // /// Extracts the predicate applications from the lhs of a clause.
+//   // pub fn extract_apps(
+//   //   clause: & Clause, interesting: PrdSet, cex: Cex
+//   // ) -> Res<(PrdSet, Vec<(PrdIdx, Args)>)> {
+//   //   let mut all_preds = PrdSet::new() ;
+//   //   let mut apps = Vec::new() ;
+//   //   for (pred, argss) in clause.lhs_preds() {
+//   //     if interesting.contains(pred) {
+//   //       for args in argss {
+//   //         let vals = cex.apply_to(args) ? ;
+//   //         apps.push( (* pred, vals) )
+//   //       }
+//   //     } else {
+//   //       all_preds.insert(* pred) ;
+//   //     }
+//   //   }
+//   //   Ok((all_preds, apps))
+//   // }
 
-  // /// Transforms a model on a cluster into some learning data.
-  // pub fn cex_to_data(
-  //   & self, instance: & Instance, data: & mut ::common::data::Data,
-  //   candidate: & Candidates, cex: & Cex
-  // ) -> Res<bool> {
-  //   let mut changed = false ;
+//   // /// Transforms a model on a cluster into some learning data.
+//   // pub fn cex_to_data(
+//   //   & self, instance: & Instance, data: & mut ::common::data::Data,
+//   //   candidate: & Candidates, cex: & Cex
+//   // ) -> Res<bool> {
+//   //   let mut changed = false ;
 
-  //   // First, find which clause is falsifiable.
-  //   let mut falsified = Vec::with_capacity(3) ;
-  //   'clauses: for clause in & self.clauses {
-  //     let clause = * clause ;
+//   //   // First, find which clause is falsifiable.
+//   //   let mut falsified = Vec::with_capacity(3) ;
+//   //   'clauses: for clause in & self.clauses {
+//   //     let clause = * clause ;
 
-  //     if let Some((prd, args)) = instance[clause].rhs() {
-  //       // Predicate application, checking if we care about `prd`.
-  //       if let Some(ref pred) = candidate[prd] {
-  //         // Evaluate it.
-  //         let lhs_vals = cex.apply_to(args) ? ;
-  //         // If rhs is false/don't care the problem does not come from this
-  //         // clause.
-  //         if pred.eval(& lhs_vals)?.to_bool() ? != Some(true) {
-  //           continue 'clauses
-  //         }
+//   //     if let Some((prd, args)) = instance[clause].rhs() {
+//   //       // Predicate application, checking if we care about `prd`.
+//   //       if let Some(ref pred) = candidate[prd] {
+//   //         // Evaluate it.
+//   //         let lhs_vals = cex.apply_to(args) ? ;
+//   //         // If rhs is false/don't care the problem does not come from this
+//   //         // clause.
+//   //         if pred.eval(& lhs_vals)?.to_bool() ? != Some(true) {
+//   //           continue 'clauses
+//   //         }
 
-  //         // Lhs terms true?
-  //         for term in instance[clause].lhs_terms() {
-  //           if term.eval(& cex)?.to_bool()?.unwrap_or(true) {
-  //             continue 'clauses
-  //           }
-  //         }
-  //         // Lhs pred apps true? Constructing rhs dependency at the same time.
-  //         let mut rhs_preds = PrdSet::with_capacity(
-  //           instance[clause].lhs_preds().len()
-  //         ) ;
-  //         for (pred, argss) in instance[clause].lhs_preds() {
-  //           for args in argss {
-  //             let vals = cex.apply_to(args) ? ;
-  //             // if 
-  //           }
-  //         }
+//   //         // Lhs terms true?
+//   //         for term in instance[clause].lhs_terms() {
+//   //           if term.eval(& cex)?.to_bool()?.unwrap_or(true) {
+//   //             continue 'clauses
+//   //           }
+//   //         }
+//   //         // Lhs pred apps true? Constructing rhs dependency at the same time.
+//   //         let mut rhs_preds = PrdSet::with_capacity(
+//   //           instance[clause].lhs_preds().len()
+//   //         ) ;
+//   //         for (pred, argss) in instance[clause].lhs_preds() {
+//   //           for args in argss {
+//   //             let vals = cex.apply_to(args) ? ;
+//   //             // if 
+//   //           }
+//   //         }
 
-  //         bail!("unimplemented")
+//   //         bail!("unimplemented")
 
-  //       } else {
-  //         // Don't care, next clause.
-  //         continue 'clauses
-  //       }
+//   //       } else {
+//   //         // Don't care, next clause.
+//   //         continue 'clauses
+//   //       }
 
-  //     } else {
-  //       // Negative clause, is the whole lhs true?
-  //     }
-  //   }
-  //   if falsified.is_empty() {
-  //     bail!("cex_to_data: none of the clauses in my cluster are falsified")
-  //   } ;
+//   //     } else {
+//   //       // Negative clause, is the whole lhs true?
+//   //     }
+//   //   }
+//   //   if falsified.is_empty() {
+//   //     bail!("cex_to_data: none of the clauses in my cluster are falsified")
+//   //   } ;
 
-  //   let mut known = PrdSet::new() ;
+//   //   let mut known = PrdSet::new() ;
 
-  //   Ok(changed)
-  // }
-}
+//   //   Ok(changed)
+//   // }
+// }
 
 
 
@@ -545,10 +545,10 @@ pub struct Instance {
   pub max_pred_arity: Arity,
   /// Clauses.
   clauses: ClsMap<Clause>,
-  /// Clause clusters.
-  ///
-  /// This is what the teacher actually works on. It is filled either by graph analysis or by [`finalize`](#method.finalize).
-  clusters: CtrMap<Cluster>,
+  // /// Clause clusters.
+  // ///
+  // /// This is what the teacher actually works on. It is filled either by graph analysis or by [`finalize`](#method.finalize).
+  // clusters: CtrMap<Cluster>,
   /// Maps predicates to the clauses where they appear in the lhs and rhs
   /// respectively.
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
@@ -570,7 +570,7 @@ impl Instance {
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clause_capa),
-      clusters: CtrMap::with_capacity( clause_capa / 3 ),
+      // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       simplifier: ClauseSimplifier::new(),
       is_unsat: false,
@@ -580,6 +580,15 @@ impl Instance {
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
+  }
+
+  /// Number of active (not forced) predicates.
+  pub fn active_pred_count(& self) -> usize {
+    let mut count = 0 ;
+    for pred in self.pred_indices() {
+      if ! self.is_known(pred) { count += 1 }
+    }
+    count
   }
 
   /// Sets the unsat flag in the instance.
@@ -727,12 +736,12 @@ impl Instance {
     self.sorted_pred_terms.shrink_to_fit() ;
 
     // If there are no clusters just create one cluster per clause.
-    if self.clusters.is_empty() {
-      log_info! { "instance has no clusters, creating single clause clusters" }
-      for (idx, clause) in self.clauses.index_iter() {
-        self.clusters.push( Cluster::of_clause(idx, clause) )
-      }
-    }
+    // if self.clusters.is_empty() {
+    //   log_info! { "instance has no clusters, creating single clause clusters" }
+    //   for (idx, clause) in self.clauses.index_iter() {
+    //     self.clusters.push( Cluster::of_clause(idx, clause) )
+    //   }
+    // }
   }
 
 
@@ -1194,48 +1203,45 @@ impl Instance {
         }
       }
 
-      // // Split disjunctions.
-      // 'find_clause: for clause in self.clauses.iter_mut() {
-      //   // Skip those for which the predicate in the rhs only appears in this
-      //   // rhs.
-      //   if let Some((pred, _)) = clause.rhs() {
-      //     if self.pred_to_clauses[pred].1.len() == 1 {
-      //       continue 'find_clause
-      //     }
-      //   }
+      // Split disjunctions.
+      'find_clause: for clause in self.clauses.iter_mut() {
+        // Skip those for which the predicate in the rhs only appears in this
+        // rhs.
+        if let Some((pred, _)) = clause.rhs() {
+          if self.pred_to_clauses[pred].1.len() == 1 {
+            continue 'find_clause
+          }
+        }
 
-      //   // Skip if clause contains more than 2 disjunctions.
-      //   let mut disj = None ;
-      //   let mut disj_count = 0 ;
-      //   for term in & clause.lhs_terms {
-      //     if let Some(args) = term.disj_inspect() {
-      //       disj_count += 1 ;
-      //       if disj.is_none() {
-      //         disj = Some((term.clone(), args.clone()))
-      //       }
-      //     }
-      //   }
-      //   if disj_count > 2 {
-      //     continue 'find_clause
-      //   }
-      //   if let Some((disj, mut kids)) = disj {
-      //     log_debug!{
-      //       "splitting clause {}", clause.to_string_info(& self.preds) ?
-      //     }
-      //     let _was_there = clause.lhs_terms.remove(& disj) ;
-      //     debug_assert!(_was_there) ;
-      //     if let Some(kid) = kids.pop() {
-      //       for kid in kids {
-      //         let mut clause = clause.clone() ;
-      //         clause.insert_term(kid) ;
-      //         nu_clauses.push(clause)
-      //       }
-      //       clause.insert_term(kid) ;
-      //     } else {
-      //       bail!("illegal empty disjunction")
-      //     }
-      //   }
-      // }
+        // Skip if clause contains more than 2 disjunctions.
+        let mut disj = None ;
+        for term in & clause.lhs_terms {
+          if let Some(args) = term.disj_inspect() {
+            // More than one disjunction, skipping.
+            if disj.is_some() {
+              continue 'find_clause
+            }
+            disj = Some((term.clone(), args.clone()))
+          }
+        }
+        if let Some((disj, mut kids)) = disj {
+          log_debug!{
+            "splitting clause {}", clause.to_string_info(& self.preds) ?
+          }
+          let _was_there = clause.lhs_terms.remove(& disj) ;
+          debug_assert!(_was_there) ;
+          if let Some(kid) = kids.pop() {
+            for kid in kids {
+              let mut clause = clause.clone() ;
+              clause.insert_term(kid) ;
+              nu_clauses.push(clause)
+            }
+            clause.insert_term(kid) ;
+          } else {
+            bail!("illegal empty disjunction")
+          }
+        }
+      }
 
       if ! nu_clauses.is_empty() {
         changed = true ;
@@ -2274,10 +2280,14 @@ impl Instance {
 
   /// Removes irrelevant predicate arguments.
   pub fn arg_reduce(& mut self) -> Res<()> {
-    let reductions = ::instance::preproc::args::reductions(self) ? ;
-    for (pred, vars) in reductions {
-      for var in vars {
-        self.preds[pred].var_active[var] = false
+    let to_keep = ::instance::preproc::args::to_keep(self) ? ;
+    for (pred, vars) in to_keep {
+      let pred_info = & mut self.preds[pred] ;
+      if vars.len() == pred_info.sig.len() { continue }
+      for (var, _) in pred_info.sig.index_iter() {
+        if ! vars.contains(& var) {
+          pred_info.var_active[var] = false
+        }
       }
     }
     Ok(())

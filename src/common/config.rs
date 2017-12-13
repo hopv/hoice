@@ -135,7 +135,7 @@ impl SmtConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -370,7 +370,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -380,7 +380,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -463,7 +463,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).hidden(true)
+      ).default_value("no").takes_value(true).hidden(true)
       // .number_of_values(1)
 
     ).arg(
@@ -485,7 +485,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -533,7 +533,7 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -716,7 +716,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -749,7 +749,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -957,13 +957,13 @@ pub trait ColorExt {
 
 
 /// Format for booleans.
-pub static bool_format: & str = "on|off" ;
+pub static bool_format: & str = "on/true|no/off/false" ;
 
 /// Boolean of a string.
 pub fn bool_of_str(s: & str) -> Option<bool> {
   match & s as & str {
     "on" | "true" => Some(true),
-    "off" | "false" => Some(false),
+    "no" | "off" | "false" => Some(false),
     _ => None,
   }
 }
