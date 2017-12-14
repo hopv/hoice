@@ -330,11 +330,11 @@ where Slver: Solver<'kid, Parser> {
 
     use rand::Rng ;
     // Use simple entropy 30% of the time.
-    let simple = self.rng.next_f64() <= 0.30 ;
+    let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.30 ;
     msg!{ self => "looking for qualifier (simple: {})...", simple } ;
 
     // Sort the predicates 70% of the time.
-    if self.rng.next_f64() <= 0.70 {
+    if conf.ice.sort_preds || self.rng.next_f64() <= 0.70 {
       profile!{ self tick "learning", "predicate sorting" }
       self.predicates.sort_unstable_by(
         |
@@ -1368,7 +1368,7 @@ impl CData {
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
   ///
-  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
@@ -1382,7 +1382,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   ///
-  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain(
     & self, pred: PrdIdx, data: & Data, qual: & mut QualValues

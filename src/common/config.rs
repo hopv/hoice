@@ -424,7 +424,9 @@ pub struct IceConf {
   /// Maximum decay above which qualifiers are dropped.
   pub max_decay: usize,
   /// Ignore unclassified data when computing entropy.
-  pub simple_entropy: bool,
+  pub simple_gain: bool,
+  /// Sort predicates.
+  pub sort_preds: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -468,6 +470,17 @@ impl IceConf {
 
     ).arg(
 
+      Arg::with_name("sort_preds").long("--sort_preds").help(
+        "(de)activates predicate sorting before learning"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("no").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
       Arg::with_name("max_decay").long("--max_decay").help(
         "maximum decay above which qualifiers are dropped"
       ).validator(
@@ -479,7 +492,7 @@ impl IceConf {
 
     ).arg(
 
-      Arg::with_name("simple_entropy").long("--simple_entropy").help(
+      Arg::with_name("simple_gain").long("--simple_gain").help(
         "ignore unclassified data when computing entropy"
       ).validator(
         bool_validator
@@ -500,10 +513,11 @@ impl IceConf {
     let decay = bool_of_matches(matches, "decay") ;
     let max_decay = int_of_matches(matches, "max_decay") ;
 
-    let simple_entropy = bool_of_matches(matches, "simple_entropy") ;
+    let simple_gain = bool_of_matches(matches, "simple_gain") ;
+    let sort_preds = bool_of_matches(matches, "sort_preds") ;
 
     IceConf {
-      fpice_synth, gain_threads, decay, max_decay, simple_entropy
+      fpice_synth, gain_threads, decay, max_decay, simple_gain, sort_preds
     }
   }
 }
