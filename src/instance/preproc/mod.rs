@@ -304,11 +304,11 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     'run_all: while changed {
       for strat in & mut self.post_smt_strats {
         log_info!("applying {}", conf.emph( strat.name() )) ;
-        profile!{ |_profiler| tick "pre-proc", "simplifying", strat.name() }
+        profile!{ |_profiler| tick "pre-proc", "post smt", strat.name() }
         let red_info = strat.apply(instance) ? ;
         changed = red_info.non_zero() && strat.causes_restart() ;
         if_not_bench!{
-          profile!{ |_profiler| mark "pre-proc", "simplifying", strat.name() }
+          profile!{ |_profiler| mark "pre-proc", "post smt", strat.name() }
           profile!{
             |_profiler| format!(
               "{:>25}   pred red", strat.name()

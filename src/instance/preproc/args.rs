@@ -137,7 +137,7 @@ impl Cxt {
     }
 
     for (_, pvars) in self.cvar_to_pvar.drain() {
-      if pvars.len() < 2 { return () }
+      if pvars.len() < 2 { continue }
 
       // Retrieve all `dep` indices and merge them.
       let mut indices = None ;
@@ -273,6 +273,7 @@ pub fn to_keep(
   //   for var in vars {
   //     print!("{},", var)
   //   }
+  //   println!("")
   // }
   // println!("") ;
 
