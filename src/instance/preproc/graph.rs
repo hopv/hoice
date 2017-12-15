@@ -363,6 +363,10 @@ impl Graph {
 
     }
 
+    // println!(
+    //   "; blow up prediction: {} -> {} ({})", clause_count, total, keep.len()
+    // ) ;
+
     if clause_count <= 10 {
       total > clause_count * 10
     } else if clause_count <= 100 {
@@ -380,10 +384,23 @@ impl Graph {
   /// Returns a disjunction of conjunctions.
   pub fn inline(
     & mut self, instance: & Instance, keep: & PrdSet
-  ) -> Res< PrdHMap< Vec<(Quantfed, Vec<TTerm>)> > > {
+  ) -> Res<
+    Option< PrdHMap< Vec<(Quantfed, Vec<TTerm>)> > >
+  > {
     let mut res = PrdHMap::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
+    let clause_count = instance.clauses().len() ;
+    let upper_bound = if clause_count <= 10 {
+      clause_count * 10
+    } else if clause_count <= 100 {
+      clause_count * 3
+    } else if clause_count <= 500 {
+      clause_count * 2
+    } else {
+      clause_count + clause_count / 2
+    } ;
+    let mut increase: usize = 0 ;
 
     'construct: loop {
 
@@ -413,7 +430,7 @@ impl Graph {
 
       // read_line("to continue...") ;
 
-      let (_, clauses) = instance.clauses_of_pred(pred) ;
+      let (lhs_clauses, clauses) = instance.clauses_of_pred(pred) ;
       let mut def = Vec::with_capacity( clauses.len() ) ;
 
       'clause_iter: for clause in clauses {
@@ -507,11 +524,39 @@ impl Graph {
         
       }
 
+      for clause in lhs_clauses {
+        let count = if let Some(argss) = instance[
+          * clause
+        ].lhs_preds().get(& pred) {
+          argss.len()
+        } else {
+          bail!("inconsistent instance state")
+        } ;
+
+        let mut this_increase = def.len() ;
+        for _ in 1 .. count {
+          if let Some(val) = this_increase.checked_mul( def.len() ) {
+            this_increase = val
+          } else {
+            return Ok(None)
+          }
+        }
+        if let Some(val) = increase.checked_add(this_increase) {
+          increase = val
+        } else {
+          return Ok(None)
+        }
+
+        if increase >= upper_bound {
+          return Ok(None)
+        }
+      }
+
       let prev = res.insert( pred, def ) ;
       debug_assert! { prev.is_none() }
     }
 
-    Ok(res)
+    Ok( Some(res) )
   }
 
 

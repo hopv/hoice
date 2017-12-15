@@ -708,6 +708,16 @@ impl TTerm {
     }
   }
 
+  /// Applies some treatment if the top term is a predicate application.
+  pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
+  where F: Fn(T, PrdIdx, & mut VarMap<Term>) -> T {
+    if let TTerm::P { pred, ref mut args } = * self {
+      f(init, pred, args)
+    } else {
+      init
+    }
+  }
+
   /// Variables appearing in a top term.
   pub fn vars(& self) -> VarSet {
     match * self {
@@ -859,6 +869,40 @@ impl TTerms {
       TTerms::True => Some(true),
       TTerms::False => Some(false),
       _ => None,
+    }
+  }
+
+  /// Applies something to all predicate applications.
+  pub fn pred_app_fold<T, F>(& mut self, mut init: T, f: F)
+  where F: Fn(T, PrdIdx, & mut VarMap<Term>) -> T {
+    match * self {
+      TTerms::True | TTerms::False => (),
+      TTerms::And(ref mut tterms) => for tterm in tterms {
+        init = tterm.pred_app_fold(
+          init, |init, pred, var_map| f(init, pred, var_map)
+        )
+      },
+      TTerms::Or { ref mut pos, ref mut neg } => {
+        for tterm in pos {
+          init = tterm.pred_app_fold(
+            init, |init, pred, var_map| f(init, pred, var_map)
+          )
+        }
+        for tterm in neg {
+          init = tterm.pred_app_fold(
+            init, |init, pred, var_map| f(init, pred, var_map)
+          )
+        }
+      },
+      TTerms::Dnf( ref mut quantified ) => for & mut (
+        _, ref mut tterms
+      ) in quantified {
+        for tterm in tterms {
+          init = tterm.pred_app_fold(
+            init, |init, pred, var_map| f(init, pred, var_map)
+          )
+        }
+      }
     }
   }
 

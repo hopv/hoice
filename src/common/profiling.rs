@@ -155,11 +155,13 @@ impl CanPrint for Stats {
     let mut stats: Vec<_> = self.iter().collect() ;
     stats.sort_unstable() ;
     for (stat, count) in stats {
-      let stat_len = ::std::cmp::min( STAT_LEN, stat.len() ) ;
-      println!(
-        ";   {0: >1$}{2}: {3: >5}",
-        "", STAT_LEN - stat_len, conf.emph(stat), count
-      )
+      if * count > 0 {
+        let stat_len = ::std::cmp::min( STAT_LEN, stat.len() ) ;
+        println!(
+          ";   {0: >1$}{2}: {3: >5}",
+          "", STAT_LEN - stat_len, conf.emph(stat), count
+        )
+      }
     }
   }
 }

@@ -41,12 +41,34 @@ impl Cxt {
 
   /// Checks the context is legal (only active in debug).
   #[cfg(debug_assertions)]
-  pub fn check(& self) -> Res<()> {
+  pub fn check(& self, instance: & Instance) -> Res<()> {
     macro_rules! fail {
       ($blah:expr) => (
         bail!("inconsistent predicate argument context state ({})...", $blah)
       ) ;
     }
+
+    for set in & self.dep {
+      for & (pred, var) in set {
+        if * var >= instance[pred].sig.len() {
+          bail!(
+            "inconsistent `dep` in argument reduction\n\
+            predicate {} has no var {}", instance[pred], var.default_str()
+          )
+        }
+      }
+    }
+    for (pred, vars) in & self.keep {
+      for var in vars {
+        if * var >= instance[* pred].sig.len() {
+          bail!(
+            "inconsistent `keep` in argument reduction\n\
+            predicate {} has no var {}", instance[* pred], var.default_str()
+          )
+        }
+      }
+    }
+
     let mut index = 0 ;
     while index < self.dep.len() {
       for elem in & self.dep[index] {
@@ -76,7 +98,7 @@ impl Cxt {
   }
   #[cfg( not(debug_assertions) )]
   #[inline(always)]
-  pub fn check(& self) -> Res<()> { Ok(()) }
+  pub fn check(& self, _instance: & Instance) -> Res<()> { Ok(()) }
 
   /// Adds clause term variables.
   pub fn term_vars(& mut self, vars: VarSet) {
@@ -108,7 +130,7 @@ impl Cxt {
         RTerm::Var(var) => {
           if self.term_vars.contains(& var) {
             // println!("keeping {} {}", pred, var) ;
-            self.keep(pred, var)
+            self.keep(pred, pvar)
           }
           self.cvar_to_pvar(var, pred, pvar)
         },
@@ -119,6 +141,15 @@ impl Cxt {
             self.cvar_to_pvar(var, pred, pvar)
           }
         },
+      }
+    }
+  }
+
+  /// Registers a predicate application, RHS version.
+  pub fn rhs_pred_app(& mut self, pred: PrdIdx, args: & VarMap<Term>) {
+    for (pvar, term) in args.index_iter() {
+      for var in term::vars(term) {
+        self.cvar_to_pvar(var, pred, pvar)
       }
     }
   }
@@ -235,13 +266,13 @@ pub fn to_keep(
   // - find links between predicate arguments and terms (keep)
   // - find links between predicate arguments (dep)
   'all_clauses: for clause in instance.clauses() {
-    cxt.check() ? ;
+    cxt.check(instance) ? ;
 
     // All the variables appearing in the lhs's terms are off limits.
     for term in clause.lhs_terms() {
       cxt.term_vars( term::vars(term) )
     }
-    cxt.check() ? ;
+    cxt.check(instance) ? ;
 
     // Scan all predicate applications.
     for (pred, argss) in clause.lhs_preds() {
@@ -249,12 +280,12 @@ pub fn to_keep(
         cxt.pred_app(* pred, args)
       }
     }
-    cxt.check() ? ;
+    cxt.check(instance) ? ;
 
     if let Some((pred, args)) = clause.rhs() {
-      cxt.pred_app(pred, args)
+      cxt.rhs_pred_app(pred, args)
     }
-    cxt.check() ? ;
+    cxt.check(instance) ? ;
 
     cxt.commit()
   }

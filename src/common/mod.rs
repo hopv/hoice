@@ -88,19 +88,19 @@ pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 /// - investigate whether it would be possible to remove the qualifier from
 ///   `QualValues` entirely
 pub type Quals = ArityMap<
-  HConMap<Term, (::learning::ice::mining::QualValues, PrdSet)>
+  HConMap<Term, ::learning::ice::mining::QualValues>
 > ;
 /// Helpers for `Quals`.
 pub trait QualsExt {
   /// Treats the `HConMap` as sets for inserting qualifiers.
   ///
   /// Returns true if the term was not there (think `is_new`).
-  fn insert(& mut self, arity: Arity, term: Term, preds: PrdSet) ;
+  fn insert(& mut self, arity: Arity, term: Term) ;
 }
 impl QualsExt for Quals {
-  fn insert(& mut self, arity: Arity, term: Term, preds: PrdSet) {
+  fn insert(& mut self, arity: Arity, term: Term) {
     self[arity].entry( term.clone() ).or_insert_with(
-      || ( ::learning::ice::mining::QualValues::new(term), preds )
+      || ::learning::ice::mining::QualValues::new(term)
     ) ;
   }
 }
@@ -163,6 +163,8 @@ pub struct RedInfo {
   pub clauses_rmed: usize,
   /// Number of clauses created.
   pub clauses_added: usize,
+  /// Number of arguments removed.
+  pub args_rmed: usize,
 }
 impl RedInfo {
   /// True if one or more fields are non-zero.
@@ -174,16 +176,19 @@ impl From<(usize, usize, usize)> for RedInfo {
   fn from(
     (preds, clauses_rmed, clauses_added): (usize, usize, usize)
   ) -> RedInfo {
-    RedInfo { preds, clauses_rmed, clauses_added }
+    RedInfo { preds, clauses_rmed, clauses_added, args_rmed: 0 }
   }
 }
 impl ::std::ops::AddAssign for RedInfo {
   fn add_assign(
-    & mut self, RedInfo { preds, clauses_rmed, clauses_added }: Self
+    & mut self, RedInfo {
+      preds, clauses_rmed, clauses_added, args_rmed
+    }: Self
   ) {
     self.preds += preds ;
     self.clauses_rmed += clauses_rmed ;
-    self.clauses_added += clauses_added
+    self.clauses_added += clauses_added ;
+    self.args_rmed += args_rmed
   }
 }
 

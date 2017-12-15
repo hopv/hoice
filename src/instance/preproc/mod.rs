@@ -47,14 +47,10 @@ pub fn work(
     )
   } ;
   profile!{ |profiler| mark "pre-proc" } ;
-  
-  if conf.preproc.arg_red {
-    instance.arg_reduce() ?
-  }
 
-  log_info!{
-    "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
-  }
+  // log_info!{
+  //   "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
+  // }
   match res {
     Err(ref e) if e.is_unsat() => {
       instance.set_unsat()
@@ -129,24 +125,17 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     log_info!{ "running simplification" }
 
     profile!{ |profiler| tick "pre-proc", "simplifying" }
-    let red_info = reductor.run_simplification(instance, & profiler) ? ;
+    let red_info = reductor.run_simplification(
+      instance, & profiler, & mut cnt
+    ) ? ;
     total += red_info ;
     profile!{ |profiler| mark "pre-proc", "simplifying" }
 
-    // log_debug!{
-    //   "|===| after simplification:\n{}\n\n", instance.to_string_info(()) ?
-    // }
-
-    preproc_dump!(
-      instance =>
-        format!("preproc_{:0>3}_reduction", cnt),
-        "Instance after smt-free reduction"
-    ) ? ;
-    cnt += 1 ;
-
     log_info!{ "running reduction" }
     profile!{ |profiler| tick "pre-proc", "reducing" }
-    let red_info = reductor.run(instance, & profiler, & mut cnt) ? ;
+    let red_info = reductor.run(
+      instance, & profiler, & mut cnt
+    ) ? ;
     changed = red_info.non_zero() ;
     total += red_info ;
     instance.check("after reduction") ? ;
@@ -161,6 +150,12 @@ pub fn run<'kid, S: Solver<'kid, ()>>(
     cnt += 1 ;
 
   }
+
+  profile!{ |profiler| tick "pre-proc", "post smt" }
+  total += reductor.run_post_smt_simplification(
+    instance, & profiler, & mut cnt
+  ) ? ;
+  profile!{ |profiler| mark "pre-proc", "post smt" }
 
   profile!{
     |profiler| "predicates eliminated" => add total.preds
@@ -210,9 +205,8 @@ pub struct Reductor<'kid, S: Solver<'kid, ()>> {
 impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
   /// Constructor.
   pub fn new(solver: Option< SolverWrapper<S> >) -> Self {
-    let strats: Vec< Box<RedStrat> > = vec![
+    let mut strats: Vec< Box<RedStrat> > = vec![
       Box::new( Trivial {} ),
-      // Box::new( ForcedImplies::new() ),
     ] ;
     let mut smt_strats: Vec< Box<SolverRedStrat<'kid, S>> > = vec![
       Box::new( SmtTrivial::new() ),
@@ -220,6 +214,11 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     let mut post_smt_strats: Vec<
       Box<RedStrat>
     > = vec![] ;
+
+    if conf.preproc.arg_red {
+      strats.push( Box::new( ArgReduce::new() ) )
+    }
+
     if conf.preproc.one_rhs {
       smt_strats.push( Box::new( SimpleOneRhs::new() ) )
     }
@@ -232,6 +231,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
     if conf.preproc.one_lhs && conf.preproc.one_lhs_full {
       smt_strats.push( Box::new( OneLhs::new() ) )
     }
+
     if conf.preproc.cfg_red {
       post_smt_strats.push( Box::new( GraphRed::new() ) )
     }
@@ -244,7 +244,8 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 
   /// Runs instance simplification.
   pub fn run_simplification(
-    & mut self, instance: & mut Instance, _profiler: & Profiler
+    & mut self, instance: & mut Instance, _profiler: & Profiler,
+    cnt: & mut usize
   ) -> Res<RedInfo> {
     #![allow(unused_mut, unused_variables)]
     let mut total: RedInfo = (0,0,0).into() ;
@@ -274,7 +275,29 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
               "{:>25} clause add", strat.name()
             ) => add red_info.clauses_added
           }
+          profile!{
+            |_profiler| format!(
+              "{:>25}    arg red", strat.name()
+            ) => add red_info.args_rmed
+          }
         }
+
+        preproc_dump!(
+          instance =>
+            format!(
+              "preproc_{:0>3}_{}", cnt, {
+                let mut s = String::new() ;
+                for token in strat.name().split_whitespace() {
+                  s = if s.is_empty() { token.into() } else {
+                    format!("{}_{}", s, token)
+                  }
+                }
+                s
+              }
+            ),
+            "Instance after smt-based reduction"
+        ) ? ;
+        * cnt += 1 ;
 
         // let restart = red_info.non_zero() ;
         total += red_info ;
@@ -295,20 +318,24 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
 
   /// Runs post smt instance simplification.
   pub fn run_post_smt_simplification(
-    & mut self, instance: & mut Instance, _profiler: & Profiler
+    & mut self, instance: & mut Instance, _profiler: & Profiler,
+    cnt: & mut usize
   ) -> Res<RedInfo> {
     #![allow(unused_mut, unused_variables)]
     let mut total: RedInfo = (0,0,0).into() ;
     
     let mut changed = true ;
     'run_all: while changed {
+      changed = false ;
       for strat in & mut self.post_smt_strats {
         log_info!("applying {}", conf.emph( strat.name() )) ;
         profile!{ |_profiler| tick "pre-proc", "post smt", strat.name() }
         let red_info = strat.apply(instance) ? ;
-        changed = red_info.non_zero() && strat.causes_restart() ;
+        changed = changed || (
+          red_info.non_zero() && strat.causes_restart()
+        ) ;
+        profile!{ |_profiler| mark "pre-proc", "post smt", strat.name() }
         if_not_bench!{
-          profile!{ |_profiler| mark "pre-proc", "post smt", strat.name() }
           profile!{
             |_profiler| format!(
               "{:>25}   pred red", strat.name()
@@ -324,7 +351,29 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
               "{:>25} clause add", strat.name()
             ) => add red_info.clauses_added
           }
+          profile!{
+            |_profiler| format!(
+              "{:>25}    arg red", strat.name()
+            ) => add red_info.args_rmed
+          }
         }
+
+        preproc_dump!(
+          instance =>
+            format!(
+              "preproc_{:0>3}_{}", cnt, {
+                let mut s = String::new() ;
+                for token in strat.name().split_whitespace() {
+                  s = if s.is_empty() { token.into() } else {
+                    format!("{}_{}", s, token)
+                  }
+                }
+                s
+              }
+            ),
+            "Instance after smt-based reduction"
+        ) ? ;
+        * cnt += 1 ;
 
         total += red_info ;
         instance.check( strat.name() ) ? ;
@@ -385,7 +434,7 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
       let mut changed = true ;
 
       'run_strats: while changed {
-        total += self.run_simplification(instance, _profiler) ? ;
+        total += self.run_simplification(instance, _profiler, cnt) ? ;
 
         if let Some((ref mut solver, ref mut strats)) = self.smt_strats {
           for strat in strats.iter_mut() {
@@ -410,6 +459,11 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
                 |_profiler| format!(
                   "{:>25} clause add", strat.name()
                 ) => add red_info.clauses_added
+              }
+              profile!{
+                |_profiler| format!(
+                  "{:>25}    arg red", strat.name()
+                ) => add red_info.args_rmed
               }
             }
 
@@ -438,11 +492,6 @@ impl<'kid, S: Solver<'kid, ()>> Reductor<'kid, S> {
           }
         }
 
-        let red_info = self.run_post_smt_simplification(
-          instance, _profiler
-        ) ? ;
-        changed = red_info.non_zero() ;
-        total += red_info
       }
     // }
 
@@ -616,6 +665,40 @@ impl RedStrat for Trivial {
 
   fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
     instance.simplify()
+  }
+  fn causes_restart(& self) -> bool {
+    true
+  }
+}
+
+
+/// Calls [`Instance::arg_reduce`][arg_reduce].
+///
+/// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce (Instance's arg_reduce method)
+pub struct ArgReduce { }
+impl ArgReduce {
+  /// Constructor.
+  pub fn new() -> Self {
+    ArgReduce { }
+  }
+}
+impl HasName for ArgReduce {
+  fn name(& self) -> & 'static str { "arg reduce" }
+}
+// impl<'kid, Slver> SolverRedStrat<'kid, Slver> for ArgReduce
+// where Slver: Solver<'kid, ()> {
+//   fn causes_restart(& self) -> bool {
+//     true
+//   }
+//   fn apply(
+//     & mut self, instance: & mut Instance, _: & mut SolverWrapper<Slver>
+//   ) -> Res<RedInfo> {
+//     instance.arg_reduce()
+//   }
+// }
+impl RedStrat for ArgReduce {
+  fn apply(& mut self, instance: & mut Instance) -> Res<RedInfo> {
+    instance.arg_reduce()
   }
   fn causes_restart(& self) -> bool {
     true
@@ -1489,13 +1572,14 @@ impl RedStrat for GraphRed {
       & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
     ) ? ;
 
-    if graph.inlining_blows_up(& to_keep, instance) {
-      return Ok(red)
-    }
-
     red.preds += to_rm.len() ;
 
-    let pred_defs = graph.inline(instance, & to_keep) ? ;
+    let pred_defs = if let Some(res) = graph.inline(instance, & to_keep) ? {
+      res
+    } else {
+      log_info! { "avoiding cfg red blow-up" }
+      return Ok(red)
+    } ;
     graph.check(& instance) ? ;
     log_info! { "{} predicates inlined", pred_defs.len() }
 
@@ -1509,8 +1593,6 @@ impl RedStrat for GraphRed {
       }
       red.clauses_rmed += clauses_to_rm.len() ;
       instance.forget_clauses(& mut clauses_to_rm) ? ;
-
-
 
       if_verb! {
         let mut s = format!("{}(", instance[pred]) ;
@@ -1548,7 +1630,7 @@ impl RedStrat for GraphRed {
         log_info! { ")" }
       }
 
-      red += instance.force_dnf_left(pred, def) ?
+      red += instance.force_dnf_left(pred, def) ? ;
     }
 
     red += instance.simplify() ? ;
@@ -1566,3 +1648,4 @@ impl RedStrat for GraphRed {
     Ok(red)
   }
 }
+

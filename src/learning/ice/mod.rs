@@ -558,7 +558,7 @@ where Slver: Solver<'kid, Parser> {
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_para<
     'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
-      Item = (Key, & 'a mut (QualValues, PrdSet))
+      Item = (Key, & 'a mut QualValues)
     >
   >(
     _profiler: & Profiler, all_data: & Data,
@@ -571,8 +571,7 @@ where Slver: Solver<'kid, Parser> {
     profile!{ |_profiler| tick "learning", "qual", "// gain" }
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
-      |(_, & mut (ref mut values, ref preds))| {
-        if ! preds.contains(& pred) { return Ok(None) }
+      |(_, values)| {
         let gain = if simple {
           data.simple_gain(values)
         } else {
@@ -632,7 +631,7 @@ where Slver: Solver<'kid, Parser> {
   ///
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_seq<
-    'a, Key, I: IntoIterator<Item = (Key, & 'a mut (QualValues, PrdSet))>
+    'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -641,8 +640,7 @@ where Slver: Solver<'kid, Parser> {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
-    'search_qual: for (_, & mut (ref mut values, ref preds)) in quals {
-      if ! preds.contains(& pred) { continue 'search_qual }
+    'search_qual: for (_, values) in quals {
       let gain = if simple {
         data.simple_gain(values)
       } else {
@@ -670,7 +668,7 @@ where Slver: Solver<'kid, Parser> {
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier<
     'a, Key: Send,
-    I: IntoIterator<Item = (Key, & 'a mut (QualValues, PrdSet))>
+    I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
@@ -774,13 +772,13 @@ where Slver: Solver<'kid, Parser> {
       }
 
       for sample in & data.pos {
-        self.synthesize(pred, sample)
+        self.synthesize(sample)
       }
       for sample in & data.neg {
-        self.synthesize(pred, sample)
+        self.synthesize(sample)
       }
       for sample in & data.unc {
-        self.synthesize(pred, sample)
+        self.synthesize(sample)
       }
 
       profile!{ self "qualifier synthesized" => add self.new_quals.len() }
@@ -1016,7 +1014,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    & mut self, pred: PrdIdx, sample: & HSample
+    & mut self, sample: & HSample
   ) -> () {
     let mut previous_int: Vec<(Term, & Int)> = Vec::with_capacity(
       sample.len()
@@ -1026,9 +1024,6 @@ where Slver: Solver<'kid, Parser> {
     ) ;
 
     for (var_idx, val) in sample.index_iter() {
-      if ! self.instance[pred].var_active[var_idx] {
-        continue
-      }
 
       let arity: Arity = (1 + * var_idx).into() ;
       let var = term::var(var_idx) ;
@@ -1041,9 +1036,7 @@ where Slver: Solver<'kid, Parser> {
             term::not( var.clone() )
           } ;
           if ! self.qualifiers.is_known(arity, & term) {
-            if let Some((preds, _)) = self.instance.relevant_preds_of(& term) {
-              self.new_quals.insert( arity, term.clone(), preds )
-            }
+            self.new_quals.insert( arity, term.clone() )
           }
 
           for & (ref pre_var, pre_val) in & previous_bool {
@@ -1054,11 +1047,7 @@ where Slver: Solver<'kid, Parser> {
             } ;
             let and = term::and( vec![ term.clone(), other_term.clone() ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              if let Some(
-                (preds, _)
-              ) = self.instance.relevant_preds_of(& term) {
-                self.new_quals.insert( arity, and, preds )
-              }
+              self.new_quals.insert( arity, and )
             }
 
           }
@@ -1072,19 +1061,11 @@ where Slver: Solver<'kid, Parser> {
             Op::Ge, vec![ var.clone(), val_term.clone() ]
           ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            if let Some(
-              (preds, _)
-            ) = self.instance.relevant_preds_of(& term) {
-              self.new_quals.insert( arity, term, preds ) ;
-            }
+            self.new_quals.insert( arity, term )
           }
           let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
           if ! self.qualifiers.is_known(arity, & term) {
-            if let Some(
-              (preds, _)
-            ) = self.instance.relevant_preds_of(& term) {
-              self.new_quals.insert( arity, term, preds ) ;
-            }
+            self.new_quals.insert( arity, term )
           }
 
 
@@ -1092,11 +1073,7 @@ where Slver: Solver<'kid, Parser> {
             if val == pre_val {
               let eq = term::eq( pre_var.clone(), var.clone() ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
-                if let Some(
-                  (preds, _)
-                ) = self.instance.relevant_preds_of(& eq) {
-                  self.new_quals.insert( arity, eq, preds )
-                }
+                self.new_quals.insert( arity, eq )
               }
             }
             if - val == * pre_val {
@@ -1104,11 +1081,7 @@ where Slver: Solver<'kid, Parser> {
                 pre_var.clone(), term::sub( vec![var.clone()] )
               ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
-                if let Some(
-                  (preds, _)
-                ) = self.instance.relevant_preds_of(& eq) {
-                  self.new_quals.insert( arity, eq, preds )
-                }
+                self.new_quals.insert( arity, eq )
               }
             }
             let add = term::app(
@@ -1119,19 +1092,11 @@ where Slver: Solver<'kid, Parser> {
               Op::Ge, vec![ add.clone(), add_val.clone() ]
             ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              if let Some(
-                (preds, _)
-              ) = self.instance.relevant_preds_of(& term) {
-                self.new_quals.insert( arity, term, preds )
-              }
+              self.new_quals.insert( arity, term )
             }
             let term = term::app( Op::Le, vec![ add, add_val ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              if let Some(
-                (preds, _)
-              ) = self.instance.relevant_preds_of(& term) {
-                self.new_quals.insert( arity, term, preds )
-              }
+              self.new_quals.insert( arity, term )
             }
             let sub = term::app(
               Op::Sub, vec![ pre_var.clone(), var.clone() ]
@@ -1141,19 +1106,11 @@ where Slver: Solver<'kid, Parser> {
               Op::Ge, vec![ sub.clone(), sub_val.clone() ]
             ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              if let Some(
-                (preds, _)
-              ) = self.instance.relevant_preds_of(& term) {
-                self.new_quals.insert( arity, term, preds )
-              }
+              self.new_quals.insert( arity, term )
             }
             let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
             if ! self.qualifiers.is_known(arity, & term) {
-              if let Some(
-                (preds, _)
-              ) = self.instance.relevant_preds_of(& term) {
-                self.new_quals.insert( arity, term, preds )
-              }
+              self.new_quals.insert( arity, term )
             }
           }
 
