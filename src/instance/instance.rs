@@ -2168,12 +2168,16 @@ impl Instance {
   /// Removes all predicate arguments not in `to_keep`, and all corresponding
   /// arguments in the clauses. Updates `old_preds`, `pred_terms` and
   /// `pred_qterms`.
-  pub fn rm_args(& mut self, mut to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
+  pub fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
     log_debug! { "rm_args ({})", to_keep.len() }
     let mut info: RedInfo = (0, 0, 0).into() ;
-    if to_keep.is_empty() { return Ok(info) }
 
     macro_rules! rm_args {
+      (from $args:expr, keep nothing, swap $nu_args:expr) => ({
+        debug_assert!( $nu_args.is_empty() ) ;
+        ::std::mem::swap($nu_args, $args) ;
+        $nu_args.clear() ;
+      }) ;
       (from $args:expr, keep $to_keep:expr, swap $nu_args:expr) => ({
         debug_assert!( $nu_args.is_empty() ) ;
         for (var, arg) in $args.index_iter() {
@@ -2184,10 +2188,6 @@ impl Instance {
         ::std::mem::swap( $nu_args, $args ) ;
         $nu_args.clear() ;
       }) ;
-      (from $args:expr, swap $nu_args:expr) => ({
-        ::std::mem::swap($nu_args, $args) ;
-        $nu_args.clear() ;
-      })
     }
 
     // Factored list of arguments used when updating the clauses.
@@ -2201,8 +2201,6 @@ impl Instance {
           |nu_args, pred, args| {
             if let Some(vars) = to_keep.get(& pred) {
               rm_args! { from args, keep vars, swap nu_args }
-            } else {
-              rm_args! { from args, swap nu_args }
             }
             nu_args
           }
@@ -2217,8 +2215,6 @@ impl Instance {
           |nu_args, pred, args| {
             if let Some(vars) = to_keep.get(& pred) {
               rm_args! { from args, keep vars, swap nu_args }
-            } else {
-              rm_args! { from args, swap nu_args }
             }
             nu_args
           }
@@ -2227,12 +2223,7 @@ impl Instance {
     }
 
     // Remove args from applications in clauses.
-    for pred in self.pred_indices() {
-      let to_keep = if let Some(to_keep) = to_keep.remove(& pred) {
-        to_keep
-      } else {
-        VarSet::new()
-      } ;
+    for (pred, to_keep) in to_keep {
       log_debug! { "  - {}", self[pred] }
       debug_assert!( to_keep.len() <= self[pred].sig.len() ) ;
       if to_keep.len() == self[pred].sig.len() {

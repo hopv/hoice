@@ -225,7 +225,7 @@ impl Cxt {
   }
 
   /// Destroys the context and returns the predicate variables to keep.
-  pub fn extract(mut self) -> PrdHMap<VarSet> {
+  pub fn extract(mut self, instance: & Instance) -> PrdHMap<VarSet> {
     let mut keep = HashSet::new() ;
     let mut res = PrdHMap::with_capacity( self.keep.len() ) ;
     macro_rules! insert {
@@ -248,6 +248,11 @@ impl Cxt {
       for (pred, var) in self.dep[index].drain() {
         insert! { res <- pred, var }
       }
+    }
+    for pred in instance.pred_indices() {
+      if instance.is_known(pred) || res.contains_key(& pred) { continue }
+      let prev = res.insert(pred, VarSet::new()) ;
+      debug_assert!( prev.is_none() )
     }
     res
   }
@@ -308,6 +313,6 @@ pub fn to_keep(
   // }
   // println!("") ;
 
-  Ok( cxt.extract() )
+  Ok( cxt.extract(instance) )
 
 }
