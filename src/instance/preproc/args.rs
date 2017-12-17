@@ -260,6 +260,9 @@ impl Cxt {
 
 
 /// Returns the predicate variables to keep.
+///
+/// If a predicate is not in the resulting map, it means this predicate is
+/// already forced and thus should not be touched.
 pub fn to_keep(
   instance: & Instance
 ) -> Res< PrdHMap<VarSet> > {

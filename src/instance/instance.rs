@@ -1820,7 +1820,7 @@ impl Instance {
 
       match ( antecedents.len(), consequent ) {
         (0, None) => bail!(
-          "[unimplemented] clause with no predicate has a cex (unsafe)"
+          ErrorKind::Unsat
         ),
         (1, None) => {
           let (pred, args) = antecedents.pop().unwrap() ;
