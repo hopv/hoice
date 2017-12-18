@@ -229,7 +229,8 @@ where Slver: Solver<'skid, ()> {
     }
 
     // Try to split the clause.
-    self.split_disj(clause)
+    let res = self.split_disj(clause) ;
+    res
   }
 
   /// Splits disjunctions.
@@ -269,11 +270,13 @@ where Slver: Solver<'skid, ()> {
       let was_there = clause!(clause_idx).rm_term(& disj) ;
       debug_assert!(was_there) ;
       if let Some(kid) = kids.pop() {
+        let clause = clause!(clause_idx).clone() ;
+
         clause!(clause_idx).insert_term(kid) ;
         info += self.simplify_clause( clause_idx ) ? ;
 
         for kid in kids {
-          let mut clause = clause!(clause).clone() ;
+          let mut clause = clause.clone() ;
           clause.insert_term(kid) ;
           let this_clause_idx = self.instance.clauses.next_index() ;
           self.instance.push_clause(clause) ? ;
@@ -674,6 +677,8 @@ where Slver: Solver<'skid, ()> {
 
     self.check("before `force_dnf_left`") ? ;
 
+    log_debug! { "  force_dnf_left" }
+
     // Make sure there's no rhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_rhs(
@@ -699,16 +704,18 @@ where Slver: Solver<'skid, ()> {
     ) ;
 
     for clause in clauses_to_rm {
-      // This is why we rev-sorted ~~vvvvvvvvvvvvvvvvvvvvv
-      let mut clause = self.instance.forget_clause(clause) ? ;
+      info.clauses_rmed += 1 ;
 
       let pred_argss = if let Some(
         argss
-      ) = clause.lhs_preds.remove(& pred) {
+      ) = self.instance.clauses[clause].lhs_preds.remove(& pred) {
         argss
       } else {
         bail!("inconsistent instance state")
       } ;
+
+      // This is why we rev-sorted:
+      let clause = self.instance.forget_clause(clause) ? ;
 
       // This vector maps indices from `pred_argss` to the disjuncts of `def`.
       let mut def_indices = vec![ 0 ; pred_argss.len() ] ;
@@ -738,7 +745,7 @@ where Slver: Solver<'skid, ()> {
         // the clause list, meaning simplifying it will not impact other
         // clauses.
         let this_clause = self.instance.clauses.next_index() ;
-        self.instance.push_clause(clause) ? ;
+        self.instance.push_clause_unchecked(clause) ;
         info += self.simplify_clause(this_clause) ? ;
 
         // Increment.
@@ -1111,9 +1118,10 @@ where Slver: Solver<'skid, ()> {
   pub fn rm_rhs_clauses_of(& mut self, pred: PrdIdx) -> Res<RedInfo> {
     debug_assert! { self.clauses_to_simplify.is_empty() }
     let mut info = RedInfo::new() ;
-    self.instance.unlink_pred_rhs(pred, & mut self.clauses_to_simplify) ;
-    info.clauses_rmed += self.clauses_to_simplify.len() ;
-    self.instance.forget_clauses( & mut self.clauses_to_simplify ) ? ;
+    let to_rm = self.instance.pred_to_clauses[pred].1.clone() ;
+    // self.instance.unlink_pred_rhs(pred, & mut self.clauses_to_simplify) ;
+    info.clauses_rmed += to_rm.len() ;
+    self.instance.forget_clauses( & mut to_rm.into_iter().collect() ) ? ;
     Ok(info)
   }
 

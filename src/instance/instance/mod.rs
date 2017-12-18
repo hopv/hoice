@@ -1033,6 +1033,12 @@ impl Instance {
 
   /// Pushes a new clause.
   pub fn push_clause(& mut self, clause: Clause) -> Res<()> {
+    self.push_clause_unchecked(clause) ;
+    self.check("after `push_clause`")
+  }
+
+  /// Pushes a new clause, does not sanity-check.
+  fn push_clause_unchecked(& mut self, clause: Clause) -> () {
     let clause_index = self.clauses.next_index() ;
     for pred in clause.lhs_preds.keys() {
       let pred = * pred ;
@@ -1043,8 +1049,7 @@ impl Instance {
       let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
       debug_assert!(is_new)
     }
-    self.clauses.push(clause) ;
-    self.check("after `push_clause`")
+    self.clauses.push(clause)
   }
 
   /// Extracts some qualifiers from all clauses.

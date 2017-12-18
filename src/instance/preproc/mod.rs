@@ -173,7 +173,6 @@ where S: Solver<'skid, ()> {
             false
           }
         } else {
-          println!("> none") ;
           false
         }
       ) ;
@@ -184,6 +183,20 @@ where S: Solver<'skid, ()> {
         format!("preproc_{:0>4}_original_instance", count),
         "Instance before pre-processing."
     ) ? ;
+    profile!{
+      |profiler|
+        "original pred count" => add self.instance.preds().len()
+    }
+    profile!{
+      |profiler|
+        "original arg count" => add {
+          let mut args = 0 ;
+          for info in self.instance.preds() {
+            args += info.sig.len()
+          }
+          args
+        }
+    }
 
     run! { simplify } ;
 
@@ -948,7 +961,7 @@ pub struct CfgRed {
 impl CfgRed {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "graph red" }
+  fn name(& self) -> & 'static str { "cfg red" }
 }
 impl RedStrat for CfgRed {
   fn new() -> Self {
@@ -968,14 +981,15 @@ impl RedStrat for CfgRed {
       & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
     ) ? ;
 
-    red.preds += to_rm.len() ;
-
     let pred_defs = if let Some(res) = graph.inline(instance, & to_keep) ? {
       res
     } else {
       log_info! { "avoiding cfg red blow-up" }
       return Ok(red)
     } ;
+
+    red.preds += to_rm.len() ;
+
     graph.check(& instance) ? ;
     log_info! { "{} predicates inlined", pred_defs.len() }
 
