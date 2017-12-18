@@ -156,6 +156,7 @@ where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
 /// Information returned by
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
+#[must_use]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -167,6 +168,30 @@ pub struct RedInfo {
   pub args_rmed: usize,
 }
 impl RedInfo {
+  /// Basic constructor.
+  pub fn new() -> Self {
+    RedInfo {
+      preds: 0, clauses_rmed: 0, clauses_added: 0, args_rmed: 0
+    }
+  }
+  /// Constructor from the number of predicates eliminated.
+  pub fn of_preds(preds: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.preds += preds ;
+    slf
+  }
+  /// Constructor from the number of clauses removed.
+  pub fn of_clauses_rmed(clauses_rmed: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.clauses_rmed += clauses_rmed ;
+    slf
+  }
+  /// Constructor from the number of clauses added.
+  pub fn of_clauses_added(clauses_added: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.clauses_added += clauses_added ;
+    slf
+  }
   /// True if one or more fields are non-zero.
   pub fn non_zero(& self) -> bool {
     self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0

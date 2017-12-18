@@ -340,7 +340,8 @@ pub fn terms_of_lhs_app(
   }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let fresh = & mut instance[pred].sig.next_index() ;
+  let mut fresh = instance[pred].sig.next_index() ;
+  let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(
     if quantifiers { var_info.len() } else { 0 }
@@ -452,7 +453,8 @@ pub fn terms_of_rhs_app(
   log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let fresh = & mut instance[pred].sig.next_index() ;
+  let mut fresh = instance[pred].sig.next_index() ;
+  let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(
     if quantifiers { var_info.len() } else { 0 }

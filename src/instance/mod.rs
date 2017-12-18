@@ -8,4 +8,4 @@ mod instance ;
 pub mod parse ;
 pub mod preproc ;
 
-pub use self::instance::{ Clause, Instance } ;
+pub use self::instance::{ Clause, Instance, PreInstance } ;

@@ -3,6 +3,10 @@
 use common::* ;
 use instance::info::* ;
 
+pub mod pre_instance ;
+
+pub use self::pre_instance::PreInstance ;
+
 /// A clause.
 ///
 /// Fields are public because a clause is important only if it's in the
@@ -99,6 +103,11 @@ impl Clause {
     & mut self, pred: PrdIdx, args: VarMap<Term>
   ) -> bool {
     self.lhs_preds.insert_pred_app(pred, args)
+  }
+
+  /// Removes a term from the LHS.
+  pub fn rm_term(& mut self, term: & Term) -> bool {
+    self.lhs_terms.remove(term)
   }
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
@@ -960,6 +969,20 @@ impl Instance {
   LHS: ::std::iter::Extend<ClsIdx>,
   RHS: ::std::iter::Extend<ClsIdx> {
     lhs.extend( self.pred_to_clauses[pred].0.drain() ) ;
+    rhs.extend( self.pred_to_clauses[pred].1.drain() )
+  }
+
+  /// Removes and returns the indices of the clauses `pred` appears in the lhs
+  /// of from `self.pred_to_clauses`.
+  fn unlink_pred_lhs<LHS>(& mut self, pred: PrdIdx, lhs: & mut LHS)
+  where LHS: ::std::iter::Extend<ClsIdx> {
+    lhs.extend( self.pred_to_clauses[pred].0.drain() )
+  }
+
+  /// Removes and returns the indices of the clauses `pred` appears in the rhs
+  /// of from `self.pred_to_clauses`.
+  fn unlink_pred_rhs<RHS>(& mut self, pred: PrdIdx, rhs: & mut RHS)
+  where RHS: ::std::iter::Extend<ClsIdx> {
     rhs.extend( self.pred_to_clauses[pred].1.drain() )
   }
 
@@ -2403,16 +2426,21 @@ impl Instance {
     Ok(())
   }
 }
+impl ::std::ops::Index<PrdIdx> for Instance {
+  type Output = PrdInfo ;
+  fn index(& self, index: PrdIdx) -> & PrdInfo {
+    & self.preds[index]
+  }
+}
 impl ::std::ops::Index<ClsIdx> for Instance {
   type Output = Clause ;
   fn index(& self, index: ClsIdx) -> & Clause {
     & self.clauses[index]
   }
 }
-impl ::std::ops::Index<PrdIdx> for Instance {
-  type Output = PrdInfo ;
-  fn index(& self, index: PrdIdx) -> & PrdInfo {
-    & self.preds[index]
+impl ::std::ops::IndexMut<ClsIdx> for Instance {
+  fn index_mut(& mut self, index: ClsIdx) -> & mut Clause {
+    & mut self.clauses[index]
   }
 }
 
@@ -2574,7 +2602,7 @@ impl<'a> PebcakFmt<'a> for Instance {
 ///
 /// The goal of this type is to avoid reallocation and compartment the clause
 /// simplification process.
-struct ClauseSimplifier {
+pub struct ClauseSimplifier {
   /// Maps variables to their representative.
   var_to_rep: VarHMap<VarIdx>,
   /// Maps variables to their representative as a term.
