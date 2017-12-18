@@ -170,7 +170,7 @@ impl Qualifiers {
     let mut nullary_cands: HConMap<Term, _> = HConMap::with_capacity(2) ;
     nullary_cands.insert( term::tru(), QualValues::new(term::tru()) ) ;
     nullary_cands.insert( term::fls(), QualValues::new(term::fls()) ) ;
-    arity_map.push( HConMap::<Term, _>::with_capacity(0) ) ;
+    arity_map.push( nullary_cands ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
       let term = term::ge( term::var(var_idx), term::int(0) ) ;

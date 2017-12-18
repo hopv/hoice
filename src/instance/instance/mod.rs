@@ -451,8 +451,6 @@ pub struct Instance {
   /// Maps predicates to the clauses where they appear in the lhs and rhs
   /// respectively.
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
-  /// Clause simplifier.
-  simplifier: ClauseSimplifier,
   /// Unsat flag.
   is_unsat: bool,
 }
@@ -472,7 +470,6 @@ impl Instance {
       clauses: ClsMap::with_capacity(clause_capa),
       // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
-      simplifier: ClauseSimplifier::new(),
       is_unsat: false,
     } ;
     // Create basic constants, adding to consts to have mining take them into account.
@@ -930,48 +927,6 @@ impl Instance {
     idx
   }
 
-  /// Forces a predicate to be equal to something.
-  ///
-  /// Does not impact `pred_to_clauses`.
-  fn force_pred(
-    & mut self, pred: PrdIdx, qualf: Option<Qualf>, tterms: TTerms
-  ) -> Res<()> {
-    log_debug!("forcing {}", self[pred]) ;
-    if let Some(_) = self.pred_terms[pred].as_ref() {
-      bail!(
-        "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
-        conf.sad(& self[pred].name),
-        tterms, qualf.map(|q| q.len()).unwrap_or(0)
-      )
-    }
-    if let Some(_) = self.pred_qterms[pred].as_ref() {
-      bail!(
-        "trying to force predicate {} twice\n{}\n{} qualifier(s)",
-        conf.sad(& self[pred].name),
-        tterms, qualf.map(|q| q.len()).unwrap_or(0)
-      )
-    }
-    if let Some(qualf) = qualf {
-      self.pred_qterms[pred] = Some( (qualf, tterms) )
-    } else {
-      self.pred_terms[pred] = Some(tterms)
-    }
-    Ok(())
-  }
-
-  /// Unlinks a predicate from all the clauses it's linked to, and conversely.
-  ///
-  /// Only impacts `self.pred_to_clauses`.
-  fn drain_unlink_pred<LHS, RHS>(
-    & mut self, pred: PrdIdx, lhs: & mut LHS, rhs: & mut RHS
-  ) -> ()
-  where
-  LHS: ::std::iter::Extend<ClsIdx>,
-  RHS: ::std::iter::Extend<ClsIdx> {
-    lhs.extend( self.pred_to_clauses[pred].0.drain() ) ;
-    rhs.extend( self.pred_to_clauses[pred].1.drain() )
-  }
-
   /// Removes and returns the indices of the clauses `pred` appears in the lhs
   /// of from `self.pred_to_clauses`.
   fn unlink_pred_lhs<LHS>(& mut self, pred: PrdIdx, lhs: & mut LHS)
@@ -1034,7 +989,9 @@ impl Instance {
     ) ;
     let mut prev = None ;
     for clause in clauses.drain(0..) {
-      log_debug!{ "forgetting {}", self[clause].to_string_info(& self.preds) ? }
+      log_debug!{
+        "    forgetting {}", self[clause].to_string_info(& self.preds) ?
+      }
       if prev == Some(clause) { continue }
       prev = Some(clause) ;
       let _ = self.forget_clause(clause) ? ;
@@ -1088,509 +1045,6 @@ impl Instance {
     }
     self.clauses.push(clause) ;
     self.check("after `push_clause`")
-  }
-
-
-  /// Simplifies a cause. Returns `true` if the clause was (swap) removed.
-  pub fn simplify_clause(& mut self, clause: ClsIdx) -> Res<bool> {
-    let remove = self.simplifier.clause_propagate(
-      & mut self.clauses[clause]
-    ).chain_err(
-      || format!(
-        "on clause {}",
-        self.clauses[clause].to_string_info(& self.preds).unwrap()
-      )
-    ) ? ;
-    if remove {
-      self.forget_clause(clause) ? ;
-    }
-    Ok(remove)
-  }
-
-
-
-  /// Simplifies the clauses. Returns the number of clauses removed.
-  ///
-  /// - propagates variable equalities in clauses' lhs
-  ///
-  /// # TO DO
-  ///
-  /// - currently kind of assumes equalities are binary, fix?
-  pub fn simplify_clauses(& mut self) -> Res<RedInfo> {
-    let mut changed = true ;
-    let mut red_info: RedInfo = (0, 0, 0).into() ;
-    let mut nu_clauses = Vec::with_capacity(7) ;
-    while changed {
-      changed = false ;
-
-      let mut clause: ClsIdx = 0.into() ;
-      while clause < self.clauses.len() {
-        let removed = self.simplify_clause(clause) ? ;
-        if ! removed {
-          clause.inc()
-        } else {
-          red_info.clauses_rmed += 1
-        }
-      }
-
-      // Split disjunctions.
-      'find_clause: for clause in self.clauses.iter_mut() {
-        // Skip those for which the predicate in the rhs only appears in this
-        // rhs.
-        if let Some((pred, _)) = clause.rhs() {
-          if self.pred_to_clauses[pred].1.len() == 1 {
-            continue 'find_clause
-          }
-        }
-
-        // Skip if clause contains more than 2 disjunctions.
-        let mut disj = None ;
-        for term in & clause.lhs_terms {
-          if let Some(args) = term.disj_inspect() {
-            // More than one disjunction, skipping.
-            if disj.is_some() {
-              continue 'find_clause
-            }
-            disj = Some((term.clone(), args.clone()))
-          }
-        }
-        if let Some((disj, mut kids)) = disj {
-          log_debug!{
-            "splitting clause {}", clause.to_string_info(& self.preds) ?
-          }
-          let _was_there = clause.lhs_terms.remove(& disj) ;
-          debug_assert!(_was_there) ;
-          if let Some(kid) = kids.pop() {
-            for kid in kids {
-              let mut clause = clause.clone() ;
-              clause.insert_term(kid) ;
-              nu_clauses.push(clause)
-            }
-            clause.insert_term(kid) ;
-          } else {
-            bail!("illegal empty disjunction")
-          }
-        }
-      }
-
-      if ! nu_clauses.is_empty() {
-        changed = true ;
-        red_info.clauses_added += nu_clauses.len() ;
-        for clause in nu_clauses.drain(0..) {
-          self.push_clause(clause) ?
-        }
-      }
-
-      self.check("during clause simplification") ?
-    }
-
-
-    Ok(red_info)
-  }
-
-  /// Forces the lhs occurences of a predicate to be equal to something.
-  ///
-  /// If `pred` appears in `pred /\ apps /\ trms => rhs`, the clause will
-  /// become `apps /\ pred_apps /\ trms /\ terms => rhs`.
-  ///
-  /// # Usage
-  ///
-  /// This function can only be called if `pred` appears exactly once as a
-  /// consequent, say in clause `c`, and `c`'s antecedent has no application
-  /// of `pred`.
-  ///
-  /// Otherwise, it will return an error.
-  ///
-  /// # Consequences
-  ///
-  /// - forgets the one clause `pred` is in the rhs of
-  /// - forces `pred` to be `exists qvars, pred_apps /\ terms`
-  ///
-  /// # Used by
-  ///
-  /// - [`SimpleOneRhs`](../instance/preproc/struct.SimpleOneRhs.html)
-  /// - [`OneRhs`](../instance/preproc/struct.OneRhs.html)
-  pub fn force_pred_left(
-    & mut self, pred: PrdIdx,
-    qvars: Quantfed,
-    pred_apps: Vec<(PrdIdx, VarMap<Term>)>,
-    terms: HConSet<Term>,
-  ) -> Res<RedInfo> {
-    self.check("before `force_pred_left`") ? ;
-
-    let (mut clause_lhs, mut clause_rhs) = (Vec::new(), Vec::new()) ;
-    // let mut terms_to_add = vec![] ;
-    let mut clauses_to_rm = ClsSet::new() ;
-
-    log_debug! { "  force pred left on {}...", conf.emph(& self[pred].name) }
-
-    self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
-
-
-    if let Some(clause) = clause_rhs.pop() {
-      if_not_bench!{
-        if clause_rhs.pop().is_some() {
-          bail!(
-            "illegal context for `force_pred_left`, \
-            {} appears in more than one rhs", conf.emph(& self[pred].name)
-          )
-        }
-        if self.preds_of_clause(clause).0.get(& pred).is_some() {
-          bail!(
-            "illegal context for `force_pred_left`, \
-            {} appears as both lhs and rhs", conf.emph(& self[pred].name)
-          )
-        }
-      }
-      clauses_to_rm.insert(clause) ;
-    } else {
-      bail!(
-        "illegal context for `force_pred_left`, \
-        {} appears in no rhs", conf.emph(& self[pred].name)
-      )
-    }
-
-    'clause_iter: for clause in clause_lhs {
-      log_debug!{
-        "    working on lhs of clause {}",
-        self[clause].to_string_info(self.preds()).unwrap()
-      }
-
-      let argss = if let Some(argss) = self.clauses[clause].lhs_preds.remove(
-        & pred
-      ) {
-        argss
-      } else {
-        bail!(
-          "inconsistent instance state, \
-          `pred_to_clauses` and clauses out of sync"
-        )
-      } ;
-
-      for args in argss {
-        let qual_map = self.clauses[clause].fresh_vars_for(& qvars) ;
-
-        for term in & terms {
-          if let Some((term, _)) = term.subst_total( & (& args, & qual_map) ) {
-            self.clause_add_lhs_term(clause, term)
-          } else {
-            bail!("error during total substitution in `force_pred_left`")
-          }
-        }
-
-        for & (pred, ref app_args) in & pred_apps {
-          let mut nu_args = VarMap::with_capacity( args.len() ) ;
-          for arg in app_args {
-            if let Some((arg, _)) = arg.subst_total(
-              & (& args, & qual_map)
-            ) {
-              nu_args.push(arg)
-            }
-          }
-          self.clause_add_lhs_pred(clause, pred, nu_args)
-        }
-      }
-
-      log_debug! {
-        "    done with clause: {}",
-        self[clause].to_string_info(self.preds()).unwrap()
-      }
-
-    }
-
-    // Actually force the predicate.
-    let mut tterms = Vec::with_capacity(
-      pred_apps.len() + terms.len()
-    ) ;
-    for (pred, args) in pred_apps {
-      tterms.push( TTerm::P { pred, args } )
-    }
-    for term in terms {
-      tterms.push( TTerm::T(term) )
-    }
-
-    let tterms = TTerms::conj(tterms) ;
-    self.force_pred(pred, Qualf::exists(qvars), tterms) ? ;
-
-    // Remove obsolete clauses.
-    let mut info: RedInfo = (0, clauses_to_rm.len(), 0).into() ;
-    self.forget_clauses( & mut clauses_to_rm.drain().collect() ) ? ;
-    info += self.simplify() ? ;
-
-    self.check("after `force_pred_left`") ? ;
-
-    Ok(info)
-  }
-
-
-  /// Forces all lhs occurrences of a predicate to be replaced by a DNF.
-  ///
-  /// - only legal if `pred` does not appear in any rhs
-  /// - in general, will create new clauses
-  /// - if `def` is empty, equivalent to `force_false`
-  pub fn force_dnf_left(
-    & mut self, pred: PrdIdx, def: Vec< (Quantfed, Vec<TTerm>) >
-  ) -> Res<RedInfo> {
-    if def.is_empty() {
-      return self.internal_force_false( Some(pred) )
-    }
-
-    self.check("before `force_dnf_left`") ? ;
-    let mut red: RedInfo = (0, 0, 0).into() ;
-
-    let (mut clause_lhs, mut clause_rhs) = ( Vec::new(), Vec::new() ) ;
-    let (mut clauses_to_add, mut clauses_to_rm) = (
-      Vec::new(), Vec::new()
-    ) ;
-
-    self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
-
-    if ! clause_rhs.is_empty() {
-      bail!("can't force dnf {}, it appears in some rhs", self[pred])
-    }
-
-    for clause in clause_lhs {
-      clauses_to_rm.push(clause) ;
-
-      let pred_argss = if let Some(
-        argss
-      ) = self.clauses[clause].lhs_preds.remove(& pred) {
-        argss
-      } else {
-        bail!("inconsistent instance state")
-      } ;
-
-      // This vector maps indices from `pred_argss` to the disjuncts of `def`.
-      let mut def_indices = vec![ 0 ; pred_argss.len() ] ;
-
-      let mut is_done = false ;
-
-      while ! is_done {
-        let mut clause = self.clauses[clause].clone() ;
-
-        for arg_idx in 0..def_indices.len() {
-          let def_idx = def_indices[arg_idx] ;
-          let args = & pred_argss[arg_idx] ;
-          let (ref qvars, ref conj) = def[def_idx] ;
-
-          let quant_map = clause.fresh_vars_for(& qvars) ;
-
-          for tterm in conj {
-            let tterm = tterm.subst_total( & (args, & quant_map) ) ? ;
-            clause.lhs_insert(tterm) ;
-          }
-        }
-
-        clauses_to_add.push(clause) ;
-
-        // Increment.
-        let mut n = def_indices.len() ;
-        let mut increase = false ;
-        while n > 0 {
-          n -= 1 ;
-          if def_indices[n] + 1 < def.len() {
-            def_indices[n] += 1 ;
-            increase = false ;
-            break
-          } else {
-            def_indices[n] = 0 ;
-            increase = true
-          }
-        }
-        // If we still need to increase at this point, we went over the max
-        // index of the first application, meaning we went over everything.
-        is_done = increase
-
-      }
-
-    }
-
-    red.clauses_rmed += clauses_to_rm.len() ;
-    self.forget_clauses( & mut clauses_to_rm ) ? ;
-    red.clauses_added += clauses_to_add.len() ;
-    for clause in clauses_to_add {
-      self.push_clause(clause) ?
-    }
-
-    self.force_pred( pred, None, TTerms::dnf(def) ) ? ;
-
-    self.check("after `force_dnf_left`") ? ;
-
-    Ok(red)
-  }
-
-
-  /// Forces the rhs occurrences of a predicate to be equal to something.
-  ///
-  /// If `pred` appears in `args /\ trms => pred`, the clause will become
-  /// `apps /\ pred_apps /\ trms /\ terms => pred_app`.
-  ///
-  /// Quantified variables are understood as universally quantified.
-  ///
-  /// # Usage
-  ///
-  /// This function can only be called if `pred` appears exactly once as an
-  /// antecedent, say in clause `c`, and `c`'s consequent is not an application
-  /// of `pred`.
-  ///
-  /// Otherwise, it will return an error.
-  ///
-  /// # Consequences
-  ///
-  /// - forgets the one clause `pred` is in the lhs of
-  /// - forces `pred` to be `forall qvars, pred_app \/ (not /\ pred_apps) \/
-  ///   (not /\ terms)`
-  ///
-  /// # Used by
-  ///
-  /// - [`SimpleOneLhs`](../instance/preproc/struct.SimpleOneLhs.html)
-  pub fn force_pred_right(
-    & mut self, pred: PrdIdx,
-    qvars: Quantfed,
-    pred_app: Option< (PrdIdx, VarMap<Term>) >,
-    pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: HConSet<Term>
-  ) -> Res<RedInfo> {
-    self.check("before `force_pred_right`") ? ;
-
-    let (mut clause_lhs, mut clause_rhs) = ( Vec::new(), Vec::new() ) ;
-    let mut clauses_to_rm = ClsSet::new() ;
-
-    log_debug!{ "  force pred right on {}...", conf.emph(& self[pred].name) }
-
-    self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
-
-
-    if let Some(clause) = clause_lhs.pop() {
-      if_not_bench!{
-        if clause_lhs.pop().is_some() {
-          bail!(
-            "illegal context for `force_pred_right`, \
-            {} appears in more than one lhs", conf.emph(& self[pred].name)
-          )
-        }
-        if self.preds_of_clause(clause).1 == Some(pred) {
-          bail!(
-            "illegal context for `force_pred_right`, \
-            {} appears as both lhs and rhs", conf.emph(& self[pred].name)
-          )
-        }
-      }
-      clauses_to_rm.insert(clause) ;
-    } else {
-      bail!(
-        "illegal context for `force_pred_right`, \
-        {} appears in no lhs", conf.emph(& self[pred].name)
-      )
-    }
-
-    let mut rhs_swap ;
-
-    'clause_iter: for clause in clause_rhs {
-      log_debug!{ "    working on clause #{}", clause }
-
-      rhs_swap = None ;
-      ::std::mem::swap(& mut self.clauses[clause].rhs, & mut rhs_swap) ;
-
-      if let Some((prd, subst)) = rhs_swap {
-        let qual_map = self.clauses[clause].fresh_vars_for(& qvars) ;
-
-        if pred == prd {
-
-          log_debug! { "      generating new rhs" }
-
-          // New rhs.
-          if let Some( & (ref prd, ref args) ) = pred_app.as_ref() {
-            let (prd, mut args) = (* prd, args.clone()) ;
-            for arg in & mut args {
-              if let Some((nu_arg, _)) = arg.subst_total(
-                & (& subst, & qual_map)
-              ) {
-                * arg = nu_arg
-              } else {
-                bail!("unexpected failure during total substitution")
-              }
-            }
-
-            self.clause_force_rhs(clause, prd, args)
-          }
-          // No `else`, clause's rhs is already `None`.
-
-          log_debug! { "      generating new lhs pred apps" }
-
-          // New lhs predicate applications.
-          for & (pred, ref args) in & pred_apps {
-            let mut nu_args = VarMap::with_capacity( args.len() ) ;
-            for arg in args {
-              if let Some((nu_arg, _)) = arg.subst_total(
-                & (& subst, & qual_map)
-              ) {
-                nu_args.push(nu_arg)
-              } else {
-                bail!("unexpected failure during total substitution")
-              }
-            }
-            self.clause_add_lhs_pred(clause, pred, nu_args)
-          }
-          
-          log_debug! { "      generating new lhs terms" }
-
-          // New lhs terms.
-          for term in & terms {
-            if let Some((term, _)) = term.subst_total(
-              & (& subst, & qual_map)
-            ) {
-              match term.bool() {
-                Some(true) => (),
-                Some(false) => {
-                  clauses_to_rm.insert(clause) ;
-                  continue 'clause_iter
-                },
-                None => self.clause_add_lhs_term(clause, term),
-              }
-            }
-          }
-
-          // Explicitely continueing, otherwise the factored error message
-          // below will fire.
-          continue 'clause_iter
-        }
-      }
-
-      bail!(
-        "inconsistent instance state, \
-        `pred_to_clauses` and clauses out of sync"
-      )
-    }
-
-    // Actually force the predicate.
-    let mut neg_tterms = Vec::with_capacity(
-      pred_apps.len() + terms.len()
-    ) ;
-    for (pred, args) in pred_apps {
-      neg_tterms.push( TTerm::P { pred, args } )
-    }
-    for term in terms {
-      neg_tterms.push( TTerm::T(term) )
-    }
-
-    let tterms = TTerms::disj(
-      if let Some((pred, args)) = pred_app {
-        vec![ TTerm::P { pred, args } ]
-      } else { vec![] },
-      neg_tterms
-    ) ;
-
-    self.force_pred(pred, Qualf::forall(qvars), tterms) ? ;
-
-
-    // Remove obsolete clauses.
-    let mut info: RedInfo = (0, clauses_to_rm.len(), 0).into() ;
-    self.forget_clauses( & mut clauses_to_rm.drain().collect() ) ? ;
-    info += self.simplify() ? ;
-
-    self.check("after `force_pred_right`") ? ;
-
-    Ok(info)
   }
 
   /// Extracts some qualifiers from all clauses.
@@ -2028,314 +1482,6 @@ impl Instance {
   }
 
 
-  /// Forces some predicates to false. Returns the number of clauses dropped.
-  pub fn force_false<Preds: IntoIterator<Item = PrdIdx>>(
-    & mut self, preds: Preds
-  ) -> Res<RedInfo> {
-    let mut res = self.internal_force_false(preds) ? ;
-    if res.non_zero() { res += self.force_trivial() ? }
-    Ok(res)
-  }
-  /// Forces some predicates to false. Returns the number of clauses dropped.
-  ///
-  /// Internal version, does not call `force_trivial`.
-  fn internal_force_false<Preds: IntoIterator<Item = PrdIdx>>(
-    & mut self, preds: Preds
-  ) -> Res<RedInfo> {
-    self.check("before force false") ? ;
-    let mut clauses_dropped = 0 ;
-    let (mut clause_lhs, mut clause_rhs) = (Vec::new(), Vec::new()) ;
-    let fls = TTerms::fls() ;
-    for pred in preds.into_iter() {
-      debug_assert!( clause_lhs.is_empty() ) ;
-      debug_assert!( clause_rhs.is_empty() ) ;
-
-      self.force_pred( pred, None, fls.clone() ) ? ;
-      self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
-
-      clauses_dropped += clause_lhs.len() ;
-      for clause in clause_rhs.drain(0..) {
-        debug_assert_eq!{
-          self.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
-        }
-        self.clauses[clause].rhs = None
-      }
-      debug_assert!{{
-        for clause in & clause_lhs {
-          debug_assert!( self[*clause].lhs_preds().get(& pred).is_some() )
-        }
-        true
-      }}
-      self.forget_clauses( & mut clause_lhs ) ?
-    }
-    self.check("force_false") ? ;
-    Ok( (0, clauses_dropped, 0).into() )
-  }
-
-
-
-  /// Forces some predicates to false. Returns the number of clauses dropped.
-  pub fn force_true<Preds: IntoIterator<Item = PrdIdx>>(
-    & mut self, preds: Preds
-  ) -> Res<RedInfo> {
-    let mut res = self.internal_force_true(preds) ? ;
-    if res.non_zero() { res += self.force_trivial() ? }
-    Ok(res)
-  }
-  /// Forces some predicates to true.
-  ///
-  /// Internal version, does not call `force_trivial`.
-  fn internal_force_true<Preds: IntoIterator<Item = PrdIdx>>(
-    & mut self, preds: Preds
-  ) -> Res<RedInfo> {
-    let mut clauses_dropped = 0 ;
-    let (mut clause_lhs, mut clause_rhs) = (Vec::new(), Vec::new()) ;
-    let tru = TTerms::tru() ;
-    
-    for pred in preds.into_iter() {
-      debug_assert!( clause_lhs.is_empty() ) ;
-      debug_assert!( clause_rhs.is_empty() ) ;
-
-      self.force_pred( pred, None, tru.clone() ) ? ;
-      self.drain_unlink_pred(pred, & mut clause_lhs, & mut clause_rhs) ;
-
-      for clause in clause_lhs.drain(0..) {
-        self.clauses[clause].lhs_preds.remove(& pred) ;
-      }
-      clauses_dropped += clause_rhs.len() ;
-      self.forget_clauses( & mut clause_rhs ) ? ;
-    }
-    self.check("force_true") ? ;
-    Ok( (0, clauses_dropped, 0).into() )
-  }
-
-
-
-
-  /// Drops trivial clauses.
-  ///
-  /// - `... /\ (p args) /\ ... => (p args)`
-  /// - `... /\ atom /\ ... /\ (not atom) /\ ... => ...`
-  pub fn drop_trivial(& mut self) -> Res<RedInfo> {
-    log_debug!("  drop trivial") ;
-    let mut to_rm = vec![] ;
-
-    'clause_iter: for (idx, clause) in self.clauses.index_iter() {
-
-      // `atom /\ (not atom)`
-      let lhs_terms = clause.lhs_terms() ;
-      for term in lhs_terms {
-        if lhs_terms.contains( & term::not( term.clone() ) ) {
-          log_debug!(
-            "    dropping clause {}: {} /\\ (not {})",
-            idx, term, term
-          ) ;
-          to_rm.push(idx) ;
-          continue 'clause_iter
-        }
-      }
-
-      // `(p args) => (p args)`
-      if let Some((pred, args)) = clause.rhs() {
-        if let Some(lhs_argss) = clause.lhs_preds().get(& pred) {
-          for lhs_args in lhs_argss {
-            if args == lhs_args {
-              log_debug!(
-                "    dropping clause {}: ({} args) => ({} args)",
-                idx, self[pred], self[pred]
-              ) ;
-              to_rm.push(idx) ;
-              continue 'clause_iter
-            }
-          }
-        }
-      }
-
-    }
-
-    let info = ( 0, to_rm.len(), 0 ).into() ;
-
-    self.forget_clauses(& mut to_rm) ? ;
-
-    Ok(info)
-  }
-
-
-
-
-  /// Forces to false (true) all the predicates that only appear in clauses'
-  /// lhs (rhs).
-  pub fn force_trivial(& mut self) -> Res< RedInfo > {
-    let mut info: RedInfo = (0, 0, 0).into() ;
-    let mut fixed_point = false ;
-    while ! fixed_point {
-      fixed_point = true ;
-      for pred in PrdRange::zero_to( self.preds.len() ) {
-        if ! self.is_known(pred) {
-          if self.pred_to_clauses[pred].1.is_empty() {
-            info.preds += 1 ;
-            fixed_point = false ;
-            info += self.internal_force_false( Some(pred) ) ?
-          } else if self.pred_to_clauses[pred].0.is_empty() {
-            info.preds += 1 ;
-            fixed_point = false ;
-            info += self.internal_force_true( Some(pred) ) ?
-          }
-        }
-      }
-    }
-    Ok(info)
-  }
-
-
-  /// Removes all predicate arguments not in `to_keep`, and all corresponding
-  /// arguments in the clauses. Updates `old_preds`, `pred_terms` and
-  /// `pred_qterms`.
-  pub fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
-    log_debug! { "rm_args ({})", to_keep.len() }
-    let mut info: RedInfo = (0, 0, 0).into() ;
-
-    macro_rules! rm_args {
-      (from $args:expr, keep nothing, swap $nu_args:expr) => ({
-        debug_assert!( $nu_args.is_empty() ) ;
-        ::std::mem::swap($nu_args, $args) ;
-        $nu_args.clear() ;
-      }) ;
-      (from $args:expr, keep $to_keep:expr, swap $nu_args:expr) => ({
-        debug_assert!( $nu_args.is_empty() ) ;
-        for (var, arg) in $args.index_iter() {
-          if $to_keep.contains(& var) {
-            $nu_args.push( arg.clone() )
-          }
-        }
-        ::std::mem::swap( $nu_args, $args ) ;
-        $nu_args.clear() ;
-      }) ;
-    }
-
-    // Factored list of arguments used when updating the clauses.
-    let mut nu_args = VarMap::with_capacity(7) ;
-
-    // Remove args from forced predicates.
-    for tterms_opt in & mut self.pred_terms {
-      if let Some(tterms) = tterms_opt.as_mut() {
-        tterms.pred_app_fold(
-          & mut nu_args,
-          |nu_args, pred, args| {
-            if let Some(vars) = to_keep.get(& pred) {
-              rm_args! { from args, keep vars, swap nu_args }
-            }
-            nu_args
-          }
-        )
-      }
-    }
-    log_info! { "  removing arguments from pred_qterms" }
-    for tterms_opt in & mut self.pred_qterms {
-      if let Some(& mut (_, ref mut tterms)) = tterms_opt.as_mut() {
-        tterms.pred_app_fold(
-          & mut nu_args,
-          |nu_args, pred, args| {
-            if let Some(vars) = to_keep.get(& pred) {
-              rm_args! { from args, keep vars, swap nu_args }
-            }
-            nu_args
-          }
-        )
-      }
-    }
-
-    // Remove args from applications in clauses.
-    for (pred, to_keep) in to_keep {
-      log_debug! { "  - {}", self[pred] }
-      debug_assert!( to_keep.len() <= self[pred].sig.len() ) ;
-      if to_keep.len() == self[pred].sig.len() {
-        log_debug! { "    skipping" }
-        continue
-      }
-      log_debug! {
-        "  working on {} ({}/{})",
-        self[pred], to_keep.len(), self[pred].sig.len()
-      }
-      // let mut to_keep: Vec<_> = to_keep.into_iter().collect() ;
-      // to_keep.sort_unstable() ;
-      let mut var_map = VarMap::with_capacity( to_keep.len() ) ;
-      let mut nu_sig = VarMap::with_capacity( to_keep.len() ) ;
-      for (var, typ) in self[pred].sig.index_iter() {
-        if to_keep.contains(& var) {
-          // Re-route current **new** var to the original variable `var` is
-          // pointing to.
-          var_map.push( self.old_preds[pred].1[var] ) ;
-          nu_sig.push(* typ)
-        } else {
-          // println!("ping") ;
-          info.args_rmed += 1
-        }
-      }
-      // println!(
-      //   "{}: {} -> {} ({})",
-      //   self.preds[pred], self.preds[pred].sig.len(),
-      //   nu_sig.len(), to_keep.len()
-      // ) ;
-      // Update `preds` with the new signature.
-      self.preds[pred].sig = nu_sig ;
-      // Update `old_preds`'s map.
-      self.old_preds[pred].1 = var_map ;
-
-      // Propagate removal to clauses.
-      let (ref lhs, ref rhs) = self.pred_to_clauses[pred] ;
-      for clause in lhs {
-        if let Some(argss) = self.clauses[* clause].lhs_preds.get_mut(& pred) {
-          for args in argss {
-            rm_args! { from args, keep to_keep, swap & mut nu_args }
-          }
-        } else {
-          bail!("inconsistent instance state")
-        }
-      }
-      for clause in rhs {
-        if let Some(
-          & mut (p, ref mut args)
-        ) = self.clauses[* clause].rhs.as_mut() {
-          debug_assert_eq!( pred, p ) ;
-          rm_args! { from args, keep to_keep, swap & mut nu_args }
-        } else {
-          bail!("inconsistent instance state")
-        }
-      }
-
-      ()
-    }
-
-    self.check("rm_args") ? ;
-    Ok(info)
-  }
-
-
-  /// Removes irrelevant predicate arguments.
-  pub fn arg_reduce(& mut self) -> Res<RedInfo> {
-    let to_keep = ::instance::preproc::args::to_keep(self) ? ;
-    self.rm_args(to_keep)
-  }
-
-
-  /// Applies various clause simplifications.
-  pub fn simplify(& mut self) -> Res<RedInfo> {
-    let mut info: RedInfo = (0, 0, 0).into() ;
-    loop {
-      let mut nu_info = self.force_trivial() ? ;
-      nu_info += self.drop_trivial() ? ;
-      nu_info += self.simplify_clauses() ? ;
-      let fixed_point = ! nu_info.non_zero() ;
-      info += nu_info ;
-      if fixed_point {
-        break
-      }
-    }
-    Ok(info)
-  }
-
-
   /// Dumps the instance as an SMT-LIB 2 problem.
   pub fn dump_as_smt2<File, Blah>(
     & self, w: & mut File, blah: Blah
@@ -2767,7 +1913,7 @@ impl ClauseSimplifier {
 
     while let Some(eq) = self.eqs.pop() {
       remove = true ;
-      log_debug!{ "  looking at equality {}", eq }
+      // log_debug!{ "  looking at equality {}", eq }
 
       let args = if let Some(args) = eq.kids() { args } else {
         unreachable!(
@@ -2867,7 +2013,7 @@ impl ClauseSimplifier {
             debug_assert!( _prev.is_none() ) ;
             var
           } ;
-          log_debug!{ "rep of {} is {}", var, rep }
+          // log_debug!{ "rep of {} is {}", var, rep }
           let prev = self.rep_to_term.insert(rep, term.clone()) ;
           if let Some(prev) = prev {
             let eq = term::eq(prev, term) ;
@@ -2913,17 +2059,17 @@ impl ClauseSimplifier {
       }
 
       if remove {
-        log_debug!{ "  removing..." }
+        // log_debug!{ "  removing..." }
         let was_there = clause.lhs_terms.remove(& eq) ;
         debug_assert!(was_there)
       } else {
-        log_debug!{ "  skipping..." }
+        // log_debug!{ "  skipping..." }
       }
     }
 
     self.check( clause.vars() ) ? ;
 
-    log_debug!{ "  generating `var_to_rep_term`" }
+    // log_debug!{ "  generating `var_to_rep_term`" }
     self.var_to_rep_term = VarHMap::with_capacity( self.var_to_rep.len() ) ;
     for (rep, set) in & self.rep_to_vars {
       for var in set {
@@ -2933,22 +2079,22 @@ impl ClauseSimplifier {
         }
       }
     }
-    if_debug!{
-      for (var, rep) in & self.var_to_rep {
-        log_debug!{ "    {} -> {}", var, rep }
-      }
-    }
+    // if_debug!{
+    //   for (var, rep) in & self.var_to_rep {
+    //     log_debug!{ "    {} -> {}", var, rep }
+    //   }
+    // }
 
-    log_debug!{ "  stabilizing `rep_to_term` (first step)" }
+    // log_debug!{ "  stabilizing `rep_to_term` (first step)" }
     for (_, term) in & mut self.rep_to_term {
       let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
       if changed { * term = nu_term }
     }
     let mut to_rm = vec![] ;
     for (rep, term) in & self.rep_to_term {
-      log_debug!{ "    {} -> {}", rep, term }
+      // log_debug!{ "    {} -> {}", rep, term }
       if term::vars(term).contains(rep) {
-        log_debug!{ "      -> recursive, putting equality back." }
+        // log_debug!{ "      -> recursive, putting equality back." }
         to_rm.push(* rep)
       }
     }
@@ -2961,26 +2107,26 @@ impl ClauseSimplifier {
       )
     }
 
-    log_debug!{
-      "  stabilizing `rep_to_term` (second step, {})",
-      self.rep_to_term.len()
-    }
+    // log_debug!{
+    //   "  stabilizing `rep_to_term` (second step, {})",
+    //   self.rep_to_term.len()
+    // }
     // self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
       debug_assert!( _prev.is_none() )
     }
-    if_debug!{
-      for (rep, term) in & self.rep_to_stable_term {
-        log_debug!{ "    {} -> {}", rep, term }
-      }
-    }
+    // if_debug!{
+    //   for (rep, term) in & self.rep_to_stable_term {
+    //     log_debug!{ "    {} -> {}", rep, term }
+    //   }
+    // }
 
     // Note that clause variable de-activation is done in this loop.
-    log_debug!{ "  completing substitution" }
+    // log_debug!{ "  completing substitution" }
     for (rep, vars) in self.rep_to_vars.drain() {
-      log_debug!{"  - rep {}", rep}
+      // log_debug!{"  - rep {}", rep}
       let term = if let Some(term) = self.rep_to_stable_term.get(& rep) {
         clause.vars[rep].active = false ;
         term.clone()
@@ -2990,25 +2136,27 @@ impl ClauseSimplifier {
       } ;
       for var in vars {
         if var != rep {
-          log_debug!{"    var: {}", var}
+          // log_debug!{"    var: {}", var}
           clause.vars[var].active = false ;
           let _prev = self.rep_to_stable_term.insert(var, term.clone()) ;
           debug_assert_eq!( _prev, None )
         }
       }
     }
-    if_debug!{
-      for (rep, term) in & self.rep_to_stable_term {
-        log_debug!{ "    {} -> {}", rep, term }
-      }
-    }
+    // if_debug!{
+    //   for (rep, term) in & self.rep_to_stable_term {
+    //     log_debug!{ "    {} -> {}", rep, term }
+    //   }
+    // }
 
     for term in self.terms_to_add.drain(0..) {
       clause.insert_term(term) ;
     }
 
-    log_debug!{ "  updating clause's terms" }
+    // log_debug!{ "  updating clause's terms" }
     clause.subst(& self.rep_to_stable_term) ;
+
+    // log_debug!{ "  done simplifying" }
 
     Ok(false)
   }

@@ -54,7 +54,7 @@ macro_rules! add_vars {
         }
         let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
         debug_assert_eq!( None, _prev ) ;
-        log_info! { "    adding fresh v_{} for {}", $fresh, $info[var] }
+        log_debug! { "    adding fresh v_{} for {}", $fresh, $info[var] }
         let _prev = $map.insert( var, term::var(* $fresh) ) ;
         debug_assert_eq!( None, _prev ) ;
         $fresh.inc()

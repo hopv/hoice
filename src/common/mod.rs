@@ -216,6 +216,15 @@ impl ::std::ops::AddAssign for RedInfo {
     self.args_rmed += args_rmed
   }
 }
+impl_fmt!{
+  RedInfo(self, fmt) {
+    write!(
+      fmt, "\
+        prd: {}, cls rm: {}, cls add: {}, args rm: {}\
+      ", self.preds, self.clauses_rmed, self.clauses_added, self.args_rmed
+    )
+  }
+}
 
 
 
