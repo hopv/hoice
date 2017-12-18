@@ -185,7 +185,6 @@ where S: Solver<'skid, ()> {
         "Instance before pre-processing."
     ) ? ;
 
-    println!("simplify") ;
     run! { simplify } ;
 
     loop {

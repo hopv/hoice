@@ -182,6 +182,7 @@ where Slver: Solver<'skid, ()> {
   /// Simplifies some clauses.
   ///
   /// - can change **all** clause indices because of potential swap removes
+  /// - does not run `force_trivial`
   fn simplify_clauses(& mut self) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
     // We're **popping**, so sort lowest to highest to avoid problems with swap
@@ -196,7 +197,6 @@ where Slver: Solver<'skid, ()> {
       log_debug! { "      {}", info }
     }
     self.check("after `simplify_clauses`") ? ;
-    info += self.force_trivial() ? ;
     Ok(info)
   }
 
@@ -361,7 +361,9 @@ where Slver: Solver<'skid, ()> {
 
   /// Checks the underlying instance is correct.
   pub fn check(& self, blah: & 'static str) -> Res<()> {
-    debug_assert! { self.clauses_to_check.is_empty() }
+    if ! self.clauses_to_check.is_empty() {
+      bail!("clauses_to_check is not empty: {}", blah)
+    }
     self.instance.check(blah)
   }
 
@@ -525,46 +527,6 @@ where Slver: Solver<'skid, ()> {
       "  force pred left on {}...", conf.emph(& self.instance[pred].name)
     }
 
-
-    // Forget the rhs clause.
-    log_debug! {
-      "    forgetting rhs clause"
-    }
-    debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.instance.unlink_pred_rhs(
-      pred, & mut self.clauses_to_simplify
-    ) ;
-    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
-
-      // Fail if illegal.
-      if self.clauses_to_simplify.pop().is_some() {
-        bail!(
-          "illegal context for `force_pred_left`, \
-          {} appears in more than one rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      if self.instance.preds_of_clause(clause).0.get(& pred).is_some() {
-        bail!(
-          "illegal context for `force_pred_left`, \
-          {} appears as both lhs and rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-
-      clause
-    } else {
-      bail!(
-        "illegal context for `force_pred_left`, \
-        {} appears in no rhs", conf.emph(
-          & self.instance[pred].name
-        )
-      )
-    } ;
-
-    info.clauses_rmed += 1 ;
-    self.instance.forget_clause(clause_to_rm) ? ;
-
     // Update lhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_lhs(
@@ -628,6 +590,46 @@ where Slver: Solver<'skid, ()> {
 
     }
 
+    // Simplify the clauses we just updated.
+    info += self.simplify_clauses() ? ;
+
+
+    // Forget the rhs clause.
+    log_debug! {
+      "    forgetting rhs clause"
+    }
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.instance.unlink_pred_rhs(
+      pred, & mut self.clauses_to_simplify
+    ) ;
+    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
+
+      // Fail if illegal.
+      if self.clauses_to_simplify.pop().is_some() {
+        bail!(
+          "illegal context for `force_pred_left`, \
+          {} appears in more than one rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      if self.instance.preds_of_clause(clause).0.get(& pred).is_some() {
+        bail!(
+          "illegal context for `force_pred_left`, \
+          {} appears as both lhs and rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+
+      clause
+    } else {
+      bail!(
+        "illegal context for `force_pred_left`, \
+        {} appears in no rhs", conf.emph(
+          & self.instance[pred].name
+        )
+      )
+    } ;
+
     // Actually force the predicate.
     let mut tterms = Vec::with_capacity(
       pred_apps.len() + terms.len()
@@ -641,10 +643,12 @@ where Slver: Solver<'skid, ()> {
     let tterms = TTerms::conj(tterms) ;
     self.force_pred(pred, Qualf::exists(qvars), tterms) ? ;
 
+    info.clauses_rmed += 1 ;
+    self.instance.forget_clause(clause_to_rm) ? ;
+
     self.check("after `force_pred_left`") ? ;
 
-    // Simplify the clauses we just updated.
-    info += self.simplify_clauses() ? ;
+    info += self.force_trivial() ? ;
 
     Ok(info)
   }
@@ -811,35 +815,6 @@ where Slver: Solver<'skid, ()> {
       "  force pred right on {}...", conf.emph(& self.instance[pred].name)
     }
 
-    // Make sure there's exactly one lhs clause for `pred`.
-    debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.instance.unlink_pred_lhs(
-      pred, & mut self.clauses_to_simplify
-    ) ;
-    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
-      if self.clauses_to_simplify.pop().is_some() {
-        bail!(
-          "illegal context for `force_pred_right`, \
-          {} appears in more than one lhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      if self.instance.preds_of_clause(clause).1 == Some(pred) {
-        bail!(
-          "illegal context for `force_pred_right`, \
-          {} appears as both lhs and rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      clause
-    } else {
-      bail!(
-        "illegal context for `force_pred_right`, \
-        {} appears in no lhs",
-        conf.emph(& self.instance[pred].name)
-      )
-    } ;
-
     // Update rhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_rhs(
@@ -920,6 +895,38 @@ where Slver: Solver<'skid, ()> {
       )
     }
 
+    // Simplify the clause we updated.
+    info += self.simplify_clauses() ? ;
+
+    // Make sure there's exactly one lhs clause for `pred`.
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.instance.unlink_pred_lhs(
+      pred, & mut self.clauses_to_simplify
+    ) ;
+    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
+      if self.clauses_to_simplify.pop().is_some() {
+        bail!(
+          "illegal context for `force_pred_right`, \
+          {} appears in more than one lhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      if self.instance.preds_of_clause(clause).1 == Some(pred) {
+        bail!(
+          "illegal context for `force_pred_right`, \
+          {} appears as both lhs and rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      clause
+    } else {
+      bail!(
+        "illegal context for `force_pred_right`, \
+        {} appears in no lhs",
+        conf.emph(& self.instance[pred].name)
+      )
+    } ;
+
     // Actually force the predicate.
     let mut neg_tterms = Vec::with_capacity(
       pred_apps.len() + terms.len()
@@ -943,8 +950,7 @@ where Slver: Solver<'skid, ()> {
 
     self.check("after `force_pred_right`") ? ;
 
-    // Simplify the clause we updated.
-    info += self.simplify_clauses() ? ;
+    info += self.force_trivial() ? ;
 
     Ok(info)
   }
@@ -962,6 +968,8 @@ where Slver: Solver<'skid, ()> {
   /// `pred_qterms`.
   fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
     log_debug! { "rm_args ({})", to_keep.len() }
+
+    self.check("rm_args") ? ;
 
     let mut info =RedInfo::new() ;
 
@@ -1083,11 +1091,12 @@ where Slver: Solver<'skid, ()> {
       ()
     }
 
-    self.check(" after `rm_args`") ? ;
-
     // Simplify the clauses we just updated.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.clauses_to_simplify = self.clauses_to_check.drain().collect() ;
+
+    self.check(" after `rm_args`") ? ;
+
     info += self.simplify_clauses() ? ;
 
     // Force trivial predicates if any.
