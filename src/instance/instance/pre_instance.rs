@@ -386,7 +386,6 @@ where Slver: Solver<'skid, ()> {
   fn force_pred(
     & mut self, pred: PrdIdx, qualf: Option<Qualf>, tterms: TTerms
   ) -> Res<()> {
-    log_debug!("forcing {}", self.instance[pred]) ;
     if let Some(_) = self.instance.pred_terms[pred].as_ref() {
       bail!(
         "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
@@ -665,6 +664,7 @@ where Slver: Solver<'skid, ()> {
   /// - in general, will create new clauses
   /// - if `def` is empty, equivalent to `force_false`
   /// - simplifies all clauses impacted
+  /// - does not call `force_trivial`
   ///
   /// Used by `GraphRed`.
   pub fn force_dnf_left(
@@ -677,7 +677,7 @@ where Slver: Solver<'skid, ()> {
 
     self.check("before `force_dnf_left`") ? ;
 
-    log_debug! { "  force_dnf_left" }
+    log_debug! { "  force_dnf_left {}", self[pred] }
 
     // Make sure there's no rhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -774,8 +774,6 @@ where Slver: Solver<'skid, ()> {
     self.force_pred( pred, None, TTerms::dnf(def) ) ? ;
 
     self.check("after `force_dnf_left`") ? ;
-
-    info += self.force_trivial() ? ;
 
     Ok(info)
   }

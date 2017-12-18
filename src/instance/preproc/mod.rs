@@ -985,23 +985,25 @@ impl RedStrat for CfgRed {
     & mut self, instance: & mut PreInstance<'a, S>
   ) -> Res<RedInfo>
   where S: Solver<'skid, ()> {
-    let mut red = RedInfo::new() ;
+    let mut info = RedInfo::new() ;
 
     let mut graph = graph::new(instance) ;
     graph.check(& instance) ? ;
-    let (to_keep, to_rm) = graph.break_cycles(instance) ? ;
+    let mut to_keep = graph.break_cycles(instance) ? ;
     graph.to_dot(
       & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
     ) ? ;
 
-    let pred_defs = if let Some(res) = graph.inline(instance, & to_keep) ? {
+    let pred_defs = if let Some(res) = graph.inline(
+      instance, & mut to_keep
+    ) ? {
       res
     } else {
       log_info! { "avoiding cfg red blow-up" }
-      return Ok(red)
+      return Ok(info)
     } ;
 
-    red.preds += to_rm.len() ;
+    info.preds += pred_defs.len() ;
 
     graph.check(& instance) ? ;
     log_info! { "{} predicates inlined", pred_defs.len() }
@@ -1009,7 +1011,7 @@ impl RedStrat for CfgRed {
 
     // Remove all clauses leading to the predicates we just inlined.
     for (pred, def) in pred_defs {
-      red += instance.rm_rhs_clauses_of(pred) ? ;
+      info += instance.rm_rhs_clauses_of(pred) ? ;
 
       if_verb! {
         let mut s = format!("{}(", instance[pred]) ;
@@ -1023,7 +1025,7 @@ impl RedStrat for CfgRed {
           s.push_str( & var.default_str() ) ;
           s.push_str(& format!(": {}", typ)) ;
         }
-        log_info! { "{}) = (or", s }
+        log_debug! { "{}) = (or", s }
         for & (ref qvars, ref conj) in & def {
           let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
             let mut s = format!("  (exists") ;
@@ -1032,23 +1034,25 @@ impl RedStrat for CfgRed {
               s.push_str( & var.default_str() ) ;
               s.push_str( & format!(" {})", typ) )
             }
-            log_info! { "{}", s }
+            log_debug! { "{}", s }
             (Some("  )"), "    ")
           } ;
-          log_info! { "{}(and", pref }
+          log_debug! { "{}(and", pref }
           for tterm in conj {
-            log_info! { "{}  {}", pref, tterm }
+            log_debug! { "{}  {}", pref, tterm }
           }
-          log_info! { "{})", pref }
+          log_debug! { "{})", pref }
           if let Some(suff) = suff {
-            log_info! { "{}", suff }
+            log_debug! { "{}", suff }
           }
         }
-        log_info! { ")" }
+        log_debug! { ")" }
       }
 
-      red += instance.force_dnf_left(pred, def) ? ;
+      info += instance.force_dnf_left(pred, def) ? ;
     }
+
+    info += instance.force_trivial() ? ;
 
     if conf.preproc.dump_pred_dep {
       let graph = graph::new(instance) ;
@@ -1060,7 +1064,7 @@ impl RedStrat for CfgRed {
 
     self.cnt += 1 ;
 
-    Ok(red)
+    Ok(info)
   }
 }
 

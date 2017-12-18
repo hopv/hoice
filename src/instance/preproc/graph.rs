@@ -329,61 +329,11 @@ impl Graph {
   }
 
 
-  /// Estimates wether inlining the predicates in `keep` would cause an
-  /// exponential blow-up.
-  pub fn inlining_blows_up(
-    & self, keep: & PrdSet, instance: & Instance
-  ) -> bool {
-    let mut known = PrdSet::with_capacity( keep.len() ) ;
-    let mut to_check: Vec<_> = self.pos.index_iter().map(
-      |(prd, count)| (prd, * count)
-    ).collect() ;
-    let clause_count = instance.clauses().len() ;
-    let mut total = clause_count ;
-
-    while let Some((prd, count)) = to_check.pop() {
-      debug_assert!( known.difference( keep ).next().is_none() ) ;
-
-      let (is_keep, is_known) = (
-        keep.contains(& prd), known.contains(& prd)
-      ) ;
-      if is_keep {
-        total += count        
-      }
-      if is_known { continue }
-      if is_keep { known.insert(prd) ; }
-
-      for (pred, cnt) in self.forward[prd].index_iter() {
-        if prd != pred && * cnt > 0 {
-          to_check.push( (pred, cnt * count) )
-        }
-      }
-
-      total += count * self.neg[prd]
-
-    }
-
-    // println!(
-    //   "; blow up prediction: {} -> {} ({})", clause_count, total, keep.len()
-    // ) ;
-
-    if clause_count <= 10 {
-      total > clause_count * 10
-    } else if clause_count <= 100 {
-      total > clause_count * 3
-    } else if clause_count <= 500 {
-      total > clause_count * 2
-    } else {
-      total > clause_count + clause_count / 2
-    }
-  }
-
-
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
   pub fn inline(
-    & mut self, instance: & Instance, keep: & PrdSet
+    & mut self, instance: & Instance, keep: & mut PrdSet
   ) -> Res<
     Option< PrdHMap< Vec<(Quantfed, Vec<TTerm>)> > >
   > {
@@ -392,13 +342,13 @@ impl Graph {
     ) ;
     let clause_count = instance.clauses().len() ;
     let upper_bound = if clause_count <= 10 {
-      clause_count * 10
+      clause_count * 25
     } else if clause_count <= 100 {
-      clause_count * 3
+      clause_count * 20
     } else if clause_count <= 500 {
-      clause_count * 2
+      clause_count * 15
     } else {
-      clause_count + clause_count / 2
+      clause_count * 10
     } ;
     let mut increase: usize = 0 ;
 
@@ -472,42 +422,42 @@ impl Graph {
             } else {
 
               if_debug! {
-                log_info! { "  qvars {{" }
+                log_debug! { "  qvars {{" }
                 for (var, typ) in & qvars {
-                  log_info! { "    {}: {}", var.default_str(), typ }
+                  log_debug! { "    {}: {}", var.default_str(), typ }
                 }
-                log_info! { "  }}" }
-                log_info! { "  conj {{" }
+                log_debug! { "  }}" }
+                log_debug! { "  conj {{" }
                 for tt in & conj {
-                  log_info! { "    {}", tt }
+                  log_debug! { "    {}", tt }
                 }
-                log_info! { "  }}" }
+                log_debug! { "  }}" }
               }
 
               let mut curr = vec![ (qvars, conj) ] ;
               for (_this_pred, args, p_def) in to_merge.drain(0..) {
                 if_debug! {
-                  log_info! { "  args for {} {{", instance[_this_pred] }
+                  log_debug! { "  args for {} {{", instance[_this_pred] }
                   for (var, arg) in args.index_iter() {
-                    log_info! { "    {} -> {}", var.default_str(), arg }
+                    log_debug! { "    {} -> {}", var.default_str(), arg }
                   }
-                  log_info! { "  }}" }
-                  log_info! { "  curr {{" }
+                  log_debug! { "  }}" }
+                  log_debug! { "  curr {{" }
                   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-                  log_info! { "    {}", TTerms::dnf(dnf) }
-                  log_info! { "  }}" }
-                  log_info! { "  def {{" }
+                  log_debug! { "    {}", TTerms::dnf(dnf) }
+                  log_debug! { "  }}" }
+                  log_debug! { "  def {{" }
                   let ddef: Vec<_> = (p_def as & Vec<_>).clone() ;
-                  log_info! { "    {}", TTerms::dnf(ddef) }
-                  log_info! { "  }}" }
+                  log_debug! { "    {}", TTerms::dnf(ddef) }
+                  log_debug! { "  }}" }
                 }
                 curr = Self::merge(instance, pred, & args, p_def, & curr) ;
               }
               if_debug! {
-                log_info! { "  finally {{" }
+                log_debug! { "  finally {{" }
                 let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-                log_info! { "    {}", TTerms::dnf(dnf) }
-                log_info! { "  }}" }
+                log_debug! { "    {}", TTerms::dnf(dnf) }
+                log_debug! { "  }}" }
               }
               for pair in curr {
                 def.push(pair)
@@ -524,6 +474,15 @@ impl Graph {
         
       }
 
+      let mut this_pred_increase: usize = 0 ;
+
+      macro_rules! keep_and_continue {
+        ($pred:expr) => (
+          keep.insert($pred) ;
+          continue 'construct
+        )
+      }
+
       for clause in lhs_clauses {
         let count = if let Some(argss) = instance[
           * clause
@@ -538,22 +497,42 @@ impl Graph {
           if let Some(val) = this_increase.checked_mul( def.len() ) {
             this_increase = val
           } else {
-            return Ok(None)
+            keep_and_continue! { pred }
           }
         }
-        if let Some(val) = increase.checked_add(this_increase) {
-          increase = val
+        if let Some(val) = this_pred_increase.checked_add(this_increase) {
+          this_pred_increase = val
         } else {
-          return Ok(None)
+          keep_and_continue! { pred }
         }
 
-        if increase >= upper_bound {
-          return Ok(None)
-        }
       }
 
-      let prev = res.insert( pred, def ) ;
-      debug_assert! { prev.is_none() }
+      let rmed = instance.clauses_of_pred(pred).1.len() ;
+      this_pred_increase = if this_pred_increase >= rmed {
+        this_pred_increase - rmed
+      } else {
+        0
+      } ;
+
+      if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
+        log_info! {
+          "  blow-up prediction for {}: {} + {} = {} / {} ({})",
+          instance[pred], this_pred_increase, increase,
+          sum_increase, upper_bound, clause_count
+        }
+        if sum_increase >= upper_bound {
+          log_info! { "  -> blows up" }
+          keep_and_continue! { pred }
+        } else {
+          log_info! { "  -> inlining" }
+          increase = sum_increase ;
+          let prev = res.insert( pred, def ) ;
+          debug_assert! { prev.is_none() }
+        }
+      } else {
+        keep_and_continue! { pred }
+      }
     }
 
     Ok( Some(res) )
@@ -567,10 +546,9 @@ impl Graph {
   /// remove.
   pub fn break_cycles(
     & self, instance: & Instance
-  ) -> Res<(PrdSet, PrdSet)> {
+  ) -> Res<PrdSet> {
     log_debug! { "breaking cycles in pred dep graph..." }
     let mut set = PrdSet::with_capacity(instance.preds().len() / 3) ;
-    let mut to_rm = PrdSet::with_capacity( instance.preds().len() ) ;
 
     let mut pos = PrdSet::new() ;
     for (prd, cnt) in self.pos.index_iter() {
@@ -660,8 +638,6 @@ impl Graph {
           log_debug! { "  no cycle, forgetting everything" }
           // There's no cycle, forget everything in weight and keep going.
           for (prd, _weight) in weights {
-            let is_new = to_rm.insert(prd) ;
-            debug_assert!( is_new ) ;
             log_debug! { "  - forgetting {} ({})", instance[prd], _weight }
             pos.remove(& prd) ;
             forward.remove(& prd) ;
@@ -695,6 +671,6 @@ impl Graph {
     }
 
     set.shrink_to_fit() ;
-    Ok((set, to_rm))
+    Ok(set)
   }
 }
