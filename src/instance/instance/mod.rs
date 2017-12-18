@@ -996,7 +996,7 @@ impl Instance {
       prev = Some(clause) ;
       let _ = self.forget_clause(clause) ? ;
     }
-    self.check("after `forget_clause`") ? ;
+    // self.check("after `forget_clause`") ? ;
     Ok(())
   }
 
@@ -1350,13 +1350,13 @@ impl Instance {
       ).chain( clause.rhs().into_iter().map(|(pred, _)| pred) ) {
         if let Some((_, term)) = self.forced_terms_of(pred) {
           bail! {
-            "predicate {} is forced{} but appears in a clause",
+            "predicate {} is forced{} but appears in a clause: {}",
             conf.bad( & self[pred].name ),
             match term.bool() {
               Some(true) => " to true",
               Some(false) => " to false",
               None => "",
-            }
+            }, s
           }
         }
       }

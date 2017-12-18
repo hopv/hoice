@@ -225,6 +225,19 @@ where S: Solver<'skid, ()> {
         "preproc_0000_fixed_point",
         "Instance after reaching preproc fixed-point."
     ) ? ;
+    
+    profile!{
+      |profiler|
+        "final pred count" => add {
+          let mut count = 0 ;
+          for pred in self.instance.pred_indices() {
+            if ! self.instance.is_known(pred) {
+              count += 1
+            }
+          }
+          count
+        }
+    }
 
     Ok(())
   }
