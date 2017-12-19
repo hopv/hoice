@@ -968,8 +968,11 @@ impl RedStrat for OneLhs {
 
 /// Detects cycles and keeps a minimal set of predicates to infer.
 pub struct CfgRed {
-  // Internal counter for log files.
+  /// Internal counter for log files.
   cnt: usize,
+  /// Upper bound computed once at the beginning to avoid a progressive
+  /// blow-up.
+  upper_bound: Option<usize>
 }
 impl CfgRed {
   /// Pre-processor's name.
@@ -978,13 +981,30 @@ impl CfgRed {
 }
 impl RedStrat for CfgRed {
   fn new() -> Self {
-    CfgRed { cnt: 0 }
+    CfgRed { cnt: 0, upper_bound: None }
   }
 
   fn apply<'a, 'skid, S>(
     & mut self, instance: & mut PreInstance<'a, S>
   ) -> Res<RedInfo>
   where S: Solver<'skid, ()> {
+    let upper_bound = if let Some(upper_bound) = self.upper_bound {
+      upper_bound
+    } else {
+      let clause_count = instance.clauses().len() ;
+      let upper_bound = if clause_count <= 10 {
+        clause_count * 25
+      } else if clause_count <= 100 {
+        clause_count * 15
+      } else if clause_count <= 500 {
+        clause_count * 10
+      } else {
+        clause_count * 5
+      } ;
+      self.upper_bound = Some(upper_bound) ;
+      upper_bound
+    } ;
+
     let mut info = RedInfo::new() ;
 
     let mut graph = graph::new(instance) ;
@@ -995,7 +1015,7 @@ impl RedStrat for CfgRed {
     ) ? ;
 
     let pred_defs = if let Some(res) = graph.inline(
-      instance, & mut to_keep
+      instance, & mut to_keep, upper_bound
     ) ? {
       res
     } else {

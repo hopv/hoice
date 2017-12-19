@@ -333,23 +333,14 @@ impl Graph {
   ///
   /// Returns a disjunction of conjunctions.
   pub fn inline(
-    & mut self, instance: & Instance, keep: & mut PrdSet
+    & mut self, instance: & Instance, keep: & mut PrdSet,
+    upper_bound: usize
   ) -> Res<
     Option< PrdHMap< Vec<(Quantfed, Vec<TTerm>)> > >
   > {
     let mut res = PrdHMap::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
-    let clause_count = instance.clauses().len() ;
-    let upper_bound = if clause_count <= 10 {
-      clause_count * 25
-    } else if clause_count <= 100 {
-      clause_count * 20
-    } else if clause_count <= 500 {
-      clause_count * 15
-    } else {
-      clause_count * 10
-    } ;
     let mut increase: usize = 0 ;
 
     'construct: loop {
@@ -517,9 +508,9 @@ impl Graph {
 
       if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
         log_info! {
-          "  blow-up prediction for {}: {} + {} = {} / {} ({})",
+          "  blow-up prediction for {}: {} + {} = {} / {}",
           instance[pred], this_pred_increase, increase,
-          sum_increase, upper_bound, clause_count
+          sum_increase, upper_bound
         }
         if sum_increase >= upper_bound {
           log_info! { "  -> blows up" }

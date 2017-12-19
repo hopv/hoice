@@ -18,7 +18,7 @@ pub use either::Either ;
 
 pub use errors::* ;
 pub use term ;
-pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ, Qualf } ;
+pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ, Quant } ;
 pub use instance::Instance ;
 
 mod wrappers ;
@@ -136,7 +136,7 @@ unsafe impl<T: Send> Send for PrdMap<T> {}
 pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
-pub type Model = Vec< (PrdIdx, Option<Qualf>, TTerms) > ;
+pub type Model = Vec< (PrdIdx, Option<Quant>, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -145,6 +145,10 @@ pub type Cexs = ClsHMap<Cex> ;
 
 /// Mapping from variables to values, used for learning data.
 pub type Args = VarMap<Val> ;
+/// Mapping from variables to terms.
+pub type TArgs = VarMap<Term> ;
+/// Set of term arguments.
+pub type TArgss = HashSet< VarMap<Term> > ;
 
 /// Alias trait for a solver with this module's parser.
 pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}

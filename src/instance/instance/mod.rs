@@ -439,7 +439,7 @@ pub struct Instance {
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates for which a suitable quantified term has been found.
-  pred_qterms: PrdMap< Option< (Qualf, TTerms) > >,
+  pred_qterms: PrdMap< Option< (Quant, TTerms) > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
@@ -659,7 +659,7 @@ impl Instance {
 
   /// Returns the term we already know works for a predicate, if any.
   pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<(
-    Option<& Qualf>, & TTerms
+    Option<& Quant>, & TTerms
   )> {
     if let Some(tterms) = self.pred_terms[pred].as_ref() {
       Some( (None, tterms) )

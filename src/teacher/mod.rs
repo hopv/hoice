@@ -106,8 +106,8 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
             conf.emph( & teacher.learners[_idx].1 )
           ) ;
           for _pred in teacher.instance.preds() {
-            log_info!("{}:", conf.emph(& _pred.name)) ;
             if let Some(term) = candidates[_pred.idx].as_ref() {
+              log_info!("{}:", conf.emph(& _pred.name)) ;
               log_info!("  {}", term)
             }
           }

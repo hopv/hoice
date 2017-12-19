@@ -384,7 +384,7 @@ where Slver: Solver<'skid, ()> {
   ///
   /// Does not impact `pred_to_clauses`.
   fn force_pred(
-    & mut self, pred: PrdIdx, qualf: Option<Qualf>, tterms: TTerms
+    & mut self, pred: PrdIdx, qualf: Option<Quant>, tterms: TTerms
   ) -> Res<()> {
     if let Some(_) = self.instance.pred_terms[pred].as_ref() {
       bail!(
@@ -643,7 +643,7 @@ where Slver: Solver<'skid, ()> {
       tterms.push( TTerm::T(term) )
     }
     let tterms = TTerms::conj(tterms) ;
-    self.force_pred(pred, Qualf::exists(qvars), tterms) ? ;
+    self.force_pred(pred, Quant::exists(qvars), tterms) ? ;
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
@@ -948,7 +948,7 @@ where Slver: Solver<'skid, ()> {
       } else { vec![] },
       neg_tterms
     ) ;
-    self.force_pred(pred, Qualf::forall(qvars), tterms) ? ;
+    self.force_pred(pred, Quant::forall(qvars), tterms) ? ;
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;

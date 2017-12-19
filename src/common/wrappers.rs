@@ -60,6 +60,32 @@ impl VarMap<::term::Val> {
   }
 }
 
+impl VarMap< ::term::Term > {
+  /// Removes the arguments of the specified indices. Preserves the order.
+  ///
+  /// This is used when useless arguments are detected, to slice predicate
+  /// applications.
+  pub fn remove(& mut self, vars: & VarSet) {
+    debug_assert! { self.len() >= vars.len() }
+    debug_assert! {{
+      let mut okay = true ;
+      for var in vars {
+        if * var >= self.len() {
+          okay = false ; break
+        }
+      }
+      okay
+    }}
+    let mut old_vars = VarMap::with_capacity( self.len() - vars.len() ) ;
+    ::std::mem::swap( & mut old_vars, self ) ;
+    for (var, term) in old_vars.into_index_iter() {
+      if ! vars.contains(& var) {
+        self.push(term)
+      }
+    }
+  }
+}
+
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
   fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
     write!(fmt, "(") ? ;
