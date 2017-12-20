@@ -253,7 +253,7 @@ F: Fn(Term) -> Term {
 
 /// Given a predicate application, returns the constraints on the input and a
 /// map from the variables used in the arguments to the variables of the
-/// predicate.
+/// predicate. Also returns the set of variables appearing in the application.
 ///
 /// # TODO
 ///

@@ -264,7 +264,7 @@ impl PreprocConf {
   pub fn add_args(app: App) -> App {
     app.arg(
 
-      Arg::with_name("pre_proc").long("--pre_proc").help(
+      Arg::with_name("preproc").long("--preproc").help(
         "(de)activates pre-processing"
       ).validator(
         bool_validator
@@ -387,7 +387,7 @@ impl PreprocConf {
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let active = bool_of_matches(matches, "pre_proc") ;
+    let active = bool_of_matches(matches, "preproc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
     let reduction = bool_of_matches(matches, "reduction") ;
     let arg_red = bool_of_matches(matches, "arg_red") ;

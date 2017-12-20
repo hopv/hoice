@@ -169,7 +169,11 @@ where Slver: Solver<'skid, ()> {
 
     while clause > 0 {
       clause.dec() ;
-      info += self.simplify_clause(clause) ?
+      log_info! { "  simplifying clause #{}", clause }
+      log_info! { "{}", self.instance[clause].to_string_info( self.instance.preds() ) ? }
+      info += self.simplify_clause(clause) ? ;
+
+      log_info! { "{}", self.instance[clause].to_string_info( self.instance.preds() ) ? }
     }
 
     info += self.force_trivial() ? ;
@@ -192,9 +196,7 @@ where Slver: Solver<'skid, ()> {
     ) ;
     log_debug! { "    simplify clauses ({})", self.clauses_to_simplify.len() }
     while let Some(clause) = self.clauses_to_simplify.pop() {
-      log_debug! { "    - simplifying clause #{}", clause }
-      info += self.simplify_clause(clause) ? ;
-      log_debug! { "      {}", info }
+      info += self.simplify_clause(clause) ?
     }
     self.check("after `simplify_clauses`") ? ;
     Ok(info)
@@ -235,7 +237,7 @@ where Slver: Solver<'skid, ()> {
 
   /// Splits disjunctions.
   ///
-  /// Splits a clause if it contains exactly one disjunction, if if it's rhs
+  /// Splits a clause if it contains exactly one disjunction, if its rhs
   /// predicate appear in the rhs of other clauses too.
   ///
   /// Returns the number of clauses created.
@@ -830,6 +832,7 @@ where Slver: Solver<'skid, ()> {
     'clause_iter: for clause in & self.clauses_to_simplify {
       let clause = * clause ;
       log_debug!{ "    working on clause #{}", clause }
+      log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
 
       rhs_swap = None ;
       ::std::mem::swap(
@@ -888,6 +891,8 @@ where Slver: Solver<'skid, ()> {
             }
           }
 
+          log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
+
           // Explicitely continueing, otherwise the factored error message
           // below will fire.
           continue 'clause_iter
@@ -902,6 +907,9 @@ where Slver: Solver<'skid, ()> {
 
     // Simplify the clause we updated.
     info += self.simplify_clauses() ? ;
+
+    let clause: ClsIdx = 11.into() ;
+    log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
 
     // Make sure there's exactly one lhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -954,8 +962,6 @@ where Slver: Solver<'skid, ()> {
     self.instance.forget_clause(clause_to_rm) ? ;
 
     self.check("after `force_pred_right`") ? ;
-
-    info += self.force_trivial() ? ;
 
     Ok(info)
   }

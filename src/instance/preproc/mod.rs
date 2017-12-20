@@ -113,11 +113,6 @@ where S: Solver<'skid, ()> {
     }
   }
 
-  /// Runs initial instance simplifications.
-  pub fn simplify_all(& mut self) -> Res<RedInfo> {
-    self.instance.simplify_all()
-  }
-
   /// Runs the full pre-processing.
   pub fn run(& mut self, profiler: & Profiler) -> Res<()> {
     // Counter for preproc dumping.
@@ -136,36 +131,36 @@ where S: Solver<'skid, ()> {
           }
           log_info! { "running {}", conf.emph( preproc.name() ) }
           let red_info = preproc.apply( & mut self.instance ) ? ;
-          count += 1 ;
-          preproc_dump!(
-            self.instance =>
-            format!("preproc_{:0>4}_{}", count, preproc.name()),
-            format!("Instance after running `{}`.", preproc.name())
-          ) ? ;
           profile! {
             |profiler| mark "preproc", preproc.name()
           }
-          profile!{
-            |profiler| format!(
-              "{:>25}   pred red", preproc.name()
-            ) => add red_info.preds
-          }
-          profile!{
-            |profiler| format!(
-              "{:>25} clause red", preproc.name()
-            ) => add red_info.clauses_rmed
-          }
-          profile!{
-            |profiler| format!(
-              "{:>25} clause add", preproc.name()
-            ) => add red_info.clauses_added
-          }
-          profile!{
-            |profiler| format!(
-              "{:>25}    arg red", preproc.name()
-            ) => add red_info.args_rmed
-          }
           if red_info.non_zero() {
+            count += 1 ;
+            preproc_dump!(
+              self.instance =>
+              format!("preproc_{:0>4}_{}", count, preproc.name()),
+              format!("Instance after running `{}`.", preproc.name())
+            ) ? ;
+            profile!{
+              |profiler| format!(
+                "{:>25}   pred red", preproc.name()
+              ) => add red_info.preds
+            }
+            profile!{
+              |profiler| format!(
+                "{:>25} clause red", preproc.name()
+              ) => add red_info.clauses_rmed
+            }
+            profile!{
+              |profiler| format!(
+                "{:>25} clause add", preproc.name()
+              ) => add red_info.clauses_added
+            }
+            profile!{
+              |profiler| format!(
+                "{:>25}    arg red", preproc.name()
+              ) => add red_info.args_rmed
+            }
             log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
             true
           } else {
@@ -185,11 +180,15 @@ where S: Solver<'skid, ()> {
     ) ? ;
     profile!{
       |profiler|
-        "original pred count" => add self.instance.preds().len()
+        "clause count original" => add self.instance.clauses().len()
     }
     profile!{
       |profiler|
-        "original arg count" => add {
+        "pred count original" => add self.instance.preds().len()
+    }
+    profile!{
+      |profiler|
+        "arg count original" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
             args += info.sig.len()
@@ -225,10 +224,15 @@ where S: Solver<'skid, ()> {
         "preproc_0000_fixed_point",
         "Instance after reaching preproc fixed-point."
     ) ? ;
-    
+
     profile!{
       |profiler|
-        "final pred count" => add {
+        "clause count    final" => add self.instance.clauses().len()
+    }
+
+    profile!{
+      |profiler|
+        "pred count    final" => add {
           let mut count = 0 ;
           for pred in self.instance.pred_indices() {
             if ! self.instance.is_known(pred) {
@@ -236,6 +240,17 @@ where S: Solver<'skid, ()> {
             }
           }
           count
+        }
+    }
+
+    profile!{
+      |profiler|
+        "arg count    final" => add {
+          let mut args = 0 ;
+          for info in self.instance.preds() {
+            args += info.sig.len()
+          }
+          args
         }
     }
 
@@ -288,7 +303,7 @@ pub struct ArgReduce ;
 impl ArgReduce {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "arg reduce" }
+  fn name(& self) -> & 'static str { "arg_reduce" }
 }
 impl RedStrat for ArgReduce {
   fn new() -> Self { ArgReduce }
@@ -343,7 +358,7 @@ pub struct SimpleOneRhs {
 impl SimpleOneRhs {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "simple one rhs" }
+  fn name(& self) -> & 'static str { "simple_one_rhs" }
 }
 impl RedStrat for SimpleOneRhs {
   fn new() -> Self {
@@ -485,7 +500,7 @@ pub struct SimpleOneLhs {
 impl SimpleOneLhs {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "simple one lhs" }
+  fn name(& self) -> & 'static str { "simple_one_lhs" }
 }
 impl RedStrat for SimpleOneLhs {
   fn new() -> Self {
@@ -661,7 +676,7 @@ pub struct OneRhs {
 impl OneRhs {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "one rhs" }
+  fn name(& self) -> & 'static str { "one_rhs" }
 }
 impl RedStrat for OneRhs {
   fn new() -> Self {
@@ -812,7 +827,7 @@ pub struct OneLhs {
 impl OneLhs {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "one lhs" }
+  fn name(& self) -> & 'static str { "one_lhs" }
 }
 impl RedStrat for OneLhs {
   fn new() -> Self {
@@ -957,7 +972,7 @@ impl RedStrat for OneLhs {
 
       debug_assert! { instance.is_known(pred) }
 
-      red_info.preds += 1
+      red_info.preds += 1 ;
     }
 
     Ok( red_info )
@@ -977,7 +992,7 @@ pub struct CfgRed {
 impl CfgRed {
   /// Pre-processor's name.
   #[inline]
-  fn name(& self) -> & 'static str { "cfg red" }
+  fn name(& self) -> & 'static str { "cfg_red" }
 }
 impl RedStrat for CfgRed {
   fn new() -> Self {

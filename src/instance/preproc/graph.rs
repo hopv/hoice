@@ -427,29 +427,29 @@ impl Graph {
 
               let mut curr = vec![ (qvars, conj) ] ;
               for (_this_pred, args, p_def) in to_merge.drain(0..) {
-                if_debug! {
-                  log_debug! { "  args for {} {{", instance[_this_pred] }
-                  for (var, arg) in args.index_iter() {
-                    log_debug! { "    {} -> {}", var.default_str(), arg }
-                  }
-                  log_debug! { "  }}" }
-                  log_debug! { "  curr {{" }
-                  let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-                  log_debug! { "    {}", TTerms::dnf(dnf) }
-                  log_debug! { "  }}" }
-                  log_debug! { "  def {{" }
-                  let ddef: Vec<_> = (p_def as & Vec<_>).clone() ;
-                  log_debug! { "    {}", TTerms::dnf(ddef) }
-                  log_debug! { "  }}" }
-                }
+                // if_debug! {
+                //   log_debug! { "  args for {} {{", instance[_this_pred] }
+                //   for (var, arg) in args.index_iter() {
+                //     log_debug! { "    {} -> {}", var.default_str(), arg }
+                //   }
+                //   log_debug! { "  }}" }
+                //   log_debug! { "  curr {{" }
+                //   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
+                //   log_debug! { "    {}", TTerms::dnf(dnf) }
+                //   log_debug! { "  }}" }
+                //   log_debug! { "  def {{" }
+                //   let ddef: Vec<_> = (p_def as & Vec<_>).clone() ;
+                //   log_debug! { "    {}", TTerms::dnf(ddef) }
+                //   log_debug! { "  }}" }
+                // }
                 curr = Self::merge(instance, pred, & args, p_def, & curr) ;
               }
-              if_debug! {
-                log_debug! { "  finally {{" }
-                let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-                log_debug! { "    {}", TTerms::dnf(dnf) }
-                log_debug! { "  }}" }
-              }
+              // if_debug! {
+              //   log_debug! { "  finally {{" }
+              //   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
+              //   log_debug! { "    {}", TTerms::dnf(dnf) }
+              //   log_debug! { "  }}" }
+              // }
               for pair in curr {
                 def.push(pair)
               }

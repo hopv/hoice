@@ -510,16 +510,22 @@ impl Instance {
     model.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |term| (pred, None, TTerms::of_tterm( TTerm::T(term) ))
+          |term| (pred, NuTTerms::of_term(None, term))
         )
       )
     ) ;
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
-        model.push( (pred, None, tterms.clone()) )
+        model.push(
+          (pred, NuTTerms::of_old_tterms(None, tterms))
+        )
       } else if let Some((ref qualf, ref tterms)) = self.pred_qterms[pred] {
-        model.push( (pred, Some( qualf.clone() ), tterms.clone()) )
+        model.push((
+          pred, NuTTerms::of_old_tterms(
+            Some( qualf.clone() ), tterms
+          )
+        ))
       } else {
         bail!("inconsistency in sorted forced predicates")
       }
@@ -563,7 +569,7 @@ impl Instance {
   /// Meaning variables are printed with default printing: `<var_idx>` is
   /// printed as `v_<var_idx>`.
   pub fn print_tterms_as_model<W: Write>(
-    & self, w: & mut W, tterms: & TTerms
+    & self, w: & mut W, tterms: & NuTTerms
   ) -> IoRes<()> {
     tterms.write(
       w, |w, var| var.default_write(w),
@@ -1055,7 +1061,10 @@ impl Instance {
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Quals) {
     for clause in & self.clauses {
-      // println!("  - mining clause\n{}", clause.to_string_info(& self.preds).unwrap()) ;
+      // println!(
+      //   "  - mining clause\n{}",
+      //   clause.to_string_info(& self.preds).unwrap()
+      // ) ;
       self.qualifiers_of_clause(clause, quals)
     }
   }
@@ -1071,7 +1080,8 @@ impl Instance {
   ) {
 
     // println!(
-    //   "qualifiers for clause {}", clause.to_string_info(& self.preds).unwrap()
+    //   "qualifiers for clause {}",
+    //   clause.to_string_info(& self.preds).unwrap()
     // ) ;
 
     // Extraction of the variables map based on the way the predicates are
@@ -1405,6 +1415,12 @@ impl Instance {
     for (cls_idx, clause) in self.clauses.index_iter() {
       for (pred, _) in & clause.lhs_preds {
         let pred = * pred ;
+        if self.is_known(pred) {
+          bail!(
+            "predicate {} is forced but appears in lhs of clause {}",
+            self[pred], cls_idx
+          )
+        }
         if ! self.pred_to_clauses[pred].0.contains(& cls_idx) {
           bail!(
             "predicate {} appears in lhs of clause {} \
@@ -1420,6 +1436,12 @@ impl Instance {
         }
       }
       if let Some((pred, _)) = clause.rhs() {
+        if self.is_known(pred) {
+          bail!(
+            "predicate {} is forced but appears in rhs of clause {}",
+            self[pred], cls_idx
+          )
+        }
         if ! self.pred_to_clauses[pred].1.contains(& cls_idx) {
           bail!(
             "predicate {} appears in rhs of clause {} \
@@ -1537,7 +1559,7 @@ impl Instance {
   /// Writes a model.
   pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
     writeln!(w, "(model") ? ;
-    for & (pred, ref qvars, ref tterms) in model {
+    for & (pred, ref tterms) in model {
       let pred_info = & self[pred] ;
       let (ref old_sig, ref var_map) = self.old_preds[pred] ;
       // Reverse `var_map` so that it maps old vars to new ones.
@@ -1563,15 +1585,9 @@ impl Instance {
       }
 
       writeln!(w, " ) {}", Typ::Bool) ? ;
-      let (ident, closing) = if let Some(ref qvars) = * qvars {
-        qvars.write_pref(w, "    ", |w, var| var.default_write(w)) ? ;
-        ("      ", "\n    )")
-      } else {
-        ("    ", "")
-      } ;
-      write!(w, "{}", ident) ? ;
+      write!(w, "    ") ? ;
       self.print_tterms_as_model(w, tterms) ? ;
-      writeln!(w, "{}\n  )", closing) ?
+      writeln!(w, "\n  )") ?
     }
     writeln!(w, ")") ? ;
     Ok(())
