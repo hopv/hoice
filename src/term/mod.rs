@@ -963,9 +963,9 @@ impl TTermSet {
   }
 
   /// Removes some arguments from the predicate applications.
-  pub fn remove_vars(& mut self, to_rm: & PrdHMap<VarSet>) {
+  pub fn remove_vars(& mut self, to_keep: & PrdHMap<VarSet>) {
     remove_vars_from_pred_apps(
-      & mut self.preds, to_rm
+      & mut self.preds, to_keep
     )
   }
 
@@ -1065,10 +1065,10 @@ impl ::std::cmp::PartialOrd for TTermSet {
 
 /// Removes some arguments from some predicate applications.
 fn remove_vars_from_pred_apps(
-  apps: & mut PrdHMap< TArgss >, to_rm: & PrdHMap<VarSet>
+  apps: & mut PrdHMap< TArgss >, to_keep: & PrdHMap<VarSet>
 ) {
   for (pred, argss) in apps.iter_mut() {
-    let vars_to_rm = if let Some(vars) = to_rm.get(pred) {
+    let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
       vars
     } else {
       continue
@@ -1076,7 +1076,7 @@ fn remove_vars_from_pred_apps(
     let mut old_argss = HashSet::with_capacity( argss.len() ) ;
     ::std::mem::swap( & mut old_argss, argss ) ;
     for mut args in old_argss {
-      args.remove( vars_to_rm ) ;
+      args.remove( vars_to_keep ) ;
       argss.insert(args) ;
     }
   }
@@ -1129,18 +1129,18 @@ impl NuTTerms {
   }
 
   /// Removes some arguments from the predicate applications.
-  pub fn remove_vars(& mut self, to_rm: & PrdHMap< VarSet >) {
+  pub fn remove_vars(& mut self, to_keep: & PrdHMap< VarSet >) {
     match * self {
       NuTTerms::True | NuTTerms::False => (),
-      NuTTerms::Conj { ref mut tterms, .. } => tterms.remove_vars(to_rm),
+      NuTTerms::Conj { ref mut tterms, .. } => tterms.remove_vars(to_keep),
       NuTTerms::Disj {
         ref mut tterms, ref mut neg_preds, ..
       } => {
-        tterms.remove_vars(to_rm) ;
-        remove_vars_from_pred_apps(neg_preds, to_rm)
+        tterms.remove_vars(to_keep) ;
+        remove_vars_from_pred_apps(neg_preds, to_keep)
       },
       NuTTerms::Dnf { ref mut disj } => for & mut (_, ref mut tterms) in disj {
-        tterms.remove_vars(to_rm)
+        tterms.remove_vars(to_keep)
       },
     }
   }
@@ -1747,6 +1747,35 @@ impl NuTTerms {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
+  }
+}
+
+impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
+> for NuTTerms {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, info: & 'b (
+      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<::instance::info::PrdInfo>
+    )
+  ) -> SmtRes<()> {
+    let (true_preds, false_preds, pred_info) = * info ;
+    self.write_smt2(
+      w, |w, pred, args| {
+        if true_preds.contains(& pred) {
+          write!(w, "true")
+        } else if false_preds.contains(& pred) {
+          write!(w, "false")
+        } else {
+          write!(w, "({}", pred_info[pred]) ? ;
+          for arg in args {
+            write!(w, " ") ? ;
+            arg.write(w, |w, var| var.default_write(w)) ?
+          }
+          write!(w, ")")
+        }
+      }
+    ) ? ;
+    Ok(())
   }
 }
 

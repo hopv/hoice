@@ -437,9 +437,7 @@ pub struct Instance {
   /// variables of `preds` to the original signature.
   old_preds: PrdMap< (VarMap<Typ>, VarMap<VarIdx>) >,
   /// Predicates for which a suitable term has been found.
-  pred_terms: PrdMap< Option< TTerms > >,
-  /// Predicates for which a suitable quantified term has been found.
-  pred_qterms: PrdMap< Option< (Quant, TTerms) > >,
+  pred_terms: PrdMap< Option< NuTTerms > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
@@ -464,7 +462,6 @@ impl Instance {
       preds: PrdMap::with_capacity(pred_capa),
       old_preds: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
-      pred_qterms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
       clauses: ClsMap::with_capacity(clause_capa),
@@ -496,8 +493,7 @@ impl Instance {
   /// True if a predicate is forced to something.
   #[inline]
   pub fn is_known(& self, pred: PrdIdx) -> bool {
-    self.pred_terms[pred].is_some() ||
-    self.pred_qterms[pred].is_some()
+    self.pred_terms[pred].is_some()
   }
 
   /// Returns the model corresponding to the input predicates and the forced
@@ -518,14 +514,8 @@ impl Instance {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push(
-          (pred, NuTTerms::of_old_tterms(None, tterms))
+          (pred, tterms.clone())
         )
-      } else if let Some((ref qualf, ref tterms)) = self.pred_qterms[pred] {
-        model.push((
-          pred, NuTTerms::of_old_tterms(
-            Some( qualf.clone() ), tterms
-          )
-        ))
       } else {
         bail!("inconsistency in sorted forced predicates")
       }
@@ -538,8 +528,7 @@ impl Instance {
   pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
     if self.is_unsat { Ok( Some(None) ) } else {
       for pred in self.pred_indices() {
-        if self.pred_terms[pred].is_none()
-        && self.pred_qterms[pred].is_none() {
+        if self.pred_terms[pred].is_none() {
           return Ok(None)
         }
       }
@@ -622,8 +611,6 @@ impl Instance {
     for pred in self.pred_indices() {
       if let Some(ref tterms) = self.pred_terms[pred] {
         tmp.push( (pred, tterms.preds()) )
-      } else if let Some((_, ref tterms)) = self.pred_qterms[pred] {
-        tmp.push( (pred, tterms.preds()) )
       } else {
         self.max_pred_arity = ::std::cmp::max(
           self.max_pred_arity, (self[pred].sig.len() + 1).into()
@@ -664,23 +651,15 @@ impl Instance {
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<(
-    Option<& Quant>, & TTerms
-  )> {
-    if let Some(tterms) = self.pred_terms[pred].as_ref() {
-      Some( (None, tterms) )
-    } else {
-      self.pred_qterms[pred].as_ref().map(
-        |& (ref quals, ref tterms)| (Some(quals), tterms)
-      )
-    }
+  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& NuTTerms> {
+    self.pred_terms[pred].as_ref()
   }
 
   /// If the input predicate is forced to a constant boolean, returns its
   /// value.
   pub fn bool_value_of(& self, pred: PrdIdx) -> Option<bool> {
     self.forced_terms_of(pred).and_then(
-      |(_, terms)| terms.bool()
+      |terms| terms.bool()
     )
   }
 
@@ -926,7 +905,7 @@ impl Instance {
       name, idx, sig
     } ) ;
     self.pred_terms.push(None) ;
-    self.pred_qterms.push(None) ;
+
     self.pred_to_clauses.push(
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
@@ -1358,15 +1337,16 @@ impl Instance {
       for pred in clause.lhs_preds().iter().map(
         |(pred, _)| * pred
       ).chain( clause.rhs().into_iter().map(|(pred, _)| pred) ) {
-        if let Some((_, term)) = self.forced_terms_of(pred) {
+        if let Some(tterms) = self.forced_terms_of(pred) {
           bail! {
             "predicate {} is forced{} but appears in a clause: {}",
             conf.bad( & self[pred].name ),
-            match term.bool() {
+            match tterms.bool() {
               Some(true) => " to true",
               Some(false) => " to false",
               None => "",
-            }, s
+            },
+            s
           }
         }
       }
@@ -1523,8 +1503,7 @@ impl Instance {
     write!(w, "\n") ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
-      if self.pred_terms[pred_idx].is_none()
-      && self.pred_qterms[pred_idx].is_none() {
+      if self.pred_terms[pred_idx].is_none() {
         write!(
           w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
         ) ? ;
@@ -1668,8 +1647,7 @@ impl<'a> PebcakFmt<'a> for Instance {
     use common::consts::keywords ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
-      if self.pred_terms[pred_idx].is_none()
-      && self.pred_qterms[pred_idx].is_none() {
+      if self.pred_terms[pred_idx].is_none() {
         write!(
           w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
         ) ? ;
@@ -1700,21 +1678,6 @@ impl<'a> PebcakFmt<'a> for Instance {
     if self.sorted_pred_terms.is_empty() {
       // Either there's no forced predicate, or we are printing before
       // finalizing.
-      for (pred, & (ref quals, ref tterms)) in self.pred_qterms.index_iter().filter_map(
-        |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
-      ) {
-        write!(w, "({} {}\n  (", keywords::prd_def, self[pred]) ? ;
-        for (var, typ) in self[pred].sig.index_iter() {
-          write!(w, " (v_{} {})", var, typ) ?
-        }
-        write!(w, " ) Bool\n") ? ;
-        quals.write_pref(w, "  ", |w, var| var.default_write(w)) ? ;
-        write!(w, "    ") ? ;
-        tterms.expr_to_smt2(
-          w, & (& empty_prd_set, & empty_prd_set, & self.preds)
-        ).unwrap() ;
-        write!(w,"  )\n)\n") ?
-      }
       for (pred, tterms) in self.pred_terms.index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
       ) {

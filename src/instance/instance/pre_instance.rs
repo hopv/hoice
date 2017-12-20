@@ -394,24 +394,26 @@ where Slver: Solver<'skid, ()> {
   ///
   /// Does not impact `pred_to_clauses`.
   fn force_pred(
-    & mut self, pred: PrdIdx, qualf: Option<Quant>, tterms: TTerms
+    & mut self, pred: PrdIdx, tterms: NuTTerms
   ) -> Res<()> {
     if let Some(_) = self.instance.pred_terms[pred].as_ref() {
+      let mut s: Vec<u8> = Vec::new() ;
+      tterms.write_smt2(
+        & mut s, |w, pred, args| {
+          write!(w, "({}", self[pred]) ? ;
+          for arg in args {
+            write!(w, " {}", arg) ?
+          }
+          write!(w, ")")
+        }
+      ).chain_err(
+        || "while dumping top terms during error on `force_pred`"
+      ) ? ;
       bail!(
-        "[bug] trying to force predicate {} twice\n{}\n{} qualifier(s)",
+        "[bug] trying to force predicate {} twice\n{}",
         conf.sad(& self.instance[pred].name),
-        tterms, qualf.map(|q| q.len()).unwrap_or(0)
+        String::from_utf8_lossy(& s)
       )
-    }
-    if let Some(_) = self.instance.pred_qterms[pred].as_ref() {
-      bail!(
-        "trying to force predicate {} twice\n{}\n{} qualifier(s)",
-        conf.sad(& self.instance[pred].name),
-        tterms, qualf.map(|q| q.len()).unwrap_or(0)
-      )
-    }
-    if let Some(qualf) = qualf {
-      self.instance.pred_qterms[pred] = Some( (qualf, tterms) )
     } else {
       self.instance.pred_terms[pred] = Some(tterms)
     }
@@ -436,7 +438,7 @@ where Slver: Solver<'skid, ()> {
 
     let mut info = RedInfo::new() ;
 
-    self.force_pred( pred, None, TTerms::fls() ) ? ;
+    self.force_pred( pred, NuTTerms::fls() ) ? ;
 
     // Forget everything in `lhs`.
     debug_assert!( self.clauses_to_simplify.is_empty() ) ;
@@ -474,7 +476,7 @@ where Slver: Solver<'skid, ()> {
 
     let mut info = RedInfo::new() ;
 
-    self.force_pred( pred, None, TTerms::tru() ) ? ;
+    self.force_pred( pred, NuTTerms::tru() ) ? ;
 
     // Forget everything in `rhs`.
     debug_assert!( self.clauses_to_simplify.is_empty() ) ;
@@ -653,7 +655,12 @@ where Slver: Solver<'skid, ()> {
       tterms.push( TTerm::T(term) )
     }
     let tterms = TTerms::conj(tterms) ;
-    self.force_pred(pred, Quant::exists(qvars), tterms) ? ;
+    self.force_pred(
+      pred,
+      NuTTerms::of_old_tterms(
+        Quant::exists(qvars), & tterms
+      )
+    ) ? ;
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
@@ -781,7 +788,11 @@ where Slver: Solver<'skid, ()> {
     }
 
     // Actually force the predicate.
-    self.force_pred( pred, None, TTerms::dnf(def) ) ? ;
+    self.force_pred(
+      pred, NuTTerms::of_old_tterms(
+        None, & TTerms::dnf(def)
+      )
+    ) ? ;
 
     self.check("after `force_dnf_left`") ? ;
 
@@ -961,7 +972,11 @@ where Slver: Solver<'skid, ()> {
       } else { vec![] },
       neg_tterms
     ) ;
-    self.force_pred(pred, Quant::forall(qvars), tterms) ? ;
+    self.force_pred(
+      pred, NuTTerms::of_old_tterms(
+        Quant::forall(qvars), & tterms
+      )
+    ) ? ;
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
@@ -1013,31 +1028,10 @@ where Slver: Solver<'skid, ()> {
     // Remove args from forced predicates.
     for tterms_opt in & mut self.instance.pred_terms {
       if let Some(tterms) = tterms_opt.as_mut() {
-        tterms.pred_app_fold(
-          & mut nu_args,
-          |nu_args, pred, args| {
-            if let Some(vars) = to_keep.get(& pred) {
-              rm_args! { from args, keep vars, swap nu_args }
-            }
-            nu_args
-          }
-        )
+        tterms.remove_vars(& to_keep)
       }
     }
     log_debug! { "  removing arguments from pred_qterms" }
-    for tterms_opt in & mut self.instance.pred_qterms {
-      if let Some(& mut (_, ref mut tterms)) = tterms_opt.as_mut() {
-        tterms.pred_app_fold(
-          & mut nu_args,
-          |nu_args, pred, args| {
-            if let Some(vars) = to_keep.get(& pred) {
-              rm_args! { from args, keep vars, swap nu_args }
-            }
-            nu_args
-          }
-        )
-      }
-    }
 
     debug_assert! { self.clauses_to_check.is_empty() }
 
