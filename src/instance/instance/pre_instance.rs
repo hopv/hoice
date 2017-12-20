@@ -394,7 +394,7 @@ where Slver: Solver<'skid, ()> {
   ///
   /// Does not impact `pred_to_clauses`.
   fn force_pred(
-    & mut self, pred: PrdIdx, tterms: NuTTerms
+    & mut self, pred: PrdIdx, tterms: TTerms
   ) -> Res<()> {
     if let Some(_) = self.instance.pred_terms[pred].as_ref() {
       let mut s: Vec<u8> = Vec::new() ;
@@ -438,7 +438,7 @@ where Slver: Solver<'skid, ()> {
 
     let mut info = RedInfo::new() ;
 
-    self.force_pred( pred, NuTTerms::fls() ) ? ;
+    self.force_pred( pred, TTerms::fls() ) ? ;
 
     // Forget everything in `lhs`.
     debug_assert!( self.clauses_to_simplify.is_empty() ) ;
@@ -476,7 +476,7 @@ where Slver: Solver<'skid, ()> {
 
     let mut info = RedInfo::new() ;
 
-    self.force_pred( pred, NuTTerms::tru() ) ? ;
+    self.force_pred( pred, TTerms::tru() ) ? ;
 
     // Forget everything in `rhs`.
     debug_assert!( self.clauses_to_simplify.is_empty() ) ;
@@ -530,10 +530,19 @@ where Slver: Solver<'skid, ()> {
   pub fn force_pred_left(
     & mut self, pred: PrdIdx,
     qvars: Quantfed,
-    pred_apps: Vec<(PrdIdx, VarMap<Term>)>,
-    terms: HConSet<Term>,
+    tterm_set: TTermSet,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_left`") ? ;
+
+    // let mut tterm_set = TTermSet::new() ;
+    // tterm_set.insert_terms(terms) ;
+    // for (pred, args) in pred_apps {
+    //   tterm_set.insert_pred_app(pred, args) ;
+    // }
+
+    if tterm_set.is_empty() {
+      return self.force_true(pred)
+    }
 
     let mut info = RedInfo::new() ;
 
@@ -574,7 +583,7 @@ where Slver: Solver<'skid, ()> {
         // Generate fresh variables for the clause if needed.
         let qual_map = self.instance.clauses[clause].fresh_vars_for(& qvars) ;
 
-        for term in & terms {
+        for term in tterm_set.terms() {
           if let Some((term, _)) = term.subst_total( & (& args, & qual_map) ) {
             self.instance.clause_add_lhs_term(clause, term)
           } else {
@@ -582,16 +591,19 @@ where Slver: Solver<'skid, ()> {
           }
         }
 
-        for & (pred, ref app_args) in & pred_apps {
-          let mut nu_args = VarMap::with_capacity( args.len() ) ;
-          for arg in app_args {
-            if let Some((arg, _)) = arg.subst_total(
-              & (& args, & qual_map)
-            ) {
-              nu_args.push(arg)
+        for (pred, app_argss) in tterm_set.preds() {
+          let pred = * pred ;
+          for app_args in app_argss {
+            let mut nu_args = VarMap::with_capacity( args.len() ) ;
+            for arg in app_args {
+              if let Some((arg, _)) = arg.subst_total(
+                & (& args, & qual_map)
+              ) {
+                nu_args.push(arg)
+              }
             }
+            self.instance.clause_add_lhs_pred(clause, pred, nu_args)
           }
-          self.instance.clause_add_lhs_pred(clause, pred, nu_args)
         }
       }
 
@@ -645,20 +657,10 @@ where Slver: Solver<'skid, ()> {
     } ;
 
     // Actually force the predicate.
-    let mut tterms = Vec::with_capacity(
-      pred_apps.len() + terms.len()
-    ) ;
-    for (pred, args) in pred_apps {
-      tterms.push( TTerm::P { pred, args } )
-    }
-    for term in terms {
-      tterms.push( TTerm::T(term) )
-    }
-    let tterms = TTerms::conj(tterms) ;
     self.force_pred(
       pred,
-      NuTTerms::of_old_tterms(
-        Quant::exists(qvars), & tterms
+      TTerms::conj(
+        Quant::exists(qvars), tterm_set
       )
     ) ? ;
 
@@ -685,11 +687,18 @@ where Slver: Solver<'skid, ()> {
   ///
   /// Used by `GraphRed`.
   pub fn force_dnf_left(
-    & mut self, pred: PrdIdx, def: Vec< (Quantfed, Vec<TTerm>) >
+    & mut self, pred: PrdIdx, def: Vec< (Quantfed, TTermSet) >
   ) -> Res<RedInfo> {
+    let def: Vec<_> = def.into_iter().map(
+      |(qvars, conj)| (
+        Quant::exists(qvars), conj
+      )
+    ).collect() ;
+
     if def.is_empty() {
       return self.force_false(pred)
     }
+
     let mut info = RedInfo::new() ;
 
     self.check("before `force_dnf_left`") ? ;
@@ -744,14 +753,39 @@ where Slver: Solver<'skid, ()> {
 
         for arg_idx in 0..def_indices.len() {
           let def_idx = def_indices[arg_idx] ;
-          let args = & pred_argss[arg_idx] ;
-          let (ref qvars, ref conj) = def[def_idx] ;
+          let params = & pred_argss[arg_idx] ;
+          let (ref quant, ref conj) = def[def_idx] ;
 
-          let quant_map = clause.fresh_vars_for(& qvars) ;
+          let quant_map = clause.nu_fresh_vars_for(& quant) ;
 
-          for tterm in conj {
-            let tterm = tterm.subst_total( & (args, & quant_map) ) ? ;
-            clause.lhs_insert(tterm) ;
+          for term in conj.terms() {
+            if let Some((term, _)) = term.subst_total(
+              & (params, & quant_map)
+            ) {
+              clause.insert_term(term) ;
+            } else {
+              bail!("unexpected total substitution failure on term {}", term)
+            }
+          }
+
+          for (pred, argss) in conj.preds() {
+            let pred = * pred ;
+            for args in argss {
+              let mut nu_args = VarMap::with_capacity( args.len() ) ;
+              for arg in args {
+                if let Some((arg, _)) = arg.subst_total(
+                  & (params, & quant_map)
+                ) {
+                  nu_args.push(arg)
+                } else {
+                  bail!(
+                    "unexpected total substitution failure on arg {} \
+                    of ({} {})", arg, self[pred], args
+                  )
+                }
+              }
+              clause.insert_pred_app(pred, nu_args) ;
+            }
           }
         }
 
@@ -789,9 +823,7 @@ where Slver: Solver<'skid, ()> {
 
     // Actually force the predicate.
     self.force_pred(
-      pred, NuTTerms::of_old_tterms(
-        None, & TTerms::dnf(def)
-      )
+      pred, TTerms::dnf(def)
     ) ? ;
 
     self.check("after `force_dnf_left`") ? ;
@@ -831,11 +863,13 @@ where Slver: Solver<'skid, ()> {
     & mut self, pred: PrdIdx,
     qvars: Quantfed,
     pred_app: Option< (PrdIdx, VarMap<Term>) >,
-    pred_apps: Vec<(PrdIdx, VarMap<Term>)>, terms: HConSet<Term>
+    negated: TTermSet,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_right`") ? ;
 
     let mut info = RedInfo::new() ;
+
+    let quant = Quant::forall( qvars ) ;
 
     log_debug! {
       "  force pred right on {}...", conf.emph(& self.instance[pred].name)
@@ -859,7 +893,9 @@ where Slver: Solver<'skid, ()> {
       ) ;
 
       if let Some((prd, subst)) = rhs_swap {
-        let qual_map = self.instance.clauses[clause].fresh_vars_for(& qvars) ;
+        let qual_map = self.instance.clauses[clause].nu_fresh_vars_for(
+          & quant
+        ) ;
 
         if pred == prd {
 
@@ -885,24 +921,27 @@ where Slver: Solver<'skid, ()> {
           log_debug! { "      generating new lhs pred apps" }
 
           // New lhs predicate applications.
-          for & (pred, ref args) in & pred_apps {
-            let mut nu_args = VarMap::with_capacity( args.len() ) ;
-            for arg in args {
-              if let Some((nu_arg, _)) = arg.subst_total(
-                & (& subst, & qual_map)
-              ) {
-                nu_args.push(nu_arg)
-              } else {
-                bail!("unexpected failure during total substitution")
+          for (pred, argss) in negated.preds() {
+            let pred = * pred ;
+            for args in argss {
+              let mut nu_args = VarMap::with_capacity( args.len() ) ;
+              for arg in args {
+                if let Some((nu_arg, _)) = arg.subst_total(
+                  & (& subst, & qual_map)
+                ) {
+                  nu_args.push(nu_arg)
+                } else {
+                  bail!("unexpected failure during total substitution")
+                }
               }
+              self.instance.clause_add_lhs_pred(clause, pred, nu_args)
             }
-            self.instance.clause_add_lhs_pred(clause, pred, nu_args)
           }
           
           log_debug! { "      generating new lhs terms" }
 
           // New lhs terms.
-          for term in & terms {
+          for term in negated.terms() {
             if let Some((term, _)) = term.subst_total(
               & (& subst, & qual_map)
             ) {
@@ -957,25 +996,8 @@ where Slver: Solver<'skid, ()> {
     } ;
 
     // Actually force the predicate.
-    let mut neg_tterms = Vec::with_capacity(
-      pred_apps.len() + terms.len()
-    ) ;
-    for (pred, args) in pred_apps {
-      neg_tterms.push( TTerm::P { pred, args } )
-    }
-    for term in terms {
-      neg_tterms.push( TTerm::T(term) )
-    }
-    let tterms = TTerms::disj(
-      if let Some((pred, args)) = pred_app {
-        vec![ TTerm::P { pred, args } ]
-      } else { vec![] },
-      neg_tterms
-    ) ;
     self.force_pred(
-      pred, NuTTerms::of_old_tterms(
-        Quant::forall(qvars), & tterms
-      )
+      pred, TTerms::disj_of_pos_neg(quant, pred_app, negated)
     ) ? ;
 
     info.clauses_rmed += 1 ;
@@ -995,8 +1017,7 @@ where Slver: Solver<'skid, ()> {
 
 
   /// Removes all predicate arguments not in `to_keep`, and all corresponding
-  /// arguments in the clauses. Updates `old_preds`, `pred_terms` and
-  /// `pred_qterms`.
+  /// arguments in the clauses. Updates `old_preds`, `pred_terms` and.
   fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
     log_debug! { "rm_args ({})", to_keep.len() }
 
@@ -1031,12 +1052,16 @@ where Slver: Solver<'skid, ()> {
         tterms.remove_vars(& to_keep)
       }
     }
-    log_debug! { "  removing arguments from pred_qterms" }
 
     debug_assert! { self.clauses_to_check.is_empty() }
 
+    let mut did_something = false ;
+
     // Remove args from applications in clauses.
     for (pred, to_keep) in to_keep {
+      if to_keep.len() == self[pred].sig.len() { continue }
+      did_something = true ;
+
       log_debug! { "  - {}", self[pred] }
       debug_assert!( to_keep.len() <= self[pred].sig.len() ) ;
       if to_keep.len() == self[pred].sig.len() {
@@ -1100,6 +1125,8 @@ where Slver: Solver<'skid, ()> {
 
       ()
     }
+
+    if ! did_something { return Ok(info) }
 
     // Simplify the clauses we just updated.
     debug_assert! { self.clauses_to_simplify.is_empty() }

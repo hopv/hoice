@@ -276,6 +276,28 @@ impl Clause {
     map
   }
 
+  /// Adds fresh variables to the clause for each of the input variables.
+  /// Returns a map from the input variables to the fresh ones (as terms).
+  ///
+  /// Used when inlining a predicate with quantified variables.
+  fn nu_fresh_vars_for(& mut self, quant: & Option<Quant>) -> VarHMap<Term> {
+    if let Some(quant) = quant.as_ref() {
+      let vars = quant.vars() ;
+      let mut map = VarHMap::with_capacity( vars.len() ) ;
+      for (var, typ) in vars {
+        let fresh = self.vars.next_index() ;
+        let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
+        let info = VarInfo::new(fresh_name, * typ, fresh) ;
+        self.vars.push(info) ;
+        let _prev = map.insert(* var, term::var(fresh)) ;
+        debug_assert!( _prev.is_none() )
+      }
+      map
+    } else {
+      return VarHMap::new()
+    }
+  }
+
   // /// Replaces a predicate application by some top terms.
   // ///
   // /// Does not preserve the order of the top terms.
@@ -437,7 +459,7 @@ pub struct Instance {
   /// variables of `preds` to the original signature.
   old_preds: PrdMap< (VarMap<Typ>, VarMap<VarIdx>) >,
   /// Predicates for which a suitable term has been found.
-  pred_terms: PrdMap< Option< NuTTerms > >,
+  pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
@@ -506,7 +528,7 @@ impl Instance {
     model.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |term| (pred, NuTTerms::of_term(None, term))
+          |term| (pred, TTerms::of_term(None, term))
         )
       )
     ) ;
@@ -558,7 +580,7 @@ impl Instance {
   /// Meaning variables are printed with default printing: `<var_idx>` is
   /// printed as `v_<var_idx>`.
   pub fn print_tterms_as_model<W: Write>(
-    & self, w: & mut W, tterms: & NuTTerms
+    & self, w: & mut W, tterms: & TTerms
   ) -> IoRes<()> {
     tterms.write(
       w, |w, var| var.default_write(w),
@@ -651,7 +673,7 @@ impl Instance {
 
 
   /// Returns the term we already know works for a predicate, if any.
-  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& NuTTerms> {
+  pub fn forced_terms_of(& self, pred: PrdIdx) -> Option<& TTerms> {
     self.pred_terms[pred].as_ref()
   }
 

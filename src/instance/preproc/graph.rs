@@ -270,12 +270,13 @@ impl Graph {
   /// arguments of `pred` and the quantified variables in `rgt`.
   ///
   /// Renames the quantified variables so that they don't clash.
-  fn merge<Map: VarIndexed<Term>>(
+  fn merge<Map>(
     instance: & Instance, pred: PrdIdx,
-    subst: & Map,
-    lft: & Vec<(Quantfed, Vec<TTerm>)>,
-    rgt: & Vec<(Quantfed, Vec<TTerm>)>
-  ) -> Vec<(Quantfed, Vec<TTerm>)> {
+    substs: & HashSet<Map>,
+    lft: & Vec<(Quantfed, TTermSet)>,
+    rgt: & Vec<(Quantfed, TTermSet)>
+  ) -> Vec<(Quantfed, TTermSet)>
+  where Map: VarIndexed<Term> + Eq + ::std::hash::Hash {
     log_debug! { "    merging..." }
     let first_index = instance[pred].sig.next_index() ;
     log_debug! { "    first index: {}", first_index }
@@ -314,14 +315,23 @@ impl Graph {
           }
           log_debug! { "    }}" }
         }
-        let mut conj = r_conj.clone() ;
-        conj.reserve( l_conj.len() ) ;
-        for tterm in l_conj {
-          let mut tterm = tterm.clone() ;
-          tterm.subst( & (& map, subst) ) ;
-          conj.push( tterm )
+
+        'all_substitutions: for subst in substs {
+          let mut conj = r_conj.clone() ;
+          conj.reserve( l_conj.terms().len(), l_conj.preds().len() ) ;
+          for term in l_conj.terms() {
+            let (term, _) = term.subst( & (& map, subst) ) ;
+            conj.insert_term( term ) ;
+          }
+          for (pred, argss) in l_conj.preds() {
+            conj.insert_pred_apps( * pred, argss.clone() )
+          }
+          let curr = (qvars.clone(), conj) ;
+          for prev in & result {
+            if prev == & curr { continue 'all_substitutions }
+          }
+          result.push(curr)
         }
-        result.push( (qvars, conj) )
       }
     }
 
@@ -336,7 +346,7 @@ impl Graph {
     & mut self, instance: & Instance, keep: & mut PrdSet,
     upper_bound: usize
   ) -> Res<
-    Option< PrdHMap< Vec<(Quantfed, Vec<TTerm>)> > >
+    Option< PrdHMap< Vec<(Quantfed, TTermSet)> > >
   > {
     let mut res = PrdHMap::with_capacity(
       instance.preds().len() - keep.len()
@@ -389,27 +399,25 @@ impl Graph {
           clause.lhs_terms(), clause.lhs_preds(),
           pred, args
         ) ? {
-          utils::ExtractRes::Success((qvars, apps, terms)) => {
-            debug_assert!( to_merge.is_empty() ) ;
-            let mut conj: Vec<_> = terms.into_iter().map(
-              |term| TTerm::T(term)
-            ).collect() ;
-            conj.reserve( apps.len() ) ;
-            for (pred, args) in apps {
-              if keep.contains(& pred) {
-                conj.push( TTerm::P { pred, args } )
-              } else if let Some(def) = res.get(& pred) {
-                to_merge.push((pred, args, def))
-              } else {
-                bail!(
-                  "unreachable: \
-                  predicate is neither in keep or already inlined"
-                )
+          utils::ExtractRes::Success((qvars, mut tterms)) => {
+            if ! tterms.preds().is_empty() {
+              for (pred, def) in & res {
+                if tterms.preds().is_empty() { break }
+                if let Some(argss) = tterms.preds_mut().remove(pred) {
+                  to_merge.push( (pred, argss, def) )
+                }
               }
             }
+            debug_assert! {{
+              let mut okay = true ;
+              for (pred, _) in tterms.preds() {
+                if ! keep.contains( pred ) { okay = false }
+              }
+              okay
+            }}
 
             if to_merge.is_empty() {
-              def.push( (qvars, conj) )
+              def.push( (qvars, tterms) )
             } else {
 
               if_debug! {
@@ -419,14 +427,19 @@ impl Graph {
                 }
                 log_debug! { "  }}" }
                 log_debug! { "  conj {{" }
-                for tt in & conj {
-                  log_debug! { "    {}", tt }
+                for term in tterms.terms() {
+                  log_debug! { "    {}", term }
+                }
+                for (pred, argss) in tterms.preds() {
+                  for args in argss {
+                    log_debug! { "    ({} {})", instance[* pred], args }
+                  }
                 }
                 log_debug! { "  }}" }
               }
 
-              let mut curr = vec![ (qvars, conj) ] ;
-              for (_this_pred, args, p_def) in to_merge.drain(0..) {
+              let mut curr = vec![ (qvars, tterms) ] ;
+              for (_this_pred, argss, p_def) in to_merge.drain(0..) {
                 // if_debug! {
                 //   log_debug! { "  args for {} {{", instance[_this_pred] }
                 //   for (var, arg) in args.index_iter() {
@@ -442,7 +455,7 @@ impl Graph {
                 //   log_debug! { "    {}", TTerms::dnf(ddef) }
                 //   log_debug! { "  }}" }
                 // }
-                curr = Self::merge(instance, pred, & args, p_def, & curr) ;
+                curr = Self::merge(instance, pred, & argss, p_def, & curr) ;
               }
               // if_debug! {
               //   log_debug! { "  finally {{" }

@@ -435,18 +435,20 @@ impl RedStrat for SimpleOneRhs {
             log_info!("  => false") ;
             red_info += instance.force_false(pred) ?
           },
-          Success( (qvars, pred_apps, terms) ) => {
+          Success( (qvars, tterms) ) => {
             debug_assert! { qvars.is_empty() } ;
             if_not_bench! {
-              for & (pred, ref args) in & pred_apps {
-                log_debug! { "  => ({} {})", instance[pred], args }
+              for (pred, argss) in tterms.preds() {
+                for args in argss {
+                  log_debug! { "  => ({} {})", instance[* pred], args }
+                }
               }
-              for term in & terms {
+              for term in tterms.terms() {
                 log_debug!("  => {}", term ) ;
               }
             }
             red_info += instance.force_pred_left(
-              pred, qvars, pred_apps, terms
+              pred, qvars, tterms
             ) ?
           },
           // Failed is caught before this match.
@@ -607,7 +609,7 @@ impl RedStrat for SimpleOneLhs {
           log_info! { "  => trivial" }
           red_info += instance.force_true(pred) ?
         },
-        Success((qualfed, pred_app, pred_apps, terms)) => {
+        Success((qualfed, pred_app, tterms)) => {
           debug_assert! { qualfed.is_empty() }
           if_not_bench!{
             log_debug!{ "  => (or" }
@@ -620,19 +622,17 @@ impl RedStrat for SimpleOneLhs {
             }
             log_debug!{ "    (not" }
             log_debug!{ "      (and" }
-            for & (pred, ref args) in & pred_apps {
-              let mut s = format!("({}", instance[pred]) ;
-              for arg in args {
-                s = format!("{} {}", s, arg)
+            for (pred, argss) in tterms.preds() {
+              for args in argss {
+                log_debug!{ "        ({} {})", instance[* pred], args}
               }
-              log_debug!{ "        {})", s }
             }
-            for term in & terms {
+            for term in tterms.terms() {
               log_debug!{ "        {}", term }
             }
           }
           red_info += instance.force_pred_right(
-            pred, qualfed, pred_app, pred_apps, terms
+            pred, qualfed, pred_app, tterms
           ) ? ;
 
           instance.check("after unfolding") ?
@@ -758,21 +758,23 @@ impl RedStrat for OneRhs {
             log_info!("  => false") ;
             red_info += instance.force_false(pred) ? ;
           },
-          Success( (qvars, pred_apps, terms) ) => {
+          Success( (qvars, tterms) ) => {
             if_not_bench! {
               log_debug!("  {} quantified variables", qvars.len()) ;
               for (var, typ) in & qvars {
                 log_debug!("  - v_{}: {}", var, typ)
               }
-              for & (pred, ref args) in & pred_apps {
-                log_debug! { "  => ({} {})", instance[pred], args }
+              for (pred, argss) in tterms.preds() {
+                for args in argss {
+                  log_debug! { "  => ({} {})", instance[* pred], args }
+                }
               }
-              for term in & terms {
+              for term in tterms.terms() {
                 log_debug!("  => {}", term ) ;
               }
             }
             red_info += instance.force_pred_left(
-              pred, qvars, pred_apps, terms
+              pred, qvars, tterms
             ) ? ;
 
 
@@ -936,7 +938,7 @@ impl RedStrat for OneLhs {
           log_info!("  => trivial") ;
           red_info += instance.force_true(pred) ?
         },
-        Success((qvars, pred_app, pred_apps, terms)) => {
+        Success((qvars, pred_app, tterms)) => {
           if_not_bench!{
             log_debug!("  {} quantified variables", qvars.len()) ;
             for (var, typ) in & qvars {
@@ -952,19 +954,19 @@ impl RedStrat for OneLhs {
             }
             log_debug!{ "    (not" }
             log_debug!{ "      (and" }
-            for & (pred, ref args) in & pred_apps {
-              let mut s = format!("({}", instance[pred]) ;
+            for (pred, args) in tterms.preds() {
+              let mut s = format!("({}", instance[* pred]) ;
               for arg in args {
                 s = format!("{} {}", s, arg)
               }
               log_debug!{ "        {})", s }
             }
-            for term in & terms {
+            for term in tterms.terms() {
               log_debug!{ "        {}", term }
             }
           }
           red_info += instance.force_pred_right(
-            pred, qvars, pred_app, pred_apps, terms
+            pred, qvars, pred_app, tterms
           ) ? ;
 
           instance.check("after unfolding") ?
@@ -1076,8 +1078,13 @@ impl RedStrat for CfgRed {
             (Some("  )"), "    ")
           } ;
           log_debug! { "{}(and", pref }
-          for tterm in conj {
-            log_debug! { "{}  {}", pref, tterm }
+          for term in conj.terms() {
+            log_debug! { "{}  {}", pref, term }
+          }
+          for (pred, argss) in conj.preds() {
+            for args in argss {
+              log_debug! { "{}  ({} {})", pref, instance[* pred], args }
+            }
           }
           log_debug! { "{})", pref }
           if let Some(suff) = suff {

@@ -111,7 +111,7 @@ fn args_of_pred_app(
 /// handling `src`, but it's arguments will be returned.
 fn terms_of_pred_apps<'a>(
   quantifiers: bool, var_info: & VarMap<VarInfo>,
-  src: & 'a PredApps, tgt: & mut Vec<PredApp>,
+  src: & 'a PredApps, tgt: & mut TTermSet,
   pred: PrdIdx, app_vars: & mut VarSet,
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
@@ -130,7 +130,10 @@ fn terms_of_pred_apps<'a>(
       match args_of_pred_app(
         quantifiers, var_info, args, app_vars, map, qvars, fresh
       ) ? {
-        TExtractRes::Success(nu_args) => tgt.push( (prd, nu_args) ),
+        TExtractRes::Success(nu_args) => {
+          tgt.insert_pred_app(prd, nu_args) ;
+          ()
+        },
         TExtractRes::Failed => {
           log_debug! { "    failed to extract argument {}", args }
           return Ok(TExtractRes::Failed)
@@ -333,7 +336,7 @@ pub fn terms_of_lhs_app(
   rhs: Option<(PrdIdx, & VarMap<Term>)>,
   pred: PrdIdx, args: & VarMap<Term>,
 ) -> Res<
-  ExtractRes<(Quantfed, Option<PredApp>, Vec<PredApp>, HConSet<Term>)>
+  ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
 > {
   log_debug!{
     "    terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
@@ -352,7 +355,7 @@ pub fn terms_of_lhs_app(
   }
 
   let (
-    mut terms, mut map, mut app_vars
+    terms, mut map, mut app_vars
   ) = if let Some(res) = terms_of_app(
     quantifiers, var_info, instance, pred, args, fresh, & mut qvars
   ) ? {
@@ -377,12 +380,12 @@ pub fn terms_of_lhs_app(
     "    working on lhs predicate applications ({})", lhs_preds.len()
   }
 
-  let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
+  let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
 
   // Predicate applications need to be in the resulting term. Depending on
   // the definition they end up having, the constraint might be trivial.
   match terms_of_pred_apps(
-    quantifiers, var_info, lhs_preds, & mut pred_apps,
+    quantifiers, var_info, lhs_preds, & mut tterms,
     pred, & mut app_vars, & mut map, & mut qvars, fresh
   ) ? {
     TExtractRes::Success( Some(pred_argss) ) => match pred_argss.len() {
@@ -423,7 +426,7 @@ pub fn terms_of_lhs_app(
   }
 
   if let TExtractRes::Success(trivial) = terms_of_terms(
-    quantifiers, var_info, lhs_terms, & mut terms,
+    quantifiers, var_info, lhs_terms, tterms.terms_mut(),
     & mut app_vars, & mut map, & mut qvars, fresh, false, identity
   ) ? {
     if trivial { return Ok( ExtractRes::Trivial ) }
@@ -434,7 +437,7 @@ pub fn terms_of_lhs_app(
 
   debug_assert! { quantifiers || qvars.is_empty() }
 
-  Ok( ExtractRes::Success( (qvars, pred_app, pred_apps, terms) ) )
+  Ok( ExtractRes::Success( (qvars, pred_app, tterms) ) )
 }
 
 
@@ -449,7 +452,7 @@ pub fn terms_of_rhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
   pred: PrdIdx, args: & VarMap<Term>,
-) -> Res< ExtractRes<(Quantfed, Vec<PredApp>, HConSet<Term>)> > {
+) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
@@ -465,7 +468,7 @@ pub fn terms_of_rhs_app(
   }
 
   let (
-    mut terms, mut map, mut app_vars
+    terms, mut map, mut app_vars
   ) = if let Some(res) = terms_of_app(
     quantifiers, var_info, instance, pred, args, fresh, & mut qvars
   ) ? {
@@ -490,12 +493,12 @@ pub fn terms_of_rhs_app(
     "    working on lhs predicate applications ({})", lhs_preds.len()
   }
 
-  let mut pred_apps = Vec::with_capacity( lhs_preds.len() ) ;
+  let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
 
   // Predicate applications need to be in the resulting term. Depending on
   // the definition they end up having, the constraint might be trivial.
   match terms_of_pred_apps(
-    quantifiers, var_info, lhs_preds, & mut pred_apps,
+    quantifiers, var_info, lhs_preds, & mut tterms,
     pred, & mut app_vars, & mut map, & mut qvars, fresh
   ) ? {
     TExtractRes::Success( Some(pred_argss) ) => if ! pred_argss.is_empty() {
@@ -519,7 +522,7 @@ pub fn terms_of_rhs_app(
   }
 
   if let TExtractRes::Success(trivial) = terms_of_terms(
-    quantifiers, var_info, lhs_terms, & mut terms,
+    quantifiers, var_info, lhs_terms, tterms.terms_mut(),
     & mut app_vars, & mut map, & mut qvars, fresh, false, identity
   ) ? {
     if trivial { return Ok( ExtractRes::Trivial ) }
@@ -530,11 +533,11 @@ pub fn terms_of_rhs_app(
 
   debug_assert! { quantifiers || qvars.is_empty() }
 
-  if terms.is_empty() && pred_apps.is_empty() {
+  if tterms.is_empty() {
     Ok(ExtractRes::SuccessTrue)
   } else {
     Ok(
-      ExtractRes::Success( (qvars, pred_apps, terms) )
+      ExtractRes::Success( (qvars, tterms) )
     )
   }
 }
