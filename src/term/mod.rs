@@ -1181,7 +1181,7 @@ impl NuTTerms {
         for tterm in neg {
           match * tterm {
             TTerm::T(ref term) => {
-              tterms.insert_term( term::not( term.clone() ) ) ;
+              tterms.insert_term( not( term.clone() ) ) ;
               ()
             },
             TTerm::P { pred, ref args } => {
@@ -1707,7 +1707,9 @@ impl NuTTerms {
             } else {
               sep = true
             }
-            write_prd(w, * pred, args) ?
+            write!(w, "(not ") ? ;
+            write_prd(w, * pred, args) ? ;
+            write!(w, ")") ?
           }
         }
 
