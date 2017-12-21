@@ -25,6 +25,7 @@ extern crate num ;
 extern crate rayon ;
 extern crate either ;
 extern crate rand ;
+extern crate isatty ;
 
 pub mod errors ;
 #[macro_use]

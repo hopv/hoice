@@ -645,7 +645,9 @@ impl Config {
     }
 
     // Colors.
-    let color = bool_of_matches(& matches, "color") ;
+    let color = ::isatty::stdout_isatty() && bool_of_matches(
+      & matches, "color"
+    ) ;
     let styles = Styles::new(color) ;
 
     // Output directory.
@@ -707,7 +709,7 @@ impl Config {
     ).arg(
 
       Arg::with_name("color").long("--color").short("-c").help(
-        "(de)activates coloring"
+        "(de)activates coloring (inactive if output is not a tty)"
       ).validator(
         bool_validator
       ).value_name(
