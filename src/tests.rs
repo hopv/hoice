@@ -12,8 +12,8 @@ static unsat_files_dir: & str = "tests/rsc/unsat" ;
 #[test]
 fn sat() {
   if let Err(e) = run_sat() {
+    println!("Error:") ;
     for e in e.iter() {
-      println!("Error:") ;
       let mut pref = "> " ;
       for line in format!("{}", e).lines() {
         println!("{}{}", pref, line) ;
@@ -66,14 +66,20 @@ fn run_sat() -> Res<()> {
       let file = OpenOptions::new().read(true).open(entry.path()).chain_err(
         || format!( "while opening file {}", file_name )
       ) ? ;
-      let (model, instance) = read_and_work(file, true, true) ? ;
+      let (model, instance) = read_and_work(file, true, true).chain_err(
+        || "while reading file and getting model"
+      ) ? ;
       if let Some(model) = model {
         let mut buff: Vec<u8> = vec![] ;
-        instance.write_model(& model, & mut buff) ? ;
+        instance.write_model(& model, & mut buff).chain_err(
+          || "while writing model"
+        ) ? ;
         let buff = map_err!(
           String::from_utf8(buff), "converting model from bytes to utf8"
         ) ;
-        ::check::do_it_from_str(entry.path(), & buff) ? ;
+        ::check::do_it_from_str(entry.path(), & buff).chain_err(
+          || "while checking model"
+        ) ? ;
         println!("- is okay")
       } else {
         bail!( "got unsat on `{}`, expected sat", file_name )

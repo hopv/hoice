@@ -320,7 +320,12 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
 ) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
   let data = Data::new(
-    Input::of_file(input_file) ?, Output::of_str(model) ?
+    Input::of_file(input_file).chain_err(
+      || "while loading input file"
+    ) ?,
+    Output::of_str(model).chain_err(
+      || "while loading model"
+    ) ?
   ) ? ;
 
   let mut kid = Kid::new( conf.solver.conf() ).chain_err(

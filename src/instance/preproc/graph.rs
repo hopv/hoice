@@ -283,7 +283,7 @@ impl Graph {
 
     let mut result = Vec::with_capacity( lft.len() * rgt.len() ) ;
 
-    for & (ref r_qvars, ref r_conj) in rgt {
+    'merge: for & (ref r_qvars, ref r_conj) in rgt {
       // Retrieve first legal index for new quantified variables.
       let mut first_index = first_index ;
       for (idx, _) in r_qvars {
@@ -311,10 +311,16 @@ impl Graph {
         if_debug! {
           log_debug! { "    map {{" }
           for (var, term) in & map {
-            log_debug! { "    - {} -> {}", var.default_str(), term }
+            log_debug! { "      {} -> {}", var.default_str(), term }
+          }
+          log_debug! { "    }}" }
+          log_debug! { "    qvars {{" }
+          for (var, typ) in & qvars {
+            log_debug! { "      {}: {}", var.default_str(), typ }
           }
           log_debug! { "    }}" }
         }
+
 
         'all_substitutions: for subst in substs {
           let mut conj = r_conj.clone() ;
@@ -324,7 +330,16 @@ impl Graph {
             conj.insert_term( term ) ;
           }
           for (pred, argss) in l_conj.preds() {
-            conj.insert_pred_apps( * pred, argss.clone() )
+            let mut nu_argss = TArgss::with_capacity( argss.len() ) ;
+            for args in argss {
+              let mut nu_args = TArgs::with_capacity( args.len() ) ;
+              for arg in args {
+                let (arg, _) = arg.subst( & (& map, subst) ) ;
+                nu_args.push(arg)
+              }
+              nu_argss.insert(nu_args) ;
+            }
+            conj.insert_pred_apps( * pred, nu_argss )
           }
           let curr = (qvars.clone(), conj) ;
           for prev in & result {
@@ -385,7 +400,9 @@ impl Graph {
       let mut def = Vec::with_capacity( clauses.len() ) ;
 
       'clause_iter: for clause in clauses {
-        let mut to_merge = Vec::with_capacity(7) ;
+        let mut to_merge: Vec<(
+          PrdIdx, TArgss, & Vec<(Quantfed, TTermSet)>
+        )> = Vec::with_capacity(7) ;
 
         let clause = & instance[* clause] ;
         let args = if let Some((p, args)) = clause.rhs() {
@@ -400,11 +417,12 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
+            log_debug! { "from clause {}", clause.to_string_info(& instance.preds()) ? }
             if ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }
                 if let Some(argss) = tterms.preds_mut().remove(pred) {
-                  to_merge.push( (pred, argss, def) )
+                  to_merge.push( (* pred, argss, def) )
                 }
               }
             }
@@ -440,22 +458,48 @@ impl Graph {
 
               let mut curr = vec![ (qvars, tterms) ] ;
               for (_this_pred, argss, p_def) in to_merge.drain(0..) {
-                // if_debug! {
-                //   log_debug! { "  args for {} {{", instance[_this_pred] }
-                //   for (var, arg) in args.index_iter() {
-                //     log_debug! { "    {} -> {}", var.default_str(), arg }
-                //   }
-                //   log_debug! { "  }}" }
-                //   log_debug! { "  curr {{" }
-                //   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-                //   log_debug! { "    {}", TTerms::dnf(dnf) }
-                //   log_debug! { "  }}" }
-                //   log_debug! { "  def {{" }
-                //   let ddef: Vec<_> = (p_def as & Vec<_>).clone() ;
-                //   log_debug! { "    {}", TTerms::dnf(ddef) }
-                //   log_debug! { "  }}" }
-                // }
-                curr = Self::merge(instance, pred, & argss, p_def, & curr) ;
+                if_debug! {
+                  let mut first = true ;
+                  log_debug! { "  args for {} {{", instance[_this_pred] }
+                  for (var, arg) in args.index_iter() {
+                    log_debug! { "    {} -> {}", var.default_str(), arg }
+                  }
+                  log_debug! { "  }}" }
+                  log_debug! { "  curr {{" }
+                  for & (ref qv, ref tterms) in & curr {
+                    if first { first = false } else { log_debug! { " " } }
+                    for (var, typ) in qv {
+                      log_debug! { "    {}: {}", var.default_str(), typ }
+                    }
+                    for term in tterms.terms() {
+                      log_debug! { "    {}", term }
+                    }
+                    for (pred, argss) in tterms.preds() {
+                      for args in argss {
+                        log_debug! { "    ({} {})", instance[* pred], args }
+                      }
+                    }
+                  }
+                  log_debug! { "  }}" }
+                  log_debug! { "  def {{" }
+                  first = true ;
+                  for & (ref qv, ref tterms) in p_def {
+                    if first { first = false } else { log_debug! { " " } }
+                    for (var, typ) in qv {
+                      log_debug! { "    {}: {}", var.default_str(), typ }
+                    }
+                    for term in tterms.terms() {
+                      log_debug! { "    {}", term }
+                    }
+                    for (pred, argss) in tterms.preds() {
+                      for args in argss {
+                        log_debug! { "    ({} {})", instance[* pred], args }
+                      }
+                    }
+                  }
+                  log_debug! { "  }}" }
+                }
+                curr = Self::merge(instance, pred, & argss, p_def, & curr)
               }
               // if_debug! {
               //   log_debug! { "  finally {{" }

@@ -132,17 +132,24 @@ impl RTerm {
       _ => None,
     }
   }
-  /// Returns the kid of conjunctions.
+  /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::And, ref args } => Some(args),
       _ => None,
     }
   }
-  /// Returns the kid of disjunctions.
+  /// Returns the kids of disjunctions.
   pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::Or, ref args } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of equalities.
+  pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Eql, ref args } => Some(args),
       _ => None,
     }
   }
@@ -1021,6 +1028,7 @@ impl TTermSet {
       & mut self.preds, to_keep
     )
   }
+
 
   /// Writes all top terms with some separator.
   pub fn write<W, WriteVar, WritePrd>(

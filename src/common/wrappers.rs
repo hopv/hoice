@@ -88,14 +88,13 @@ impl VarMap< ::term::Term > {
 
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
   fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
-    write!(fmt, "(") ? ;
     for_first!{
       self.iter() => {
         |fst| write!(fmt, "{}", fst) ?,
-        then |nxt| write!(fmt, ",{}", nxt)?
+        then |nxt| write!(fmt, " {}", nxt) ?
       }
     }
-    write!(fmt, ")")
+    Ok(())
   }
 }
 
