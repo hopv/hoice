@@ -1167,6 +1167,28 @@ pub enum TTerms {
   },
 }
 impl TTerms {
+  pub fn inspect(& self) {
+    match * self {
+      TTerms::True => println!("true"),
+      TTerms::False => println!("false"),
+      TTerms::Conj { ref quant, ref tterms } => println!(
+        "conj, {} ({})", tterms.len(),
+        if let Some(q) = quant.as_ref() {
+          format!("{}", q.len())
+        } else { "none".into() }
+      ),
+      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => println!(
+        "conj, {}, {}, {}", tterms.len(), neg_preds.len(),
+        if let Some(q) = quant.as_ref() {
+          format!("{}", q.len())
+        } else { "none".into() }
+      ),
+      TTerms::Dnf { ref disj } => println!(
+        "dnf, {}", disj.len()
+      ),
+    }
+  }
+
   /// True.
   #[inline]
   pub fn tru() -> Self { TTerms::True }
@@ -1367,65 +1389,65 @@ impl TTerms {
           |_, argss| ! argss.is_empty()
         ) ;
 
+        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        // Used to inline conjunctions.
+        let mut swap = HConSet::new() ;
+        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
+
+        'inline_conjs: loop {
+
+          'inspect_conj_terms: for term in old_terms.drain() {
+
+            // Is the term a conjunction?
+            if let Some(kids) = term.conj_inspect() {
+              for kid in kids {
+                swap.insert( kid.clone() ) ;
+                ()
+              }
+              continue 'inspect_conj_terms
+            }
+
+            // Term trivial?
+            match term.bool() {
+              Some(true) => continue 'inspect_conj_terms,
+              Some(false) => return TTerms::fls(),
+              None => (),
+            }
+
+            // Do we also have its negation?
+            if tterms.terms.contains( & not( term.clone() ) ) {
+              return TTerms::fls()
+            }
+
+            // Okay, move on.
+            tterms.terms.insert(term) ;
+            ()
+          }
+
+          // Keep going if `swap` is not empty.
+          if ! swap.is_empty() {
+            ::std::mem::swap( & mut old_terms, & mut swap ) ;
+            continue 'inline_conjs
+          } else {
+            break 'inline_conjs
+          }
+
+        }
+
+        // Only keep active quantified variables.
+        let quant = quant.and_then(
+          |quant| {
+            let mut active = VarSet::with_capacity(
+              quant.vars().len() * 2
+            ) ;
+            tterms.vars(& mut active) ;
+            quant.filter(|var| active.contains(var))
+          }
+        ) ;
+
         if tterms.is_empty() {
           TTerms::tru()
         } else {
-          let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
-          // Used to inline conjunctions.
-          let mut swap = HConSet::new() ;
-          ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
-
-          'inline_conjs: loop {
-
-            'inspect_conj_terms: for term in old_terms.drain() {
-
-              // Is the term a conjunction?
-              if let Some(kids) = term.conj_inspect() {
-                for kid in kids {
-                  swap.insert( kid.clone() ) ;
-                  ()
-                }
-                continue 'inspect_conj_terms
-              }
-
-              // Term trivial?
-              match term.bool() {
-                Some(true) => continue 'inspect_conj_terms,
-                Some(false) => return TTerms::fls(),
-                None => (),
-              }
-
-              // Do we also have its negation?
-              if tterms.terms.contains( & not( term.clone() ) ) {
-                return TTerms::fls()
-              }
-
-              // Okay, move on.
-              tterms.terms.insert(term) ;
-              ()
-            }
-
-            // Keep going if `swap` is not empty.
-            if ! swap.is_empty() {
-              ::std::mem::swap( & mut old_terms, & mut swap ) ;
-              continue 'inline_conjs
-            } else {
-              break 'inline_conjs
-            }
-
-          }
-
-          // Only keep active quantified variables.
-          let quant = quant.and_then(
-            |quant| {
-              let mut active = VarSet::with_capacity(
-                quant.vars().len() * 2
-              ) ;
-              tterms.vars(& mut active) ;
-              quant.filter(|var| active.contains(var))
-            }
-          ) ;
-
           TTerms::Conj { quant, tterms }
         }
       },
@@ -1440,82 +1462,81 @@ impl TTerms {
           |_, argss| ! argss.is_empty()
         ) ;
 
+        // Do we have a predicate application and its negation?
+        for (pred, argss) in & tterms.preds {
+          if let Some(neg_argss) = neg_preds.get(pred) {
+            for args in argss {
+              if neg_argss.contains(args) { return TTerms::tru() }
+            }
+          }
+        }
+
+        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        // Used to inline disjunctions.
+        let mut swap = HConSet::new() ;
+        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
+
+        'inline_disj: loop {
+
+          'inspect_disj_terms: for term in old_terms.drain() {
+
+            // Is the term a disjunction?
+            if let Some(kids) = term.disj_inspect() {
+              for kid in kids {
+                swap.insert( kid.clone() ) ;
+                ()
+              }
+              continue 'inspect_disj_terms
+            }
+
+            // Term trivial?
+            match term.bool() {
+              Some(true) => return TTerms::tru(),
+              Some(false) => continue 'inspect_disj_terms,
+              None => (),
+            }
+
+            // Do we also have its negation?
+            if tterms.terms.contains( & not( term.clone() ) ) {
+              return TTerms::tru()
+            }
+
+            // Okay, move on.
+            tterms.terms.insert(term) ;
+            ()
+          }
+
+          // Keep going if `swap` is not empty.
+          if ! swap.is_empty() {
+            ::std::mem::swap( & mut old_terms, & mut swap ) ;
+            continue 'inline_disj
+          } else {
+            break 'inline_disj
+          }
+
+        }
+
+        // Only keep active quantified variables.
+        let quant = quant.and_then(
+          |quant| {
+            let mut active = VarSet::with_capacity(
+              quant.vars().len() * 2
+            ) ;
+            tterms.vars(& mut active) ;
+            for (_, argss) in & neg_preds {
+              for args in argss {
+                for arg in args {
+                  active.extend( term::vars(arg) )
+                }
+              }
+            }
+            quant.filter(|var| active.contains(var))
+          }
+        ) ;
+
         if tterms.is_empty() && neg_preds.is_empty() {
           TTerms::fls()
         } else {
-
-          // Do we have a predicate application and its negation?
-          for (pred, argss) in & tterms.preds {
-            if let Some(neg_argss) = neg_preds.get(pred) {
-              for args in argss {
-                if neg_argss.contains(args) { return TTerms::tru() }
-              }
-            }
-          }
-
-          let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
-          // Used to inline disjunctions.
-          let mut swap = HConSet::new() ;
-          ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
-
-          'inline_disj: loop {
-
-            'inspect_disj_terms: for term in old_terms.drain() {
-
-              // Is the term a disjunction?
-              if let Some(kids) = term.disj_inspect() {
-                for kid in kids {
-                  swap.insert( kid.clone() ) ;
-                  ()
-                }
-                continue 'inspect_disj_terms
-              }
-
-              // Term trivial?
-              match term.bool() {
-                Some(true) => return TTerms::tru(),
-                Some(false) => continue 'inspect_disj_terms,
-                None => (),
-              }
-
-              // Do we also have its negation?
-              if tterms.terms.contains( & not( term.clone() ) ) {
-                return TTerms::tru()
-              }
-
-              // Okay, move on.
-              tterms.terms.insert(term) ;
-              ()
-            }
-
-            // Keep going if `swap` is not empty.
-            if ! swap.is_empty() {
-              ::std::mem::swap( & mut old_terms, & mut swap ) ;
-              continue 'inline_disj
-            } else {
-              break 'inline_disj
-            }
-
-          }
-
-          // Only keep active quantified variables.
-          let quant = quant.and_then(
-            |quant| {
-              let mut active = VarSet::with_capacity(
-                quant.vars().len() * 2
-              ) ;
-              tterms.vars(& mut active) ;
-              for (_, argss) in & neg_preds {
-                for args in argss {
-                  for arg in args {
-                    active.extend( term::vars(arg) )
-                  }
-                }
-              }
-              quant.filter(|var| active.contains(var))
-            }
-          ) ;
-
           TTerms::Disj { quant, tterms, neg_preds }
         }
       },

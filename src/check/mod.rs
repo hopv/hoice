@@ -319,6 +319,8 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
   input_file: P, model: & str
 ) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
+  println!("model:") ;
+  println!("{}", model) ;
   let data = Data::new(
     Input::of_file(input_file).chain_err(
       || "while loading input file"
