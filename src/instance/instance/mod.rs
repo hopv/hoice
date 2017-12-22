@@ -507,6 +507,15 @@ impl Instance {
     count
   }
 
+  /// Returns true if the instance is already solved.
+  pub fn is_solved(& self) -> bool {
+    if self.is_unsat { return true }
+    for def in & self.pred_terms {
+      if def.is_none() { return false }
+    }
+    true
+  }
+
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
     self.is_unsat = true

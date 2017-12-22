@@ -249,7 +249,11 @@ impl Cxt {
     }
 
     for (_, pvars) in self.cvar_to_pvar.drain() {
-      if pvars.len() < 2 { continue }
+      if pvars.len() < 2 {
+        for (_, vars) in & pvars {
+          if vars.len() < 2 { continue }
+        }
+      }
 
       // Retrieve all `dep` indices and merge them.
       let mut indices = None ;

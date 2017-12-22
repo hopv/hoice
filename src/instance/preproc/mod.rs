@@ -199,25 +199,45 @@ where S: Solver<'skid, ()> {
 
     run! { simplify } ;
 
+    // Used to avoid running cfg reduction if nothing has changed since the
+    // last run.
+    let mut changed_since_cfg_red = true ;
+
     loop {
 
-      run! { arg_red } ;
+      if self.instance.is_solved() { break }
 
-      // panic!( "aaa" ) ;
+      run! { arg_red } ;
 
       let changed = run! { s_one_rhs } ;
       let changed = run! { s_one_lhs } || changed ;
 
-      if changed { continue }
+      if changed {
+        changed_since_cfg_red = true ;
+        continue
+      }
 
       let changed = run! { one_rhs } ;
       let changed = run! { one_lhs } || changed ;
 
-      if changed { continue }
+      if changed {
+        changed_since_cfg_red = true ;
+        continue
+      }
 
-      let changed = run! { cfg_red } ;
+      if self.instance.is_solved() { break }
 
-      if ! changed { break }
+      if changed_since_cfg_red {
+        let changed = run! { cfg_red } ;
+
+        if ! changed {
+          break
+        } else {
+          changed_since_cfg_red = false
+        }
+      } else {
+        break
+      }
 
     }
 

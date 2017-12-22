@@ -153,6 +153,12 @@ pub fn read_and_work<R: ::std::io::Read>(
         }
         instance.finalize() ;
 
+        if conf.stats {
+          if instance.is_solved() {
+            println!("; solved by pre-processing")
+          }
+        }
+
         if ! conf.infer { continue 'parse_work }
 
         model = if let Some(maybe_model) = instance.is_trivial() ? {

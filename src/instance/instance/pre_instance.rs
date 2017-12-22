@@ -86,6 +86,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     & mut self, vars: & VarMap<VarInfo>, lhs: Terms, rhs: & 'a Term
   ) -> Res<bool>
   where Terms: Iterator<Item = & 'a Term> {
+    log_info! { "  smt trivial-checking clause..." }
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
@@ -1041,7 +1042,6 @@ where Slver: Solver<'skid, ()> {
       (from $args:expr, keep nothing, swap $nu_args:expr) => ({
         debug_assert!( $nu_args.is_empty() ) ;
         ::std::mem::swap($nu_args, $args) ;
-        info.args_rmed += nu_args.len() ;
         $nu_args.clear() ;
       }) ;
       (from $args:expr, keep $to_keep:expr, swap $nu_args:expr) => ({
@@ -1049,8 +1049,6 @@ where Slver: Solver<'skid, ()> {
         for (var, arg) in $args.index_iter() {
           if $to_keep.contains(& var) {
             $nu_args.push( arg.clone() )
-          } else {
-            info.args_rmed += 1 ;
           }
         }
         ::std::mem::swap( $nu_args, $args ) ;
@@ -1096,6 +1094,8 @@ where Slver: Solver<'skid, ()> {
           // pointing to.
           var_map.push( self.old_preds[pred].1[var] ) ;
           nu_sig.push(* typ)
+        } else {
+          info.args_rmed += 1
         }
       }
 
