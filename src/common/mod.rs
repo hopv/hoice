@@ -202,7 +202,10 @@ impl RedInfo {
   }
   /// True if one or more fields are non-zero.
   pub fn non_zero(& self) -> bool {
-    self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0
+    self.preds > 0
+    || self.clauses_rmed > 0
+    || self.clauses_added > 0
+    || self.args_rmed > 0
   }
 }
 impl From<(usize, usize, usize)> for RedInfo {

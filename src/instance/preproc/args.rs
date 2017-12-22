@@ -10,7 +10,7 @@ pub type Reduction = PrdHMap<VarSet> ;
 /// Dependencies between predicate variables and predicate variables to keep.
 pub struct Cxt {
   /// Dependencies between predicate variables.
-  dep: Vec< HashSet<(PrdIdx, VarIdx)> >,
+  dep: Vec< PrdHMap<VarSet> >,
   /// Maps predicate variables to the index of their dependency class.
   ped: PrdMap< VarHMap<usize> >,
   /// Predicate variables that **cannot** be ignored.
@@ -18,7 +18,7 @@ pub struct Cxt {
   /// Map from **clause** variables to predicate variables.
   ///
   /// Cleared by [`commit`](#method.commit).
-  cvar_to_pvar: VarHMap< HashSet<(PrdIdx, VarIdx)> >,
+  cvar_to_pvar: VarHMap< PrdHMap<VarSet> >,
   /// Clause variables appearing in the clause's terms.
   ///
   /// Cleared by [`commit`](#method.commit).
@@ -39,6 +39,68 @@ impl Cxt {
     Cxt { dep, ped, keep, cvar_to_pvar, term_vars }
   }
 
+  /// Log-debugs cvar_to_pvar.
+  pub fn log_debug_internal(
+    & self, instance: & Instance,
+    clause: & ::instance::instance::Clause, pref: & str
+  ) {
+    if_debug! {
+      macro_rules! logd {
+        ($s:expr) => ( logd! { $s, } ) ;
+        ($s:expr, $($tt:tt)*) => (
+          log_debug! { $s, pref, $($tt)* }
+        ) ;
+      }
+      logd! { "{}cvar_to_pvar {{" }
+      for (cvar, map) in & self.cvar_to_pvar {
+        logd! { "{}  {} {{", clause.vars[* cvar] }
+        for (pred, vars) in map {
+          let mut s = String::new() ;
+          for var in vars {
+            s.push_str( & format!(" {}", var.default_str()) )
+          }
+          logd! { "{}    {}:{}", instance[* pred], s }
+        }
+        logd! { "{}  }}" }
+      }
+      logd! { "{}}}" }
+    }
+  }
+
+  /// Log-debugs the context.
+  pub fn log_debug(& self, instance: & Instance, pref: & str) {
+    if_debug! {
+      macro_rules! logd {
+        ($s:expr) => ( logd! { $s, } ) ;
+        ($s:expr, $($tt:tt)*) => (
+          log_debug! { $s, pref, $($tt)* }
+        ) ;
+      }
+      logd! { "{}dep {{" }
+      for class in & self.dep {
+        logd! { "{}  {{" }
+        for (pred, vars) in class {
+          let mut s = String::new() ;
+          for var in vars {
+            s.push_str( & format!(" {}", var.default_str()) )
+          }
+          logd! { "{}    {}:{}", instance[* pred], s }
+        }
+        logd! { "{}  }}" }
+      }
+      logd! { "{}}}" }
+      logd! { "{}to_keep {{" }
+      for (pred, vars) in & self.keep {
+        let mut s = String::new() ;
+        for var in vars {
+          s.push_str( & format!(" {}", var.default_str()) )
+        }
+        logd! { "{} {}:{}", instance[* pred], s }
+      }
+      logd! { "{}}}" }
+    }
+  }
+
   /// Checks the context is legal (only active in debug).
   #[cfg(debug_assertions)]
   pub fn check(& self, instance: & Instance) -> Res<()> {
@@ -48,13 +110,16 @@ impl Cxt {
       ) ;
     }
 
-    for set in & self.dep {
-      for & (pred, var) in set {
-        if * var >= instance[pred].sig.len() {
-          bail!(
-            "inconsistent `dep` in argument reduction\n\
-            predicate {} has no var {}", instance[pred], var.default_str()
-          )
+    for class in & self.dep {
+      for (pred, vars) in class {
+        for var in vars {
+          if * var >= instance[* pred].sig.len() {
+            bail!(
+              "inconsistent `dep` in argument reduction\n\
+              predicate {} has no var {}",
+              instance[* pred], var.default_str()
+            )
+          }
         }
       }
     }
@@ -71,17 +136,20 @@ impl Cxt {
 
     let mut index = 0 ;
     while index < self.dep.len() {
-      for elem in & self.dep[index] {
-        let (pred, var) = (elem.0, elem.1) ;
-        if self.ped[pred].get(& var) != Some(& index) {
-          fail!("dep -> ped")
-        }
-        let mut inner_index = index + 1 ;
-        while inner_index < self.dep.len() {
-          if self.dep[inner_index].contains(elem) {
-            fail!("dep")
+      for (pred, vars) in & self.dep[index] {
+        for var in vars {
+          if self.ped[* pred].get(& var) != Some(& index) {
+            fail!("dep -> ped")
           }
-          inner_index += 1
+          let mut inner_index = index + 1 ;
+          while inner_index < self.dep.len() {
+            if self.dep[inner_index].get(pred).map(
+              |vars| vars.contains(var)
+            ).unwrap_or(false) {
+              fail!("dep")
+            }
+            inner_index += 1
+          }
         }
       }
       index += 1
@@ -89,7 +157,9 @@ impl Cxt {
 
     for (pred, var_map) in self.ped.index_iter() {
       for (var, index) in var_map {
-        if ! self.dep[* index].contains( & (pred, * var) ) {
+        if ! self.dep[* index].get(& pred).map(
+          |vars| vars.contains(var)
+        ).unwrap_or(false) {
           fail!("ped -> dep")
         }
       }
@@ -107,12 +177,20 @@ impl Cxt {
   }
 
   /// Adds a link between some clause variables and a predicate variable.
+  ///
+  /// Returns the new length of the set of `pred`'s variables that are related
+  /// to `cvar`. (This is usefull to check if more than one of `pred`'s
+  /// variables are related to `cvar`.)
   pub fn cvar_to_pvar(
     & mut self, cvar: VarIdx, pred: PrdIdx, var: VarIdx
-  ) {
-    self.cvar_to_pvar.entry(cvar).or_insert_with(
-      || HashSet::new()
-    ).insert( (pred, var) ) ;
+  ) -> usize {
+    let pred_var_set = self.cvar_to_pvar.entry(cvar).or_insert_with(
+      || PrdHMap::new()
+    ).entry(pred).or_insert_with(
+      || VarSet::new()
+    ) ;
+    pred_var_set.insert(var) ;
+    pred_var_set.len()
   }
 
   /// Registers a predicate variable to keep.
@@ -132,13 +210,16 @@ impl Cxt {
             // println!("keeping {} {}", pred, var) ;
             self.keep(pred, pvar)
           }
-          self.cvar_to_pvar(var, pred, pvar)
+          let pred_vars_count = self.cvar_to_pvar(var, pred, pvar) ;
+          if pred_vars_count > 1 {
+            self.keep(pred, pvar)
+          }
         },
         _ => {
           // println!("keeping {} {}", pred, pvar) ;
           self.keep(pred, pvar) ;
           for var in term::vars(term) {
-            self.cvar_to_pvar(var, pred, pvar)
+            self.cvar_to_pvar(var, pred, pvar) ;
           }
         },
       }
@@ -148,8 +229,8 @@ impl Cxt {
   /// Registers a predicate application, RHS version.
   pub fn rhs_pred_app(& mut self, pred: PrdIdx, args: & VarMap<Term>) {
     for (pvar, term) in args.index_iter() {
-      for var in term::vars(term) {
-        self.cvar_to_pvar(var, pred, pvar)
+      for cvar in term::vars(term) {
+        self.cvar_to_pvar(cvar, pred, pvar) ;
       }
     }
   }
@@ -157,12 +238,12 @@ impl Cxt {
   /// Commits the information on a clause.
   pub fn commit(& mut self) {
     for cvar in self.term_vars.drain() {
-      if let Some(set) = self.cvar_to_pvar.get(& cvar) {
-        for & (pred, var) in set {
+      if let Some(map) = self.cvar_to_pvar.get(& cvar) {
+        for (pred, vars) in map {
           // println!("keeping {} {}", pred, var) ;
-          self.keep.entry(pred).or_insert_with(
-            || VarSet::new()
-          ).insert(var) ;
+          self.keep.entry(* pred).or_insert_with(
+            || VarSet::with_capacity( vars.len() )
+          ).extend(vars) ;
         }
       }
     }
@@ -172,9 +253,11 @@ impl Cxt {
 
       // Retrieve all `dep` indices and merge them.
       let mut indices = None ;
-      for & (pred, var) in & pvars {
-        if let Some(index) = self.ped[pred].get(& var) {
-          indices.get_or_insert_with( || HashSet::new() ).insert(* index) ;
+      for (pred, vars) in & pvars {
+        for var in vars {
+          if let Some(index) = self.ped[* pred].get(var) {
+            indices.get_or_insert_with( || HashSet::new() ).insert(* index) ;
+          }
         }
       }
 
@@ -188,36 +271,48 @@ impl Cxt {
           // We're merging into the first element, skip it.
           if indices.is_empty() { break }
 
-          for (pred, var) in self.dep.swap_remove(index) {
-            let prev = self.ped[pred].insert(var, merging_to) ;
-            debug_assert_eq! { prev, Some(index) }
-            self.dep[merging_to].insert((pred, var)) ;
+          for (pred, vars) in self.dep.swap_remove(index) {
+            for var in & vars {
+              let prev = self.ped[pred].insert(* var, merging_to) ;
+              debug_assert_eq! { prev, Some(index) }
+            }
+            self.dep[merging_to].entry(pred).or_insert_with(
+              || VarSet::with_capacity( vars.len() )
+            ).extend(vars) ;
           }
 
           if index < self.dep.len() {
-            for & (pred, var) in & self.dep[index] {
-              let prev = self.ped[pred].insert(var, index) ;
-              debug_assert_eq! { prev, Some(self.dep.len()) }
+            for (pred, vars) in & self.dep[index] {
+              for var in vars {
+                let prev = self.ped[* pred].insert(* var, index) ;
+                debug_assert_eq! { prev, Some(self.dep.len()) }
+              }
             }
           }
         }
 
-        for (pred, var) in pvars {
-          if let Some(index) = self.ped[pred].get(& var).cloned() {
-            debug_assert_eq! { index, merging_to }
-          } else {
-            let is_new = self.dep[merging_to].insert((pred, var)) ;
-            debug_assert! { is_new }
-            let prev = self.ped[pred].insert(var, merging_to) ;
-            debug_assert! { prev.is_none() }
+        for (pred, vars) in pvars {
+          for var in vars {
+            if let Some(index) = self.ped[pred].get(& var).cloned() {
+              debug_assert_eq! { index, merging_to }
+            } else {
+              let is_new = self.dep[merging_to].entry(pred).or_insert_with(
+                || VarSet::new()
+              ).insert(var) ;
+              debug_assert! { is_new }
+              let prev = self.ped[pred].insert(var, merging_to) ;
+              debug_assert! { prev.is_none() }
+            }
           }
         }
 
       } else {
         let index = self.dep.len() ;
-        for & (pred, var) in & pvars {
-          let prev = self.ped[pred].insert(var, index) ;
-          debug_assert! { prev.is_none() }
+        for (pred, vars) in & pvars {
+          for var in vars {
+            let prev = self.ped[* pred].insert(* var, index) ;
+            debug_assert! { prev.is_none() }
+          }
         }
         self.dep.push(pvars)
       }
@@ -226,27 +321,32 @@ impl Cxt {
 
   /// Destroys the context and returns the predicate variables to keep.
   pub fn extract(mut self, instance: & Instance) -> PrdHMap<VarSet> {
+    log_debug! { "  extract..." }
     let mut keep = HashSet::new() ;
     let mut res = PrdHMap::with_capacity( self.keep.len() ) ;
-    macro_rules! insert {
-      ($res:ident <- $pred:expr, $var:expr) => (
-        res.entry($pred).or_insert_with(
-          || VarSet::new()
-        ).insert($var) ;
-      )
-    }
     for (pred, vars) in self.keep {
       for var in vars {
         if let Some(index) = self.ped[pred].remove(& var) {
           keep.insert(index) ;
         } else {
-          insert! { res <- pred, var }
+          res.entry(pred).or_insert_with(
+            || VarSet::new()
+          ).insert(var) ;
         }
       }
     }
     for index in keep {
-      for (pred, var) in self.dep[index].drain() {
-        insert! { res <- pred, var }
+      for (pred, vars) in self.dep[index].drain() {
+        if_debug! {
+          let mut s = String::new() ;
+          for var in & vars {
+            s.push_str( & format!(" {}", var.default_str()) )
+          }
+          log_debug! { "    keeping {}:{}", instance[pred], s }
+        }
+        res.entry(pred).or_insert_with(
+          || VarSet::new()
+        ).extend(vars)
       }
     }
     for pred in instance.pred_indices() {
@@ -254,6 +354,20 @@ impl Cxt {
       let prev = res.insert(pred, VarSet::new()) ;
       debug_assert!( prev.is_none() )
     }
+
+    if_debug! {
+      log_debug! { "  extraction result {{" }
+      for (pred, vars) in & res {
+        let mut s = String::new() ;
+        for var in vars {
+          s.push_str(" ") ;
+          s.push_str( & var.default_str() )
+        }
+        log_debug! { "    {}:{}", instance[* pred], s }
+      }
+      log_debug! { "  }}" }
+    }
+
     res
   }
 }
@@ -276,6 +390,12 @@ pub fn to_keep(
   'all_clauses: for clause in instance.clauses() {
     cxt.check(instance) ? ;
 
+    log_debug! {
+      "    working on clause {}", clause.to_string_info(
+        instance.preds()
+      ).unwrap()
+    }
+
     // All the variables appearing in the lhs's terms are off limits.
     for term in clause.lhs_terms() {
       cxt.term_vars( term::vars(term) )
@@ -295,7 +415,11 @@ pub fn to_keep(
     }
     cxt.check(instance) ? ;
 
-    cxt.commit()
+    cxt.log_debug_internal(instance, clause, "    ") ;
+
+    cxt.commit() ;
+
+    cxt.log_debug(instance, "    ")
   }
 
   // println!("dependencies:") ;

@@ -1167,27 +1167,27 @@ pub enum TTerms {
   },
 }
 impl TTerms {
-  pub fn inspect(& self) {
-    match * self {
-      TTerms::True => println!("true"),
-      TTerms::False => println!("false"),
-      TTerms::Conj { ref quant, ref tterms } => println!(
-        "conj, {} ({})", tterms.len(),
-        if let Some(q) = quant.as_ref() {
-          format!("{}", q.len())
-        } else { "none".into() }
-      ),
-      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => println!(
-        "conj, {}, {}, {}", tterms.len(), neg_preds.len(),
-        if let Some(q) = quant.as_ref() {
-          format!("{}", q.len())
-        } else { "none".into() }
-      ),
-      TTerms::Dnf { ref disj } => println!(
-        "dnf, {}", disj.len()
-      ),
-    }
-  }
+  // pub fn inspect(& self) {
+  //   match * self {
+  //     TTerms::True => println!("true"),
+  //     TTerms::False => println!("false"),
+  //     TTerms::Conj { ref quant, ref tterms } => println!(
+  //       "conj, {} ({})", tterms.len(),
+  //       if let Some(q) = quant.as_ref() {
+  //         format!("{}", q.len())
+  //       } else { "none".into() }
+  //     ),
+  //     TTerms::Disj { ref quant, ref tterms, ref neg_preds } => println!(
+  //       "conj, {}, {}, {}", tterms.len(), neg_preds.len(),
+  //       if let Some(q) = quant.as_ref() {
+  //         format!("{}", q.len())
+  //       } else { "none".into() }
+  //     ),
+  //     TTerms::Dnf { ref disj } => println!(
+  //       "dnf, {}", disj.len()
+  //     ),
+  //   }
+  // }
 
   /// True.
   #[inline]

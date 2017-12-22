@@ -1019,16 +1019,29 @@ where Slver: Solver<'skid, ()> {
   /// Removes all predicate arguments not in `to_keep`, and all corresponding
   /// arguments in the clauses. Updates `old_preds`, `pred_terms` and.
   fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
-    log_debug! { "rm_args ({})", to_keep.len() }
+    if_debug! {
+      log_debug! { "  rm_args ({})", to_keep.len() }
+      log_debug! { "  to keep {{" }
+      for (pred, vars) in to_keep.iter() {
+        let mut s = String::new() ;
+        for var in vars {
+          s.push_str(" ") ;
+          s.push_str( & var.default_str() )
+        }
+        log_debug! { "    {}:{}", self[* pred], s }
+      }
+      log_debug! { "  }}" }
+    }
 
     self.check("rm_args") ? ;
 
-    let mut info =RedInfo::new() ;
+    let mut info = RedInfo::new() ;
 
     macro_rules! rm_args {
       (from $args:expr, keep nothing, swap $nu_args:expr) => ({
         debug_assert!( $nu_args.is_empty() ) ;
         ::std::mem::swap($nu_args, $args) ;
+        info.args_rmed += nu_args.len() ;
         $nu_args.clear() ;
       }) ;
       (from $args:expr, keep $to_keep:expr, swap $nu_args:expr) => ({
@@ -1036,6 +1049,8 @@ where Slver: Solver<'skid, ()> {
         for (var, arg) in $args.index_iter() {
           if $to_keep.contains(& var) {
             $nu_args.push( arg.clone() )
+          } else {
+            info.args_rmed += 1 ;
           }
         }
         ::std::mem::swap( $nu_args, $args ) ;
@@ -1072,8 +1087,7 @@ where Slver: Solver<'skid, ()> {
         "  working on {} ({}/{})",
         self[pred], to_keep.len(), self[pred].sig.len()
       }
-      // let mut to_keep: Vec<_> = to_keep.into_iter().collect() ;
-      // to_keep.sort_unstable() ;
+
       let mut var_map = VarMap::with_capacity( to_keep.len() ) ;
       let mut nu_sig = VarMap::with_capacity( to_keep.len() ) ;
       for (var, typ) in self[pred].sig.index_iter() {
@@ -1082,16 +1096,9 @@ where Slver: Solver<'skid, ()> {
           // pointing to.
           var_map.push( self.old_preds[pred].1[var] ) ;
           nu_sig.push(* typ)
-        } else {
-          // println!("ping") ;
-          info.args_rmed += 1
         }
       }
-      // println!(
-      //   "{}: {} -> {} ({})",
-      //   self.preds[pred], self.preds[pred].sig.len(),
-      //   nu_sig.len(), to_keep.len()
-      // ) ;
+
       // Update `preds` with the new signature.
       self.instance.preds[pred].sig = nu_sig ;
       // Update `old_preds`'s map.

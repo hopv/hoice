@@ -1587,7 +1587,6 @@ impl Instance {
 
       writeln!(w, " ) {}", Typ::Bool) ? ;
       write!(w, "    ") ? ;
-      tterms.inspect() ;
       self.print_tterms_as_model(w, tterms) ? ;
       writeln!(w, "\n  )") ?
     }

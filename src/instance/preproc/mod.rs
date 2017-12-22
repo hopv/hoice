@@ -203,6 +203,8 @@ where S: Solver<'skid, ()> {
 
       run! { arg_red } ;
 
+      // panic!( "aaa" ) ;
+
       let changed = run! { s_one_rhs } ;
       let changed = run! { s_one_lhs } || changed ;
 
