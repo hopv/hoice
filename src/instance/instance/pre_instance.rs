@@ -86,7 +86,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     & mut self, vars: & VarMap<VarInfo>, lhs: Terms, rhs: & 'a Term
   ) -> Res<bool>
   where Terms: Iterator<Item = & 'a Term> {
-    log_info! { "  smt trivial-checking clause..." }
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
@@ -385,7 +384,45 @@ where Slver: Solver<'skid, ()> {
 
 
 
+  /// Forces all the remaining predicates to some DNFs at the same time.
+  pub fn force_all_preds(
+    & mut self, defs: PrdHMap< Vec<(Quantfed, TTermSet)> >
+  ) -> Res<RedInfo> {
+    for (pred, def_opt) in self.pred_terms.index_iter() {
+      if def_opt.is_none() && defs.get(& pred).is_none() {
+        bail!(
+          format!(
+            "error in `force_all_preds`, no definition for {}", self[pred]
+          )
+        )
+      }
+    }
 
+    let mut info = RedInfo::new() ;
+    info.clauses_rmed += self.instance.clauses.len() ;
+
+    // Drop all clauses.
+    self.instance.clauses.clear() ;
+    for & mut (
+      ref mut lhs, ref mut rhs
+    ) in self.instance.pred_to_clauses.iter_mut() {
+      lhs.clear() ;
+      rhs.clear()
+    }
+
+    for (pred, def) in defs {
+      let def = TTerms::dnf(
+        def.into_iter().map(
+          |(quantfed, conj)| (
+            Quant::exists(quantfed), conj
+          )
+        ).collect()
+      ) ;
+      self.instance.pred_terms[pred] = Some(def)
+    }
+
+    Ok(info)
+  }
 
 
 

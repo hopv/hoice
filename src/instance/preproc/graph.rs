@@ -361,12 +361,14 @@ impl Graph {
     & mut self, instance: & Instance, keep: & mut PrdSet,
     upper_bound: usize
   ) -> Res<
-    Option< PrdHMap< Vec<(Quantfed, TTermSet)> > >
+    PrdHMap< Vec<(Quantfed, TTermSet)> >
   > {
     let mut res = PrdHMap::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
     let mut increase: usize = 0 ;
+
+    let forced_inlining = keep.len() == 0 ;
 
     'construct: loop {
 
@@ -563,27 +565,34 @@ impl Graph {
         0
       } ;
 
-      if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
-        log_info! {
-          "  blow-up prediction for {}: {} + {} = {} / {}",
-          instance[pred], this_pred_increase, increase,
-          sum_increase, upper_bound
-        }
-        if sum_increase >= upper_bound {
-          log_info! { "  -> blows up" }
-          keep_and_continue! { pred }
-        } else {
-          log_info! { "  -> inlining" }
-          increase = sum_increase ;
-          let prev = res.insert( pred, def ) ;
-          debug_assert! { prev.is_none() }
-        }
+      if forced_inlining {
+        let prev = res.insert( pred, def ) ;
+        debug_assert! { prev.is_none() }
       } else {
-        keep_and_continue! { pred }
+
+        if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
+          log_info! {
+            "  blow-up prediction for {}: {} + {} = {} / {}",
+            instance[pred], this_pred_increase, increase,
+            sum_increase, upper_bound
+          }
+          if sum_increase >= upper_bound {
+            log_info! { "  -> blows up" }
+            keep_and_continue! { pred }
+          } else {
+            log_info! { "  -> inlining" }
+            increase = sum_increase ;
+            let prev = res.insert( pred, def ) ;
+            debug_assert! { prev.is_none() }
+          }
+        } else {
+          keep_and_continue! { pred }
+        }
+
       }
     }
 
-    Ok( Some(res) )
+    Ok( res )
   }
 
 
@@ -593,13 +602,21 @@ impl Graph {
   /// Returns the set of predicates to keep, and the set of predicates to
   /// remove.
   pub fn break_cycles(
-    & self, instance: & Instance
+    & mut self, instance: & Instance
   ) -> Res<PrdSet> {
     log_debug! { "breaking cycles in pred dep graph..." }
     let mut set = PrdSet::with_capacity(instance.preds().len() / 3) ;
 
+    for (prd, prds) in self.forward.index_iter() {
+      if prds[prd] > 0 {
+        let is_new = set.insert(prd) ;
+        debug_assert!( is_new )
+      }
+    }
+
     let mut pos = PrdSet::new() ;
     for (prd, cnt) in self.pos.index_iter() {
+      if set.contains(& prd) { continue }
       if * cnt > 0 {
         pos.insert(prd) ;
       }
@@ -607,7 +624,9 @@ impl Graph {
 
     let mut forward = PrdHMap::new() ;
     for (prd, prds) in self.forward.index_iter() {
+      if set.contains(& prd) { continue }
       for (tgt, cnt) in prds.index_iter() {
+        if set.contains(& tgt) { continue }
         if * cnt > 0 {
           let is_new = forward.entry(prd).or_insert_with(
             || PrdSet::new()
@@ -617,7 +636,12 @@ impl Graph {
       }
     }
 
+    let mut cnt = 0 ;
+
     'break_cycles: while ! forward.is_empty() {
+
+      cnt += 1 ;
+      self.to_dot(instance, format!("pred_red_{}", cnt), & set) ? ;
 
       if_debug! {
         log_debug! { "  looking for a starting point with" }
@@ -673,6 +697,7 @@ impl Graph {
       let mut rep = None ;
       for (prd, weight) in & weights {
         let (prd, weight) = (* prd, * weight) ;
+        log_debug! { "    {} -> {}", instance[prd], weight }
         let curr_weight = if let Some(
           & (_, w)
         ) = rep.as_ref() { w } else { 0 } ;

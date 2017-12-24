@@ -1056,20 +1056,21 @@ impl RedStrat for CfgRed {
       & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
     ) ? ;
 
-    let pred_defs = if let Some(res) = graph.inline(
+    let pred_defs = graph.inline(
       instance, & mut to_keep, upper_bound
-    ) ? {
-      res
-    } else {
-      log_info! { "avoiding cfg red blow-up" }
-      return Ok(info)
-    } ;
+    ) ? ;
+
+    if pred_defs.len() == 0 { return Ok(info) }
 
     info.preds += pred_defs.len() ;
 
     graph.check(& instance) ? ;
-    log_info! { "{} predicates inlined", pred_defs.len() }
+    log_info! { "inlining {} predicates", pred_defs.len() }
 
+    if pred_defs.len() == instance.active_pred_count() {
+      info += instance.force_all_preds(pred_defs) ? ;
+      return Ok(info)
+    }
 
     // Remove all clauses leading to the predicates we just inlined.
     for (pred, def) in pred_defs {
