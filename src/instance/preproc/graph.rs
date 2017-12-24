@@ -420,7 +420,7 @@ impl Graph {
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
             log_debug! { "from clause {}", clause.to_string_info(& instance.preds()) ? }
-            if ! tterms.preds().is_empty() {
+            if ! forced_inlining && ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }
                 if let Some(argss) = tterms.preds_mut().remove(pred) {
@@ -430,8 +430,13 @@ impl Graph {
             }
             debug_assert! {{
               let mut okay = true ;
-              for (pred, _) in tterms.preds() {
-                if ! keep.contains( pred ) { okay = false }
+              if ! forced_inlining {
+                for (pred, _) in tterms.preds() {
+                  if ! keep.contains( pred ) {
+                    println!("can't find {} in keep", instance[* pred]) ;
+                    okay = false
+                  }
+                }
               }
               okay
             }}
