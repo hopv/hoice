@@ -1818,6 +1818,8 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
           write!(w, "true")
         } else if false_preds.contains(& pred) {
           write!(w, "false")
+        } else if args.is_empty() {
+          write!(w, "{}", pred_info[pred])
         } else {
           write!(w, "({}", pred_info[pred]) ? ;
           for arg in args {
