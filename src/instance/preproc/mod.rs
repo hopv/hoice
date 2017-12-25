@@ -633,29 +633,34 @@ impl RedStrat for SimpleOneLhs {
         },
         Success((qualfed, pred_app, tterms)) => {
           debug_assert! { qualfed.is_empty() }
-          if_not_bench!{
-            log_debug!{ "  => (or" }
-            if let Some((pred, ref args)) = pred_app {
-              let mut s = format!("({}", instance[pred]) ;
-              for arg in args {
-                s = format!("{} {}", s, arg)
+          if pred_app.is_none() && tterms.is_empty() {
+            log_info!("  => false") ;
+            red_info += instance.force_false(pred) ?
+          } else {
+            if_not_bench!{
+              log_debug!{ "  => (or" }
+              if let Some((pred, ref args)) = pred_app {
+                let mut s = format!("({}", instance[pred]) ;
+                for arg in args {
+                  s = format!("{} {}", s, arg)
+                }
+                log_debug!{ "    {})", s }
               }
-              log_debug!{ "    {})", s }
-            }
-            log_debug!{ "    (not" }
-            log_debug!{ "      (and" }
-            for (pred, argss) in tterms.preds() {
-              for args in argss {
-                log_debug!{ "        ({} {})", instance[* pred], args}
+              log_debug!{ "    (not" }
+              log_debug!{ "      (and" }
+              for (pred, argss) in tterms.preds() {
+                for args in argss {
+                  log_debug!{ "        ({} {})", instance[* pred], args}
+                }
+              }
+              for term in tterms.terms() {
+                log_debug!{ "        {}", term }
               }
             }
-            for term in tterms.terms() {
-              log_debug!{ "        {}", term }
-            }
+            red_info += instance.force_pred_right(
+              pred, qualfed, pred_app, tterms
+            ) ?
           }
-          red_info += instance.force_pred_right(
-            pred, qualfed, pred_app, tterms
-          ) ? ;
 
           instance.check("after unfolding") ?
         },

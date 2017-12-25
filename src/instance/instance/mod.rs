@@ -626,6 +626,7 @@ impl Instance {
   ///
   /// - optimize sorting of forced preds by dependencies (low priority)
   pub fn finalize(& mut self) {
+    self.sorted_pred_terms.clear() ;
     self.consts.shrink_to_fit() ;
     self.preds.shrink_to_fit() ;
     self.old_preds.shrink_to_fit() ;

@@ -437,7 +437,11 @@ pub fn terms_of_lhs_app(
 
   debug_assert! { quantifiers || qvars.is_empty() }
 
-  Ok( ExtractRes::Success( (qvars, pred_app, tterms) ) )
+  if pred_app.is_none() && tterms.is_empty() {
+    Ok( ExtractRes::SuccessFalse )
+  } else {
+    Ok( ExtractRes::Success( (qvars, pred_app, tterms) ) )
+  }
 }
 
 
