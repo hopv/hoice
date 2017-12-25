@@ -8,41 +8,31 @@ use instance::Clause ;
 
 
 
-/// Wrapper around a negated implication for smt printing.
-struct NegImplWrap<'a, Terms> {
-  /// Lhs.
-  lhs: ::std::cell::RefCell<Terms>,
-  /// Rhs.
-  rhs: & 'a Term,
+/// Wrapper around a conjunction for smt printing.
+struct ConjWrap<'a> {
+  /// Conjunction.
+  terms: & 'a Vec<& 'a Term>,
 }
-impl<'a, Terms> NegImplWrap<'a, Terms> {
+impl<'a> ConjWrap<'a> {
   /// Constructor.
-  pub fn new(lhs: Terms, rhs: & 'a Term) -> Self {
-    NegImplWrap { lhs: ::std::cell::RefCell::new(lhs), rhs }
+  pub fn new(terms: & 'a Vec<& 'a Term>) -> Self {
+    ConjWrap { terms }
   }
 }
-impl<'a, Terms> ::rsmt2::to_smt::Expr2Smt<()> for NegImplWrap<'a, Terms>
-where Terms: Iterator<Item = & 'a Term> {
+impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ConjWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
-    let mut lhs = self.lhs.borrow_mut() ;
-    write!(w, "(not ")? ;
-    if let Some(term) = lhs.next() {
-      write!(w, "(=> (and") ? ;
-      write!(w, " ") ? ;
-      term.write(w, |w, var| var.default_write(w)) ? ;
-      while let Some(term) = lhs.next() {
-        write!(w, " ") ? ;
-        term.write(w, |w, var| var.default_write(w)) ?
-      }
-      write!(w, ") ") ? ;
-      self.rhs.write(w, |w, var| var.default_write(w)) ? ;
-      write!(w, ")") ?
+    if self.terms.is_empty() {
+      write!(w, "true") ?
     } else {
-      self.rhs.write(w, |w, var| var.default_write(w)) ?
+      write!(w, "(and") ? ;
+      for term in self.terms {
+        write!(w, " ") ? ;
+        term.write(w, |w, var| var.default_write(w)) ? ;
+      }
+      write!(w, ")") ?
     }
-    write!(w, ")") ? ;
     Ok(())
   }
 }
@@ -53,6 +43,17 @@ where Terms: Iterator<Item = & 'a Term> {
 pub struct SolverWrapper<S> {
   /// The solver.
   solver: S,
+}
+impl<S> ::std::ops::Deref for SolverWrapper<S> {
+  type Target = S ;
+  fn deref(& self) -> & S {
+    & self.solver
+  }
+}
+impl<S> ::std::ops::DerefMut for SolverWrapper<S> {
+  fn deref_mut(& mut self) -> & mut S {
+    & mut self.solver
+  }
 }
 impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   /// Constructor.
@@ -82,17 +83,17 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   // }
 
   /// True if an implication of terms is a tautology.
-  pub fn trivial_impl<'a, Terms>(
-    & mut self, vars: & VarMap<VarInfo>, lhs: Terms, rhs: & 'a Term
-  ) -> Res<bool>
-  where Terms: Iterator<Item = & 'a Term> {
+  pub fn trivial_impl<'a>(
+    & mut self, vars: & VarMap<VarInfo>, lhs: & 'a Vec<& 'a Term>
+  ) -> Res<bool> {
+    if lhs.is_empty() { return Ok(false) }
     self.solver.push(1) ? ;
     for var in vars {
       if var.active {
         self.solver.declare_const(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert( & NegImplWrap::new(lhs, rhs) ) ? ;
+    self.solver.assert( & ConjWrap::new(lhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
     self.solver.pop(1) ? ;
     Ok(! sat)
@@ -107,8 +108,7 @@ pub struct PreInstance<'a, Slver> {
   solver: SolverWrapper<Slver>,
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
-  /// The term `false`, here for convenience in `is_clause_trivial`.
-  fls: Term,
+
   /// Factored vector of clauses to check for simplification.
   ///
   /// Be **super careful** of swap removes.
@@ -125,12 +125,11 @@ where Slver: Solver<'skid, ()> {
   ) -> Self {
     let solver = SolverWrapper::new(solver) ;
     let simplifier = ClauseSimplifier::new() ;
-    let fls = term::fls() ;
     let clauses_to_check = ClsSet::with_capacity(7) ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
     PreInstance {
       instance, solver, simplifier,
-      fls, clauses_to_check, clauses_to_simplify
+      clauses_to_check, clauses_to_simplify
     }
   }
 
@@ -331,7 +330,7 @@ where Slver: Solver<'skid, ()> {
 
       // Either it is trivial, or falsifiable regardless of the predicates.
       if self.solver.trivial_impl(
-        clause.vars(), lhs.drain(0..), & self.fls
+        clause.vars(), & lhs
       ) ? {
         return Ok(true)
       } else {
@@ -355,7 +354,7 @@ where Slver: Solver<'skid, ()> {
       if lhs.is_empty() {
         Ok(false)
       } else if self.solver.trivial_impl(
-        clause.vars(), lhs.drain(0..), & self.fls
+        clause.vars(), & lhs
       ) ? {
         Ok(true)
       } else {
@@ -385,9 +384,13 @@ where Slver: Solver<'skid, ()> {
 
 
   /// Forces all the remaining predicates to some DNFs at the same time.
+  ///
+  /// Checks that the positive and negative constraints are respected. Returns
+  /// `true` if they are, *i.e.* the definitions are a legal model, and `false`
+  /// otherwise.
   pub fn force_all_preds(
     & mut self, defs: PrdHMap< Vec<(Quantfed, TTermSet)> >
-  ) -> Res<RedInfo> {
+  ) -> Res< (bool, RedInfo) > {
     for (pred, def_opt) in self.pred_terms.index_iter() {
       if def_opt.is_none() && defs.get(& pred).is_none() {
         bail!(
@@ -397,20 +400,14 @@ where Slver: Solver<'skid, ()> {
         )
       }
     }
+    log_debug! { "  forcing all {} remaining predicates", defs.len() }
 
     let mut info = RedInfo::new() ;
     info.clauses_rmed += self.instance.clauses.len() ;
 
-    // Drop all clauses.
-    self.instance.clauses.clear() ;
-    for & mut (
-      ref mut lhs, ref mut rhs
-    ) in self.instance.pred_to_clauses.iter_mut() {
-      lhs.clear() ;
-      rhs.clear()
-    }
-
+    // Force predicates.
     for (pred, def) in defs {
+      log_debug! { "    forcing {}", self[pred] }
       let def = TTerms::dnf(
         def.into_iter().map(
           |(quantfed, conj)| (
@@ -418,10 +415,34 @@ where Slver: Solver<'skid, ()> {
           )
         ).collect()
       ) ;
+      debug_assert! { self.instance.pred_terms[pred].is_none() }
       self.instance.pred_terms[pred] = Some(def)
     }
 
-    Ok(info)
+    // Drop all clauses.
+    log_debug! { "  unlinking all predicates" }
+    for & mut (
+      ref mut lhs, ref mut rhs
+    ) in self.instance.pred_to_clauses.iter_mut() {
+      lhs.clear() ;
+      rhs.clear()
+    }
+    log_debug! { "  dropping non pos/neg clauses" }
+    let mut clause: ClsIdx = 0.into() ;
+    while clause < self.instance.clauses.len() {
+      if self.instance.clauses[clause].rhs.is_none()
+      || self.instance.clauses[clause].lhs_preds.is_empty() {
+        clause.inc() ;
+        continue
+      } else {
+        self.instance.clauses.swap_remove(clause) ;
+      }
+    }
+    log_debug! { "  checking pred defs" }
+    let is_sat = self.check_pred_defs() ? ;
+    self.instance.clauses.clear() ;
+
+    Ok( (is_sat, info) )
   }
 
 
@@ -1200,6 +1221,70 @@ where Slver: Solver<'skid, ()> {
   }
 
 
+
+
+  /// Checks the predicates' definition verify the current instance.
+  ///
+  /// Returns `true` if they work (sat).
+  ///
+  /// # Errors if
+  ///
+  /// - some predicates are not defined
+  pub fn check_pred_defs(& mut self) -> Res<bool> {
+    if self.active_pred_count() > 0 {
+      bail!(
+        "can't check predicate definitions, some predicates are not defined"
+      )
+    }
+
+    self.solver.reset() ? ;
+
+    let set = PrdSet::new() ;
+    self.instance.finalize() ;
+    for pred in self.instance.sorted_forced_terms() {
+      let pred = * pred ;
+      log_debug! { "    definining {}", self[pred] }
+
+      let sig: Vec<_> = self.instance[pred].sig.index_iter().map(
+        |(var, typ)| (var.default_str(), * typ)
+      ).collect() ;
+
+      if let Some(ref def) = self.instance.pred_terms[pred] {
+        self.solver.define_fun_with(
+          & self.instance[pred].name,
+          & sig,
+          & Typ::Bool,
+          def,
+          & (& set, & set, & self.instance.preds)
+        ) ?
+      } else {
+        bail!(
+          "can't check predicate definitions, predicate {} is not defined",
+          self.instance.preds[pred]
+        )
+      }
+    }
+
+    for clause in & self.instance.clauses {
+      self.solver.push(1) ? ;
+      for info in clause.vars() {
+        self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
+      }
+      self.solver.assert_with(
+        clause, & (& set, & set, & self.instance.preds)
+      ) ? ;
+
+      if self.solver.check_sat() ? {
+        return Ok(false)
+      } else {
+        self.solver.pop(1) ?
+      }
+    }
+
+    Ok(true)
+    
+  }
+
 }
 
 
@@ -1654,4 +1739,5 @@ impl ClauseSimplifier {
 
     Ok(false)
   }
+
 }

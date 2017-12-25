@@ -1068,8 +1068,13 @@ impl RedStrat for CfgRed {
     log_info! { "inlining {} predicates", pred_defs.len() }
 
     if pred_defs.len() == instance.active_pred_count() {
-      info += instance.force_all_preds(pred_defs) ? ;
-      return Ok(info)
+      let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
+      info += this_info ;
+      if ! is_sat {
+        bail!( ErrorKind::Unsat )
+      } else {
+        return Ok(info)
+      }
     }
 
     // Remove all clauses leading to the predicates we just inlined.
