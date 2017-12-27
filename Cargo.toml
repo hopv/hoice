@@ -1,6 +1,6 @@
 [package]
 name = "hoice"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
 
 readme = "README.md"
@@ -22,14 +22,14 @@ bench = [ ]
 
 [dependencies]
 lazy_static = "*"
-clap = "2.26.0"
+clap = "*"
 regex = "*"
 hashconsing = "*"
 error-chain = "*"
 log = "0.3.9"
 env_logger = "*"
 ansi_term = "*"
-rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
+rsmt2 = "*"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 rayon = "*"

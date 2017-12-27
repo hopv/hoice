@@ -184,6 +184,21 @@ where S: Solver<'skid, ()> {
     }
     profile!{
       |profiler|
+        "nl clause count original" => add {
+          let mut count = 0 ;
+          'clause_iter: for clause in self.instance.clauses() {
+            for (_, argss) in clause.lhs_preds() {
+              if argss.len() > 1 {
+                count += 1 ;
+                continue 'clause_iter
+              }
+            }
+          }
+          count
+        }
+    }
+    profile!{
+      |profiler|
         "pred count original" => add self.instance.preds().len()
     }
     profile!{
@@ -250,6 +265,21 @@ where S: Solver<'skid, ()> {
     profile!{
       |profiler|
         "clause count    final" => add self.instance.clauses().len()
+    }
+    profile!{
+      |profiler|
+        "nl clause count    final" => add {
+          let mut count = 0 ;
+          'clause_iter: for clause in self.instance.clauses() {
+            for (_, argss) in clause.lhs_preds() {
+              if argss.len() > 1 {
+                count += 1 ;
+                continue 'clause_iter
+              }
+            }
+          }
+          count
+        }
     }
 
     profile!{
