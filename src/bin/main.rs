@@ -39,7 +39,7 @@ fn format(log: & ::log::LogRecord) -> String {
       for line in format!( "{}", log.args() ).lines() {
         s.push_str( & format!("\n; {} {}", conf.sad("|"), line) )
       }
-      s.push_str(& format!("\n; {}", conf.sad("|===|\n")) ) ;
+      s.push_str(& format!("\n; {}\n", conf.sad("|===|")) ) ;
       s
     },
     Trace => {
@@ -55,7 +55,7 @@ fn format(log: & ::log::LogRecord) -> String {
       for line in format!( "{}", log.args() ).lines() {
         s.push_str( & format!("\n; {} {}", "|", line) )
       }
-      s.push_str(& format!("\n; {}","|===|\n") ) ;
+      s.push_str(& format!("\n; {}\n","|===|") ) ;
       s
     },
     Info | Debug => {

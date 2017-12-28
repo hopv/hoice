@@ -163,14 +163,14 @@ impl Qualifiers {
   /// Constructor.
   #[allow(unused_mut)]
   pub fn new(instance: & Instance) -> Res<Self> {
-    let mut arity_map = ArityMap::with_capacity( * instance.max_pred_arity ) ;
+    let mut arity_map = Quals::with_capacity( * instance.max_pred_arity ) ;
     let mut decay_map = HConMap::with_capacity(
       instance.consts().len() * (* instance.max_pred_arity) * 4
     ) ;
     let mut nullary_cands: HConMap<Term, _> = HConMap::with_capacity(2) ;
     nullary_cands.insert( term::tru(), QualValues::new(term::tru()) ) ;
     nullary_cands.insert( term::fls(), QualValues::new(term::fls()) ) ;
-    arity_map.push( HConMap::<Term, _>::with_capacity(0) ) ;
+    arity_map.push( nullary_cands ) ;
     for var_idx in VarRange::zero_to( * instance.max_pred_arity ) {
       let mut terms = HConMap::with_capacity( (* var_idx) * 20 ) ;
       let term = term::ge( term::var(var_idx), term::int(0) ) ;
@@ -209,9 +209,7 @@ impl Qualifiers {
   }
 
   /// Accessor to the qualifiers.
-  pub fn qualifiers(& self) -> & ArityMap< HConMap<Term, QualValues> > {
-    & self.arity_map
-  }
+  pub fn qualifiers(& self) -> & Quals { & self.arity_map }
 
   /// Updates qualifiers' decay given the qualifiers **chosen** at this
   /// iteration, and removes qualifiers with a decay strictly above some value.
@@ -276,43 +274,6 @@ impl Qualifiers {
     self.blacklist.clear()
   }
 
-  // /// Registers a sample.
-  // fn register_sample(& mut self, args: HSample) -> Res<()> {
-  //   for arity in ArityRange::zero_to( args.len() + 1 ) {
-  //     for pair in self.arity_map[arity].iter_mut() {
-  //       let (term, values) = (& pair.0, & mut pair.1) ;
-  //       if let Some(val) = term.bool_eval(& args) ? {
-  //         values.add(args.clone(), val) ;
-  //       } else {
-  //         bail!("[bug] incomplete arguments in learning data")
-  //       }
-  //     }
-  //   }
-  //   Ok(())
-  // }
-
-  // /// Registers some samples.
-  // pub fn register_samples(
-  //   & mut self, new_samples: Vec<HSample>
-  // ) -> Res<()> {
-  //   for sample in new_samples {
-  //     self.register_sample(sample) ?
-  //   }
-  //   Ok(())
-  // }
-
-  /// Adds some qualifiers as qualifier values.
-  pub fn add_quals<Terms: IntoIterator<Item = Term>>(
-    & mut self, arity: Arity, quals: Terms
-  ) -> Res<()> {
-    for qual in quals.into_iter() {
-      if ! self.arity_map[arity].contains_key(& qual) {
-        self.arity_map[arity].insert(qual.clone(), QualValues::new(qual)) ;
-      }
-    }
-    Ok(())
-  }
-
   /// Adds some qualifiers as qualifier values.
   pub fn add_qual_values(
     & mut self, qualss: & mut Quals
@@ -325,70 +286,6 @@ impl Qualifiers {
     }
     Ok(())
   }
-
-  // /// Adds a qualifier whithout doing anything.
-  // pub fn add_qual_values<'a, Terms: IntoIterator<Item = QualValues>>(
-  //   & 'a mut self, quals: Terms
-  // ) -> Res<()> {
-  //   for values in quals {
-  //     let arity: Arity = if let Some(max_var) = values.qual.highest_var() {
-  //       (1 + * max_var).into()
-  //     } else {
-  //       bail!("[bug] trying to add constant qualifier")
-  //     } ;
-  //     let _ = self.decay_map.insert( qual.clone(), (arity, 0) ) ;
-  //     let term = values.qual.clone() ;
-  //     let _ = self.arity_map[arity].insert( term, values ) ;
-  //   }
-  //   Ok(())
-  // }
-
-
-  // /// Adds a qualifier.
-  // pub fn add_qual<'a>(
-  //   & 'a mut self, qual: Term
-  //   // , samples: & ::common::data::HSampleConsign
-  // ) -> Res<& 'a mut QualValues> {
-  //   let arity: Arity = if let Some(max_var) = qual.highest_var() {
-  //     (1 + * max_var).into()
-  //   } else {
-  //     bail!("[bug] trying to add constant qualifier")
-  //   } ;
-  //   // let values = samples.read().map_err(
-  //   //   corrupted_err
-  //   // )?.fold(
-  //   //   |mut values, sample| {
-  //   //     if sample.len() >= * arity {
-  //   //       match qual.bool_eval(& * sample) {
-  //   //         Ok( Some(b) ) => values.add(sample, b),
-  //   //         Ok( None ) => panic!(
-  //   //           "incomplete model, cannot evaluate qualifier"
-  //   //         ),
-  //   //         Err(e) => panic!(
-  //   //           "[bug] error while evaluating qualifier: {}", e
-  //   //         ),
-  //   //       }
-  //   //     }
-  //   //     values
-  //   //   }, QualValues::new( qual.clone() )
-  //   // ) ;
-  //   debug_assert!({
-  //     for values in self.arity_map[arity].iter() {
-  //       assert!(& values.qual != & qual)
-  //     }
-  //     true
-  //   }) ;
-  //   let values = QualValues::new( qual ) ;
-    
-  //   // The two operations below make sense iff `arity_map` is not shared.
-  //   self.arity_map[arity].push( values ) ;
-  //   // If it was shared, someone could insert between these two lines.
-  //   let last_values = self.arity_map[arity].last_mut().unwrap() ;
-  //   //                                                 ^^^^^^^^|
-  //   // Definitely safe right after the push -------------------|
-
-  //   Ok(last_values)
-  // }
 }
 
 
@@ -397,12 +294,15 @@ impl Qualifiers {
 #[doc = r#"Iterator over the qualifiers of a predicate."#]
 pub struct QualIter<'a> {
   /// Reference to the arity map.
-  arity_map: ::std::slice::IterMut< 'a, HConMap<Term, QualValues> >,
+  arity_map: ::std::slice::IterMut<
+    'a, HConMap<Term, QualValues>
+  >,
   /// Current values.
   values: Option<
-    ::std::collections::hash_map::IterMut<'a, Term, QualValues>
+    ::std::collections::hash_map::IterMut<
+      'a, Term, QualValues
+    >
   >,
-  // & 'a mut ArityMap< Vec<QualValues> >,
   /// Blacklisted terms.
   blacklist: & 'a HConSet<Term>,
   /// Arity of the predicate the qualifiers are for.
@@ -415,7 +315,7 @@ pub struct QualIter<'a> {
 impl<'a> QualIter<'a> {
   /// Constructor.
   pub fn new(
-    map: & 'a mut ArityMap< HConMap<Term, QualValues> >,
+    map: & 'a mut Quals,
     blacklist: & 'a HConSet<Term>, pred_arity: Arity
   ) -> Self {
     let mut arity_map = map.iter_mut() ;
@@ -435,9 +335,9 @@ impl<'a> ::std::iter::Iterator for QualIter<'a> {
     while self.curr_arity <= self.pred_arity {
       if let Some( ref mut iter ) = self.values {
         // Consume the elements until a non-blacklisted one is found.
-        while let Some( (term, values) ) = iter.next() {
+        while let Some( (term, val) ) = iter.next() {
           if ! self.blacklist.contains(term) {
-            return Some(((), values))
+            return Some(((), val))
           }
         }
       } else {

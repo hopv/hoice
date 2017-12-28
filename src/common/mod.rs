@@ -1,4 +1,4 @@
-//! Base types and functions.
+  //! Base types and functions.
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
@@ -18,7 +18,11 @@ pub use either::Either ;
 
 pub use errors::* ;
 pub use term ;
-pub use term::{ RTerm, Term, TTerm, TTerms, Val, Op, Typ } ;
+pub use term::{
+  RTerm, Term, TTerm,
+  TTermSet, TTerms,
+  Val, Op, Typ, Quant,
+} ;
 pub use instance::Instance ;
 
 mod wrappers ;
@@ -59,6 +63,9 @@ pub fn pause(s: & str) {
   println!( "; {}{}...", conf.emph("press return"), s ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
+
+/// Identity function.
+pub fn identity<T>(t: T) -> T { t }
 
 
 // |===| Type and traits aliases.
@@ -129,11 +136,11 @@ impl PredAppsExt for PredApps {
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 
-/// Qualified variables for a top term.
-pub type Qualfed = VarHMap<Typ> ;
+/// Quantified variables for a top term.
+pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
-pub type Model = Vec< (PrdIdx, Option<Qualfed>, TTerms) > ;
+pub type Model = Vec< (PrdIdx, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = VarMap<Val> ;
@@ -142,6 +149,10 @@ pub type Cexs = ClsHMap<Cex> ;
 
 /// Mapping from variables to values, used for learning data.
 pub type Args = VarMap<Val> ;
+/// Mapping from variables to terms.
+pub type TArgs = VarMap<Term> ;
+/// Set of term arguments.
+pub type TArgss = HashSet< VarMap<Term> > ;
 
 /// Alias trait for a solver with this module's parser.
 pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
@@ -153,6 +164,7 @@ where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
 /// Information returned by
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
+#[must_use]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -160,27 +172,68 @@ pub struct RedInfo {
   pub clauses_rmed: usize,
   /// Number of clauses created.
   pub clauses_added: usize,
+  /// Number of arguments removed.
+  pub args_rmed: usize,
 }
 impl RedInfo {
+  /// Basic constructor.
+  pub fn new() -> Self {
+    RedInfo {
+      preds: 0, clauses_rmed: 0, clauses_added: 0, args_rmed: 0
+    }
+  }
+  /// Constructor from the number of predicates eliminated.
+  pub fn of_preds(preds: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.preds += preds ;
+    slf
+  }
+  /// Constructor from the number of clauses removed.
+  pub fn of_clauses_rmed(clauses_rmed: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.clauses_rmed += clauses_rmed ;
+    slf
+  }
+  /// Constructor from the number of clauses added.
+  pub fn of_clauses_added(clauses_added: usize) -> Self {
+    let mut slf = Self::new() ;
+    slf.clauses_added += clauses_added ;
+    slf
+  }
   /// True if one or more fields are non-zero.
   pub fn non_zero(& self) -> bool {
-    self.preds > 0 || self.clauses_rmed > 0 || self.clauses_added > 0
+    self.preds > 0
+    || self.clauses_rmed > 0
+    || self.clauses_added > 0
+    || self.args_rmed > 0
   }
 }
 impl From<(usize, usize, usize)> for RedInfo {
   fn from(
     (preds, clauses_rmed, clauses_added): (usize, usize, usize)
   ) -> RedInfo {
-    RedInfo { preds, clauses_rmed, clauses_added }
+    RedInfo { preds, clauses_rmed, clauses_added, args_rmed: 0 }
   }
 }
 impl ::std::ops::AddAssign for RedInfo {
   fn add_assign(
-    & mut self, RedInfo { preds, clauses_rmed, clauses_added }: Self
+    & mut self, RedInfo {
+      preds, clauses_rmed, clauses_added, args_rmed
+    }: Self
   ) {
     self.preds += preds ;
     self.clauses_rmed += clauses_rmed ;
-    self.clauses_added += clauses_added
+    self.clauses_added += clauses_added ;
+    self.args_rmed += args_rmed
+  }
+}
+impl_fmt!{
+  RedInfo(self, fmt) {
+    write!(
+      fmt, "\
+        prd: {}, cls rm: {}, cls add: {}, args rm: {}\
+      ", self.preds, self.clauses_rmed, self.clauses_added, self.args_rmed
+    )
   }
 }
 
@@ -343,3 +396,13 @@ mod hash {
   }
 }
 
+
+
+/// Prints some text and reads a line.
+pub fn read_line(blah: & str) -> String {
+  let mut line = String::new() ;
+  println!("") ;
+  println!( "; {} {}", conf.emph("press return"), blah ) ;
+  let _ = ::std::io::stdin().read_line(& mut line) ;
+  line
+}

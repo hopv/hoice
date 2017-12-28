@@ -6,6 +6,7 @@ It infers predicates verifying a set of horn clauses.
 |:-------------:|:-------:|:---:|
 | [![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice) | [![Build status](https://ci.appveyor.com/api/projects/status/db247pe2jp9uo9cs?svg=true)](https://ci.appveyor.com/project/hopv/rsmt2) | [![codecov](https://codecov.io/gh/hopv/hoice/branch/master/graph/badge.svg)](https://codecov.io/gh/hopv/hoice) |
 
+`hoice` only supports the `Int` and `Bool` sorts. You can get a sense of the fragment `r_type` supports by looking at [our benchmarks][benchs].
 
 # Install
 
@@ -78,4 +79,5 @@ We welcome any help, please the [contribution guidelines](https://github.com/hop
 
 `hoice` is released under the [Apache 2 license](./LICENSE.md). Please note in particular that the [`NOTICE.md`](./NOTICE.md) file from this repository must be available if you redistribute `hoice` in a source or binary format.
 
+[benchs]: https://github.com/hopv/benchmarks/tree/master/clauses (hopv benchmarks)
 [main dev fork]: https://github.com/AdrienChampion/hoice (AdrienChampion's fork of hoice on github)

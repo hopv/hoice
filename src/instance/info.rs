@@ -48,7 +48,7 @@ pub struct PrdInfo {
   /// Predicate's index.
   pub idx: PrdIdx,
   /// Signature.
-  pub sig: VarMap<Typ>
+  pub sig: VarMap<Typ>,
 }
 impl PrdInfo {
   /// Name of the variable as bytes.

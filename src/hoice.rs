@@ -24,6 +24,8 @@ extern crate rsmt2 ;
 extern crate num ;
 extern crate rayon ;
 extern crate either ;
+extern crate rand ;
+extern crate isatty ;
 
 pub mod errors ;
 #[macro_use]
@@ -151,6 +153,12 @@ pub fn read_and_work<R: ::std::io::Read>(
         }
         instance.finalize() ;
 
+        if conf.stats {
+          if instance.is_solved() {
+            println!("; solved by pre-processing")
+          }
+        }
+
         if ! conf.infer { continue 'parse_work }
 
         model = if let Some(maybe_model) = instance.is_trivial() ? {
@@ -212,9 +220,16 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::GetModel if ! conf.infer => (),
 
       // Print model if available.
-      Parsed::GetModel => if let Some(ref model) = model {
+      Parsed::GetModel => if let Some(model) = model.as_mut() {
+        // Simplify model before writing it.
+        let mut old_model = Vec::with_capacity( model.len() ) ;
+        ::std::mem::swap( & mut old_model, model ) ;
+        for (pred, def) in old_model {
+          let simplified = def.simplify_pred_apps(& model) ;
+          model.push( (pred, simplified) )
+        }
         let stdout = & mut ::std::io::stdout() ;
-        instance.write_model(model, stdout) ?
+        instance.write_model(& model, stdout) ?
       } else {
         bail!("no model available")
       },

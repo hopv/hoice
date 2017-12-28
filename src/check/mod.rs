@@ -153,7 +153,7 @@ impl Output {
           count += 1
         }
       } else {
-        println!(
+        warn!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;
@@ -211,11 +211,11 @@ impl Data {
         ref pred, ref args, ref body
       } in & self.output.pred_defs {
         if let Some(body) = body.as_ref() {
-          solver.define_fun_u(
+          solver.define_fun(
             pred, args, & "Bool".to_string(), body
           ) ?
         } else {
-          solver.declare_fun_u(
+          solver.declare_fun(
             pred,
             & args.iter().map(
               |& (_, ref typ)| typ.clone()
@@ -227,16 +227,21 @@ impl Data {
 
       // Declare arguments.
       for & (ref ident, ref typ) in args {
-        solver.declare_const_u(ident, typ) ?
+        solver.declare_const(ident, typ) ?
       }
 
-      solver.assert_u( & format!("(not {})", body) ) ? ;
+      solver.assert( & format!("(not {})", body) ) ? ;
 
-      if solver.check_sat() ? {
+      let res = solver.check_sat_or_unknown() ? ;
+
+      if let & Some(true) = & res {
         okay = false ;
-        let model = solver.get_model_const() ? ;
+        let exprs: Vec<_> = args.iter().map(
+          |& (ref id, _)| id.clone()
+        ).collect() ;
+        let model = solver.get_values(& exprs) ? ;
         println!("") ;
-        println!("(error \"") ;
+        println!("({} \"", conf.bad("error")) ;
         println!("  clause {} is falsifiable with {{", count) ;
         // print!(  "   ") ;
         // for & (ref id, ref ty) in args {
@@ -251,14 +256,18 @@ impl Data {
         // println!("      ) {}", rhs) ;
         // println!("    )") ;
         // println!("  is falsifiable with {{") ;
-        for (ident, _, value) in model {
+        for (ident, value) in model {
           println!("    {}: {},", ident, value)
         }
         println!("  }}") ;
         println!("\")") ;
         println!("")
-      } else {
+      } else if let & Some(false) = & res {
         info!("clause {} is fine", count)
+      } else {
+        warn!(
+          "clause {}'s check resulted in unknown, assuming it's fine", count
+        )
       }
     }
 
@@ -310,8 +319,15 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
   input_file: P, model: & str
 ) -> Res<()> {
   use rsmt2::{ solver, Kid } ;
+  println!("model:") ;
+  println!("{}", model) ;
   let data = Data::new(
-    Input::of_file(input_file) ?, Output::of_str(model) ?
+    Input::of_file(input_file).chain_err(
+      || "while loading input file"
+    ) ?,
+    Output::of_str(model).chain_err(
+      || "while loading model"
+    ) ?
   ) ? ;
 
   let mut kid = Kid::new( conf.solver.conf() ).chain_err(
@@ -343,10 +359,10 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
 
 
 mod smt {
-  use rsmt2::parse::{ IdentParser, ValueParser } ;
+  use rsmt2::parse::{ IdentParser, ValueParser, ExprParser } ;
   use rsmt2::SmtRes ;
 
-  use check::{ Ident, Value } ;
+  use check::{ Ident, Value, Term } ;
 
 
 /// Parser for the output of the SMT solver.
@@ -362,6 +378,12 @@ pub struct Parser ;
     }
     fn parse_type(self, _: & 'a str) -> SmtRes<()> {
       Ok(())
+    }
+  }
+
+  impl<'a> ExprParser<Term, (), & 'a str> for Parser {
+    fn parse_expr(self, input: & 'a str, _: ()) -> SmtRes<Term> {
+      Ok( input.into() )
     }
   }
 

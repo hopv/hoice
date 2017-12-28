@@ -27,25 +27,25 @@ impl Launcher {
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
-      || "while spawning the teacher's synthesis solver"
-    ) ? ;
-    let synth_solver = solver(& mut synth_kid, Parser).chain_err(
-      || "while constructing the teacher's synthesis solver"
-    ) ? ;
+    // let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
+    //   || "while spawning the teacher's synthesis solver"
+    // ) ? ;
+    // let synth_solver = solver(& mut synth_kid, Parser).chain_err(
+    //   || "while constructing the teacher's synthesis solver"
+    // ) ? ;
     if let Some(log) = conf.solver.log_file("ice_learner") ? {
-      let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
-        "[unreachable] log mod is active"
-      ) ;
+      // let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
+      //   "[unreachable] log mod is active"
+      // ) ;
       IceLearner::new(
         & core, instance, data,
-        conflict_solver.tee(log), synth_solver.tee(synth_log)
+        conflict_solver.tee(log), // synth_solver.tee(synth_log)
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
-        & core, instance, data, conflict_solver, synth_solver
+        & core, instance, data, conflict_solver, // synth_solver
       ).chain_err(
         || "while creating ice learner"
       )?.run()
@@ -75,8 +75,8 @@ pub struct IceLearner<'core, Slver> {
   data: Data,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
-  /// Solver used to synthesize an hyperplane separating two points.
-  synth_solver: Slver,
+  // /// Solver used to synthesize an hyperplane separating two points.
+  // synth_solver: Slver,
   /// Learner core.
   core: & 'core LearnerCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -94,13 +94,17 @@ pub struct IceLearner<'core, Slver> {
   new_quals: Quals,
   /// Profiler.
   _profiler: Profiler,
+  /// Vector used during learning, avoids re-allocation.
+  predicates: Vec<(usize, usize, PrdIdx)>,
+  /// Rng to decide when to sort predicates.
+  rng: ::rand::StdRng,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
   /// Ice learner constructor.
   pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
-    solver: Slver, synth_solver: Slver
+    solver: Slver, // synth_solver: Slver
   ) -> Res<Self> {
     let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
@@ -110,9 +114,10 @@ where Slver: Solver<'kid, Parser> {
     let mut new_quals = Quals::with_capacity(
       qualifiers.qualifiers().len()
     ) ;
-    for map in qualifiers.qualifiers() {
-      new_quals.push( HConMap::with_capacity( map.len() ) )
+    for _ in ArityRange::zero_to( instance.max_pred_arity ) {
+      new_quals.push( HConMap::with_capacity(107) )
     }
+
     profile!{ |_profiler| mark "mining" }
     if_verb!{
       log_info!{ "qualifiers:" } ;
@@ -126,15 +131,22 @@ where Slver: Solver<'kid, Parser> {
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
     let candidate = vec![ None ; instance.preds().len() ].into() ;
+    let predicates = Vec::with_capacity( instance.preds().len() ) ;
     Ok(
       IceLearner {
-        instance, qualifiers, data, solver, synth_solver, core,
+        instance, qualifiers, data, solver, // synth_solver,
+        core,
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
         dec_mem, candidate,
         new_quals,
         _profiler,
+        predicates,
+        rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 42 ])
+        },
       }
     )
   }
@@ -240,8 +252,8 @@ where Slver: Solver<'kid, Parser> {
   pub fn learn(
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
-    profile!{ self tick "learning" }
-    profile!{ self tick "learning", "setup" }
+    profile! { self tick "learning" }
+    profile! { self tick "learning", "setup" }
     let _new_samples = data.drain_new_samples() ;
     self.data = data ;
     self.qualifiers.clear_blacklist() ;
@@ -267,7 +279,7 @@ where Slver: Solver<'kid, Parser> {
       okay
     }}
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
-    let mut predicates = Vec::with_capacity(prd_count) ;
+    debug_assert! { self.predicates.is_empty() }
 
     for pred in PrdRange::zero_to(prd_count) {
       // msg!{
@@ -311,14 +323,20 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
-      predicates.push((
+      self.predicates.push((
         unc_len, pos_len + neg_len, pred
       ))
     }
 
-    if conf.ice.sort_preds {
+    use rand::Rng ;
+    // Use simple entropy 30% of the time.
+    let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.30 ;
+    msg!{ self => "looking for qualifier (simple: {})...", simple } ;
+
+    // Sort the predicates 70% of the time.
+    if conf.ice.sort_preds || self.rng.next_f64() <= 0.70 {
       profile!{ self tick "learning", "predicate sorting" }
-      predicates.sort_by(
+      self.predicates.sort_unstable_by(
         |
           & (
             unclassed_1, classed_1, _
@@ -343,13 +361,17 @@ where Slver: Solver<'kid, Parser> {
 
     let mut used_quals = HConSet::with_capacity(107) ;
 
-    'pred_iter: for (_unc, _cla, pred) in predicates {
+    'pred_iter: while let Some(
+      (_unc, _cla, pred)
+    ) = self.predicates.pop() {
       msg!(
         self => "{}: {} unclassified, {} classified",
                 self.instance[pred], _unc, _cla
       ) ;
       let data = self.data.data_of(pred) ;
-      if let Some(term) = self.pred_learn(pred, data, & mut used_quals) ? {
+      if let Some(term) = self.pred_learn(
+        pred, data, & mut used_quals, simple
+      ) ? {
         self.candidate[pred] = Some(term)
       } else {
         return Ok(None)
@@ -402,7 +424,8 @@ where Slver: Solver<'kid, Parser> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>
+    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -491,9 +514,8 @@ where Slver: Solver<'kid, Parser> {
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
-      msg!{ self => "looking for qualifier..." } ;
       let (qual, q_data, nq_data) = self.get_qualifier(
-        pred, data, used_quals
+        pred, data, used_quals, simple
       ) ? ;
       profile!{ self mark "learning", "qual" }
       // msg!{ self => "qual: {}", qual } ;
@@ -532,6 +554,8 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any, parallel version using `rayon`.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_para<
     'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
       Item = (Key, & 'a mut QualValues)
@@ -539,7 +563,8 @@ where Slver: Solver<'kid, Parser> {
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<Term>
+    used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     use rayon::prelude::* ;
 
@@ -547,7 +572,7 @@ where Slver: Solver<'kid, Parser> {
 
     let mut gains: Vec<_> = quals.into_par_iter().map(
       |(_, values)| {
-        let gain = if conf.ice.simple_entropy {
+        let gain = if simple {
           data.simple_gain(values)
         } else {
           data.gain(pred, all_data, values)?.map(
@@ -603,17 +628,20 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any, sequential version.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier_seq<
     'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     _profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
 
     profile!{ |_profiler| tick "learning", "qual", "gain" }
     'search_qual: for (_, values) in quals {
-      let gain = if conf.ice.simple_entropy {
+      let gain = if simple {
         data.simple_gain(values)
       } else {
         data.gain(pred, all_data, values)?.map(
@@ -636,16 +664,20 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Gets the best qualifier if any.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_best_qualifier<
-    'a, Key: Send, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
+    'a, Key: Send,
+    I: IntoIterator<Item = (Key, & 'a mut QualValues)>
   >(
     profiler: & Profiler, all_data: & Data,
     pred: PrdIdx, data: & CData, quals: I,
     used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< Option< (f64, & 'a mut QualValues) > > {
     if conf.ice.gain_threads == 1 {
       match Self::get_best_qualifier_seq(
-        profiler, all_data, pred, data, quals.into_iter()
+        profiler, all_data, pred, data, quals, simple
       ) {
         Ok( Some( (gain, qual) ) ) => {
           let _ = used_quals.insert( qual.qual.clone() ) ;
@@ -656,7 +688,7 @@ where Slver: Solver<'kid, Parser> {
     } else {
       let quals: Vec<_> = quals.into_iter().collect() ;
       Self::get_best_qualifier_para(
-        profiler, all_data, pred, data, quals, used_quals
+        profiler, all_data, pred, data, quals, used_quals, simple
       )
     }
   }
@@ -669,13 +701,16 @@ where Slver: Solver<'kid, Parser> {
   /// Be careful when modifying this function as it as a (tail-)recursive call.
   /// The recursive call is logically guaranteed not cause further calls and
   /// terminate right away. Please be careful to preserve this.
+  ///
+  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_qualifier(
-    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>
+    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>,
+    simple: bool
   ) -> Res< (Term, CData, CData) > {
 
     if let Some( (_gain, values) ) = Self::get_best_qualifier(
       & self._profiler, & self.data, pred, & data, self.qualifiers.of(pred),
-      used_quals
+      used_quals, simple
     ) ? {
       let (q_data, nq_data) = data.split(values) ;
       // msg!(
@@ -699,6 +734,7 @@ where Slver: Solver<'kid, Parser> {
       // ) ;
       return Ok( (values.qual.clone(), q_data, nq_data) )
     }
+
 
     // Reachable only if none of our qualifiers can split the data.
 
@@ -730,7 +766,7 @@ where Slver: Solver<'kid, Parser> {
 
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    if conf.ice.fpice_synth {
+    // if conf.ice.fpice_synth {
       if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
         bail!("[bug] cannot synthesize qualifier based on no data")
       }
@@ -746,39 +782,39 @@ where Slver: Solver<'kid, Parser> {
       }
 
       profile!{ self "qualifier synthesized" => add self.new_quals.len() }
-    } else {
-      let qual = match (
-        data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
-      ) {
-        (false, false, _) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
-        ) ?,
-        (false, _, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
-        ) ?,
-        (true, false, false) => Self::smt_synthesize(
-          & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
-        ) ?,
-        (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
-          & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
-        ) ?,
-        _ => bail!(
-          "[unreachable] illegal status reached on predicate {}:\n\
-          cannot synthesize candidate for data\n\
-          pos: {:?}\n\
-          neg: {:?}\n\
-          unc: {:?}\n",
-          self.instance[pred], data.pos, data.neg, data.unc
-        ),
-      } ;
-      profile!{ self "qualifier synthesized" => add 1 }
-      let arity: Arity = if let Some(max_var) = qual.highest_var() {
-        (1 + * max_var).into()
-      } else {
-        bail!("[bug] trying to add constant qualifier")
-      } ;
-      self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
-    } ;
+    // } else {
+    //   let qual = match (
+    //     data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
+    //   ) {
+    //     (false, false, _) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
+    //     ) ?,
+    //     (false, _, false) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
+    //     ) ?,
+    //     (true, false, false) => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
+    //     ) ?,
+    //     (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
+    //       & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
+    //     ) ?,
+    //     _ => bail!(
+    //       "[unreachable] illegal status reached on predicate {}:\n\
+    //       cannot synthesize candidate for data\n\
+    //       pos: {:?}\n\
+    //       neg: {:?}\n\
+    //       unc: {:?}\n",
+    //       self.instance[pred], data.pos, data.neg, data.unc
+    //     ),
+    //   } ;
+    //   profile!{ self "qualifier synthesized" => add 1 }
+    //   let arity: Arity = if let Some(max_var) = qual.highest_var() {
+    //     (1 + * max_var).into()
+    //   } else {
+    //     bail!("[bug] trying to add constant qualifier")
+    //   } ;
+    //   self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
+    // } ;
     profile!{ self mark "learning", "qual", "synthesis" }
 
     
@@ -787,7 +823,7 @@ where Slver: Solver<'kid, Parser> {
       self.new_quals.iter_mut().flat_map(
         |map| map.iter_mut()
       ),
-      used_quals
+      used_quals, simple
     ) ? {
       let (q_data, nq_data) = data.split(values) ;
       // msg!(
@@ -835,7 +871,7 @@ where Slver: Solver<'kid, Parser> {
     // Wrap actlit and increment counter.
     let actlit = self.solver.get_actlit() ? ;
     let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert_u( & actlit ) ? ;
+    self.solver.assert( & actlit ) ? ;
     let actlit = actlit.destroy() ;
 
     let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
@@ -869,7 +905,7 @@ where Slver: Solver<'kid, Parser> {
     // Wrap actlit and increment counter.
     let actlit = self.solver.get_actlit() ? ;
     let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert_u( & actlit ) ? ;
+    self.solver.assert( & actlit ) ? ;
     let actlit = actlit.destroy() ;
 
     let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
@@ -905,7 +941,7 @@ where Slver: Solver<'kid, Parser> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
-        self.solver.define_fun_u(
+        self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "true"
         ) ?
       }
@@ -919,7 +955,7 @@ where Slver: Solver<'kid, Parser> {
           // Contradiction found.
           return Ok(true)
         }
-        self.solver.define_fun_u(
+        self.solver.define_fun(
           & SWrap(pred, sample), & args, & Typ::Bool, & "false"
         ) ?
       }
@@ -955,7 +991,7 @@ where Slver: Solver<'kid, Parser> {
           let uid = sample.uid() ;
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
-            self.solver.declare_const_u(
+            self.solver.declare_const(
               & SWrap(pred, sample), & Typ::Bool
             ) ?
           }
@@ -967,7 +1003,7 @@ where Slver: Solver<'kid, Parser> {
     // Assert all constraints.
     for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
-        self.solver.assert_u( & CWrap(constraint) ) ?
+        self.solver.assert( & CWrap(constraint) ) ?
       }
     }
     profile!{ self mark "learning", "smt", "setup" }
@@ -988,6 +1024,7 @@ where Slver: Solver<'kid, Parser> {
     ) ;
 
     for (var_idx, val) in sample.index_iter() {
+
       let arity: Arity = (1 + * var_idx).into() ;
       let var = term::var(var_idx) ;
       
@@ -1031,6 +1068,7 @@ where Slver: Solver<'kid, Parser> {
             self.new_quals.insert( arity, term )
           }
 
+
           for & (ref pre_var, pre_val) in & previous_int {
             if val == pre_val {
               let eq = term::eq( pre_var.clone(), var.clone() ) ;
@@ -1040,7 +1078,7 @@ where Slver: Solver<'kid, Parser> {
             }
             if - val == * pre_val {
               let eq = term::eq(
-                pre_var.clone(), term::not( var.clone() )
+                pre_var.clone(), term::sub( vec![var.clone()] )
               ) ;
               if ! self.qualifiers.is_known(arity, & eq) {
                 self.new_quals.insert( arity, eq )
@@ -1153,12 +1191,12 @@ where Slver: Solver<'kid, Parser> {
 
     solver.reset() ? ;
     // Declare coefs and constant.
-    solver.declare_const_u(& cst, & Typ::Int) ? ;
+    solver.declare_const(& cst, & Typ::Int) ? ;
     for coef in & coefs {
-      solver.declare_const_u(coef, & Typ::Int) ?
+      solver.declare_const(coef, & Typ::Int) ?
     }
-    solver.assert_u( & constraint_1 ) ? ;
-    solver.assert_u( & constraint_2 ) ? ;
+    solver.assert( & constraint_1 ) ? ;
+    solver.assert( & constraint_2 ) ? ;
 
     let model = if solver.check_sat() ? {
       solver.get_model_const() ?
@@ -1287,7 +1325,7 @@ impl CData {
 
   /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
   ///
-  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
@@ -1301,7 +1339,7 @@ impl CData {
 
   /// Modified gain, uses `entropy`.
   ///
-  /// Only takes into account unclassified data when `conf.ice.simple_entropy`
+  /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain(
     & self, pred: PrdIdx, data: & Data, qual: & mut QualValues

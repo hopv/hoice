@@ -132,17 +132,24 @@ impl RTerm {
       _ => None,
     }
   }
-  /// Returns the kid of conjunctions.
+  /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::And, ref args } => Some(args),
       _ => None,
     }
   }
-  /// Returns the kid of disjunctions.
+  /// Returns the kids of disjunctions.
   pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::Or, ref args } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of equalities.
+  pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Eql, ref args } => Some(args),
       _ => None,
     }
   }
@@ -400,26 +407,6 @@ impl RTerm {
     max
   }
 
-  /// All the variables appearing in a term.
-  pub fn vars(& self) -> VarSet {
-    let mut to_do = vec![ self ] ;
-    let mut set = VarSet::with_capacity(11) ;
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(i) => {
-          let _ = set.insert(i) ; ()
-        },
-        RTerm::Int(_) => (),
-        RTerm::Bool(_) => (),
-        RTerm::App{ ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-      }
-    }
-    set.shrink_to_fit() ;
-    set
-  }
-
   /// Returns the variable index if the term is a variable.
   pub fn var_idx(& self) -> Option<VarIdx> {
     match * self {
@@ -666,7 +653,7 @@ pub enum TTerm {
     /// Predicate applied.
     pred: PrdIdx,
     /// The arguments.
-    args: VarMap<Term>,
+    args: TArgs,
   },
   /// Just a term.
   T(Term),
@@ -721,10 +708,20 @@ impl TTerm {
   }
 
   /// The arguments of a top term if it's a predicate application.
-  pub fn args(& self) -> Option<& VarMap<Term>> {
+  pub fn args(& self) -> Option<& TArgs> {
     match * self {
       TTerm::P { ref args, .. } => Some(args),
       _ => None,
+    }
+  }
+
+  /// Applies some treatment if the top term is a predicate application.
+  pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
+  where F: Fn(T, PrdIdx, & mut TArgs) -> T {
+    if let TTerm::P { pred, ref mut args } = * self {
+      f(init, pred, args)
+    } else {
+      init
     }
   }
 
@@ -732,14 +729,13 @@ impl TTerm {
   pub fn vars(& self) -> VarSet {
     match * self {
       TTerm::P { ref args, .. } => {
-        use std::iter::Extend ;
         let mut vars = VarSet::with_capacity(17) ;
         for term in args {
-          vars.extend( term.vars() )
+          vars.extend( term::vars(term) )
         }
         vars
       },
-      TTerm::T(ref term) => term.vars(),
+      TTerm::T(ref term) => term::vars(term),
     }
   }
 
@@ -801,7 +797,7 @@ impl TTerm {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
     use self::TTerm::* ;
     match * self {
       P { pred, ref args } => write_prd(w, pred, args),
@@ -816,7 +812,7 @@ impl TTerm {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
@@ -838,37 +834,374 @@ impl_fmt!{
 }
 
 
-/// Either true, false, a conjunction or a DNF of top terms.
+/// A *set* of top terms.
+///
+/// Actually contains a set of `Term`s and a map from predicates to their
+/// arguments.
 #[derive(Clone, PartialEq, Eq)]
+pub struct TTermSet {
+  /// Set of terms.
+  terms: HConSet<Term>,
+  /// Predicate applications.
+  preds: PrdHMap< HashSet<TArgs> >,
+}
+impl TTermSet {
+  /// Creates a new top term set with some capacity
+  #[inline]
+  pub fn with_capacity(capa: usize) -> Self {
+    TTermSet {
+      terms: HConSet::with_capacity(capa),
+      preds: PrdHMap::with_capacity(capa),
+    }
+  }
+  /// Creates a new top term set with some capacities
+  #[inline]
+  pub fn with_capacities(term_capa: usize, pred_capa: usize) -> Self {
+    TTermSet {
+      terms: HConSet::with_capacity(term_capa),
+      preds: PrdHMap::with_capacity(pred_capa),
+    }
+  }
+
+  /// Reserves some space.
+  #[inline]
+  pub fn reserve(& mut self, terms: usize, preds: usize) {
+    self.terms.reserve(terms) ;
+    self.preds.reserve(preds)
+  }
+
+  /// Creates an empty top term set.
+  #[inline]
+  pub fn new() -> Self { Self::with_capacity(5) }
+
+  /// Creates a top term set from a set of terms.
+  #[inline]
+  pub fn of_terms(terms: HConSet<Term>, pred_capa: usize) -> Self {
+    TTermSet {
+      terms: terms,
+      preds: PrdHMap::with_capacity(pred_capa),
+    }
+  }
+
+  /// True iff the set is empty.
+  #[inline]
+  pub fn is_empty(& self) -> bool {
+    self.terms.is_empty() && self.preds.is_empty()
+  }
+
+  /// Number of elements.
+  #[inline]
+  pub fn len(& self) -> usize {
+    let mut len = self.terms.len() ;
+    for (_, argss) in & self.preds {
+      len += argss.len()
+    }
+    len
+  }
+
+  /// Terms.
+  #[inline]
+  pub fn terms(& self) -> & HConSet<Term> {
+    & self.terms
+  }
+  /// Predicate applications.
+  #[inline]
+  pub fn preds(& self) -> & PrdHMap< TArgss > {
+    & self.preds
+  }
+
+  /// Terms (mutable version).
+  #[inline]
+  pub fn terms_mut(& mut self) -> & mut HConSet<Term> {
+    & mut self.terms
+  }
+  /// Predicate applications (mutable version).
+  #[inline]
+  pub fn preds_mut(& mut self) -> & mut PrdHMap< TArgss > {
+    & mut self.preds
+  }
+
+  /// True if `self` is a subset of `that`.
+  #[inline]
+  pub fn is_subset_of(& self, that: & Self) -> bool {
+    // `terms` subset?
+    if ! self.terms.is_subset(& that.terms) { return false }
+    // All predicates in `that` also appear in `self`?
+    for (pred, _) in & that.preds {
+      if ! self.preds.contains_key(pred) {
+        return false
+      }
+    }
+    // All applications in `self` also in `that`?
+    for (pred, self_set) in & self.preds {
+      if let Some(that_set) = that.preds.get(pred) {
+        if ! self_set.is_subset(that_set) { return false }
+      } else {
+        return false
+      }
+    }
+    true
+  }
+
+  /// Inserts a predicate application.
+  #[inline]
+  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: TArgs) -> bool {
+    self.preds.entry(pred).or_insert_with(
+      || HashSet::new()
+    ).insert(args)
+  }
+  /// Inserts some predicate applications.
+  pub fn insert_pred_apps<Iter, TArgss>(
+    & mut self, pred: PrdIdx, argss: TArgss
+  )
+  where
+  Iter: Iterator<Item = TArgs> + ExactSizeIterator,
+  TArgss: IntoIterator<Item = TArgs, IntoIter = Iter> {
+    let argss = argss.into_iter() ;
+    if argss.len() == 0 { return () }
+    self.preds.entry(pred).or_insert_with(
+      || HashSet::new()
+    ).extend( argss )
+  }
+
+  /// Inserts a term.
+  #[inline]
+  pub fn insert_term(& mut self, term: Term) -> bool {
+    self.terms.insert(term)
+  }
+  /// Inserts some terms.
+  #[inline]
+  pub fn insert_terms<Iter, Terms>(& mut self, terms: Terms)
+  where
+  Iter: Iterator<Item = Term> + ExactSizeIterator,
+  Terms: IntoIterator<Item = Term, IntoIter = Iter> {
+    let terms = terms.into_iter() ;
+    self.terms.reserve( terms.len() ) ;
+    for term in terms { self.terms.insert(term) ; () }
+  }
+
+  /// Inserts a top term.
+  pub fn insert_tterm(& mut self, tterm: TTerm) -> bool {
+    match tterm {
+      TTerm::T(term) => self.insert_term(term),
+      TTerm::P { pred, args } => self.insert_pred_app(pred, args)
+    }
+  }
+
+  /// Constructor from some top terms.
+  pub fn of_tterms<Iter, TTs>(tterms: TTs) -> Self
+  where
+  Iter: Iterator<Item = TTerm> + ExactSizeIterator,
+  TTs: IntoIterator<Item = TTerm, IntoIter = Iter> {
+    let tterms = tterms.into_iter() ;
+    let mut slf = Self::with_capacity( tterms.len() ) ;
+    for tterm in tterms {
+      slf.insert_tterm(tterm) ; ()
+    }
+    slf
+  }
+
+  /// Constructor from a single term.
+  pub fn of_term(term: Term) -> Self {
+    let mut slf = Self::new() ;
+    slf.insert_term(term) ;
+    slf
+  }
+
+  /// Puts the variables appearing in the top terms in some set.
+  pub fn vars(& self, set: & mut VarSet) {
+    for term in & self.terms {
+      set.extend( term::vars(term) )
+    }
+    for (_, argss) in & self.preds {
+      for args in argss {
+        for arg in args {
+          set.extend( term::vars(arg) )
+        }
+      }
+    }
+  }
+
+  /// Removes some arguments from the predicate applications.
+  pub fn remove_vars(& mut self, to_keep: & PrdHMap<VarSet>) {
+    remove_vars_from_pred_apps(
+      & mut self.preds, to_keep
+    )
+  }
+
+
+  /// Writes all top terms with some separator.
+  pub fn write<W, WriteVar, WritePrd>(
+    & self, w: & mut W, sep: & str, write_var: WriteVar, write_pred: WritePrd
+  ) -> IoRes<()>
+  where
+  W: Write,
+  WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
+  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+    // Don't print the separator the first time.
+    let mut separate = false ;
+    macro_rules! write_sep {
+      () => (
+        if separate {
+          write!(w, "{}", sep) ?
+        } else {
+          separate = true
+        }
+      ) ;
+    }
+
+    for term in & self.terms {
+      write_sep!() ;
+      term.write(w, & write_var) ?
+    }
+
+    for (pred, argss) in & self.preds {
+      for args in argss {
+        write_sep!() ;
+        write_pred(w, * pred, args) ?
+      }
+    }
+
+    Ok(())
+  }
+}
+impl ::std::cmp::PartialOrd for TTermSet {
+  fn partial_cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
+    use ::std::cmp::Ordering::* ;
+    let mut le = true ;
+    let mut ge = true ;
+    macro_rules! check_none {
+      () => ( if ! le && ! ge { return None } )
+    }
+
+    for term in & self.terms {
+      if ! other.terms.contains(term) { le = false ; break }
+    }
+    for term in & other.terms {
+      if ! self.terms.contains(term) { ge = false ; break }
+    }
+    check_none! {}
+
+    // Part of what happens in this loop is explained below.
+    for (pred, argss) in & self.preds {
+      check_none! {}
+      if let Some(ass) = other.preds.get(pred) {
+        if ! argss.is_subset(ass) {
+          le = false
+        }
+        if ! ass.is_subset(argss) {
+          ge = false
+        }
+      } else {
+        le = false
+      }
+    }
+
+    // At this point we checked all predicate applications in `self`. We won't
+    // touch `le` anymore.
+    //
+    // The only way `ge` can change is if it is true and `other` has some
+    // predicates that don't appear in `self`. That's because in the previous
+    // loop, whenever a predicate from `self` also appears in `other`, we
+    // checked whether the other set of arguments is a subset of the self set
+    // of arguments and set `ge` to false if it's not the case.
+
+    if ge {
+      for pred in other.preds.keys() {
+        if ! self.preds.contains_key(pred) {
+          ge = false ;
+          break
+        }
+      }
+    }
+
+    match (le, ge) {
+      (true, true) => Some(Equal),
+      (true, false) => Some(Less),
+      (false, true) => Some(Greater),
+      (false, false) => None,
+    }
+  }
+}
+
+/// Removes some arguments from some predicate applications.
+fn remove_vars_from_pred_apps(
+  apps: & mut PrdHMap< TArgss >, to_keep: & PrdHMap<VarSet>
+) {
+  for (pred, argss) in apps.iter_mut() {
+    let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
+      vars
+    } else {
+      continue
+    } ;
+    let mut old_argss = HashSet::with_capacity( argss.len() ) ;
+    ::std::mem::swap( & mut old_argss, argss ) ;
+    for mut args in old_argss {
+      args.remove( vars_to_keep ) ;
+      argss.insert(args) ;
+    }
+  }
+}
+
+
+/// A formula composed of top terms.
+#[derive(Clone)]
 pub enum TTerms {
   /// True.
   True,
   /// False.
   False,
   /// Conjunction.
-  And( Vec<TTerm> ),
+  Conj {
+    quant: Option<Quant>, tterms: TTermSet
+  },
   /// Disjunction.
-  Or( Vec<TTerm> ),
+  Disj {
+    quant: Option<Quant>,
+    tterms: TTermSet,
+    neg_preds: PrdHMap< TArgss >
+  },
+  /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
+  Dnf {
+    disj: Vec< (Option<Quant>, TTermSet) >
+  },
 }
 impl TTerms {
+  // pub fn inspect(& self) {
+  //   match * self {
+  //     TTerms::True => println!("true"),
+  //     TTerms::False => println!("false"),
+  //     TTerms::Conj { ref quant, ref tterms } => println!(
+  //       "conj, {} ({})", tterms.len(),
+  //       if let Some(q) = quant.as_ref() {
+  //         format!("{}", q.len())
+  //       } else { "none".into() }
+  //     ),
+  //     TTerms::Disj { ref quant, ref tterms, ref neg_preds } => println!(
+  //       "conj, {}, {}, {}", tterms.len(), neg_preds.len(),
+  //       if let Some(q) = quant.as_ref() {
+  //         format!("{}", q.len())
+  //       } else { "none".into() }
+  //     ),
+  //     TTerms::Dnf { ref disj } => println!(
+  //       "dnf, {}", disj.len()
+  //     ),
+  //   }
+  // }
+
   /// True.
   #[inline]
   pub fn tru() -> Self { TTerms::True }
-  /// True?
-  #[inline]
-  pub fn is_tru(& self) -> bool { * self == TTerms::True }
   /// False.
   #[inline]
   pub fn fls() -> Self { TTerms::False }
-  /// False?
-  #[inline]
-  pub fn is_fls(& self) -> bool { * self == TTerms::False }
   /// Constructor from a boolean.
   #[inline]
   pub fn of_bool(b: bool) -> Self {
     if b { Self::tru() } else { Self::fls() }
   }
-  /// Boolean value if `True` or `False`.
+
+  /// Boolean value of some top terms.
   #[inline]
   pub fn bool(& self) -> Option<bool> {
     match * self {
@@ -878,131 +1211,492 @@ impl TTerms {
     }
   }
 
-  /// True if the top terms contain an application of `pred`.
-  pub fn mention_pred(& self, pred: PrdIdx) -> bool {
+  /// Removes some arguments from the predicate applications.
+  pub fn remove_vars(& mut self, to_keep: & PrdHMap< VarSet >) {
     match * self {
-      TTerms::And(ref tterms) => for tterm in tterms {
-        if let Some(p) = tterm.pred() {
-          if p == pred { return true }
-        }
-      },
-      TTerms::Or(ref tterms) => for tterm in tterms {
-        if let Some(p) = tterm.pred() {
-          if p == pred { return true }
-        }
-      },
       TTerms::True | TTerms::False => (),
-    }
-    false
-  }
-
-  /// Constructor for a single top term.
-  #[inline]
-  pub fn of_tterm(tterm: TTerm) -> Self {
-    if tterm.is_true() {
-      TTerms::True
-    } else if tterm.is_false() {
-      TTerms::False
-    } else {
-      TTerms::And( vec![tterm] )
-    }
-  }
-  /// Constructor for a conjunction.
-  #[inline]
-  pub fn conj(mut tterms: Vec<TTerm>) -> Self {
-    let mut cnt = 0 ;
-    while cnt < tterms.len() {
-      match tterms[cnt].bool() {
-        Some(true) => { tterms.swap_remove(cnt) ; },
-        Some(false) => return TTerms::fls(),
-        None => cnt += 1,
-      }
-    }
-    if tterms.is_empty() {
-      TTerms::tru()
-    } else {
-      TTerms::And(tterms)
-    }
-  }
-  /// Constructor for a DNF.
-  #[inline]
-  pub fn disj(mut tterms: Vec<TTerm>) -> Self {
-    let mut cnt = 0 ;
-    while cnt < tterms.len() {
-      match tterms[cnt].bool() {
-        Some(true) => return TTerms::tru(),
-        Some(false) => { tterms.swap_remove(cnt) ; },
-        None => cnt += 1,
-      }
-    }
-    if tterms.len() == 0 {
-      TTerms::fls()
-    } else if tterms.len() == 1 {
-      TTerms::And(tterms)
-    } else {
-      TTerms::Or(tterms)
-    }
-  }
-
-  /// The predicates appearing in some top terms.
-  pub fn preds(& self) -> PrdSet {
-    let mut set = PrdSet::new() ;
-    match * self {
-      TTerms::And(ref tterms) => for tterm in tterms {
-        if let Some(pred) = tterm.pred() { set.insert(pred) ; }
+      TTerms::Conj { ref mut tterms, .. } => tterms.remove_vars(to_keep),
+      TTerms::Disj {
+        ref mut tterms, ref mut neg_preds, ..
+      } => {
+        tterms.remove_vars(to_keep) ;
+        remove_vars_from_pred_apps(neg_preds, to_keep)
       },
-      TTerms::Or(ref tterms) => for tterm in tterms {
-        if let Some(pred) = tterm.pred() { set.insert(pred) ; }
+      TTerms::Dnf { ref mut disj } => for & mut (_, ref mut tterms) in disj {
+        tterms.remove_vars(to_keep)
       },
-      _ => (),
     }
-    set
   }
 
-  /// Total variable substitution for top terms.
+  /// Constructor for a single term.
+  pub fn of_term(quant: Option<Quant>, term: Term) -> Self {
+    Self::conj( quant, TTermSet::of_term(term) )
+  }
+
+  /// Constructs a conjuction.
+  pub fn conj(quant: Option<Quant>, tterms: TTermSet) -> Self {
+    TTerms::Conj{ quant, tterms }.simplify()
+  }
+
+  /// Constructs a disjuction.
+  pub fn disj(
+    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<TArgss>
+  ) -> Self {
+    TTerms::Disj{ quant, tterms, neg_preds }.simplify()
+  }
+  /// Constructs a disjunction from a positive application and some negated top
+  /// terms.
   ///
-  /// Used for substitutions in different clause / predicate scope.
-  pub fn subst_total<Map: VarIndexed<Term>>(
-    & self, map: & Map
-  ) -> Res<TTerms> {
-    match * self {
-      TTerms::And(ref tterms) => {
-        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-        for tterm in tterms {
-          let tterm = tterm.subst_total(map) ? ;
-          if let Some(b) = tterm.bool() {
-            if ! b { return Ok( Self::fls() ) }
-          } else {
-            nu_tterms.push(tterm)
-          }
-        }
-        if nu_tterms.is_empty() {
-          Ok( TTerms::tru() )
-        } else {
-          Ok( TTerms::And(nu_tterms) )
-        }
-      },
-      TTerms::Or(ref tterms) => {
-        let mut nu_tterms = Vec::with_capacity( tterms.len() ) ;
-        for tterm in tterms {
-          let tterm = tterm.subst_total(map) ? ;
-          if let Some(b) = tterm.bool() {
-            if b { return Ok( Self::tru() ) }
-          } else {
-            nu_tterms.push( tterm )
-          }
-        }
-        if nu_tterms.len() == 0 {
-          Ok( TTerms::fls() )
-        } else if nu_tterms.len() == 1 {
-          Ok( TTerms::And(nu_tterms) )
-        } else {
-          Ok( TTerms::Or(nu_tterms) )
-        }
-      },
-      _ => Ok( self.clone() ),
+  /// This special format is exactly the one used by preprocessing.
+  pub fn disj_of_pos_neg(
+    quant: Option<Quant>, pos: Option<(PrdIdx, TArgs)>, neg: TTermSet
+  ) -> Self {
+    let TTermSet { terms, preds: neg_preds } = neg ;
+    let mut tterms = TTermSet::with_capacities(terms.len(), 1) ;
+    for term in terms {
+      tterms.insert_term( not(term) ) ;
+    }
+    if let Some((pred, args)) = pos {
+      tterms.insert_pred_app(pred, args) ;
+    }
+    TTerms::Disj {
+      quant, tterms, neg_preds
     }
   }
+
+  /// Constructs a DNF.
+  pub fn dnf(disj: Vec< (Option<Quant>, TTermSet) >) -> Self {
+    TTerms::Dnf{ disj }.simplify()
+  }
+
+  /// Predicates appearing in the top terms.
+  pub fn preds(& self) -> PrdSet {
+    let mut res = PrdSet::new() ;
+    match * self {
+      TTerms::True | TTerms::False => (),
+
+      TTerms::Conj { ref tterms, .. } => for pred in tterms.preds.keys() {
+        res.insert(* pred) ;
+      },
+      TTerms::Disj { ref tterms, ref neg_preds, .. } => {
+        for pred in tterms.preds.keys() {
+          res.insert(* pred) ;
+        }
+        for pred in neg_preds.keys() {
+          res.insert(* pred) ;
+        }
+      },
+
+      TTerms::Dnf { ref disj } => for & (_, ref tterms) in disj {
+        for pred in tterms.preds.keys() {
+          res.insert(* pred) ;
+        }
+      },
+    }
+
+    res
+  }
+
+  /// Constructs the disjunction of `self` and `conj` (a conjunction).
+  ///
+  /// Does not call `simplify` if it creates a dnf.
+  ///
+  /// # Error if
+  ///
+  /// - called on a `Disj`
+  pub fn or(self, conj: (Option<Quant>, TTermSet)) -> Res<Self> {
+    match self {
+      TTerms::True => Ok(self),
+      TTerms::False => Ok(
+        TTerms::conj(conj.0, conj.1).simplify()
+      ),
+      TTerms::Conj { quant, tterms } => {
+        // conj => self?
+        if tterms.is_subset_of(& conj.1) {
+          Ok( TTerms::Conj { quant, tterms } )
+        } else
+        // self => conj?
+        if conj.1.is_subset_of(& tterms) {
+          Ok(
+            TTerms::Conj{ quant: conj.0, tterms: conj.1 }.simplify()
+          )
+        } else {
+          Ok(
+            TTerms::dnf(
+              vec![ (quant, tterms), conj ]
+            )
+          )
+        }
+      },
+      TTerms::Disj { .. } => bail!(
+        "TTerms: trying to call `or` on a disjunction"
+      ),
+      TTerms::Dnf { disj } => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        let mut ignore_conj = false ;
+        for (quant, tterms) in disj {
+          use std::cmp::Ordering::* ;
+          match tterms.partial_cmp( & conj.1 ) {
+            // conj => tterms
+            // don't need `conj`
+            Some(Less) => ignore_conj = true,
+            // tterms => conj
+            // skip `tterms`
+            Some(Greater) => continue,
+            // tterms = conj
+            // skip `conj`
+            Some(Equal) => ignore_conj = true,
+
+            None => (),
+          }
+          nu_disj.push( (quant, tterms) )
+        }
+
+        if ! ignore_conj { nu_disj.push(conj) }
+
+        // Note that if we ignored a `tterms_1` because `tterms_1 => conj`, and
+        // then we saw a `tterms_2` s.t. `conj => tterms_2` so we ignored
+        // `conj` as well, there is no problem because implication is
+        // transitive.
+
+        Ok( TTerms::Dnf { disj: nu_disj } )
+      },
+    }
+  }
+
+  /// Simplifies a formula of top terms.
+  ///
+  /// # TODO
+  ///
+  /// - factor code inside this function, `Conj` and `Disj` are almost the
+  ///   same, DRY
+  ///
+  /// # Warning
+  ///
+  /// This function recurses on a `Conj` in the `Dnf` case. At the time of
+  /// writing, this recursive call is guaranteed not to cause more recursive
+  /// calls.
+  ///
+  /// Be careful to maintain, or (ideally) improve, this invariant.
+  pub fn simplify(self) -> Self {
+
+    match self {
+
+      TTerms::True | TTerms::False => return self,
+
+      TTerms::Conj { quant, mut tterms } => {
+        tterms.preds.retain(
+          |_, argss| ! argss.is_empty()
+        ) ;
+
+        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        // Used to inline conjunctions.
+        let mut swap = HConSet::new() ;
+        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
+
+        'inline_conjs: loop {
+
+          'inspect_conj_terms: for term in old_terms.drain() {
+
+            // Is the term a conjunction?
+            if let Some(kids) = term.conj_inspect() {
+              for kid in kids {
+                swap.insert( kid.clone() ) ;
+                ()
+              }
+              continue 'inspect_conj_terms
+            }
+
+            // Term trivial?
+            match term.bool() {
+              Some(true) => continue 'inspect_conj_terms,
+              Some(false) => return TTerms::fls(),
+              None => (),
+            }
+
+            // Do we also have its negation?
+            if tterms.terms.contains( & not( term.clone() ) ) {
+              return TTerms::fls()
+            }
+
+            // Okay, move on.
+            tterms.terms.insert(term) ;
+            ()
+          }
+
+          // Keep going if `swap` is not empty.
+          if ! swap.is_empty() {
+            ::std::mem::swap( & mut old_terms, & mut swap ) ;
+            continue 'inline_conjs
+          } else {
+            break 'inline_conjs
+          }
+
+        }
+
+        // Only keep active quantified variables.
+        let quant = quant.and_then(
+          |quant| {
+            let mut active = VarSet::with_capacity(
+              quant.vars().len() * 2
+            ) ;
+            tterms.vars(& mut active) ;
+            quant.filter(|var| active.contains(var))
+          }
+        ) ;
+
+        if tterms.is_empty() {
+          TTerms::tru()
+        } else {
+          TTerms::Conj { quant, tterms }
+        }
+      },
+
+      TTerms::Disj {
+        quant, mut tterms, mut neg_preds
+      } => {
+        tterms.preds.retain(
+          |_, argss| ! argss.is_empty()
+        ) ;
+        neg_preds.retain(
+          |_, argss| ! argss.is_empty()
+        ) ;
+
+        // Do we have a predicate application and its negation?
+        for (pred, argss) in & tterms.preds {
+          if let Some(neg_argss) = neg_preds.get(pred) {
+            for args in argss {
+              if neg_argss.contains(args) { return TTerms::tru() }
+            }
+          }
+        }
+
+        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        // Used to inline disjunctions.
+        let mut swap = HConSet::new() ;
+        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
+
+        'inline_disj: loop {
+
+          'inspect_disj_terms: for term in old_terms.drain() {
+
+            // Is the term a disjunction?
+            if let Some(kids) = term.disj_inspect() {
+              for kid in kids {
+                swap.insert( kid.clone() ) ;
+                ()
+              }
+              continue 'inspect_disj_terms
+            }
+
+            // Term trivial?
+            match term.bool() {
+              Some(true) => return TTerms::tru(),
+              Some(false) => continue 'inspect_disj_terms,
+              None => (),
+            }
+
+            // Do we also have its negation?
+            if tterms.terms.contains( & not( term.clone() ) ) {
+              return TTerms::tru()
+            }
+
+            // Okay, move on.
+            tterms.terms.insert(term) ;
+            ()
+          }
+
+          // Keep going if `swap` is not empty.
+          if ! swap.is_empty() {
+            ::std::mem::swap( & mut old_terms, & mut swap ) ;
+            continue 'inline_disj
+          } else {
+            break 'inline_disj
+          }
+
+        }
+
+        // Only keep active quantified variables.
+        let quant = quant.and_then(
+          |quant| {
+            let mut active = VarSet::with_capacity(
+              quant.vars().len() * 2
+            ) ;
+            tterms.vars(& mut active) ;
+            for (_, argss) in & neg_preds {
+              for args in argss {
+                for arg in args {
+                  active.extend( term::vars(arg) )
+                }
+              }
+            }
+            quant.filter(|var| active.contains(var))
+          }
+        ) ;
+
+        if tterms.is_empty() && neg_preds.is_empty() {
+          TTerms::fls()
+        } else {
+          TTerms::Disj { quant, tterms, neg_preds }
+        }
+      },
+
+      TTerms::Dnf { disj } => {
+        // We're cheating a bit here. Simplifying the disjuncts is done by
+        // constructing the corresponding `TTerms::Conj` and simplifying them.
+        // While this causes a recursive call, it's fine because it is
+        // guaranteed to be the only one.
+        //
+        // Unless something changes later in `Conj`'s simplification...
+        let mut nu_disj: Vec<(_, TTermSet)> = Vec::with_capacity(
+          disj.len()
+        ) ;
+        'simplify_disjuncts: for (quant, tterms) in disj {
+          match ( TTerms::Conj { quant, tterms } ).simplify() {
+            TTerms::True => return TTerms::True,
+            TTerms::False => (),
+            TTerms::Conj { quant, tterms } => {
+              // Check with other disjuncts.
+              let mut cnt = 0 ;
+              while cnt < nu_disj.len() {
+                use std::cmp::Ordering::* ;
+                match tterms.partial_cmp(& nu_disj[cnt].1) {
+                  None => cnt += 1,
+                  // other disjunct => this disjunct
+                  Some(Less) => { nu_disj.swap_remove(cnt) ; () },
+                  // other disjunct = this disjunct
+                  Some(Equal) => continue 'simplify_disjuncts,
+                  // this disjunct => other disjunct
+                  Some(Greater) => continue 'simplify_disjuncts,
+                }
+              }
+              nu_disj.push( (quant, tterms) )
+            },
+            TTerms::Disj { .. } => panic!(
+              "simplification of a conjunct in a TTerms DNF \
+              yielded a disjunction, unreachable"
+            ),
+            TTerms::Dnf { .. } => panic!(
+              "simplification of a conjunct in a TTerms DNF \
+              yielded a DNF, unreachable"
+            ),
+          }
+        }
+        match nu_disj.len() {
+          0 => TTerms::fls(),
+          1 => if let Some((quant, tterms)) = nu_disj.pop() {
+            TTerms::Conj { quant, tterms }
+          } else {
+            unreachable!()
+          },
+          _ => TTerms::Dnf { disj: nu_disj }
+        }
+      },
+    }
+  }
+
+
+  /// Simplifies some top terms given some definitions for the predicates.
+  pub fn simplify_pred_apps(self, model: & Model) -> Self {
+    macro_rules! if_defined {
+      ($pred:ident then |$def:ident| $stuff:expr) => (
+        for & (ref idx, ref $def) in model {
+          if idx == $pred { $stuff }
+        }
+      )
+    }
+
+    match self {
+      TTerms::True => TTerms::True,
+      TTerms::False => TTerms::False,
+
+      TTerms::Conj { quant, mut tterms } => {
+        let mut to_rm = PrdSet::new() ;
+
+        for pred in tterms.preds.keys() {
+          if_defined! {
+            pred then |def| match def.bool() {
+              Some(true) => { to_rm.insert(* pred) ; () },
+              Some(false) => return TTerms::fls(),
+              None => (),
+            }
+          }
+        }
+
+        for pred in to_rm {
+          let value = tterms.preds.remove(& pred) ;
+          debug_assert!( value.is_some() )
+        }
+
+        TTerms::Conj { quant, tterms }.simplify()
+      },
+
+      TTerms::Disj { quant, mut tterms, mut neg_preds } => {
+        let mut to_rm = PrdSet::new() ;
+
+        for pred in tterms.preds.keys() {
+          if_defined! {
+            pred then |def| match def.bool() {
+              Some(false) => { to_rm.insert(* pred) ; () },
+              Some(true) => return TTerms::tru(),
+              None => (),
+            }
+          }
+        }
+
+        for pred in to_rm.drain() {
+          let value = tterms.preds.remove(& pred) ;
+          debug_assert!( value.is_some() )
+        }
+
+        for pred in neg_preds.keys() {
+          if_defined! {
+            pred then |def| match def.bool() {
+              Some(true) => { to_rm.insert(* pred) ; () },
+              Some(false) => return TTerms::tru(),
+              None => (),
+            }
+          }
+        }
+
+        for pred in to_rm.drain() {
+          let value = neg_preds.remove(& pred) ;
+          debug_assert!( value.is_some() )
+        }
+
+        TTerms::Disj { quant, tterms, neg_preds }.simplify()
+      },
+
+      TTerms::Dnf { disj } => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+
+        for (quant, tterms) in disj {
+          match (
+            TTerms::Conj { quant, tterms }
+          ).simplify_pred_apps(model) {
+            TTerms::True => return TTerms::tru(),
+            TTerms::False => (),
+
+            TTerms::Conj { quant, tterms } => nu_disj.push(
+              (quant, tterms)
+            ),
+
+            TTerms::Disj { .. } => panic!(
+              "simplification of a conjunct in a TTerms DNF \
+              yielded a disjunction, unreachable"
+            ),
+            TTerms::Dnf { .. } => panic!(
+              "simplification of a conjunct in a TTerms DNF \
+              yielded a DNF, unreachable"
+            ),
+          }
+        }
+
+        TTerms::Dnf{ disj: nu_disj }.simplify()
+      },
+    }
+  }
+
 
   /// Writes some top terms using special functions for writing predicates and
   /// variables.
@@ -1012,66 +1706,100 @@ impl TTerms {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+
+    macro_rules! write_conj {
+      ($quant:expr, $tterms:expr) => ({
+        let close_quant = if let Some(quant) = $quant.as_ref() {
+          write!(w, "(") ? ;
+          quant.write(w, & write_var) ? ;
+          write!(w, " ") ? ;
+          true
+        } else { false } ;
+
+        let close_and = if $tterms.len() > 1 {
+          write!(w, "(and ") ? ;
+          true
+        } else { false } ;
+
+        $tterms.write(w, " ", & write_var, & write_prd) ? ;
+
+        if close_and { write!(w, ")") ? }
+
+        if close_quant { write!(w, ")") } else { Ok(()) }
+      }) ;
+    }
+
     match * self {
       TTerms::True => return write!(w, "true"),
       TTerms::False => return write!(w, "false"),
-      TTerms::And(ref tterms) => {
-        write!(w, "(and") ? ;
-        for tterm in tterms {
+
+      TTerms::Conj { ref quant, ref tterms } => write_conj!(quant, tterms),
+
+      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
+        let close_quant = if let Some(quant) = quant.as_ref() {
+          write!(w, "(") ? ;
+          quant.write(w, & write_var) ? ;
           write!(w, " ") ? ;
-          tterm.write(w, & write_var, & write_prd) ?
+          true
+        } else { false } ;
+
+        let close_or = if tterms.len() + neg_preds.len() > 1 {
+          write!(w, "(or ") ? ;
+          true
+        } else { false } ;
+
+        tterms.write(w, " ", & write_var, & write_prd) ? ;
+
+        let mut sep = ! tterms.is_empty() && ! neg_preds.is_empty() ;
+
+        for (pred, argss) in neg_preds {
+          for args in argss {
+            if sep {
+              write!(w, " ") ?
+            } else {
+              sep = true
+            }
+            write!(w, "(not ") ? ;
+            write_prd(w, * pred, args) ? ;
+            write!(w, ")") ?
+          }
         }
-        write!(w, ")")
+
+        if close_or { write!(w, ")") ? }
+
+        if close_quant { write!(w, ")") } else { Ok(()) }
       },
-      TTerms::Or(ref tterms) => {
-        write!(w, "(or") ? ;
-        for tterm in tterms {
+
+      TTerms::Dnf { ref disj } => {
+        let close_or = if disj.len() > 1 {
+          write!(w, "(or") ? ;
+          true
+        } else { false } ;
+
+        for & (ref quant, ref tterms) in disj {
           write!(w, " ") ? ;
-          tterm.write(w, & write_var, & write_prd) ?
+          write_conj!(quant, tterms) ?
         }
-        write!(w, ")")
+
+        if close_or { write!(w, ")") } else { Ok(()) }
       },
     }
   }
 
   /// Writes some top terms smt2 style using a special function for writing
   /// predicates.
+  ///
+  /// Equivalent to `write` with variable default printing.
   pub fn write_smt2<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
-  }
-}
-
-
-impl_fmt!{
-  TTerms(self, fmt) {
-    match * self {
-      TTerms::True => return write!(fmt, "true"),
-      TTerms::False => return write!(fmt, "false"),
-      TTerms::And(ref tterms) => {
-        write!(fmt, "(and") ? ;
-        for tterm in tterms {
-          write!(fmt, " ") ? ;
-          tterm.fmt(fmt) ?
-        }
-        write!(fmt, ")")
-      },
-      TTerms::Or(ref tterms) => {
-        write!(fmt, "(or") ? ;
-        for tterm in tterms {
-          write!(fmt, " ") ? ;
-          tterm.fmt(fmt) ?
-        }
-        write!(fmt, ")")
-      },
-    }
   }
 }
 
@@ -1090,6 +1818,8 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
           write!(w, "true")
         } else if false_preds.contains(& pred) {
           write!(w, "false")
+        } else if args.is_empty() {
+          write!(w, "{}", pred_info[pred])
         } else {
           write!(w, "({}", pred_info[pred]) ? ;
           for arg in args {
@@ -1103,8 +1833,6 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
     Ok(())
   }
 }
-
-
 
 
 
@@ -1408,3 +2136,123 @@ impl_fmt!{
     fmt.write_str( self.as_str() )
   }
 }
+
+
+
+/// Existential or universal quantifier.
+///
+/// Always use the constructors to avoid falsifying the invariant.
+///
+/// # Invariant
+///
+/// The variable partial maps are never empty.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Quant {
+  /// Exists.
+  Exists( VarHMap<Typ> ),
+  /// Forall.
+  Forall( VarHMap<Typ> ),
+}
+impl Quant {
+  /// Creates an existential qualifier.
+  pub fn exists(map: VarHMap<Typ>) -> Option<Self> {
+    if map.is_empty() { None } else { Some( Quant::Exists(map) ) }
+  }
+  /// Creates an existential qualifier.
+  pub fn forall(map: VarHMap<Typ>) -> Option<Self> {
+    if map.is_empty() { None } else { Some( Quant::Forall(map) ) }
+  }
+
+  /// Quantified variables.
+  pub fn vars(& self) -> & VarHMap<Typ> {
+    match * self {
+      Quant::Exists(ref vars) => vars,
+      Quant::Forall(ref vars) => vars,
+    }
+  }
+
+  /// Quantified variables (mutable version).
+  pub fn vars_mut(& mut self) -> & mut VarHMap<Typ> {
+    match * self {
+      Quant::Exists(ref mut vars) => vars,
+      Quant::Forall(ref mut vars) => vars,
+    }
+  }
+
+  /// Number of quantified variables.
+  pub fn len(& self) -> usize {
+    let map = match * self {
+      Quant::Exists(ref map) => map,
+      Quant::Forall(ref map) => map,
+    } ;
+    debug_assert! { ! map.is_empty() }
+    map.len()
+  }
+
+  /// Filters some quantified variables.
+  ///
+  /// Keeps all quantified variables such that `f(var)`.
+  ///
+  /// Returns `None` if the mapping ends up being empty.
+  pub fn filter<F>(mut self, f: F) -> Option<Self>
+  where F: Fn(& VarIdx) -> bool {
+    self.vars_mut().retain( |var, _| f(var) ) ;
+    if self.vars().is_empty() { None } else { Some(self) }
+  }
+
+  /// Writes the quantier and its quantified variables.
+  pub fn write<W, WVar>(
+    & self, w: & mut W, write_var: WVar
+  ) -> IoRes<()>
+  where W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
+    debug_assert!( ! self.vars().is_empty() ) ;
+
+    let qvars = match * self {
+      Quant::Exists(ref qvars) => {
+        write!(w, "exists ") ? ;
+        qvars
+      },
+      Quant::Forall(ref qvars) => {
+        write!(w, "forall ") ? ;
+        qvars
+      },
+    } ;
+
+    write!(w, "(") ? ;
+    for (var, typ) in qvars {
+      write!(w, " (") ? ;
+      write_var(w, * var) ? ;
+      write!(w, " {})", typ) ? ;
+    }
+    write!(w, " )")
+  }
+
+  /// Writes the opening part of the quantifier as a line.
+  ///
+  /// Basically `"{}(<quantified> ( <qvars> )\n", prefix`.
+  pub fn write_pref<W, WVar>(
+    & self, w: & mut W, pref: & str, write_var: WVar
+  ) -> IoRes<()>
+  where
+  W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
+    w.write( pref.as_bytes() ) ? ;
+    let map = match * self {
+      Quant::Exists(ref map) => {
+        write!(w, "(exists (") ? ;
+        map
+      },
+      Quant::Forall(ref map) => {
+        write!(w, "(forall (") ? ;
+        map
+      },
+    } ;
+    for (var, typ) in map {
+      write!(w, " (") ? ;
+      write_var(w, * var) ? ;
+      write!(w, " {})", typ) ?
+    }
+    writeln!(w, " )")
+  }
+}
+
+

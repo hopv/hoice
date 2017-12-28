@@ -469,16 +469,16 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(true)
   }
 
-  /// Parses a type or fails.
-  fn typ(& mut self) -> Res<Typ> {
-    if let Some(typ) = self.typ_opt() {
-      Ok(typ)
+  /// Parses a sort or fails.
+  fn sort(& mut self) -> Res<Typ> {
+    if let Some(sort) = self.sort_opt() {
+      Ok(sort)
     } else {
-      bail!( self.error_here("expected type") )
+      bail!( self.error_here("expected sort (Int or Bool)") )
     }
   }
-  /// Tries to parse a type.
-  fn typ_opt(& mut self) -> Option<Typ> {
+  /// Tries to parse a sort.
+  fn sort_opt(& mut self) -> Option<Typ> {
     if self.tag_opt("Int") {
       Some(Typ::Int)
     } else if self.tag_opt("Bool") {
@@ -499,23 +499,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.char('(') ? ;
     self.ws_cmt() ;
 
-    let mut typs = Vec::with_capacity(11) ;
-    while let Some(ty) = self.typ_opt() {
-      typs.push(ty) ;
+    let mut sorts = Vec::with_capacity(11) ;
+    while let Some(ty) = self.sort_opt() {
+      sorts.push(ty) ;
       self.ws_cmt()
     }
-    typs.shrink_to_fit() ;
+    sorts.shrink_to_fit() ;
 
     self.char(')') ? ;
     self.ws_cmt() ;
     if ! self.tag_opt("Bool") {
       bail!(
-        self.error_here("expected Bool type")
+        self.error_here("expected Bool sort")
       )
     }
 
     let pred_index = instance.push_pred(
-      ident.into(), VarMap::of(typs)
+      ident.into(), VarMap::of(sorts)
     ) ;
     let prev = self.cxt.pred_name_map.insert(ident.into(), pred_index) ;
     if let Some(prev) = prev {
@@ -544,7 +544,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       let (pos, ident) = self.ident() ? ;
       self.ws_cmt() ;
-      let typ = self.typ() ? ;
+      let sort = self.sort() ? ;
       self.ws_cmt() ;
       self.char(')') ? ;
       self.ws_cmt() ;
@@ -559,7 +559,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
         )
       }
-      var_map.push( VarInfo::new(ident.into(), typ, idx) )
+      var_map.push( VarInfo::new(ident.into(), sort, idx) )
     }
     self.char(')') ? ;
     var_map.shrink_to_fit() ;

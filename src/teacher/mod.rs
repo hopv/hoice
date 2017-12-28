@@ -79,10 +79,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
     }
 
     if conf.teacher.step {
-      let mut dummy = String::new() ;
-      println!("") ;
-      println!( "; {} to broadcast data...", conf.emph("press return") ) ;
-      let _ = ::std::io::stdin().read_line(& mut dummy) ;
+      read_line("to broadcast data (--step on)...") ;
     }
 
     let one_alive = teacher.broadcast() ;
@@ -109,8 +106,8 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
             conf.emph( & teacher.learners[_idx].1 )
           ) ;
           for _pred in teacher.instance.preds() {
-            log_info!("{}:", conf.emph(& _pred.name)) ;
             if let Some(term) = candidates[_pred.idx].as_ref() {
+              log_info!("{}:", conf.emph(& _pred.name)) ;
               log_info!("  {}", term)
             }
           }
@@ -375,7 +372,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             let sig: Vec<_> = pred.sig.index_iter().map(
               |(var, typ)| (var, * typ)
             ).collect() ;
-            self.solver.define_fun_u(
+            self.solver.define_fun(
               & pred.name, & sig, & Typ::Bool, & TermWrap(term)
             ) ?
           },
@@ -452,10 +449,10 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     profile!{ self tick "cexs", "prep" }
     for var in clause.vars() {
       if var.active {
-        self.solver.declare_const_u(& var.idx, & var.typ) ?
+        self.solver.declare_const(& var.idx, & var.typ) ?
       }
     }
-    self.solver.assert(
+    self.solver.assert_with(
       clause, & (true_preds, false_preds, self.instance.preds())
     ) ? ;
     profile!{ self mark "cexs", "prep" }

@@ -135,7 +135,7 @@ impl SmtConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -177,8 +177,12 @@ pub struct PreprocConf {
   pub one_rhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
-  /// Mono-predicate.
-  pub mono_pred: bool,
+  /// Allow to introduce quantifiers.
+  pub one_lhs_full: bool,
+  /// Allow cfg reduction.
+  pub cfg_red: bool,
+  /// Allow argument reduction.
+  pub arg_red: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -260,7 +264,7 @@ impl PreprocConf {
   pub fn add_args(app: App) -> App {
     app.arg(
 
-      Arg::with_name("pre_proc").long("--pre_proc").help(
+      Arg::with_name("preproc").long("--preproc").help(
         "(de)activates pre-processing"
       ).validator(
         bool_validator
@@ -284,6 +288,17 @@ impl PreprocConf {
 
       Arg::with_name("reduction").long("--reduction").help(
         "(de)activates Horn reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("arg_red").long("--arg_red").help(
+        "(de)activates argument reduction"
       ).validator(
         bool_validator
       ).value_name(
@@ -327,13 +342,24 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("mono_pred").long("--mono_pred").help(
-        "(de)activates mono-predicate reduction"
+      Arg::with_name("one_lhs_full").long("--one_lhs_full").help(
+        "(de)activates full one lhs reduction (might introduce quantifiers)"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)
+      ).default_value("on").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("cfg_red").long("--cfg_red").help(
+        "(de)activates control flow graph reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(true)
       // .number_of_values(1)
 
     ).arg(
@@ -344,7 +370,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -354,26 +380,29 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let active = bool_of_matches(matches, "pre_proc") ;
+    let active = bool_of_matches(matches, "preproc") ;
     let smt_red = bool_of_matches(matches, "smt_red") ;
     let reduction = bool_of_matches(matches, "reduction") ;
+    let arg_red = bool_of_matches(matches, "arg_red") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
     let one_rhs_full = bool_of_matches(matches, "one_rhs_full") ;
     let one_lhs = bool_of_matches(matches, "one_lhs") ;
-    let mono_pred = bool_of_matches(matches, "mono_pred") ;
+    let one_lhs_full = bool_of_matches(matches, "one_lhs_full") ;
+    let cfg_red = bool_of_matches(matches, "cfg_red") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
-      reduction, one_rhs, one_rhs_full, one_lhs, mono_pred
+      reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
+      arg_red
     }
   }
 }
@@ -394,10 +423,10 @@ pub struct IceConf {
   pub decay: bool,
   /// Maximum decay above which qualifiers are dropped.
   pub max_decay: usize,
-  /// Sort the predicates before building the decision trees.
-  pub sort_preds: bool,
   /// Ignore unclassified data when computing entropy.
-  pub simple_entropy: bool,
+  pub simple_gain: bool,
+  /// Sort predicates.
+  pub sort_preds: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -436,7 +465,18 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).hidden(true)
+      ).default_value("no").takes_value(true).hidden(true)
+      // .number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("sort_preds").long("--sort_preds").help(
+        "(de)activates predicate sorting before learning"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("no").takes_value(true).hidden(true)
       // .number_of_values(1)
 
     ).arg(
@@ -452,23 +492,13 @@ impl IceConf {
 
     ).arg(
 
-      Arg::with_name("sort_preds").long("--sort_preds").help(
-        "sort the predicates before building the decision tree"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("simple_entropy").long("--simple_entropy").help(
+      Arg::with_name("simple_gain").long("--simple_gain").help(
         "ignore unclassified data when computing entropy"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -483,12 +513,11 @@ impl IceConf {
     let decay = bool_of_matches(matches, "decay") ;
     let max_decay = int_of_matches(matches, "max_decay") ;
 
+    let simple_gain = bool_of_matches(matches, "simple_gain") ;
     let sort_preds = bool_of_matches(matches, "sort_preds") ;
 
-    let simple_entropy = bool_of_matches(matches, "simple_entropy") ;
-
     IceConf {
-      fpice_synth, gain_threads, decay, max_decay, sort_preds, simple_entropy
+      fpice_synth, gain_threads, decay, max_decay, simple_gain, sort_preds
     }
   }
 }
@@ -518,7 +547,7 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -616,7 +645,9 @@ impl Config {
     }
 
     // Colors.
-    let color = bool_of_matches(& matches, "color") ;
+    let color = ::isatty::stdout_isatty() && bool_of_matches(
+      & matches, "color"
+    ) ;
     let styles = Styles::new(color) ;
 
     // Output directory.
@@ -678,7 +709,7 @@ impl Config {
     ).arg(
 
       Arg::with_name("color").long("--color").short("-c").help(
-        "(de)activates coloring"
+        "(de)activates coloring (inactive if output is not a tty)"
       ).validator(
         bool_validator
       ).value_name(
@@ -701,7 +732,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     ).arg(
 
@@ -734,7 +765,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true)// .number_of_values(1)
 
     )
   }
@@ -942,13 +973,13 @@ pub trait ColorExt {
 
 
 /// Format for booleans.
-pub static bool_format: & str = "on|off" ;
+pub static bool_format: & str = "on/true|no/off/false" ;
 
 /// Boolean of a string.
 pub fn bool_of_str(s: & str) -> Option<bool> {
   match & s as & str {
     "on" | "true" => Some(true),
-    "off" | "false" => Some(false),
+    "no" | "off" | "false" => Some(false),
     _ => None,
   }
 }

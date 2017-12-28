@@ -47,16 +47,54 @@ impl VarIdx {
   }
 }
 
+impl VarMap<::term::Val> {
+  /// Evaluates some arguments and yields the resulting `VarMap`.
+  pub fn apply_to(
+    & self, args: & VarMap<::term::Term>
+  ) -> ::errors::Res<Self> {
+    let mut res = Self::with_capacity( args.len() ) ;
+    for arg in args {
+      res.push( arg.eval(self) ? )
+    }
+    Ok(res)
+  }
+}
+
+impl VarMap< ::term::Term > {
+  /// Removes the arguments of indices **not** in the set. Preserves the order.
+  ///
+  /// This is used when useless arguments are detected, to slice predicate
+  /// applications.
+  pub fn remove(& mut self, to_keep: & VarSet) {
+    debug_assert! { self.len() >= to_keep.len() }
+    debug_assert! {{
+      let mut okay = true ;
+      for var in to_keep {
+        if * var >= self.len() {
+          okay = false ; break
+        }
+      }
+      okay
+    }}
+    let mut old_vars = VarMap::with_capacity( to_keep.len() ) ;
+    ::std::mem::swap( & mut old_vars, self ) ;
+    for (var, term) in old_vars.into_index_iter() {
+      if to_keep.contains(& var) {
+        self.push(term)
+      }
+    }
+  }
+}
+
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
   fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
-    write!(fmt, "(") ? ;
     for_first!{
       self.iter() => {
         |fst| write!(fmt, "{}", fst) ?,
-        then |nxt| write!(fmt, ",{}", nxt)?
+        then |nxt| write!(fmt, " {}", nxt) ?
       }
     }
-    write!(fmt, ")")
+    Ok(())
   }
 }
 
@@ -91,16 +129,29 @@ wrap_usize!{
 wrap_usize!{
   #[doc = "Clause indices."]
   ClsIdx
-  #[doc = "Range over variables."]
+  #[doc = "Range over clauses."]
   range: ClsRange
-  #[doc = "Set of variables."]
+  #[doc = "Set of clauses."]
   set: ClsSet
-  #[doc = "Hash map from variables to something."]
+  #[doc = "Hash map from clauses to something."]
   hash map: ClsHMap
-  #[doc = "Total map from variables to something."]
+  #[doc = "Total map from clauses to something."]
   map: ClsMap with iter: ClsMapIter
 }
 
+
+wrap_usize! {
+  #[doc = "Clause cluster indices."]
+  CtrIdx
+  #[doc = "Ranger over clusters."]
+  range: CtrRange
+  #[doc = "Set of clusters."]
+  set: CtrSet
+  #[doc = "Hash map from clusters to something."]
+  hash map: CtrHMap
+  #[doc = "Total map from clusters to something."]
+  map: CtrMap with iter: CtrMapIter
+}
 
 wrap_usize!{
   #[doc = "Constraint index."]
