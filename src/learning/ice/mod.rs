@@ -334,7 +334,8 @@ where Slver: Solver<'kid, Parser> {
     msg!{ self => "looking for qualifier (simple: {})...", simple } ;
 
     // Sort the predicates 70% of the time.
-    if conf.ice.sort_preds || self.rng.next_f64() <= 0.70 {
+    if conf.ice.sort_preds && self.rng.next_f64() <= 0.70 {
+
       profile!{ self tick "learning", "predicate sorting" }
       self.predicates.sort_unstable_by(
         |
@@ -357,6 +358,27 @@ where Slver: Solver<'kid, Parser> {
         }
       ) ;
       profile!{ self mark "learning", "predicate sorting" }
+
+    } else {
+
+      // Not sorting, forcing random order.
+      profile!{ self tick "learning", "predicate sorting" }
+      let mut rng = self.rng.clone() ;
+      self.predicates.sort_unstable_by(
+        |_, _| {
+          use std::cmp::Ordering::* ;
+          let rand = rng.next_f64() ;
+          if rand <= 0.33 {
+            Less
+          } else if rand <= 0.66 {
+            Equal
+          } else {
+            Greater
+          }
+        }
+      ) ;
+      profile!{ self mark "learning", "predicate sorting" }
+
     }
 
     let mut used_quals = HConSet::with_capacity(107) ;
