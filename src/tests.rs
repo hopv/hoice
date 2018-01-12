@@ -6,8 +6,8 @@ use std::fs::OpenOptions ;
 use common::* ;
 use read_and_work ;
 
-static sat_files_dir: & str = "tests/rsc/sat" ;
-static unsat_files_dir: & str = "tests/rsc/unsat" ;
+static sat_files_dir: & str = "tests/sat" ;
+static unsat_files_dir: & str = "tests/unsat" ;
 
 #[test]
 fn sat() {

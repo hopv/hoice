@@ -3,6 +3,11 @@
 use check::* ;
 
 
+/// Check 
+
+
+
+
 /// Parser.
 pub struct InParser<'a> {
   /// Predicate definitions.

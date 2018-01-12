@@ -308,9 +308,8 @@ impl Clause {
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
-    use common::consts::keywords ;
 
-    write!(w, "({} ({}\n  (", keywords::assert, keywords::forall) ? ;
+    write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
     let mut inactive = 0 ;
     for var in & self.vars {
       if var.active {
@@ -1526,7 +1525,6 @@ impl Instance {
     & self, w: & mut File, blah: Blah
   ) -> Res<()>
   where File: Write, Blah: AsRef<str> {
-    use common::consts::keywords ;
     let blah = blah.as_ref() ;
 
     for line in blah.lines() {
@@ -1537,7 +1535,7 @@ impl Instance {
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
         write!(
-          w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
+          w, "({}\n  {}\n  (", keywords::cmd::dec_fun, pred.name
         ) ? ;
         for typ in & pred.sig {
           write!(w, " {}", typ) ?
@@ -1581,7 +1579,7 @@ impl Instance {
       }
 
       writeln!(
-        w, "  ({} {}", ::common::consts::keywords::prd_def, pred_info.name
+        w, "  ({} {}", keywords::cmd::def_fun, pred_info.name
       ) ? ;
       write!(w, "    (")  ?;
 
@@ -1676,12 +1674,11 @@ impl<'a> PebcakFmt<'a> for Instance {
   fn pebcak_io_fmt<W: Write>(
     & self, w: & mut W, _: ()
   ) -> IoRes<()> {
-    use common::consts::keywords ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
         write!(
-          w, "({}\n  {}\n  (", keywords::prd_dec, pred.name
+          w, "({}\n  {}\n  (", keywords::cmd::dec_fun, pred.name
         ) ? ;
         for typ in & pred.sig {
           write!(w, " {}", typ) ?
@@ -1713,7 +1710,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       for (pred, tterms) in self.pred_terms.index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt))
       ) {
-        write!(w, "({} {}\n  (", keywords::prd_def, self[pred]) ? ;
+        write!(w, "({} {}\n  (", keywords::cmd::def_fun, self[pred]) ? ;
         for (var, typ) in self[pred].sig.index_iter() {
           write!(w, " (v_{} {})", var, typ) ?
         }
@@ -1725,7 +1722,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
     } else {
       for pred in & self.sorted_pred_terms {
-        write!(w, "({} {}\n  (", keywords::prd_def, self[* pred]) ? ;
+        write!(w, "({} {}\n  (", keywords::cmd::def_fun, self[* pred]) ? ;
         for (var, typ) in self[* pred].sig.index_iter() {
           write!(w, " (v_{} {})", var, typ) ?
         }

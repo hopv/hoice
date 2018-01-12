@@ -72,7 +72,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
 
-    log_info!{
+    log_debug!{
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?

@@ -1,9 +1,9 @@
-#![doc = r#"# TODO
-
-- improve `rsmt2` and make smt learner more efficient and less ad hoc
-- remove all the useless error messages in lo-level rsmt2 writers
-- investigate problems with trivial clauses of the form `true => false`
-"#]
+//! [Hoice][hoice] is Horn clause solver based on the [ICE][ice] framework. The
+//! original approach was modified to handle non-linear Horn clauses and
+//! multi-predicates natively.
+//!
+//! [hoice]: https://github.com/hopv/hoice (hoice repository on github)
+//! [ice]: http://madhu.cs.illinois.edu/CAV14ice.pdf (ICE paper (PDF))
 
 #![allow(non_upper_case_globals)]
 

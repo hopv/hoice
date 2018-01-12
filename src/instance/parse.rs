@@ -323,7 +323,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an ident of fails.
   fn ident(& mut self) -> Res<(usize, & 's str)> {
-    if let Some(id) = self.ident_opt() {
+    if let Some(id) = self.ident_opt() ? {
       Ok(id)
     } else {
       bail!(
@@ -331,8 +331,25 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       )
     }
   }
-  /// Tries to parse an ident.
-  fn ident_opt(& mut self) -> Option<(usize, & 's str)> {
+  fn ident_opt(& mut self) -> Res< Option<(usize, & 's str)> > {
+    let res = self.unsafe_ident_opt() ? ;
+    if let Some(& (start_pos, ref id)) = res.as_ref() {
+      if keywords::is_keyword(id) {
+        bail!(
+          self.error(
+            start_pos,
+            format!(
+              "expected identifier, found keyword `{}`",
+              conf.bad(id)
+            )
+          )
+        )
+      }
+    }
+    Ok(res)
+  }
+  /// Tries to parse an ident, does not check anything about the ident.
+  fn unsafe_ident_opt(& mut self) -> Res< Option<(usize, & 's str)> > {
     if let Some( (start_pos, char) ) = self.next() {
       if char == '|' {
         let (mut legal_unquoted, mut is_first) = (true, true) ;
@@ -343,7 +360,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             } else {
               (start_pos, pos + 1)
             } ;
-            return Some( (start_pos, & self.string[start..end]) )
+            return Ok(
+              Some( (start_pos, & self.string[start..end]) )
+            )
           } else {
             legal_unquoted = legal_unquoted && (
               (! is_first && char.is_alphanumeric()) ||
@@ -353,7 +372,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             is_first = false ;
           }
         }
-        panic!("expected '|', found eof")
+        bail!(
+          self.error(
+            start_pos,
+            format!("expected `|` closing this quoted identifier, found eof")
+          )
+        )
       } else if char.is_alphabetic() || id_special_chars.contains(& char) {
         let mut end_pos = self.string.len() ;
         'unquoted: while let Some((pos, char)) = self.next() {
@@ -365,13 +389,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             break
           }
         }
-        Some( (start_pos, & self.string[start_pos..end_pos]) )
+        Ok(
+          Some( (start_pos, & self.string[start_pos..end_pos]) )
+        )
       } else {
         self.txen(start_pos, char) ;
-        None
+        Ok(None)
       }
     } else {
-      None
+      Ok(None)
     }
   }
 
@@ -440,7 +466,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     if self.char_opt('"') {
       self.eat_until('"')
-    } else if self.ident_opt().is_some() {
+    } else if self.ident_opt()?.is_some() {
       ()
     }
     Ok(true)
@@ -568,11 +594,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Adds a binding to the current bindings.
-  fn insert_bind(& mut self, var: & 's str, term: PTTerms) {
+  fn insert_bind(& mut self, var: & 's str, term: PTTerms) -> Res<()> {
     if let Some(bindings) = self.bindings.last_mut() {
       bindings.insert(var, term) ;
+      Ok(())
     } else {
-      panic!("bug, adding binding before pushing a binding scope")
+      bail!("bug, adding binding before pushing a binding scope")
     }
   }
   /// Pushes a binding scopes.
@@ -580,10 +607,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.bindings.push( HashMap::with_capacity(17) )
   }
   /// Pops a binding scope.
-  fn pop_bind(& mut self) {
+  fn pop_bind(& mut self) -> Res<()> {
     if self.bindings.pop().is_none() {
-      panic!("bug, popping binding scope but there's no scope")
+      bail!("bug, popping binding scope but there's no scope")
     }
+    Ok(())
   }
   /// Finds what a variable is mapped to.
   fn get_bind(& self, var: & str) -> Option< & PTTerms > {
@@ -602,24 +630,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     for _ in 0..count.n {
       self.ws_cmt() ;
       self.char(')') ? ;
-      self.pop_bind()
+      self.pop_bind() ?
     }
     Ok(())
-  }
-
-
-  /// Line from a position.
-  pub fn line_from(& self, pos: usize) -> & str {
-    if pos >= self.string.len() {
-      panic!("illegal position {}, length is {}", pos, self.string.len())
-    }
-    let mut end = pos ;
-    for char in self.string[pos..].chars() {
-      if char == '\n' {
-        break
-      } else { end += 1 }
-    }
-    & self.string[pos .. end]
   }
 
 
@@ -642,7 +655,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       if let Some((pos, c)) = self.next() {
         if c == '(' && {
-          self.ws_cmt() ; self.tag_opt("let")
+          self.ws_cmt() ; self.tag_opt( keywords::let_ )
         } {
           self.push_bind() ;
           self.ws_cmt() ;
@@ -652,7 +665,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
             let tterms = self.parse_ptterms(map, instance) ? ;
-            self.insert_bind(id, tterms) ;
+            self.insert_bind(id, tterms) ? ;
             self.ws_cmt() ;
             self.char(')') ?
           }
@@ -802,7 +815,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         term::int(int)
       } else if let Some(b) = self.bool() {
         term::bool(b)
-      } else if let Some((pos, id)) = self.ident_opt() {
+      } else if let Some((pos, id)) = self.ident_opt()? {
         if let Some(idx) = map.get(id) {
           term::var(* idx)
         } else if let Some(ptterms) = self.get_bind(id) {
@@ -872,8 +885,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Ok( Some(
           PTTerms::tterm( TTerm::T( term::app(op, args) ) )
         ) )
-      } else if let Some((pos,ident)) = self.ident_opt() {
-        if ident == "forall" || ident == "exists" {
+      } else if let Some((pos,ident)) = self.ident_opt()? {
+        if ident == keywords::forall || ident == keywords::exists {
           bail!(
             self.error(
               pos, format!("unable to work on clauses that are not ground")
@@ -919,7 +932,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       Ok( Some( PTTerms::tterm( TTerm::T( term::bool(b) ) ) ) )
     } else if let Some(int) = self.int() {
       Ok( Some( PTTerms::tterm( TTerm::T( term::int(int) ) ) ) )
-    } else if let Some((pos,id)) = self.ident_opt() {
+    } else if let Some((pos,id)) = self.ident_opt()? {
       if let Some(idx) = map.get(id) {
         Ok( Some( PTTerms::tterm( TTerm::T( term::var(* idx) ) ) ) )
       } else if let Some(tterms) = self.get_bind(id) {
@@ -954,7 +967,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn forall(
     & mut self, instance: & mut Instance
   ) -> Res<bool> {
-    if ! self.tag_opt("forall") {
+    if ! self.tag_opt(keywords::forall) {
       return Ok(false)
     }
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
@@ -966,7 +979,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       parse_args = if let Some(pos) = self.char_opt_pos('(') {
         self.ws_cmt() ;
-        if self.tag_opt("forall") {
+        if self.tag_opt(keywords::forall) {
           closing_parens += 1 ;
           true
         } else {
@@ -993,7 +1006,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a negated exists.
   fn exists(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("not") {
+    if ! self.tag_opt(keywords::op::not_) {
       return Ok(false)
     }
     self.ws_cmt() ;
@@ -1001,7 +1014,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     self.char('(') ? ;
     self.ws_cmt() ;
-    self.tag("exists") ? ;
+    self.tag(keywords::exists) ? ;
     self.ws_cmt() ;
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
       VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
@@ -1012,7 +1025,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       parse_args = if let Some(pos) = self.char_opt_pos('(') {
         self.ws_cmt() ;
-        if self.tag_opt("exists") {
+        if self.tag_opt(keywords::exists) {
           closing_parens += 1 ;
           true
         } else {
@@ -1073,7 +1086,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an assert.
   fn assert(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("assert") {
+    if ! self.tag_opt(keywords::cmd::assert) {
       return Ok(false)
     }
     self.ws_cmt() ;
@@ -1112,7 +1125,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a check-sat.
   fn check_sat(& mut self) -> bool {
-    if self.tag_opt("check-sat") {
+    if self.tag_opt(keywords::cmd::check_sat) {
       true
     } else {
       false
@@ -1121,7 +1134,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a get-model.
   fn get_model(& mut self) -> bool {
-    if self.tag_opt("get-model") {
+    if self.tag_opt(keywords::cmd::get_model) {
       true
     } else {
       false
@@ -1130,7 +1143,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an exit command.
   fn exit(& mut self) -> bool {
-    if self.tag_opt("exit") {
+    if self.tag_opt(keywords::cmd::exit) {
       true
     } else {
       false
@@ -1139,7 +1152,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an reset command.
   fn reset(& mut self) -> bool {
-    if self.tag_opt("reset") {
+    if self.tag_opt(keywords::cmd::reset) {
       true
     } else {
       false

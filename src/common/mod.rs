@@ -24,6 +24,7 @@ pub use term::{
   Val, Op, Typ, Quant,
 } ;
 pub use instance::Instance ;
+pub use common::consts::keywords ;
 
 mod wrappers ;
 pub mod config ;
