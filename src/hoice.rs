@@ -62,7 +62,7 @@ pub fn work() -> Res<()> {
       || format!("while opening input file `{}`", conf.emph(file_path))
     ) ? ;
 
-    read_and_work(file, true, false) ? ;
+    read_and_work(file, true, false, false) ? ;
     Ok(())
 
   } else {
@@ -70,7 +70,7 @@ pub fn work() -> Res<()> {
 
     let stdin = ::std::io::stdin() ;
 
-    read_and_work(stdin, false, false) ? ;
+    read_and_work(stdin, false, false, false) ? ;
     Ok(())
 
   }
@@ -87,9 +87,12 @@ pub fn work() -> Res<()> {
 /// The `stop_on_check` flag forces the function to return once the first check
 /// is complete. Only used in tests.
 ///
+/// The `stop_on_err` flag forces to stop at the first error. Only used in
+/// tests.
+///
 /// [read]: https://doc.rust-lang.org/std/io/trait.Read.html (Read trait)
 pub fn read_and_work<R: ::std::io::Read>(
-  reader: R, file_input: bool, stop_on_check: bool,
+  reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
 ) -> Res< (Option<Model>, Instance) > {
   use instance::parse::ItemRead ;
 
@@ -107,7 +110,7 @@ pub fn read_and_work<R: ::std::io::Read>(
   // Current model.
   let mut model = None ;
   // Any error encountered?
-  let mut error = false ;
+  // let mut error = false ;
 
   'parse_work: loop {
     use instance::parse::Parsed ;
@@ -130,7 +133,9 @@ pub fn read_and_work<R: ::std::io::Read>(
     let parse_res = match parse_res {
       Ok(res) => res,
       Err(e) => {
-        error = true ;
+        println!("parse err") ;
+        if stop_on_err { return Err(e) }
+        // error = true ;
         print_err(e) ;
         continue 'parse_work
       },
@@ -142,9 +147,9 @@ pub fn read_and_work<R: ::std::io::Read>(
     
     match parse_res {
 
-      Parsed::CheckSat if error => {
-        println!("unknown")
-      },
+      // Parsed::CheckSat if error => {
+      //   println!("unknown")
+      // },
 
       // Check-sat, start class.
       Parsed::CheckSat => {
