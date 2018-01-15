@@ -78,7 +78,7 @@ impl QualValuesExt for QualValues {
   }
   fn eval(& mut self, s: & HSample) -> Option<bool> {
     if let Some(res) = self.lazy_eval(s) { res } else {
-      match self.qual.bool_eval(s) {
+      match self.qual.bool_eval( s.get() ) {
         Ok( Some(b) ) => {
           self.add( s.clone(), b ) ;
           Some(b)

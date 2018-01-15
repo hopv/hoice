@@ -7,6 +7,7 @@ use self::mining::* ;
 use self::smt::* ;
 
 pub mod mining ;
+pub mod quals ;
 
 
 

@@ -286,25 +286,34 @@ pub trait PebcakFmt<'a> {
 pub trait VarIndexed<T> {
   /// Gets the value associated with a variable.
   #[inline(always)]
-  fn var_get(& self, var: VarIdx) -> Option<& T> ;
+  fn var_get(& self, var: VarIdx) -> Option<T> ;
 }
-impl<Elem> VarIndexed<Elem> for VarMap<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if var < self.len() {
-      Some(& self[var])
+      Some( self[var].clone() )
     } else {
       None
     }
   }
 }
-impl<Elem> VarIndexed<Elem> for VarHMap<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
-    self.get(& var)
+impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
+    self.get(& var).map(|e| e.clone())
+  }
+}
+impl VarIndexed<Term> for VarMap<VarIdx> {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    if var < self.len() {
+      Some( term::var( self[var] ) )
+    } else {
+      None
+    }
   }
 }
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if let Some(res) = self.0.var_get(var) {
       debug_assert!( self.1.var_get(var).is_none() ) ;
       Some(res)
@@ -318,7 +327,7 @@ where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
 }
 impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
 where T: VarIndexed<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     (* self).var_get(var)
   }
 }

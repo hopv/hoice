@@ -72,7 +72,13 @@ pub use self::val::Val ;
 
 
 /// Types.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[
+  derive(
+    Debug, Clone, Copy,
+    PartialEq, Eq, Hash,
+    PartialOrd, Ord
+  )
+]
 pub enum Typ {
   /// Integers.
   Int,
@@ -105,6 +111,42 @@ impl_fmt!{
   }
 }
 
+
+
+/// Implemented by types lending themselves to evaluation.
+pub trait Evaluator {
+  /// Retrieves the value associated with a variable.
+  fn get(& self, var: VarIdx) -> & Val ;
+  /// Number of variables the evaluator supports.
+  fn len(& self) -> usize ;
+}
+impl Evaluator for VarMap<Val> {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    & self[var]
+  }
+  #[inline]
+  fn len(& self) -> usize { VarMap::len(self) }
+}
+impl Evaluator for () {
+  #[inline]
+  fn get(& self, _: VarIdx) -> & Val {
+    panic!("trying actual evaluation with unit")
+  }
+  #[inline]
+  fn len(& self) -> usize { 0 }
+}
+/// This implements a redirection `(map, vals)`, where a variable `var` from
+/// the term evaluated is evaluated to `vals[ map[var] ]`.
+impl<'a, E> Evaluator for (& 'a VarMap<VarIdx>, & 'a E)
+where E: Evaluator {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    self.1.get( self.0[var] )
+  }
+  #[inline]
+  fn len(& self) -> usize { self.0.len() }
+}
 
 
 /// A real term.
@@ -196,12 +238,16 @@ impl RTerm {
   }
 
   /// Term evaluation (int).
-  pub fn int_eval(& self, model: & VarMap<Val>) -> Res< Option<Int> > {
+  pub fn int_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<Int> > {
     self.eval(model)?.to_int()
   }
 
   /// Term evaluation (bool).
-  pub fn bool_eval(& self, model: & VarMap<Val>) -> Res< Option<bool> > {
+  pub fn bool_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<bool> > {
     self.eval(model)?.to_bool()
   }
 
@@ -241,7 +287,7 @@ impl RTerm {
   /// assert!( term.is_true() ) ;
   /// ```
   pub fn is_true(& self) -> bool {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => b,
       _ => false,
     }
@@ -283,21 +329,21 @@ impl RTerm {
   /// assert!( term.is_false() ) ;
   /// ```
   pub fn is_false(& self) -> bool {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => ! b,
       _ => false,
     }
   }
   /// Boolean a constant boolean term evaluates to.
   pub fn bool(& self) -> Option<bool> {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => Some(b),
       _ => None
     }
   }
   /// Integer a constant integer term evaluates to.
   pub fn int(& self) -> Option<Int> {
-    match self.int_eval( & VarMap::with_capacity(0) ) {
+    match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
       _ => None
     }
@@ -333,7 +379,7 @@ impl RTerm {
 
 
   /// Term evaluation.
-  pub fn eval(& self, model: & VarMap<Val>) -> Res<Val> {
+  pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
     use self::RTerm::* ;
     let mut current = self ;
     let mut stack = vec![] ;
@@ -349,7 +395,7 @@ impl RTerm {
         },
         // Rest are leaves, going up.
         Var(v) => if v < model.len() {
-          model[v].clone()
+          model.get(v).clone()
         } else {
           bail!("model is too short")
         },
@@ -456,7 +502,7 @@ impl RTerm {
       let mut term = match * current.get() {
         RTerm::Var(var) => if let Some(term) = map.var_get(var) {
           subst_count += 1 ;
-          term.clone()
+          term
         } else if total {
           return None
         } else {
