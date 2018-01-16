@@ -396,6 +396,7 @@ fn normalize_app(
       } else if args.len() == 1 {
         return Either::Left( args.pop().unwrap() )
       } else {
+        args.sort_unstable() ;
         (op, args)
       }
     },
@@ -418,6 +419,7 @@ fn normalize_app(
       } else if args.len() == 1 {
         return Either::Left( args.pop().unwrap() )
       } else {
+        args.sort_unstable() ;
         (op, args)
       }
     },
@@ -487,6 +489,7 @@ fn normalize_app(
           return Either::Left( term::bool( i_1 == i_2 ) )
         }
       }
+      args.sort_unstable() ;
       (op, args)
     },
 
@@ -512,6 +515,7 @@ fn normalize_app(
         if ! sum.is_zero() {
           args.push( int(sum) )
         }
+        args.sort_unstable() ;
         (op, args)
       }
     },
@@ -547,6 +551,7 @@ fn normalize_app(
         if mul != 1.into() {
           args.push( int(mul) )
         }
+        args.sort_unstable() ;
         (op, args)
       }
     },

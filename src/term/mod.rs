@@ -357,6 +357,26 @@ impl RTerm {
       None
     }
   }
+  /// True if this term is known to have type bool.
+  pub fn has_type_bool(
+    & self, vars: & VarMap<::instance::info::VarInfo>
+  ) -> bool {
+    match * self {
+      RTerm::App { op: Op::Eql, .. } |
+      RTerm::App { op: Op::And, .. } |
+      RTerm::App { op: Op::Or, .. } |
+      RTerm::App { op: Op::Impl, .. } |
+      RTerm::App { op: Op::Gt, .. } |
+      RTerm::App { op: Op::Ge, .. } |
+      RTerm::App { op: Op::Lt, .. } |
+      RTerm::App { op: Op::Le, .. } => true,
+      RTerm::App { op: Op::Not, ref args } => args[0].has_type_bool(vars),
+      RTerm::App { op: Op::Ite, ref args } => args[1].has_type_bool(vars),
+      RTerm::Var(idx) => vars[idx].typ == Typ::Bool,
+      RTerm::Bool(_) => true,
+      _ => false,
+    }
+  }
   /// Checks whether the term is a relation.
   pub fn is_relation(& self) -> bool {
     match * self {

@@ -174,6 +174,13 @@ pub fn read_and_work<R: ::std::io::Read>(
           maybe_model
         } else {
           let arc_instance = Arc::new(instance) ;
+
+          // let quals = ::learning::ice::quals::Quals::new(
+          //   103, arc_instance.clone()
+          // ) ? ;
+          // quals.print("") ;
+          // panic!("aaaa") ;
+
           match teacher::start_class(
             & arc_instance, & profiler
           ) {

@@ -138,7 +138,7 @@ pub type SigTransform = VarMap<VarIdx> ;
 /// predicate var to qualifier var mappings that work type-wise.
 pub struct SigTransforms {
   /// Actual map.
-  map: HashMap< VarMap<Typ>, Vec<SigTransform> >,
+  pub map: HashMap< VarMap<Typ>, Vec<SigTransform> >,
 }
 
 impl ::std::ops::Deref for SigTransforms {
@@ -149,6 +149,42 @@ impl ::std::ops::Deref for SigTransforms {
 }
 
 impl SigTransforms {
+  /// Checks consistency.
+  #[inline]
+  #[cfg( not(debug_assertions) )]
+  pub fn check(& self) -> Res<()> { Ok(()) }
+  #[cfg(debug_assertions)]
+  pub fn check(& self) -> Res<()> {
+    let mut prev = None ;
+    for (sig, transs) in & self.map {
+      for trans in transs {
+        if prev.is_none() { prev = Some( trans.len() ) }
+        if prev != Some( trans.len() ) {
+          bail!(
+            "sig transform is inconsistent: \
+            non-unique transformation arity"
+          )
+        }
+        for idx in trans {
+          if * idx >= sig.len() {
+            bail!(
+              "sig transform is inconsistent: \
+              co-domain inconsistent with signature"
+            )
+          }
+        }
+      }
+    }
+    if prev == Some(0) {
+      bail!(
+        "illegal sig transform: \
+        empty transformations"
+      )
+    }
+    Ok(())
+  }
+
+
   /// Constructor.
   pub fn new(
     preds: & PrdMap<::instance::info::PrdInfo>,
@@ -311,28 +347,68 @@ impl SigTransforms {
 /// Stores qualifiers that have the same signature.
 pub struct QualClass {
   /// Signature transformations.
-  transforms: SigTransforms,
+  pub transforms: SigTransforms,
   /// Qualifiers: map from terms to `EvalCache`.
-  quals: HConMap<Term, EvalCache>,
+  pub quals: HConMap<Term, EvalCache>,
 }
 
 impl QualClass {
+  /// Checks consistency.
+  #[cfg( not(debug_assertions) )]
+  pub fn check(& self) -> Res<()> { Ok(()) }
+  #[cfg(debug_assertions)]
+  pub fn check(& self) -> Res<()> {
+    if self.transforms.is_empty() {
+      bail!("illegal qual class: no transformations")
+    }
+    self.transforms.check() ? ;
+    for transs in self.transforms.values() {
+      for trans in transs {
+        'check_quals: for qual in self.quals.keys() {
+          for var in term::vars(qual) {
+            if * var >= trans.len() {
+              bail!(
+                "illegal qual class: \
+                qual {} goes above the max variable `v_{}`",
+                qual, trans.len() - 1
+              )
+            }
+          }
+
+        }
+      }
+    }
+    Ok(())
+  }
+
+
   /// Constructor.
-  pub fn new(transforms: SigTransforms, qual_capa: usize) -> Self {
-    QualClass {
-      transforms,
-      quals: HConMap::with_capacity(qual_capa)}
+  pub fn new(transforms: SigTransforms, qual_capa: usize) -> Option<Self> {
+    if transforms.is_empty() {
+      None
+    } else {
+      Some(
+        QualClass {
+          transforms,
+          quals: HConMap::with_capacity(qual_capa)
+        }
+      )
+    }
   }
 
   /// Inserts a new term in the class.
   pub fn insert(& mut self, term: Term) -> bool {
     use std::collections::hash_map::Entry ;
-    match self.quals.entry(term) {
-      Entry::Occupied(_) => false,
-      Entry::Vacant(entry) => {
-        entry.insert( EvalCache::new(107) ) ;
-        true
-      },
+    if ! self.quals.contains_key( & term::not( term.clone() ) ) {
+      match self.quals.entry(term) {
+        Entry::Occupied(_) => false,
+        Entry::Vacant(entry) => {
+          entry.insert( EvalCache::new(107) ) ;
+          true
+        },
+      }
+    } else {
+      false
     }
   }
 }
@@ -350,11 +426,29 @@ impl QualClass {
 ///
 /// [quals max]: struct.Quals.html#methods.maximize (Quals' maximize function)
 pub struct Qual<'a> {
-  qual: & 'a Term,
+  /// The qualifier.
+  pub qual: & 'a Term,
   // cache: & 'a mut EvalCache,
-  map: & 'a VarMap<VarIdx>,
+  /// Maps qualifier variables to predicate variables.
+  pub map: & 'a VarMap<VarIdx>,
 }
 impl<'a> Qual<'a> {
+  /// Checks consistency.
+  #[cfg( not(debug_assertions) )]
+  pub fn check(& self) -> Res<()> { Ok(()) }
+  #[cfg(debug_assertions)]
+  pub fn check(& self) -> Res<()> {
+    for var in term::vars(self.qual) {
+      if * var >= self.map.len() {
+        bail!(
+          "illegal qualifier: {} goes above max variable `v_{}`",
+          self.qual, self.map.len()
+        )
+      }
+    }
+    Ok(())
+  }
+
   /// Evaluates this qualifier.
   pub fn bool_eval<E>(& mut self, vals: & E) -> Res<Option<bool>>
   where E: term::Evaluator {
@@ -378,19 +472,41 @@ impl<'a> Qual<'a> {
 ///
 /// # TODO
 ///
-/// - `classes` is probably not deterministic right now; fix
+/// - `classes` is probably not deterministic right now: fix
 pub struct Quals {
   // /// `QArgs` factory.
   // factory: Factory,
   /// Map from **qualifier** signatures to qualifier classes.
-  classes: HashMap< VarMap<Typ>, QualClass >,
+  pub classes: HashMap< VarMap<Typ>, QualClass >,
   /// Arc to the instance.
-  instance: Arc<Instance>,
-  /// Qualifier blacklist.
-  blacklist: HConSet<Term>,
+  pub instance: Arc<Instance>,
+  // /// Qualifier blacklist.
+  // pub blacklist: HConSet<Term>,
 }
 
 impl Quals {
+  /// Checks consistency.
+  #[cfg( not(debug_assertions) )]
+  pub fn check(& self) -> Res<()> { Ok(()) }
+  #[cfg(debug_assertions)]
+  pub fn check(& self) -> Res<()> {
+    for (sig, class) in self.classes.iter() {
+      class.check() ? ;
+      for transs in class.transforms.values() {
+        for trans in transs {
+          if trans.len() != sig.len() {
+            bail!(
+              "inconsistent quals: \
+              found a transformation of arity {} but \
+              qual signature arity is {}", trans.len(), sig.len()
+            )
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
   /// Constructor.
   ///
   /// - `factory_capa`: size of the `QArgs` factory
@@ -398,13 +514,67 @@ impl Quals {
   pub fn new(
     // factory_capa: usize,
     class_capa: usize, instance: Arc<Instance>
-  ) -> Self {
-    Quals {
+  ) -> Res<Self> {
+    let mut quals = Quals {
       // factory: Factory::with_capacity(factory_capa),
       classes: HashMap::with_capacity(class_capa),
-      instance,
-      blacklist: HConSet::with_capacity(107),
+      instance: instance.clone(),
+      // blacklist: HConSet::with_capacity(107),
+    } ;
+
+    let mut to_inspect = Vec::with_capacity(17) ;
+
+    for clause in instance.clauses() {
+      for term in clause.lhs_terms() {
+        debug_assert! { to_inspect.is_empty() }
+        
+        to_inspect.push(term) ;
+
+        while let Some(mut term) = to_inspect.pop() {
+          quals.insert(term, clause.vars()) ;
+          let mut keep_going = true ;
+          while keep_going {
+            keep_going = false ;
+            match term.app_inspect() {
+              Some((Op::And, kids)) |
+              Some((Op::Or, kids)) |
+              Some((Op::Impl, kids)) => for kid in kids {
+                to_inspect.push(kid)
+              },
+              Some((Op::Ite, kids)) => to_inspect.push( & kids[0] ),
+              Some((Op::Not, kids)) => {
+                term = & kids[0] ;
+                keep_going = true
+              },
+              Some((Op::Eql, kids))
+              if kids[0].has_type_bool(clause.vars()) => for kid in kids {
+                to_inspect.push(kid)
+              }
+              _ => (),
+            }
+          }
+        }
+      }
     }
+
+    quals.check().chain_err( || "after creation" ) ? ;
+
+    Ok(quals)
+  }
+
+
+  /// Number of qualifiers.
+  pub fn qual_count(& self) -> usize {
+    let mut count = 0 ;
+    let mut mul ;
+    for class in self.classes.values() {
+      mul = 0 ;
+      for trans in class.transforms.values() {
+        mul += trans.len() ;
+      }
+      count += mul * class.quals.len()
+    }
+    count
   }
 
 
@@ -416,7 +586,7 @@ impl Quals {
   /// qualifier will be returned.
   pub fn maximize<Info, Crit>(
     & self, pred: PrdIdx, mut crit: Crit
-  ) -> Option<(Term, f64, Info)>
+  ) -> Res< Option<(Term, f64, Info)> >
   where Crit: for<'a> FnMut( & Qual<'a> ) -> (f64, Info) {
     let sig = & self.instance.preds()[pred].sig ;
     let mut prev = None ;
@@ -424,12 +594,17 @@ impl Quals {
       if let Some(maps) = class.transforms.get(sig) {
         let quals = & class.quals ;
         for map in maps {
-          for qual in quals.keys() {
+          'all_quals: for qual in quals.keys() {
             let qual = Qual { qual, map } ;
+            qual.check() ? ;
             let (res, info) = crit(& qual) ;
-            if res == 1.0 {
-              return Some(
-                (qual.to_term(), res, info)
+            if res == 0.0 {
+              continue 'all_quals
+            } else if res == 1.0 {
+              return Ok(
+                Some(
+                  (qual.to_term(), res, info)
+                )
               )
             }
             prev = if let Some((p_term, p_res, p_info)) = prev {
@@ -445,20 +620,20 @@ impl Quals {
         }
       }
     }
-    prev
+    Ok(prev)
   }
 
 
 
-  /// Blacklists a qualifier.
-  pub fn blacklist(& mut self, qual: & Term) {
-    let is_new = self.blacklist.insert( qual.clone() ) ;
-    debug_assert! { is_new }
-  }
-  /// Clears the qualifier blacklist.
-  pub fn clear_blacklist(& mut self) {
-    self.blacklist.clear()
-  }
+  // /// Blacklists a qualifier.
+  // pub fn blacklist(& mut self, qual: & Term) {
+  //   let is_new = self.blacklist.insert( qual.clone() ) ;
+  //   debug_assert! { is_new }
+  // }
+  // /// Clears the qualifier blacklist.
+  // pub fn clear_blacklist(& mut self) {
+  //   self.blacklist.clear()
+  // }
 
   /// Inserts a new qualifier.
   pub fn insert(
@@ -523,7 +698,16 @@ impl Quals {
       }
     } ;
 
+    if sig.is_empty() {
+      return false
+    }
     sig.shrink_to_fit() ;
+
+    let term = if let Some(term) = term.rm_neg() {
+      term
+    } else {
+      term
+    } ;
 
     use std::collections::hash_map::Entry ;
     match self.classes.entry(sig) {
@@ -532,12 +716,49 @@ impl Quals {
         let transforms = SigTransforms::new(
           self.instance.preds(), entry.key()
         ) ;
-        entry.insert(
-          QualClass::new(transforms, 107)
-        ).insert(term) ;
-        true
+        if let Some(class) = QualClass::new(transforms, 107) {
+          entry.insert(class).insert(term)
+        } else {
+          false
+        }
       },
     }
+  }
+
+  /// Prints itself.
+  pub fn print(& self, pref: & str) {
+    println!("{}quals {{", pref) ;
+    for (sig, class) in & self.classes {
+      let mut s = String::new() ;
+      for (var, typ) in sig.index_iter() {
+        s.push_str(& format!(" ({} {})", var.default_str(), typ))
+      }
+      println!("{}  sig{} {{", pref, s) ;
+      s.clear() ;
+      println!("{}    transforms {{", pref) ;
+      for (sig, transs) in class.transforms.iter() {
+        for (var, typ) in sig.index_iter() {
+          s.push_str( & format!(" ({} {})", var.default_str(), typ) ) ;
+        }
+        println!("{}      for {}", pref, s) ;
+        s.clear() ;
+        for trans in transs {
+          for (var, v) in trans.index_iter() {
+            s.push_str(
+              & format!(" {} -> {},", v.default_str(), var.default_str())
+            )
+          }
+          println!("{}      |{}", pref, s) ;
+          s.clear()
+        }
+      }
+      println!("{}    }}", pref) ;
+      for quals in class.quals.keys() {
+        println!("{}    {}", pref, quals)
+      }
+      println!("{}  }}", pref)
+    }
+    println!("{}}}", pref)
   }
 
 }
