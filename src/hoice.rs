@@ -175,12 +175,6 @@ pub fn read_and_work<R: ::std::io::Read>(
         } else {
           let arc_instance = Arc::new(instance) ;
 
-          // let quals = ::learning::ice::quals::Quals::new(
-          //   103, arc_instance.clone()
-          // ) ? ;
-          // quals.print("") ;
-          // panic!("aaaa") ;
-
           match teacher::start_class(
             & arc_instance, & profiler
           ) {
@@ -285,10 +279,10 @@ fn print_stats(profiler: Profiler) {
   if conf.stats {
     println!("") ;
     let (tree, stats) = profiler.extract_tree() ;
-    tree.print() ;
+    tree.print( & [] ) ;
     if ! stats.is_empty() {
       println!("; stats:") ;
-      stats.print()
+      stats.print( & vec![ "data" ] )
     }
     println!("") ;
   }

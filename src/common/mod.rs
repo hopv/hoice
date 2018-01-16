@@ -77,39 +77,6 @@ pub type Int = ::num::BigInt ;
 /// A trivially hashed set of variable maps.
 pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 
-/// Alias type for a map from arity to a map from terms to qualifier values.
-///
-/// The term to qualifier maps map the qualifier to their values. It sounds
-/// stupid to do this since `QualValues` already contains the qualifier.
-/// Ideally, it should be a set of values hashed by the qualifier. But we need
-/// to iterate on this collection with `iter_mut` to update the values,
-/// something `HashSet` does not admit as it is unsafe in general to do so.
-///
-/// Hence we have the qualifier twice, which is not that bad to check directly
-/// if a term is a known qualifier or not.
-///
-/// # TODO
-///
-/// - investigate whether it would be possible to remove the qualifier from
-///   `QualValues` entirely
-pub type Quals = ArityMap<
-  HConMap<Term, ::learning::ice::mining::QualValues>
-> ;
-/// Helpers for `Quals`.
-pub trait QualsExt {
-  /// Treats the `HConMap` as sets for inserting qualifiers.
-  ///
-  /// Returns true if the term was not there (think `is_new`).
-  fn insert(& mut self, arity: Arity, term: Term) ;
-}
-impl QualsExt for Quals {
-  fn insert(& mut self, arity: Arity, term: Term) {
-    self[arity].entry( term.clone() ).or_insert_with(
-      || ::learning::ice::mining::QualValues::new(term)
-    ) ;
-  }
-}
-
 /// A predicate application.
 pub type PredApp = (PrdIdx, VarMap<Term>) ;
 

@@ -3,13 +3,12 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-use self::mining::* ;
+
 use self::smt::* ;
 
-pub mod mining ;
 pub mod quals ;
 
-
+use self::quals::{ Qualifiers, Qual } ;
 
 
 /// Launcher.
@@ -91,8 +90,6 @@ pub struct IceLearner<'core, Slver> {
   dec_mem: PrdMap< HashSet<u64> >,
   /// Current candidate, cleared at the beginning of each learning phase.
   candidate: PrdMap< Option<Term> >,
-  /// Set storing new qualifiers during synthesis (avoids allocation).
-  new_quals: Quals,
   /// Profiler.
   _profiler: Profiler,
   /// Vector used during learning, avoids re-allocation.
@@ -109,25 +106,19 @@ where Slver: Solver<'kid, Parser> {
   ) -> Res<Self> {
     let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
-    let qualifiers = Qualifiers::new(& * instance).chain_err(
+    let qualifiers = Qualifiers::new( instance.clone() ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
-    let mut new_quals = Quals::with_capacity(
-      qualifiers.qualifiers().len()
-    ) ;
-    for _ in ArityRange::zero_to( instance.max_pred_arity ) {
-      new_quals.push( HConMap::with_capacity(107) )
-    }
 
     profile!{ |_profiler| mark "mining" }
-    if_verb!{
-      log_info!{ "qualifiers:" } ;
-      for quals in qualifiers.qualifiers() {
-        for (qual, _) in quals {
-          log_info!("- {}", qual)
-        }
-      }
-    }
+    // if_verb!{
+    //   log_info!{ "qualifiers:" } ;
+    //   for quals in qualifiers.qualifiers() {
+    //     for (qual, _) in quals {
+    //       log_info!("- {}", qual)
+    //     }
+    //   }
+    // }
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
@@ -141,7 +132,6 @@ where Slver: Solver<'kid, Parser> {
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
         dec_mem, candidate,
-        new_quals,
         _profiler,
         predicates,
         rng: {
@@ -156,7 +146,7 @@ where Slver: Solver<'kid, Parser> {
   pub fn run(mut self) -> Res<()> {
     let mut teacher_alive = true ;
     profile!{ self "qualifier synthesized" => add 0 }
-    profile!{ self "qualifiers initially" => add self.qualifiers.count() }
+    profile!{ self "qualifiers initially" => add self.qualifiers.qual_count() }
     // if_verb!{
     //   teacher_alive = msg!{ & self => "Qualifiers:" } ;
     //   for quals in self.qualifiers.qualifiers() {
@@ -190,7 +180,7 @@ where Slver: Solver<'kid, Parser> {
   /// Finalizes the learning process.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(self) -> Res<()> {
-    profile!{ self "qualifiers once done" => add self.qualifiers.count() }
+    profile!{ self "qualifiers once done" => add self.qualifiers.qual_count() }
 
     let success = self.core.stats(
       self._profiler, vec![ vec!["learning", "smt", "data"] ]
@@ -257,7 +247,7 @@ where Slver: Solver<'kid, Parser> {
     profile! { self tick "learning", "setup" }
     let _new_samples = data.drain_new_samples() ;
     self.data = data ;
-    self.qualifiers.clear_blacklist() ;
+    // self.qualifiers.clear_blacklist() ;
     profile!{ self mark "learning", "setup" }
     // profile!{ self tick "learning", "new sample registration" }
     // self.qualifiers.register_samples( new_samples ) ? ;
@@ -382,8 +372,6 @@ where Slver: Solver<'kid, Parser> {
 
     }
 
-    let mut used_quals = HConSet::with_capacity(107) ;
-
     'pred_iter: while let Some(
       (_unc, _cla, pred)
     ) = self.predicates.pop() {
@@ -393,7 +381,7 @@ where Slver: Solver<'kid, Parser> {
       ) ;
       let data = self.data.data_of(pred) ;
       if let Some(term) = self.pred_learn(
-        pred, data, & mut used_quals, simple
+        pred, data, simple
       ) ? {
         self.candidate[pred] = Some(term)
       } else {
@@ -406,14 +394,14 @@ where Slver: Solver<'kid, Parser> {
     ::std::mem::swap(& mut candidates, & mut self.candidate) ;
     profile!{ self mark "learning" }
 
-    if conf.ice.decay {
-      profile!{ self tick "decay" }
-      let _brushed = self.qualifiers.brush_quals(
-        used_quals, conf.ice.max_decay
-      ) ;
-      profile!{ self "brushed qualifiers" => add _brushed }
-      profile!{ self mark "decay" }
-    }
+    // if conf.ice.decay {
+    //   profile!{ self tick "decay" }
+    //   let _brushed = self.qualifiers.brush_quals(
+    //     used_quals, conf.ice.max_decay
+    //   ) ;
+    //   profile!{ self "brushed qualifiers" => add _brushed }
+    //   profile!{ self mark "decay" }
+    // }
 
     Ok( Some(candidates) )
   }
@@ -428,13 +416,13 @@ where Slver: Solver<'kid, Parser> {
   /// is over.
   pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     profile!{ self tick "learning", "backtrack" }
-    self.qualifiers.clear_blacklist() ;
+    // self.qualifiers.clear_blacklist() ;
     // Backtracking or exit loop.
     if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
       // Update blacklisted qualifiers.
-      for & (ref t, _) in & nu_branch {
-        self.qualifiers.blacklist(t)
-      }
+      // for & (ref t, _) in & nu_branch {
+      //   self.qualifiers.blacklist(t)
+      // }
       // Update data, some previously unclassified data may be classified now.
       self.data.classify(pred, & mut nu_data) ;
       profile!{ self mark "learning", "backtrack" }
@@ -447,8 +435,7 @@ where Slver: Solver<'kid, Parser> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData, used_quals: & mut HConSet<Term>,
-    simple: bool
+    & mut self, pred: PrdIdx, mut data: CData, simple: bool
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -537,12 +524,10 @@ where Slver: Solver<'kid, Parser> {
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
-      let (qual, q_data, nq_data) = self.get_qualifier(
-        pred, data, used_quals, simple
-      ) ? ;
+      let (qual, q_data, nq_data) = self.get_qualifier(pred, data, simple) ? ;
       profile!{ self mark "learning", "qual" }
       // msg!{ self => "qual: {}", qual } ;
-      self.qualifiers.blacklist(& qual) ;
+      // self.qualifiers.blacklist(& qual) ;
 
       // Remember the branch where qualifier is false.
       let mut nq_branch = branch.clone() ;
@@ -576,146 +561,6 @@ where Slver: Solver<'kid, Parser> {
     )
   }
 
-  /// Gets the best qualifier if any, parallel version using `rayon`.
-  ///
-  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
-  pub fn get_best_qualifier_para<
-    'a, Key: Send, I: ::rayon::iter::IntoParallelIterator<
-      Item = (Key, & 'a mut QualValues)
-    >
-  >(
-    _profiler: & Profiler, all_data: & Data,
-    pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<Term>,
-    simple: bool
-  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
-    use rayon::prelude::* ;
-
-    profile!{ |_profiler| tick "learning", "qual", "// gain" }
-
-    let mut gains: Vec<_> = quals.into_par_iter().map(
-      |(_, values)| {
-        let gain = if simple {
-          data.simple_gain(values)
-        } else {
-          data.gain(pred, all_data, values)?.map(
-            |(gain, _, _)| gain
-          )
-        } ;
-        Ok( gain.map(|gain| (gain, values)) )
-      }
-    ).collect() ;
-
-    profile!{ |_profiler| mark "learning", "qual", "// gain" }
-
-    profile!{ |_profiler| tick "learning", "qual", "gain sort" }
-
-    gains.sort_by(
-      |lft, rgt| {
-        use ::std::cmp::Ordering::* ;
-        match (lft, rgt) {
-          ( & Err(_), _   ) |
-          ( _, & Ok(None) ) => Greater,
-          ( _, & Err(_)   ) |
-          ( & Ok(None), _ ) => Less,
-
-          (
-            & Ok( Some((lft_gain, ref lft_values)) ),
-            & Ok( Some((rgt_gain, ref rgt_values)) )
-          ) => match lft_gain.partial_cmp(& rgt_gain) {
-            None | Some(Equal) => lft_values.qual.cmp(& rgt_values.qual),
-            Some(res) => res
-          }
-        }
-      }
-    ) ;
-
-    profile!{ |_profiler| mark "learning", "qual", "gain sort" }
-
-    let res = if let Some(res) = gains.pop() { res } else {
-      bail!("[bug] empty QualIter")
-    } ;
-    if conf.ice.decay {
-      if let & Ok( Some( (best_gain, ref qual) ) ) = & res {
-        let _ = used_quals.insert( qual.qual.clone() ) ;
-        while let Some( Ok( Some( (gain, qual) ) ) ) = gains.pop() {
-          if best_gain == gain {
-            let _ = used_quals.insert( qual.qual.clone() ) ;
-          } else {
-            break
-          }
-        }
-      }
-    }
-    res
-  }
-
-  /// Gets the best qualifier if any, sequential version.
-  ///
-  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
-  pub fn get_best_qualifier_seq<
-    'a, Key, I: IntoIterator<Item = (Key, & 'a mut QualValues)>
-  >(
-    _profiler: & Profiler, all_data: & Data,
-    pred: PrdIdx, data: & CData, quals: I,
-    simple: bool
-  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
-    let mut maybe_qual: Option<(f64, & mut QualValues)> = None ;
-
-    profile!{ |_profiler| tick "learning", "qual", "gain" }
-    'search_qual: for (_, values) in quals {
-      let gain = if simple {
-        data.simple_gain(values)
-      } else {
-        data.gain(pred, all_data, values)?.map(
-          |(gain, _, _)| gain
-        )
-      } ;
-      if let Some(gain) = gain {
-        let better = if let Some( (old_gain, _) ) = maybe_qual {
-          old_gain < gain
-        } else { true } ;
-        if better {
-          maybe_qual = Some( (gain, values) )
-        }
-        if gain == 1. { break 'search_qual }
-      }
-    }
-    profile!{ |_profiler| mark "learning", "qual", "gain" }
-
-    Ok( maybe_qual )
-  }
-
-  /// Gets the best qualifier if any.
-  ///
-  /// The `simple` flag forces to use simple, unclassified-agnostic gain.
-  pub fn get_best_qualifier<
-    'a, Key: Send,
-    I: IntoIterator<Item = (Key, & 'a mut QualValues)>
-  >(
-    profiler: & Profiler, all_data: & Data,
-    pred: PrdIdx, data: & CData, quals: I,
-    used_quals: & mut HConSet<Term>,
-    simple: bool
-  ) -> Res< Option< (f64, & 'a mut QualValues) > > {
-    if conf.ice.gain_threads == 1 {
-      match Self::get_best_qualifier_seq(
-        profiler, all_data, pred, data, quals, simple
-      ) {
-        Ok( Some( (gain, qual) ) ) => {
-          let _ = used_quals.insert( qual.qual.clone() ) ;
-          Ok( Some( (gain, qual) ) )
-        },
-        res => res,
-      }
-    } else {
-      let quals: Vec<_> = quals.into_iter().collect() ;
-      Self::get_best_qualifier_para(
-        profiler, all_data, pred, data, quals, used_quals, simple
-      )
-    }
-  }
-
   /// Looks for a qualifier. Requires a mutable `self` in case it needs to
   /// synthesize a qualifier.
   ///
@@ -727,40 +572,40 @@ where Slver: Solver<'kid, Parser> {
   ///
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_qualifier(
-    & mut self, pred: PrdIdx, data: CData, used_quals: & mut HConSet<Term>,
-    simple: bool
+    & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< (Term, CData, CData) > {
 
-    if let Some( (_gain, values) ) = Self::get_best_qualifier(
-      & self._profiler, & self.data, pred, & data, self.qualifiers.of(pred),
-      used_quals, simple
-    ) ? {
-      let (q_data, nq_data) = data.split(values) ;
-      // msg!(
-      //   self.core =>
-      //     "  using qualifier {} | \
-      //     gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-      //     values.qual.string_do(
-      //       & self.instance[pred].sig.index_iter().map(
-      //         |(idx, typ)| ::instance::info::VarInfo {
-      //           name: format!("v_{}", idx), typ: * typ, idx
-      //         }
-      //       ).collect(), |s| s.to_string()
-      //     ).unwrap(),
-      //     _gain,
-      //     q_data.pos.len(),
-      //     q_data.neg.len(),
-      //     q_data.unc.len(),
-      //     nq_data.pos.len(),
-      //     nq_data.neg.len(),
-      //     nq_data.unc.len(),
-      // ) ;
-      return Ok( (values.qual.clone(), q_data, nq_data) )
+    macro_rules! best_qual {
+      (only new: $new:expr) => ({
+        if simple {
+          let res = self.qualifiers.maximize(
+            pred, |qual| data.simple_gain(qual), $new
+          ) ? ;
+          if res.is_none() {
+            let qualifiers = & mut self.qualifiers ;
+            let all_data = & self.data ;
+            qualifiers.maximize(
+              pred, |qual| data.gain(pred, all_data, qual), $new
+            )
+          } else {
+            Ok(res)
+          }
+        } else {
+          let qualifiers = & mut self.qualifiers ;
+          let all_data = & self.data ;
+          qualifiers.maximize(
+            pred, |qual| data.gain(pred, all_data, qual), $new
+          )
+        }
+      }) ;
     }
 
+    if let Some( (qual, _gain) ) = best_qual!(only new: false) ? {
+      let (q_data, nq_data) = data.split(& qual) ;
+      return Ok( (qual, q_data, nq_data) )
+    }
 
     // Reachable only if none of our qualifiers can split the data.
-
     // if_verb!{
     //   let mut msg = format!(
     //     "\ncould not split remaining data for {}:\n", self.instance[pred]
@@ -781,101 +626,37 @@ where Slver: Solver<'kid, Parser> {
     //   msg!{ self => msg } ;
     // }
 
-    if_not_bench!{
-      for map in & self.new_quals {
-        debug_assert!( map.is_empty() )
-      }
-    }
-
     // Synthesize qualifier separating the data.
     profile!{ self tick "learning", "qual", "synthesis" }
-    // if conf.ice.fpice_synth {
-      if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
-        bail!("[bug] cannot synthesize qualifier based on no data")
-      }
 
-      for sample in & data.pos {
-        self.synthesize(sample)
-      }
-      for sample in & data.neg {
-        self.synthesize(sample)
-      }
-      for sample in & data.unc {
-        self.synthesize(sample)
-      }
+    if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
+      bail!("[bug] cannot synthesize qualifier based on no data")
+    }
 
-      profile!{ self "qualifier synthesized" => add self.new_quals.len() }
-    // } else {
-    //   let qual = match (
-    //     data.pos.is_empty(), data.neg.is_empty(), data.unc.is_empty()
-    //   ) {
-    //     (false, false, _) => Self::smt_synthesize(
-    //       & mut self.synth_solver, & data.pos[0], true, & data.neg[0]
-    //     ) ?,
-    //     (false, _, false) => Self::smt_synthesize(
-    //       & mut self.synth_solver, & data.pos[0], true, & data.unc[0]
-    //     ) ?,
-    //     (true, false, false) => Self::smt_synthesize(
-    //       & mut self.synth_solver, & data.neg[0], false, & data.unc[0]
-    //     ) ?,
-    //     (true, true, false) if data.unc.len() > 1 => Self::smt_synthesize(
-    //       & mut self.synth_solver, & data.unc[0], true, & data.unc[1]
-    //     ) ?,
-    //     _ => bail!(
-    //       "[unreachable] illegal status reached on predicate {}:\n\
-    //       cannot synthesize candidate for data\n\
-    //       pos: {:?}\n\
-    //       neg: {:?}\n\
-    //       unc: {:?}\n",
-    //       self.instance[pred], data.pos, data.neg, data.unc
-    //     ),
-    //   } ;
-    //   profile!{ self "qualifier synthesized" => add 1 }
-    //   let arity: Arity = if let Some(max_var) = qual.highest_var() {
-    //     (1 + * max_var).into()
-    //   } else {
-    //     bail!("[bug] trying to add constant qualifier")
-    //   } ;
-    //   self.new_quals[arity].insert( qual.clone(), QualValues::new(qual) ) ;
-    // } ;
+    let mut new = 0 ;
+
+    for sample in & data.pos {
+      new += self.synthesize(sample)
+    }
+    for sample in & data.neg {
+      new += self.synthesize(sample)
+    }
+    for sample in & data.unc {
+      new += self.synthesize(sample)
+    }
+
+    // self.qualifiers.print("") ;
+
     profile!{ self mark "learning", "qual", "synthesis" }
 
+    profile!{ self "qualifier synthesized" => add new }
     
-    let res = if let Some( (_gain, values) ) = Self::get_best_qualifier(
-      & self._profiler, & self.data, pred, & data,
-      self.new_quals.iter_mut().flat_map(
-        |map| map.iter_mut()
-      ),
-      used_quals, simple
-    ) ? {
-      let (q_data, nq_data) = data.split(values) ;
-      // msg!(
-      //   self.core =>
-      //     "  using synthetic qualifier {} | \
-      //     gain: {}, pos: ({},{},{}), neg: ({},{},{})",
-      //     values.qual.string_do(
-      //       & self.instance[pred].sig.index_iter().map(
-      //         |(idx, typ)| ::instance::info::VarInfo {
-      //           name: format!("v_{}", idx), typ: * typ, idx
-      //         }
-      //       ).collect(), |s| s.to_string()
-      //     ).unwrap(),
-      //     _gain,
-      //     q_data.pos.len(),
-      //     q_data.neg.len(),
-      //     q_data.unc.len(),
-      //     nq_data.pos.len(),
-      //     nq_data.neg.len(),
-      //     nq_data.unc.len(),
-      // ) ;
-      Ok( (values.qual.clone(), q_data, nq_data) )
+    if let Some( (qual, _gain) ) = best_qual!(only new: true) ? {
+      let (q_data, nq_data) = data.split(& qual) ;
+      Ok( (qual, q_data, nq_data) )
     } else {
       bail!("[bug] unable to split the data after synthesis...")
-    } ;
-
-    self.qualifiers.add_qual_values(& mut self.new_quals) ? ;
-
-    res
+    }
   }
 
 
@@ -1038,113 +819,104 @@ where Slver: Solver<'kid, Parser> {
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
     & mut self, sample: & HSample
-  ) -> () {
-    let mut previous_int: Vec<(Term, & Int)> = Vec::with_capacity(
+  ) -> usize {
+    let mut previous_int: Vec<& Int> = Vec::with_capacity(
       sample.len()
     ) ;
-    let mut previous_bool: Vec<(Term, bool)> = Vec::with_capacity(
-      sample.len()
-    ) ;
+    let mut sig = VarMap::new() ;
 
-    for (var_idx, val) in sample.index_iter() {
+    let mut count = 0 ;
+    macro_rules! insert {
+      ($term:expr, $sig:expr) => (
+        // println!("  synth: {}", $term) ;
+        if self.qualifiers.insert($term, $sig) {
+          // println!("  is new") ;
+          count += 1
+        }
+      ) ;
+    }
 
-      let arity: Arity = (1 + * var_idx).into() ;
-      let var = term::var(var_idx) ;
+    for val in sample.iter() {
       
       match * val {
-        Val::B(val) => {
-          let term = if val {
-            var.clone()
-          } else {
-            term::not( var.clone() )
-          } ;
-          if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term.clone() )
-          }
-
-          for & (ref pre_var, pre_val) in & previous_bool {
-            let other_term = if pre_val {
-              pre_var.clone()
-            } else {
-              term::not( pre_var.clone() )
-            } ;
-            let and = term::and( vec![ term.clone(), other_term.clone() ] ) ;
-            if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, and )
-            }
-
-          }
-
-          previous_bool.push( (var, val) )
-        },
         
         Val::I(ref val) => {
+          // println!("tick ({})", val) ;
+          sig.clear() ;
+          let var = term::var( sig.next_index() ) ;
+          sig.push(Typ::Int) ;
+
           let val_term = term::int( val.clone() ) ;
           let term = term::app(
             Op::Ge, vec![ var.clone(), val_term.clone() ]
           ) ;
-          if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term )
-          }
-          let term = term::app( Op::Le, vec![ var.clone(), val_term ] ) ;
-          if ! self.qualifiers.is_known(arity, & term) {
-            self.new_quals.insert( arity, term )
-          }
+          insert! { & term, & sig }
+          let term = term::app(
+            Op::Le, vec![ var.clone(), val_term.clone() ]
+          ) ;
+          insert! { & term, & sig }
+          let term = term::app(
+            Op::Eql, vec![ var.clone(), val_term ]
+          ) ;
+          insert! { & term, & sig }
 
 
-          for & (ref pre_var, pre_val) in & previous_int {
+          let other_var = term::var( sig.next_index() ) ;
+          sig.push(Typ::Int) ;
+          for pre_val in & previous_int {
+            // println!("  tick ({})", pre_val) ;
+            let pre_val = * pre_val ;
             if val == pre_val {
-              let eq = term::eq( pre_var.clone(), var.clone() ) ;
-              if ! self.qualifiers.is_known(arity, & eq) {
-                self.new_quals.insert( arity, eq )
-              }
+              let term = term::eq(
+                var.clone(), other_var.clone()
+              ) ;
+              insert!{ & term, & sig }
             }
             if - val == * pre_val {
-              let eq = term::eq(
-                pre_var.clone(), term::sub( vec![var.clone()] )
+              let term = term::eq(
+                var.clone(), term::sub( vec![ other_var.clone() ] )
               ) ;
-              if ! self.qualifiers.is_known(arity, & eq) {
-                self.new_quals.insert( arity, eq )
-              }
+              insert!{ & term, & sig }
             }
+
             let add = term::app(
-              Op::Add, vec![ pre_var.clone(), var.clone() ]
+              Op::Add, vec![ var.clone(), other_var.clone() ]
             ) ;
-            let add_val = term::int( pre_val + val ) ;
+            let add_val = term::int( val + pre_val ) ;
             let term = term::app(
               Op::Ge, vec![ add.clone(), add_val.clone() ]
             ) ;
-            if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
-            }
-            let term = term::app( Op::Le, vec![ add, add_val ] ) ;
-            if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
-            }
-            let sub = term::app(
-              Op::Sub, vec![ pre_var.clone(), var.clone() ]
+            insert!{ & term, & sig }
+            let term = term::app(
+              Op::Le, vec![ add, add_val ]
             ) ;
-            let sub_val = term::int( pre_val - val ) ;
+            insert!{ & term, & sig }
+
+            let sub = term::app(
+              Op::Sub, vec![ var.clone(), other_var.clone() ]
+            ) ;
+            let sub_val = term::int( val - pre_val ) ;
             let term = term::app(
               Op::Ge, vec![ sub.clone(), sub_val.clone() ]
             ) ;
-            if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
-            }
-            let term = term::app( Op::Le, vec![ sub, sub_val ] ) ;
-            if ! self.qualifiers.is_known(arity, & term) {
-              self.new_quals.insert( arity, term )
-            }
+            insert!{ & term, & sig }
+            let term = term::app(
+              Op::Le, vec![ sub, sub_val ]
+            ) ;
+            insert!{ & term, & sig }
           }
 
-          previous_int.push( (var, val) )
+          previous_int.push(val)
         },
+
+        Val::B(_) => (),
 
         Val::N => continue,
 
       }
 
     }
+    count
   }
 
 
@@ -1298,7 +1070,7 @@ impl CData {
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
-  pub fn simple_gain(& self, qual: & mut QualValues) -> Option<f64> {
+  pub fn simple_gain(& self, qual: & mut Qual) -> Res< Option<f64> > {
     // println!("my entropy") ;
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
@@ -1308,39 +1080,41 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0., 0., 0., 0., 0., 0.) ;
     for pos in & self.pos {
-      match qual.eval(pos) {
+      match qual.bool_eval( pos.get() ) ? {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,
-        None => return None,
+        None => return Ok(None),
       }
     }
     for neg in & self.neg {
-      match qual.eval(neg) {
+      match qual.bool_eval( neg.get() ) ? {
         Some(true) => q_neg += 1.,
         Some(false) => nq_neg += 1.,
-        None => return None,
+        None => return Ok(None),
       }
     }
     for unc in & self.unc {
-      match qual.eval(unc) {
+      match qual.bool_eval( unc.get() ) ? {
         Some(true) => q_unc += 1.,
         Some(false) => nq_unc += 1.,
-        None => return None,
+        None => return Ok(None),
       }
     }
     if q_pos + q_neg + q_unc == 0. || nq_pos + nq_neg + nq_unc == 0. {
-      None
+      Ok( None )
     } else {
       let (q_entropy, nq_entropy) = (
         Self::shannon_entropy( q_pos,  q_neg),
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
       // println!("{} | q: {}, nq: {}", my_entropy, q_entropy, nq_entropy) ;
-      Some(
-        my_entropy - (
-          ( (q_pos + q_neg) *  q_entropy / card ) +
-          ( (nq_pos + nq_neg) * nq_entropy / card )
-        )
+      Ok(
+        Some((
+          my_entropy - (
+            ( (q_pos + q_neg) *  q_entropy / card ) +
+            ( (nq_pos + nq_neg) * nq_entropy / card )
+          )
+        ))
       )
     }
   }
@@ -1365,8 +1139,8 @@ impl CData {
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain(
-    & self, pred: PrdIdx, data: & Data, qual: & mut QualValues
-  ) -> Res< Option< (f64, (f64, f64, f64), (f64, f64, f64) ) > > {
+    & self, pred: PrdIdx, data: & Data, qual: & mut Qual
+  ) -> Res< Option<f64> > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
       self.pos.len() + self.neg.len() + self.unc.len()
@@ -1378,7 +1152,7 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0, 0, 0., 0, 0, 0.) ;
     for pos in & self.pos {
-      match qual.eval(pos) {
+      match qual.bool_eval( pos.get() ) ? {
         Some(true) => q_pos += 1,
         Some(false) => nq_pos += 1,
         None => return Ok(None),
@@ -1388,7 +1162,7 @@ impl CData {
     nq_ent.set_pos_count(nq_pos) ;
 
     for neg in & self.neg {
-      match qual.eval(neg) {
+      match qual.bool_eval( neg.get() ) ? {
         Some(true) => q_neg += 1,
         Some(false) => nq_neg += 1,
         None => return Ok(None),
@@ -1398,7 +1172,7 @@ impl CData {
     nq_ent.set_neg_count(nq_neg) ;
 
     for unc in & self.unc {
-      match qual.eval(unc) {
+      match qual.bool_eval( unc.get() ) ? {
         Some(true) => {
           q_unc += 1. ;
           q_ent.add_unc(data, pred, unc) ?
@@ -1443,12 +1217,12 @@ impl CData {
     // println!("gain: {}", gain) ;
     // println!("") ;
 
-    Ok( Some( (gain, (q_pos, q_neg, q_unc), (nq_pos, nq_neg, nq_unc)) ) )
+    Ok( Some(gain) )
   }
 
   /// Splits the data given some qualifier. First is the data for which the
   /// qualifier is true.
-  pub fn split(self, qual: & mut QualValues) -> (Self, Self) {
+  pub fn split(self, qual: & Term) -> (Self, Self) {
     let (mut q, mut nq) = (
       CData {
         pos: Vec::with_capacity( self.pos.len() ),
@@ -1463,21 +1237,33 @@ impl CData {
     ) ;
 
     for pos in self.pos {
-      if qual.eval(& pos).expect("error evaluating qualifier") {
+      if qual.bool_eval( pos.get() ).and_then(
+        |res| res.ok_or_else(
+          || ErrorKind::Msg( "model is not complete enough".into() ).into()
+        )
+      ).expect("error evaluating qualifier") {
         q.pos.push( pos )
       } else {
         nq.pos.push( pos )
       }
     }
     for neg in self.neg {
-      if qual.eval(& neg).expect("error evaluating qualifier") {
+      if qual.bool_eval( neg.get() ).and_then(
+        |res| res.ok_or_else(
+          || ErrorKind::Msg( "model is not complete enough".into() ).into()
+        )
+      ).expect("error evaluating qualifier") {
         q.neg.push( neg )
       } else {
         nq.neg.push( neg )
       }
     }
     for unc in self.unc {
-      if qual.eval(& unc).expect("error evaluating qualifier") {
+      if qual.bool_eval( unc.get() ).and_then(
+        |res| res.ok_or_else(
+          || ErrorKind::Msg( "model is not complete enough".into() ).into()
+        )
+      ).expect("error evaluating qualifier") {
         q.unc.push( unc )
       } else {
         nq.unc.push( unc )

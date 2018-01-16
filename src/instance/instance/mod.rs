@@ -2,6 +2,7 @@
 
 use common::* ;
 use instance::info::* ;
+use learning::ice::quals::Qualifiers ;
 
 pub mod pre_instance ;
 
@@ -1069,7 +1070,7 @@ impl Instance {
   }
 
   /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self, quals: & mut Quals) {
+  pub fn qualifiers(& self, quals: & mut Qualifiers) {
     for clause in & self.clauses {
       // println!(
       //   "  - mining clause\n{}",
@@ -1086,7 +1087,7 @@ impl Instance {
   /// - write an explanation of what actually happens
   /// - and some tests, probably
   pub fn qualifiers_of_clause(
-    & self, clause: & Clause, quals: & mut Quals
+    & self, clause: & Clause, quals: & mut Qualifiers
   ) {
 
     // println!(
@@ -1115,9 +1116,14 @@ impl Instance {
 
       let rhs_opt = rhs_opt.as_ref().map( |& (pred, ref set)| (pred, set) ) ;
 
-      for (_, argss) in clause.lhs_preds.iter().chain( rhs_opt.into_iter() ) {
+      for (pred, argss) in clause.lhs_preds.iter().chain(
+        rhs_opt.into_iter()
+      ) {
+        // println!("lhs_preds ({})", self[* pred]) ;
+        let pred = * pred ;
         debug_assert!( app_quals.is_empty() ) ;
         for args in argss {
+          // println!("  args") ;
           debug_assert!( eq_quals.is_empty() ) ;
 
           // All the *clause var* to *pred var* maps for this predicate
@@ -1126,6 +1132,7 @@ impl Instance {
 
           // println!("  iterating over pred app") ;
           for (pred_var, term) in args.index_iter() {
+            // println!("    arg ({}: {})", pred_var.default_str(), term) ;
             // println!("v_{}: {}", pred_var, term) ;
 
             // Parameter's a variable?
@@ -1159,64 +1166,71 @@ impl Instance {
 
           }
 
+          // println!("    {} eq quals", eq_quals.len()) ;
+
           // println!("  generating var / term equalities") ;
+          // println!("    draining") ;
           for (pred, term) in eq_quals.drain() {
             if let Some((term, _)) = term.subst_total(& map) {
               app_quals.insert( term::eq( term::var(pred), term ) ) ;
             }
           }
 
+          // println!("    {} app quals", app_quals.len()) ;
+
           if ! app_quals.is_empty() {
             let build_conj = app_quals.len() > 1 ;
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
-              if let Some(max_var) = term.highest_var() {
+              // println!("    {}", term) ;
+              if let Some(_) = term.highest_var() {
                 if build_conj { conj.push(term.clone()) }
-                let arity: Arity = (1 + * max_var).into() ;
+                // let arity: Arity = (1 + * max_var).into() ;
                 // println!("- {}", term) ;
-                quals.insert(arity, term) ;
+                quals.insert(& term, & self[pred].sig) ;
               }
             }
+            // println!("    conj") ;
             if build_conj {
               let term = term::and(conj) ;
-              if let Some(max_var) = term.highest_var() {
-                quals.insert( (1 + * max_var).into(), term )
+              if let Some(_) = term.highest_var() {
+                quals.insert(& term, & self[pred].sig) ;
               }
             }
           }
 
-          maps.push(map)
+          maps.push((pred, map))
         }
       }
     }
 
+    // println!("done building maps") ;
+
     // Build the conjunction of atoms.
-    let mut conjs = vec![
-      HConSet::<Term>::with_capacity( clause.lhs_terms.len() + 1 ) ;
-      maps.len()
-    ] ;
+    let mut conjs = Vec::with_capacity( maps.len() ) ;
 
     // Stores the subterms of `lhs_terms` that are disjunctions or
     // conjunctions.
     let mut subterms = Vec::with_capacity(7) ;
 
     // Now look for atoms and try to apply the mappings above.
-    for term in clause.lhs_terms.iter() {
+    for (pred, map) in maps {
+      let mut conj = HConSet::<Term>::with_capacity(
+        clause.lhs_terms.len()
+      ) ;
 
-      let mut cnt = 0 ;
-      for map in & maps {
-        if let Some( (term, true) ) = term.subst_total(map) {
-          if let Some(max_var) = term.highest_var() {
-            let arity: Arity = (1 + * max_var).into() ;
-            conjs[cnt].insert( term.clone() ) ;
-            cnt += 1 ;
+      for term in clause.lhs_terms.iter() {
+
+        if let Some( (term, true) ) = term.subst_total(& map) {
+          if let Some(_) = term.highest_var() {
+            conj.insert( term.clone() ) ;
             let term = if let Some(term) = term.rm_neg() {
               term
             } else { term } ;
-            // println!("- {}", term) ;
-            quals.insert(arity, term)
+            quals.insert(& term, & self[pred].sig) ;
           }
         }
+
         // Is it a disjunction? If yes, add disjuncts as qualifiers.
         debug_assert!( subterms.is_empty() ) ;
         subterms.push(term) ;
@@ -1225,15 +1239,15 @@ impl Instance {
             Some( (Op::Or, terms) ) |
             Some( (Op::And, terms) ) => for term in terms {
               subterms.push(term) ;
-              if let Some( (qual, true) ) = term.subst_total(map) {
-                if let Some(max_var) = qual.highest_var() {
-                  let arity: Arity = (1 + * max_var).into() ;
+              if let Some( (qual, true) ) = term.subst_total(& map) {
+                if let Some(_) = qual.highest_var() {
+                  // let arity: Arity = (1 + * max_var).into() ;
                   let qual = if let Some(qual) = qual.rm_neg() {
                     qual
                   } else {
                     qual
                   } ;
-                  quals.insert(arity, qual)
+                  quals.insert(& qual, & self[pred].sig) ;
                 }
               }
             },
@@ -1242,15 +1256,14 @@ impl Instance {
         }
       }
 
+      conjs.push((pred, conj))
     }
 
-    for conj in conjs {
+    for (pred, conj) in conjs {
       if conj.len() > 1 {
         let term = term::and( conj.into_iter().collect() ) ;
-        // println!("- {}", term) ;
-        if let Some(max_var) = term.highest_var() {
-          let arity: Arity = (1 + * max_var).into() ;
-          quals.insert( arity, term )
+        if let Some(_) = term.highest_var() {
+          quals.insert(& term, & self[pred].sig) ;
         }
       }
     }

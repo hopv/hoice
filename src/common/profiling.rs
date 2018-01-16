@@ -89,7 +89,7 @@ impl ProfileTree {
   /// Iterator on the tree.
   ///
   /// Scopes are guaranteed to follow the topological order.
-  pub fn iter<F>(& self, f: F)
+  pub fn iter<F>(& self, f: F, set_sum: & [& 'static str])
   where F: Fn(& [& 'static str], & Duration, Duration) {
     if let Some(duration) = self.duration.as_ref() {
       let sub_duration = self.branches.iter().fold(
@@ -120,13 +120,17 @@ impl ProfileTree {
         if let Some(duration) = profile.duration.as_ref() {
           f(& this_scope, duration, sub_duration)
         } else {
-          let mut scope_str = "".to_string() ;
-          for s in & this_scope {
-            scope_str.push_str("::") ; scope_str.push_str(s)
-          }
-          warn!{
-            "no duration for scope {}, setting to sum of branches",
-            conf.emph(& scope_str)
+          if set_sum.iter().any(
+            |scope| s == * scope
+          ) {
+            let mut scope_str = "".to_string() ;
+            for s in & this_scope {
+              scope_str.push_str("::") ; scope_str.push_str(s)
+            }
+            warn!{
+              "no duration for scope {}, setting to sum of branches",
+              conf.emph(& scope_str)
+            }
           }
           f(& this_scope, & sub_duration, sub_duration.clone())
         }
@@ -147,11 +151,11 @@ pub type Stats = HashMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// Debug print (multi-line).
-  fn print(& self) ;
+  fn print(& self, & [ & 'static str ]) ;
 }
 static STAT_LEN: usize = 40 ;
 impl CanPrint for Stats {
-  fn print(& self) {
+  fn print(& self, _: & [ & 'static str ]) {
     let mut stats: Vec<_> = self.iter().collect() ;
     stats.sort_unstable() ;
     for (stat, count) in stats {
@@ -166,7 +170,7 @@ impl CanPrint for Stats {
   }
 }
 impl CanPrint for ProfileTree {
-  fn print(& self) {
+  fn print(& self, set_sum: & [ & 'static str ]) {
     self.iter(
       |scope, time, sub_time| if let Some(last) = scope.last() {
         println!(
@@ -186,7 +190,7 @@ impl CanPrint for ProfileTree {
             "".into()
           }
         )
-      }
+      }, set_sum
     )
   }
 }

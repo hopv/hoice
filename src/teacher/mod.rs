@@ -296,10 +296,10 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           println!(
             "; received stats from {}", conf.emph( & self.learners[idx].1 )
           ) ;
-          tree.print() ;
+          tree.print( & [] ) ;
           if ! stats.is_empty() {
             println!("; stats:") ;
-            stats.print()
+            stats.print( & [ "data" ] )
           }
           println!("")
         },
