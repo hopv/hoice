@@ -648,8 +648,8 @@ impl RTerm {
               continue
             },
             Op::Sub => (Op::Add, false),
-            Op::Div => (Op::Mul, false),
-            Op::Mul => (Op::Div, true),
+            Op::IDiv => (Op::Mul, false),
+            Op::Mul => (Op::IDiv, true),
             _ => return None,
           } ;
           if args.len() != 2 { return None }
@@ -1916,7 +1916,9 @@ pub enum Op {
   /// Multiplication.
   Mul,
   /// Division.
-  Div,
+  IDiv,
+  /// Remainder.
+  Rem,
   /// Modulo.
   Mod,
   /// Greater than.
@@ -1945,7 +1947,8 @@ impl Op {
   pub fn as_str(& self) -> & str {
     use self::Op::* ;
     match * self {
-      Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
+      Add => "+", Sub => "-", Mul => "*",
+      IDiv => "div", Rem => "rem", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
     }
@@ -2001,7 +2004,7 @@ impl Op {
         }
         if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
       },
-      Div => {
+      IDiv => {
         if args.len() != 2 {
           bail!("unexpected division over {} numbers", args.len())
         }
@@ -2020,9 +2023,9 @@ impl Op {
         Ok( Val::I(res) )
       },
 
-      Mod => if args.len() != 2 {
+      Rem => if args.len() != 2 {
         bail!(
-          format!("evaluating `Div` with {} (!= 2) arguments", args.len())
+          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
         )
       } else {
         use num::Integer ;
@@ -2031,7 +2034,28 @@ impl Op {
           Ok( 0.into() )
         } else {
           let a = try_val!( int args.pop().unwrap() ) ;
-          Ok( Val::I( a.mod_floor(& b) ) )
+          Ok( Val::I( a.div_rem(& b).1 ) )
+        }
+      },
+
+      Mod => if args.len() != 2 {
+        bail!(
+          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
+        )
+      } else {
+        use num::{ Integer, Signed } ;
+        let b = try_val!( int args.pop().unwrap() ) ;
+        if b == 1.into() {
+          Ok( 0.into() )
+        } else {
+          let a = try_val!( int args.pop().unwrap() ) ;
+          let res = a.mod_floor(& b) ;
+          let res = if res.is_negative() {
+            b.abs() - res.abs()
+          } else {
+            res
+          } ;
+          Ok( Val::I( res ) )
         }
       },
 

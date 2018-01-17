@@ -51,7 +51,7 @@ fn cst_mul() {
 fn cst_div() {
   let c_1 = int(7) ;
   let c_2 = int(3) ;
-  let div = term::app( Op::Div, vec![ c_1, c_2 ] ) ;
+  let div = term::app( Op::IDiv, vec![ c_1, c_2 ] ) ;
   let model = model!() ;
   assert_eval!(
     int model => div, 2

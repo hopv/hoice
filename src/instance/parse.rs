@@ -755,6 +755,24 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.txen(pos_1, 'i') ;
         None
       },
+      Some( (pos_1, 'm') ) => if self.tag_opt("od") {
+        Some(Op::Mod)
+      } else {
+        self.txen(pos_1, 'm') ;
+        None
+      },
+      Some( (pos_1, 'r') ) => if self.tag_opt("em") {
+        Some(Op::Rem)
+      } else {
+        self.txen(pos_1, 'r') ;
+        None
+      },
+      Some( (pos_1, 'd') ) => if self.tag_opt("iv") {
+        Some(Op::IDiv)
+      } else {
+        self.txen(pos_1, 'd') ;
+        None
+      },
       Some( (_, '=') ) => if self.char_opt('>') {
         Some(Op::Impl)
       } else {
@@ -769,18 +787,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Some(Op::Le)
       } else {
         Some(Op::Lt)
-      },
-      Some( (pos_1, 'm') ) => if self.tag_opt("od") {
-        Some(Op::Mod)
-      } else {
-        self.txen(pos_1, 'm') ;
-        None
-      },
-      Some( (pos_1, 'd') ) => if self.tag_opt("iv") {
-        Some(Op::Div)
-      } else {
-        self.txen(pos_1, 'd') ;
-        None
       },
       Some( (_, '+') ) => Some(Op::Add),
       Some( (_, '-') ) => Some(Op::Sub),

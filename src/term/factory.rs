@@ -190,7 +190,7 @@ pub fn mul(kids: Vec<Term>) -> Term {
 /// Creates a division.
 #[inline(always)]
 pub fn div(kids: Vec<Term>) -> Term {
-  app(Op::Div, kids)
+  app(Op::IDiv, kids)
 }
 /// Creates a modulo application.
 #[inline(always)]
@@ -556,7 +556,7 @@ fn normalize_app(
       }
     },
 
-    Op::Div => {
+    Op::IDiv => {
       if args.len() == 2 {
         if let Some(i) = args[0].int() {
           if i.is_zero() {
