@@ -278,6 +278,13 @@ impl VarIndexed<Term> for VarMap<VarIdx> {
     }
   }
 }
+impl VarIndexed<Term> for VarHMap<VarIdx> {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    self.get(& var).map(
+      |v| term::var(* v)
+    )
+  }
+}
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
   fn var_get(& self, var: VarIdx) -> Option<Elem> {

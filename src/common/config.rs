@@ -433,6 +433,8 @@ pub struct IceConf {
   /// Biases qualifier selection based on the predicates the qualifier was
   /// created for.
   pub qual_bias: bool,
+  /// Activates qualifier printing.
+  pub qual_print: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -471,7 +473,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(
+      ).default_value("off").takes_value(
         true
       ).hidden(true).number_of_values(1)
 
@@ -487,6 +489,18 @@ impl IceConf {
         true
       ).hidden(true).number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("qual_print").long("--qual_print").help(
+        "(de)activates qualifier printing"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1)
+
     )
   }
 
@@ -496,8 +510,9 @@ impl IceConf {
     let sort_preds = bool_of_matches(matches, "sort_preds") ;
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
+    let qual_print = bool_of_matches(matches, "qual_print") ;
 
-    IceConf { simple_gain, sort_preds, complete, qual_bias }
+    IceConf { simple_gain, sort_preds, complete, qual_bias, qual_print }
   }
 }
 

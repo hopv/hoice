@@ -1069,10 +1069,11 @@ impl Instance {
   }
 
   /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self, quals: & mut Qualifiers) {
+  pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
     for clause in & self.clauses {
-      self.qualifiers_of_clause(clause, quals)
+      self.qualifiers_of_clause(clause, quals) ?
     }
+    Ok(())
   }
 
   /// Extracts some qualifiers from a clause.
@@ -1083,7 +1084,7 @@ impl Instance {
   /// - and some tests, probably
   pub fn qualifiers_of_clause(
     & self, clause: & Clause, quals: & mut Qualifiers
-  ) {
+  ) -> Res<()> {
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;
 
@@ -1159,12 +1160,12 @@ impl Instance {
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
               if build_conj { conj.push(term.clone()) }
-              quals.insert(& term, pred) ;
+              quals.insert(& term, pred) ? ;
             }
 
             if build_conj {
               let term = term::and(conj) ;
-              quals.insert(& term, pred) ;
+              quals.insert(& term, pred) ? ;
               ()
             }
           }
@@ -1194,7 +1195,7 @@ impl Instance {
           let term = if let Some(term) = term.rm_neg() {
             term
           } else { term } ;
-          quals.insert(& term, pred) ;
+          quals.insert(& term, pred) ? ;
           ()
         }
 
@@ -1212,7 +1213,7 @@ impl Instance {
                 } else {
                   qual
                 } ;
-                quals.insert(& qual, pred) ;
+                quals.insert(& qual, pred) ? ;
               }
             },
             _ => (),
@@ -1226,10 +1227,12 @@ impl Instance {
     for (pred, conj) in conjs {
       if conj.len() > 1 {
         let term = term::and( conj.into_iter().collect() ) ;
-        quals.insert(& term, pred) ;
+        quals.insert(& term, pred) ? ;
         ()
       }
     }
+
+    Ok(())
 
   }
 

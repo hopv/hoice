@@ -600,6 +600,10 @@ where Slver: Solver<'kid, Parser> {
       }) ;
     }
 
+    if conf.ice.qual_print {
+      self.qualifiers.log()
+    }
+
     if let Some( (qual, _gain) ) = best_qual!(only new: false) ? {
       let (q_data, nq_data) = data.split(& qual) ;
       return Ok( (qual, q_data, nq_data) )
@@ -636,16 +640,14 @@ where Slver: Solver<'kid, Parser> {
     let mut new = 0 ;
 
     for sample in & data.pos {
-      new += self.synthesize(pred, sample)
+      new += self.synthesize(pred, sample) ?
     }
     for sample in & data.neg {
-      new += self.synthesize(pred, sample)
+      new += self.synthesize(pred, sample) ?
     }
     for sample in & data.unc {
-      new += self.synthesize(pred, sample)
+      new += self.synthesize(pred, sample) ?
     }
-
-    // self.qualifiers.print("") ;
 
     profile!{ self mark "learning", "qual", "synthesis" }
 
@@ -819,7 +821,7 @@ where Slver: Solver<'kid, Parser> {
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
     & mut self, pred: PrdIdx, sample: & HSample
-  ) -> usize {
+  ) -> Res<usize> {
     let mut previous_int: Vec<(VarIdx, & Int)> = Vec::with_capacity(
       sample.len()
     ) ;
@@ -828,7 +830,7 @@ where Slver: Solver<'kid, Parser> {
     macro_rules! insert {
       ($term:expr) => (
         // println!("synthesizing {}", $term) ;
-        if self.qualifiers.insert($term, pred) {
+        if self.qualifiers.insert($term, pred) ? {
           // println!("  new") ;
           count += 1
         } else {
@@ -909,110 +911,7 @@ where Slver: Solver<'kid, Parser> {
       }
 
     }
-    count
-  }
-
-
-  /// Synthesizes a term representing a demi-space separating two points in an
-  /// integer multidimensional space.
-  ///
-  /// Parameter `pos` indicates whether the demi-space should include `s_1`
-  /// (`pos`) or not (`! pos`). The `solver` parameter should be the
-  /// `synth_solver`. It is passed explicitely here (for now) for ownership
-  /// reasons.
-  ///
-  /// The two points are given as
-  /// [`HSample`s](../../common/data/type.HSample.html). These two points must
-  /// come from the same signature, *i.e.* they are samples for the same
-  /// predicate.
-  ///
-  /// # How it works
-  ///
-  /// If the two points have `n` integers in them, then the demi-space
-  /// synthesized is of the form `c_1 * x_1 + ... + c_n * x_n + c >= 0`.
-  ///
-  /// It is constructed with the `synth_solver` in one `check-sat`.
-  ///
-  /// # Assumptions
-  ///
-  /// The two samples should be such that the vectors obtained by keeping only
-  /// their integers composants are different.
-  ///
-  /// # TO DO
-  ///
-  /// - package the `synth_solver` with an instance and define `synthesize` on
-  ///   that structure to avoid this ugly function (check no deadlock occurs)
-  pub fn smt_synthesize(
-    solver: & mut Slver, s_1: & HSample, pos: bool, s_2: & HSample
-  ) -> Res<Term> {
-    debug_assert!( s_1.len() == s_2.len() ) ;
-    let mut p_1 = Vec::with_capacity( s_1.len() ) ;
-    let mut p_2 = p_1.clone() ;
-    let mut coefs = Vec::with_capacity( s_1.len() ) ;
-    let mut coef: VarIdx = 0.into() ;
-
-    for val in s_1.get() {
-      if let Val::I(ref i) = * val {
-        coefs.push(coef) ;
-        p_1.push( i.clone() )
-      }
-      coef.inc()
-    }
-    for val in s_2.get() {
-      if let Val::I(ref i) = * val {
-        p_2.push( i.clone() )
-      }
-    }
-    debug_assert!( p_1.len() == p_2.len() ) ;
-    debug_assert!({
-      let mut diff = false ;
-      for (v_1, v_2) in p_1.iter().zip(& p_2) {
-        diff = diff || (v_1 != v_2)
-      }
-      diff
-    }) ;
-
-    let cst = "v" ;
-
-    let constraint_1 = ValCoefWrap::new(& p_1, & coefs, cst, pos) ;
-    let constraint_2 = ValCoefWrap::new(& p_2, & coefs, cst, ! pos) ;
-
-    solver.reset() ? ;
-    // Declare coefs and constant.
-    solver.declare_const(& cst, & Typ::Int) ? ;
-    for coef in & coefs {
-      solver.declare_const(coef, & Typ::Int) ?
-    }
-    solver.assert( & constraint_1 ) ? ;
-    solver.assert( & constraint_2 ) ? ;
-
-    let model = if solver.check_sat() ? {
-      solver.get_model_const() ?
-    } else {
-      bail!("[unreachable] could not separate points {:?} and {:?}", p_1, p_2)
-    } ;
-
-    let mut sum = Vec::with_capacity( coefs.len() ) ;
-    for (var_opt, (), val) in model {
-      use num::Zero ;
-      if ! val.is_zero() {
-        let val = term::int(val) ;
-        if let Some(var) = var_opt {
-          let var = term::var(var) ;
-          sum.push(
-            term::app( Op::Mul, vec![val, var] )
-          )
-        } else {
-          sum.push(val)
-        }
-      }
-    }
-    let lhs = term::app( Op::Add, sum ) ;
-    let rhs = term::zero() ;
-
-    let term = term::ge(lhs, rhs) ;
-
-    Ok(term)
+    Ok(count)
   }
 }
 

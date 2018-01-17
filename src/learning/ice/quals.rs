@@ -574,6 +574,9 @@ pub struct Qualifiers {
   pub classes: HConMap< HConsed<VarMap<Typ>>, QualClass >,
   /// Arc to the instance.
   pub instance: Arc<Instance>,
+  /// Maps predicate variables to alpha-renamed qualifier variables. Factored
+  /// to avoid allocation.
+  alpha_map: VarHMap<VarIdx>,
 }
 
 impl Qualifiers {
@@ -614,9 +617,12 @@ impl Qualifiers {
       factory: Factory::with_capacity(17),
       classes: HConMap::with_capacity(class_capa),
       instance: instance.clone(),
+      alpha_map: VarHMap::with_capacity(7)
     } ;
 
-    instance.qualifiers(& mut quals) ;
+    instance.qualifiers(& mut quals).chain_err(
+      || "during qualifier mining"
+    ) ? ;
 
     quals.check().chain_err( || "after creation" ) ? ;
 
@@ -718,101 +724,57 @@ impl Qualifiers {
   /// for the first time.
   pub fn insert(
     & mut self, term: & Term, pred: PrdIdx
-  ) -> bool {
+  ) -> Res<bool> {
     let pred_sig = & self.instance[pred].sig ;
     // This function basically renames the variables that appear in `term` so
-    // that they are numbered in the order they appear in. While doing so, it
-    // builds the following.
+    // that their numbering follows the order on their types. That is, in the
+    // renamed term, `forall v_i, v_j. ( i < j => typ(v_i) <= typ(v_j) )`.
+    //
+    // This guarantees that two qualifiers that can have the same signature
+    // will have the same signature.
+
+    let mut vars = Vec::with_capacity( pred_sig.len() ) ;
+    for var in term::vars( term ) {
+      vars.push(var)
+    }
+
+    if vars.is_empty() {
+      // No variables, don't care about this term.
+      return Ok(false)
+    }
+
+    vars.sort_unstable_by(
+      |v_i, v_j| pred_sig[* v_i].cmp( & pred_sig[* v_j] )
+    ) ;
+
+    // This will be used for variable substitution.
+    self.alpha_map.clear() ;
 
     // Signature of the alpha-renamed term.
-    let mut sig = VarMap::with_capacity( pred_sig.len() ) ;
+    let mut sig = VarMap::with_capacity( vars.len() ) ;
     // Map from variables of the alpha-renamed term to variables of `pred_sig`.
-    let mut transform = VarMap::with_capacity( pred_sig.len() ) ;
-    // Map from variables in `pred_sig` to variables of the alpha-renamed term.
-    let mut map = VarHMap::with_capacity( pred_sig.len() ) ;
+    let mut transform = VarMap::with_capacity( vars.len() ) ;
 
-    // Stack used when going down applications. Elements of the stack are
-    // triplets composed of
-    //
-    // - `op`: the operator of the application,
-    // - `lft`: list of kids that have aready been handled,
-    // - `rgt`: iterator over the kids, contains only those that haven't been
-    //   handled yet.
-    let mut stack: Vec<( Op, Vec<Term>, _ )> = Vec::with_capacity(7) ;
-    // Term we're going down into.
-    let mut curr = term ;
-
-    let term = 'top_loop: loop {
-
-      // Go down.
-      let mut to_propagate_upward = match * * curr {
-
-        // Variable, rename if necessary and move on.
-        RTerm::Var(old_idx) => {
-          use std::collections::hash_map::Entry ;
-          let idx = match map.entry(old_idx) {
-            Entry::Occupied(entry) => * entry.get(),
-            Entry::Vacant(entry) => {
-              let idx = sig.next_index() ;
-              entry.insert(idx) ;
-              sig.push( pred_sig[old_idx] ) ;
-              transform.push(old_idx) ;
-              idx
-            },
-          } ;
-          term::var(idx)
-        },
-
-        // Constants, nothing to do.
-        RTerm::Int(_) => curr.clone(),
-        RTerm::Bool(_) => curr.clone(),
-
-        // Application, we're going down.
-        //
-        // Push on stack, go down the first argument (update `curr`).
-        RTerm::App { op, ref args } => {
-          let mut args_iter = args.iter() ;
-          if let Some(next) = args_iter.next() {
-            curr = next ;
-          } else {
-            panic!("empty operator application")
-          }
-          stack.push( (op, Vec::with_capacity( args.len() ), args_iter) ) ;
-          continue 'top_loop
-        },
-
-      } ;
-
-      // Go up, working on `to_propagate_upward`.
-      'go_up: loop {
-
-        if let Some( (op, mut lft, mut rgt) ) = stack.pop() {
-          // There something on the stack, update `lft`.
-          lft.push(to_propagate_upward) ;
-          if let Some(next) = rgt.next() {
-            // There still terms to go down into, push back the frame on the
-            // stack and go down `next`.
-            stack.push( (op, lft, rgt) ) ;
-            curr = next ;
-            continue 'top_loop
-          } else {
-            // Nothing left for this application, go up the modified
-            // application.
-            to_propagate_upward = term::app(op, lft) ;
-          }
-        } else {
-          // Nothing on the stack, we're done.
-          break 'top_loop to_propagate_upward
-        }
-
-      }
-    } ;
-
-    if sig.is_empty() {
-      // No variables, don't care about this term.
-      return false
+    for var in vars {
+      // Next qualifier variable index...
+      let q_var = sig.next_index() ;
+      // ...maps to `var`,
+      transform.push(var) ;
+      // ...has its type,
+      sig.push( pred_sig[var] ) ;
+      // ...substitution will change `var` to `q_var`.
+      let prev = self.alpha_map.insert(var, q_var) ;
+      debug_assert_eq! { prev, None }
     }
-    sig.shrink_to_fit() ;
+
+    debug_assert_eq! { sig.len(), self.alpha_map.len() }
+    debug_assert_eq! { sig.len(), transform.len() }
+
+    let term = if let Some((term, _)) = term.subst_total(& self.alpha_map) {
+      term
+    } else {
+      bail!("qualifier total substitution failed")
+    } ;
 
     // Remove term's negation if any.
     let term = if let Some(term) = term.rm_neg() {
@@ -827,8 +789,10 @@ impl Qualifiers {
     // Insert in the classes.
     use std::collections::hash_map::Entry ;
     match self.classes.entry(sig) {
-      Entry::Occupied(entry) => entry.into_mut().insert(
-        term, pred, pred_sig, transform
+      Entry::Occupied(entry) => Ok(
+        entry.into_mut().insert(
+          term, pred, pred_sig, transform
+        )
       ),
       Entry::Vacant(entry) => {
         let transforms = SigTransforms::new(
@@ -836,18 +800,21 @@ impl Qualifiers {
         ) ;
 
         if let Some(class) = QualClass::new(transforms, 107) {
-          entry.insert(class).insert(
-            term, pred, pred_sig, transform
+          Ok(
+            entry.insert(class).insert(
+              term, pred, pred_sig, transform
+            )
           )
         } else {
-          false
+          Ok(false)
         }
       },
     }
   }
 
-  /// Prints itself.
-  pub fn print(& self, pref: & str) {
+  /// Logs itself.
+  pub fn log(& self) {
+    let pref = ";" ;
     println!("{}quals {{", pref) ;
     for (sig, class) in & self.classes {
       let mut s = String::new() ;
