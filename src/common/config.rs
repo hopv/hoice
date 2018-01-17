@@ -125,7 +125,7 @@ impl SmtConf {
 
       Arg::with_name("z3_cmd").long("--z3").help(
         "sets the command used to call z3"
-      ).default_value("z3").takes_value(true)// .number_of_values(1)
+      ).default_value("z3").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -135,7 +135,7 @@ impl SmtConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     )
   }
@@ -270,8 +270,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -281,8 +282,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -292,8 +294,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -303,8 +306,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -314,8 +318,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -325,8 +330,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -337,8 +343,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -348,8 +355,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -359,8 +367,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
@@ -370,7 +379,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -380,7 +389,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     )
   }
@@ -415,18 +424,15 @@ impl PreprocConf {
 
 /// Ice learner configuration.
 pub struct IceConf {
-  /// Fpice-style synthesis.
-  pub fpice_synth: bool,
-  /// Number of threads used for computing qualifier's gain.
-  pub gain_threads: usize,
-  /// Qualifier decay flag.
-  pub decay: bool,
-  /// Maximum decay above which qualifiers are dropped.
-  pub max_decay: usize,
   /// Ignore unclassified data when computing entropy.
   pub simple_gain: bool,
   /// Sort predicates.
   pub sort_preds: bool,
+  /// Generate complete transformations for qualifiers.
+  pub complete: bool,
+  /// Biases qualifier selection based on the predicates the qualifier was
+  /// created for.
+  pub qual_bias: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -437,36 +443,13 @@ impl IceConf {
   pub fn add_args(app: App) -> App {
     app.arg(
 
-      Arg::with_name("gain_threads").long("--gain_threads").help(
-        "sets the number of threads to use when computing qualifier gains, \
-        0 for auto"
-      ).validator(
-        int_validator
-      ).value_name(
-        "INT"
-      ).default_value("1").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    // ).arg(
-
-    //   Arg::with_name("fpice_synth").long("--fpice_synth").help(
-    //     "(de)activates fpice-style synthesis"
-    //   ).validator(
-    //     bool_validator
-    //   ).value_name(
-    //     bool_format
-    //   ).default_value("on").takes_value(true)// .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("decay").long("--decay").short("-d").help(
-        "(de)activates qualifier decay (forgetting unused qualifiers)"
+      Arg::with_name("simple_gain").long("--simple_gain").help(
+        "ignore unclassified data when computing entropy"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -476,49 +459,45 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("no").takes_value(true).hidden(
+        true
+      ).number_of_values(1)
 
     ).arg(
 
-      Arg::with_name("max_decay").long("--max_decay").help(
-        "maximum decay above which qualifiers are dropped"
-      ).validator(
-        int_validator
-      ).value_name(
-        "INT"
-      ).default_value("50").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("simple_gain").long("--simple_gain").help(
-        "ignore unclassified data when computing entropy"
+      Arg::with_name("complete").long("--complete_quals").help(
+        "generate complete transformations for qualifiers"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(
+        true
+      ).hidden(true).number_of_values(1)
+
+    ).arg(
+
+      Arg::with_name("qual_bias").long("--qual_bias").help(
+        "predicate-based bias for qualifier section"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).hidden(true).number_of_values(1)
 
     )
   }
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let fpice_synth = true ;
-    // let fpice_synth = bool_of_matches(matches, "fpice_synth") ;
-
-    let gain_threads = int_of_matches(matches, "gain_threads") ;
-
-    let decay = bool_of_matches(matches, "decay") ;
-    let max_decay = int_of_matches(matches, "max_decay") ;
-
     let simple_gain = bool_of_matches(matches, "simple_gain") ;
     let sort_preds = bool_of_matches(matches, "sort_preds") ;
+    let complete = bool_of_matches(matches, "complete") ;
+    let qual_bias = bool_of_matches(matches, "qual_bias") ;
 
-    IceConf {
-      fpice_synth, gain_threads, decay, max_decay, simple_gain, sort_preds
-    }
+    IceConf { simple_gain, sort_preds, complete, qual_bias }
   }
 }
 
@@ -547,7 +526,7 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     )
   }
@@ -714,15 +693,15 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).number_of_values(1)
 
     ).arg(
 
       Arg::with_name("out_dir").long("--out_dir").short("-o").help(
-        "sets the output directory (used only by smt logging currently)"
+        "sets the output directory"
       ).value_name(
         "DIR"
-      ).default_value("hoice_out").takes_value(true)// .number_of_values(1)
+      ).default_value("hoice_out").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -732,7 +711,7 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -755,7 +734,7 @@ impl Config {
         "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
-      ).takes_value(true)// .number_of_values(1)
+      ).takes_value(true).number_of_values(1)
 
     ).arg(
 
@@ -765,30 +744,13 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(true).number_of_values(1)
 
     )
   }
 
   /// Initializes stuff.
   pub fn init(& self) -> Res<()> {
-    // Setup the rayon thread pool.
-    if self.ice.gain_threads > 1 {
-      use rayon::{ Configuration, initialize } ;
-      initialize(
-        Configuration::new().num_threads(
-          self.ice.gain_threads
-        ).thread_name(
-          |i| format!("hoice_gain_{}", i)
-        )
-      ).map_err(
-        |e| Error::from_kind(
-          ErrorKind::Msg( format!("{}", e) )
-        )
-      ).chain_err(
-        || "during rayon initialization"
-      ) ?
-    }
     // Are we gonna use the output directory?
     if self.solver.need_out_dir()
     || self.preproc.need_out_dir()

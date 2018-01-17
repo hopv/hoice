@@ -22,7 +22,6 @@ extern crate regex ;
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;
-extern crate rayon ;
 extern crate either ;
 extern crate rand ;
 extern crate isatty ;

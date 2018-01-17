@@ -88,45 +88,21 @@ pub type QSig = VarMap<Typ> ;
 
 
 
-/// Contains the sets of `QArgs` on which a qualifier is true/false/unknown.
-pub struct EvalCache {
-  /// Indicates whether the qualifier is considered a new one.
+/// Information about a qualifier.
+pub struct QInfo {
+  /// Indicates whether the qualifier has been evaluated at least once.
   pub is_new: bool,
-  /// `QArgs` for which the qualifier is true.
-  pub tru_set: HConSet<QArgs>,
-  /// `QArgs` for which the qualifier is false.
-  pub fls_set: HConSet<QArgs>,
-  /// `QArgs` fro which the value of the qualifier is unknown.
-  pub unk_set: HConSet<QArgs>,
+  /// Predicates the qualifier was created for.
+  pub preds: PrdSet,
 }
-impl EvalCache {
+impl QInfo {
   /// Constructor.
-  pub fn new(capa: usize) -> Self {
-    EvalCache {
+  pub fn new(pred: PrdIdx) -> Self {
+    let mut preds = PrdSet::with_capacity(3) ;
+    preds.insert(pred) ;
+    QInfo {
       is_new: true,
-      tru_set: HConSet::with_capacity(capa),
-      fls_set: HConSet::with_capacity(capa),
-      unk_set: HConSet::with_capacity(capa),
-    }
-  }
-
-  /// Retrieves a value from the cache or updates it.
-  pub fn get(& mut self, qual: & Term, args: & QArgs) -> Res< Option<bool> > {
-    if self.tru_set.contains(args) {
-      Ok( Some(true) )
-    } else if self.fls_set.contains(args) {
-      Ok( Some(false) )
-    } else if self.unk_set.contains(args) {
-      Ok( None )
-    } else {
-      let res = qual.bool_eval( args.get() ) ? ;
-      let is_new = match res {
-        Some(true) => & mut self.tru_set,
-        Some(false) => & mut self.fls_set,
-        None => & mut self.unk_set,
-      }.insert( args.clone() ) ;
-      debug_assert! { is_new }
-      Ok(res)
+      preds,
     }
   }
 }
@@ -252,6 +228,9 @@ impl SigTransforms {
           debug_assert! { prev.is_none() }
           continue 'all_preds
         })
+      }
+      if ! conf.ice.complete {
+        partial_and_continue!()
       }
       let mut res: u64 = 1 ;
       for typ in qual_sig {
@@ -435,12 +414,13 @@ impl SigTransforms {
 pub struct QualClass {
   /// Signature transformations.
   pub transforms: SigTransforms,
-  /// Qualifiers: map from terms to `EvalCache`.
-  pub quals: HConMap<Term, EvalCache>,
+  /// Qualifiers: map from terms to their info.
+  pub quals: HConMap<Term, QInfo>,
 }
 
 impl QualClass {
   /// Checks consistency.
+  #[inline]
   #[cfg( not(debug_assertions) )]
   pub fn check(& self) -> Res<()> { Ok(()) }
   #[cfg(debug_assertions)]
@@ -487,25 +467,36 @@ impl QualClass {
   ///
   /// Tricky arguments:
   ///
-  /// - `hint_sig`: (predicate) signature this new term was extracted from,
+  /// - `pred_sig`: (predicate) signature this new term was extracted from,
   /// - `hint_map`: map from term's variables to predicate's.
   ///
-  /// These two hints are only useful when the transforms for `hint_sig` are
+  /// These two hints are only useful when the transforms for `pred_sig` are
   /// stored in a partial manner. In this case, `hint_map` is added to the list
   /// of partial maps.
   pub fn insert(
-    & mut self, term: Term,
-    hint_sig: & VarMap<Typ>, hint_map: VarMap<VarIdx>
+    & mut self, term: Term, pred: PrdIdx,
+    pred_sig: & VarMap<Typ>, hint_map: VarMap<VarIdx>
   ) -> bool {
     use std::collections::hash_map::Entry ;
-    if let Some(transforms) = self.transforms.get_mut(hint_sig) {
+    if let Some(transforms) = self.transforms.get_mut(pred_sig) {
       transforms.insert(hint_map)
+    } else {
+      panic!("unknown predicate signature {}", pred_sig)
     }
     if ! self.quals.contains_key( & term::not( term.clone() ) ) {
       match self.quals.entry(term) {
-        Entry::Occupied(_) => false,
+        Entry::Occupied(entry) => {
+          let entry = entry.into_mut() ;
+          let is_new = entry.preds.insert(pred) ;
+          if is_new {
+            // Qualifier is new **for this predicate**.
+            entry.is_new = true
+          }
+          // But qualifier is not new in general.
+          false
+        },
         Entry::Vacant(entry) => {
-          entry.insert( EvalCache::new(107) ) ;
+          entry.insert( QInfo::new(pred) ) ;
           true
         },
       }
@@ -536,6 +527,7 @@ pub struct Qual<'a> {
 }
 impl<'a> Qual<'a> {
   /// Checks consistency.
+  #[inline]
   #[cfg( not(debug_assertions) )]
   pub fn check(& self) -> Res<()> { Ok(()) }
   #[cfg(debug_assertions)]
@@ -582,12 +574,11 @@ pub struct Qualifiers {
   pub classes: HConMap< HConsed<VarMap<Typ>>, QualClass >,
   /// Arc to the instance.
   pub instance: Arc<Instance>,
-  // /// Qualifier blacklist.
-  // pub blacklist: HConSet<Term>,
 }
 
 impl Qualifiers {
   /// Checks consistency.
+  #[inline]
   #[cfg( not(debug_assertions) )]
   pub fn check(& self) -> Res<()> { Ok(()) }
   #[cfg(debug_assertions)]
@@ -623,49 +614,9 @@ impl Qualifiers {
       factory: Factory::with_capacity(17),
       classes: HConMap::with_capacity(class_capa),
       instance: instance.clone(),
-      // blacklist: HConSet::with_capacity(107),
     } ;
 
-    // let mut to_inspect = Vec::with_capacity(17) ;
-
-    // println!("extracting from clauses...") ;
-
-    // for clause in instance.clauses() {
-    //   for term in clause.lhs_terms() {
-    //     debug_assert! { to_inspect.is_empty() }
-        
-    //     to_inspect.push(term) ;
-
-    //     while let Some(mut term) = to_inspect.pop() {
-    //       quals.insert(term, clause.vars()) ;
-    //       let mut keep_going = true ;
-    //       while keep_going {
-    //         keep_going = false ;
-    //         match term.app_inspect() {
-    //           Some((Op::And, kids)) |
-    //           Some((Op::Or, kids)) |
-    //           Some((Op::Impl, kids)) => for kid in kids {
-    //             to_inspect.push(kid)
-    //           },
-    //           Some((Op::Ite, kids)) => to_inspect.push( & kids[0] ),
-    //           Some((Op::Not, kids)) => {
-    //             term = & kids[0] ;
-    //             keep_going = true
-    //           },
-    //           Some((Op::Eql, kids))
-    //           if kids[0].has_type_bool(clause.vars()) => for kid in kids {
-    //             to_inspect.push(kid)
-    //           }
-    //           _ => (),
-    //         }
-    //       }
-    //     }
-    //   }
-    // }
-
-    // println!("extracting from instance...") ;
     instance.qualifiers(& mut quals) ;
-    // println!("done extracting from instance") ;
 
     quals.check().chain_err( || "after creation" ) ? ;
 
@@ -698,9 +649,13 @@ impl Qualifiers {
     for class in self.classes.values_mut() {
       if let Some(maps) = class.transforms.get(sig) {
         let quals = & mut class.quals ;
-        'all_quals: for (qual, cache) in quals.iter_mut() {
-          if new_only && ! cache.is_new { continue 'all_quals }
-          cache.is_new = false ;
+        'all_quals: for (qual, info) in quals.iter_mut() {
+          
+          if conf.ice.qual_bias && ! info.preds.contains(& pred)
+          || new_only && ! info.is_new {
+            continue 'all_quals
+          }
+          info.is_new = false ;
 
           'all_maps: for map in maps.iter() {
             let qual = & mut Qual { qual, map } ;
@@ -762,22 +717,37 @@ impl Qualifiers {
   /// When a qualifier is inserted, it is considered new until it is evaluated
   /// for the first time.
   pub fn insert(
-    & mut self, term: & Term, old_sig: & VarMap<Typ>
+    & mut self, term: & Term, pred: PrdIdx
   ) -> bool {
-    let mut sig = VarMap::with_capacity( old_sig.len() ) ;
-    let mut transform = VarMap::with_capacity( old_sig.len() ) ;
-    let mut map = VarHMap::with_capacity( old_sig.len() ) ;
+    let pred_sig = & self.instance[pred].sig ;
+    // This function basically renames the variables that appear in `term` so
+    // that they are numbered in the order they appear in. While doing so, it
+    // builds the following.
+
+    // Signature of the alpha-renamed term.
+    let mut sig = VarMap::with_capacity( pred_sig.len() ) ;
+    // Map from variables of the alpha-renamed term to variables of `pred_sig`.
+    let mut transform = VarMap::with_capacity( pred_sig.len() ) ;
+    // Map from variables in `pred_sig` to variables of the alpha-renamed term.
+    let mut map = VarHMap::with_capacity( pred_sig.len() ) ;
+
+    // Stack used when going down applications. Elements of the stack are
+    // triplets composed of
+    //
+    // - `op`: the operator of the application,
+    // - `lft`: list of kids that have aready been handled,
+    // - `rgt`: iterator over the kids, contains only those that haven't been
+    //   handled yet.
     let mut stack: Vec<( Op, Vec<Term>, _ )> = Vec::with_capacity(7) ;
+    // Term we're going down into.
     let mut curr = term ;
-    // println!("inserting {}", curr) ;
 
     let term = 'top_loop: loop {
-
-      // println!("  going down {}", curr) ;
 
       // Go down.
       let mut to_propagate_upward = match * * curr {
 
+        // Variable, rename if necessary and move on.
         RTerm::Var(old_idx) => {
           use std::collections::hash_map::Entry ;
           let idx = match map.entry(old_idx) {
@@ -785,7 +755,7 @@ impl Qualifiers {
             Entry::Vacant(entry) => {
               let idx = sig.next_index() ;
               entry.insert(idx) ;
-              sig.push( old_sig[old_idx] ) ;
+              sig.push( pred_sig[old_idx] ) ;
               transform.push(old_idx) ;
               idx
             },
@@ -793,9 +763,13 @@ impl Qualifiers {
           term::var(idx)
         },
 
+        // Constants, nothing to do.
         RTerm::Int(_) => curr.clone(),
         RTerm::Bool(_) => curr.clone(),
 
+        // Application, we're going down.
+        //
+        // Push on stack, go down the first argument (update `curr`).
         RTerm::App { op, ref args } => {
           let mut args_iter = args.iter() ;
           if let Some(next) = args_iter.next() {
@@ -809,66 +783,67 @@ impl Qualifiers {
 
       } ;
 
-      // println!("  going up {}", to_propagate_upward) ;
-
+      // Go up, working on `to_propagate_upward`.
       'go_up: loop {
+
         if let Some( (op, mut lft, mut rgt) ) = stack.pop() {
-          // println!("  - {}/{}/{}", op, lft.len(), rgt.len()) ;
+          // There something on the stack, update `lft`.
           lft.push(to_propagate_upward) ;
           if let Some(next) = rgt.next() {
+            // There still terms to go down into, push back the frame on the
+            // stack and go down `next`.
             stack.push( (op, lft, rgt) ) ;
             curr = next ;
             continue 'top_loop
           } else {
-            // println!("    building app") ;
+            // Nothing left for this application, go up the modified
+            // application.
             to_propagate_upward = term::app(op, lft) ;
-            // println!("    done building app")
           }
         } else {
+          // Nothing on the stack, we're done.
           break 'top_loop to_propagate_upward
         }
 
       }
     } ;
 
-    // println!("done inspecting term") ;
-
     if sig.is_empty() {
+      // No variables, don't care about this term.
       return false
     }
     sig.shrink_to_fit() ;
 
+    // Remove term's negation if any.
     let term = if let Some(term) = term.rm_neg() {
       term
     } else {
       term
     } ;
 
-    // println!("done rm_neg") ;
-
-    use std::collections::hash_map::Entry ;
+    // Hashcons signature.
     let sig = self.factory.mk(sig) ;
-    // println!("done mk_sig") ;
-    let res = match self.classes.entry(sig) {
-      Entry::Occupied(entry) => {
-        // println!("inserting (occupied)") ;
-        entry.into_mut().insert(term, old_sig, transform)
-      },
+
+    // Insert in the classes.
+    use std::collections::hash_map::Entry ;
+    match self.classes.entry(sig) {
+      Entry::Occupied(entry) => entry.into_mut().insert(
+        term, pred, pred_sig, transform
+      ),
       Entry::Vacant(entry) => {
-        // println!("creating sig transforms") ;
         let transforms = SigTransforms::new(
           self.instance.preds(), entry.key()
         ) ;
-        // println!("inserting (vacant)") ;
+
         if let Some(class) = QualClass::new(transforms, 107) {
-          entry.insert(class).insert(term, old_sig, transform)
+          entry.insert(class).insert(
+            term, pred, pred_sig, transform
+          )
         } else {
           false
         }
       },
-    } ;
-    // println!("done") ;
-    res
+    }
   }
 
   /// Prints itself.
@@ -900,7 +875,12 @@ impl Qualifiers {
       }
       println!("{}    }}", pref) ;
       for (quals, cache) in class.quals.iter() {
-        println!("{}    {} ({})", pref, quals, cache.is_new)
+        println!("{}    {} ({})", pref, quals, cache.is_new) ;
+        print!(  "{}    ->", pref) ;
+        for pred in & cache.preds {
+          print!(" {},", self.instance[* pred])
+        }
+        println!("")
       }
       println!("{}  }}", pref)
     }

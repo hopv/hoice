@@ -585,7 +585,7 @@ where Slver: Solver<'kid, Parser> {
             let qualifiers = & mut self.qualifiers ;
             let all_data = & self.data ;
             qualifiers.maximize(
-              pred, |qual| data.gain(pred, all_data, qual), $new
+              pred, |qual| data.gain(pred, all_data, qual), false
             )
           } else {
             Ok(res)
@@ -636,13 +636,13 @@ where Slver: Solver<'kid, Parser> {
     let mut new = 0 ;
 
     for sample in & data.pos {
-      new += self.synthesize(sample)
+      new += self.synthesize(pred, sample)
     }
     for sample in & data.neg {
-      new += self.synthesize(sample)
+      new += self.synthesize(pred, sample)
     }
     for sample in & data.unc {
-      new += self.synthesize(sample)
+      new += self.synthesize(pred, sample)
     }
 
     // self.qualifiers.print("") ;
@@ -818,65 +818,58 @@ where Slver: Solver<'kid, Parser> {
 
   /// Qualifier synthesis, fpice style.
   pub fn synthesize(
-    & mut self, sample: & HSample
+    & mut self, pred: PrdIdx, sample: & HSample
   ) -> usize {
-    let mut previous_int: Vec<& Int> = Vec::with_capacity(
+    let mut previous_int: Vec<(VarIdx, & Int)> = Vec::with_capacity(
       sample.len()
     ) ;
-    let mut sig = VarMap::new() ;
 
     let mut count = 0 ;
     macro_rules! insert {
-      ($term:expr, $sig:expr) => (
-        // println!("  synth: {}", $term) ;
-        if self.qualifiers.insert($term, $sig) {
-          // println!("  is new") ;
+      ($term:expr) => (
+        // println!("synthesizing {}", $term) ;
+        if self.qualifiers.insert($term, pred) {
+          // println!("  new") ;
           count += 1
+        } else {
+          // println!("  not new")
         }
       ) ;
     }
 
-    for val in sample.iter() {
+    for (var_idx, val) in sample.index_iter() {
       
       match * val {
         
         Val::I(ref val) => {
-          // println!("tick ({})", val) ;
-          sig.clear() ;
-          let var = term::var( sig.next_index() ) ;
-          sig.push(Typ::Int) ;
+          let var = term::var(var_idx) ;
 
           let val_term = term::int( val.clone() ) ;
           let term = term::app(
             Op::Ge, vec![ var.clone(), val_term.clone() ]
           ) ;
-          insert! { & term, & sig }
+          insert! { & term }
           let term = term::app(
             Op::Le, vec![ var.clone(), val_term.clone() ]
           ) ;
-          insert! { & term, & sig }
+          insert! { & term }
           let term = term::app(
             Op::Eql, vec![ var.clone(), val_term ]
           ) ;
-          insert! { & term, & sig }
-
-
-          let other_var = term::var( sig.next_index() ) ;
-          sig.push(Typ::Int) ;
-          for pre_val in & previous_int {
-            // println!("  tick ({})", pre_val) ;
-            let pre_val = * pre_val ;
+          insert! { & term }
+          for & (pre_var, pre_val) in & previous_int {
+            let other_var = term::var(pre_var) ;
             if val == pre_val {
               let term = term::eq(
                 var.clone(), other_var.clone()
               ) ;
-              insert!{ & term, & sig }
+              insert!{ & term }
             }
             if - val == * pre_val {
               let term = term::eq(
                 var.clone(), term::sub( vec![ other_var.clone() ] )
               ) ;
-              insert!{ & term, & sig }
+              insert!{ & term }
             }
 
             let add = term::app(
@@ -886,11 +879,11 @@ where Slver: Solver<'kid, Parser> {
             let term = term::app(
               Op::Ge, vec![ add.clone(), add_val.clone() ]
             ) ;
-            insert!{ & term, & sig }
+            insert!{ & term }
             let term = term::app(
               Op::Le, vec![ add, add_val ]
             ) ;
-            insert!{ & term, & sig }
+            insert!{ & term }
 
             let sub = term::app(
               Op::Sub, vec![ var.clone(), other_var.clone() ]
@@ -899,14 +892,14 @@ where Slver: Solver<'kid, Parser> {
             let term = term::app(
               Op::Ge, vec![ sub.clone(), sub_val.clone() ]
             ) ;
-            insert!{ & term, & sig }
+            insert!{ & term }
             let term = term::app(
               Op::Le, vec![ sub, sub_val ]
             ) ;
-            insert!{ & term, & sig }
+            insert!{ & term }
           }
 
-          previous_int.push(val)
+          previous_int.push( (var_idx, val) )
         },
 
         Val::B(_) => (),
@@ -1018,7 +1011,6 @@ where Slver: Solver<'kid, Parser> {
     let rhs = term::zero() ;
 
     let term = term::ge(lhs, rhs) ;
-    // println!("synthesis: {}", term) ;
 
     Ok(term)
   }
@@ -1055,23 +1047,18 @@ impl CData {
   /// Shannon entropy given the number of positive and negative samples.
   fn shannon_entropy(pos: f64, neg: f64) -> f64 {
     if pos == 0. && neg == 0. { return 1. }
-    // println!("| pos: {}, neg: {}", pos, neg) ;
     let den = pos + neg ;
-    // println!("| den: {}", den) ;
     let (pos, neg) = (pos / den, neg / den) ;
-    // println!("| /den: (pos: {}, neg: {})", pos, neg) ;
     let (pos, neg) = (
       if pos <= 0. { 0. } else { - ( pos * pos.log2() ) },
       if neg <= 0. { 0. } else { - ( neg * neg.log2() ) }
     ) ;
-    // println!("| final: (pos: {}, neg: {})", pos, neg) ;
     pos + neg
   }
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
   pub fn simple_gain(& self, qual: & mut Qual) -> Res< Option<f64> > {
-    // println!("my entropy") ;
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
     ) ;
@@ -1107,7 +1094,7 @@ impl CData {
         Self::shannon_entropy( q_pos,  q_neg),
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
-      // println!("{} | q: {}, nq: {}", my_entropy, q_entropy, nq_entropy) ;
+
       Ok(
         Some((
           my_entropy - (
@@ -1195,27 +1182,12 @@ impl CData {
       return Ok(None)
     }
 
-    // let (q_proba, nq_proba) = (q_ent.proba(), nq_ent.proba()) ;
     let (q_entropy, nq_entropy) = (q_ent.entropy(), nq_ent.entropy()) ;
-
-    // if my_entropy.is_nan() {
-    //   println!("data entropy is nan...")
-    // }
-    // println!(
-    //   "q entropy: {} ({},{},{} -> {})",
-    //   q_entropy, q_pos, q_neg, q_unc, q_proba
-    // ) ;
-    // println!(
-    //   "nq entropy: {} ({},{},{} -> {})",
-    //   nq_entropy, nq_pos, nq_neg, nq_unc, nq_proba
-    // ) ;
 
     let gain = my_entropy - (
       (q_pos + q_neg + q_unc) * q_entropy / my_card +
       (nq_pos + nq_neg + nq_unc) * nq_entropy / my_card
     ) ;
-    // println!("gain: {}", gain) ;
-    // println!("") ;
 
     Ok( Some(gain) )
   }

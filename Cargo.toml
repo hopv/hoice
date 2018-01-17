@@ -32,7 +32,6 @@ ansi_term = "*"
 rsmt2 = "*"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
-rayon = "*"
 either = "*"
 rand = "*"
 isatty = "*"
