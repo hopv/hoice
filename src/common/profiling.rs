@@ -336,7 +336,9 @@ impl Profiler {
     self.subs.borrow_mut().push( (name.into(), tree, stats) )
   }
   #[cfg(feature = "bench")]
-  pub fn add_sub(& self, _: Self) {}
+  pub fn add_sub< S: Into<String> >(
+    & self, _: S, _: ProfileTree, _: Stats
+  ) {}
 
 
   /// Consumes and prints a profiler.
