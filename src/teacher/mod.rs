@@ -63,7 +63,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
   log_debug!{ "  performing initial check..." }
   let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
-    teacher.finalize() ? ;
+    teacher.finalize(profiler) ? ;
     return Ok( Some(cands) )
   }
   log_debug!{ "  generating data from initial cex..." }
@@ -87,14 +87,14 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
       bail!("all learners are dead")
     }
 
-    match teacher.get_candidates() ? {
+    match teacher.get_candidates(profiler) ? {
 
       // Unsat result, done.
       Some( (_idx, None) ) => {
         log_info!(
           "\ngot unsat result from {} learner", teacher.learners[_idx].1
         ) ;
-        teacher.finalize() ? ;
+        teacher.finalize(profiler) ? ;
         return Ok(None)
       },
 
@@ -118,7 +118,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
         profile!{ teacher mark "cexs" }
 
         if cexs.is_empty() {
-          teacher.finalize() ? ;
+          teacher.finalize(profiler) ? ;
           return Ok( Some(candidates) )
         }
 
@@ -135,7 +135,7 @@ fn teach< 'kid, S: Solver<'kid, Parser> >(
         ) {
           match e.kind() {
             & ErrorKind::Unsat => {
-              teacher.finalize() ? ;
+              teacher.finalize(profiler) ? ;
               return Ok(None)
             },
             _ => bail!(e),
@@ -202,7 +202,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Finalizes the run, does nothing in bench mode.
   #[cfg( not(feature = "bench") )]
-  pub fn finalize(mut self) -> Res<()> {
+  pub fn finalize(mut self, profiler: & Profiler) -> Res<()> {
     if conf.stats {
       println!("; Done in {} guess(es)", self.count) ;
       println!("") ;
@@ -210,13 +210,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     for & mut (ref mut sender, _) in self.learners.iter_mut() {
       * sender = None
     }
-    while self.get_candidates()?.is_some() {}
+    while self.get_candidates(profiler)?.is_some() {}
     Ok(())
   }
   /// Finalizes the run, does nothing in bench mode.
   #[cfg(feature = "bench")]
   #[inline(always)]
-  pub fn finalize(self) -> Res<()> { Ok(()) }
+  pub fn finalize(self, _: & Profiler) -> Res<()> { Ok(()) }
 
   /// Adds a new learner.
   pub fn add_learner<L: Learner + 'static>(& mut self, learner: L) -> Res<()> {
@@ -267,7 +267,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// element of the pair is `None` if a learner concluded `unsat`, and
   /// `Some` of the candidates otherwise.
   pub fn get_candidates(
-    & self
+    & self, profiler: & Profiler
   ) -> Res< Option<(LrnIdx, Option<Candidates>)> > {
     profile!{ self tick "waiting" }
     'recv: loop {
@@ -296,12 +296,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           println!(
             "; received stats from {}", conf.emph( & self.learners[idx].1 )
           ) ;
-          tree.print( & [] ) ;
-          if ! stats.is_empty() {
-            println!("; stats:") ;
-            stats.print( & [ "data" ] )
-          }
-          println!("")
+          profiler.add_sub( self.learners[idx].1.clone(), tree, stats )
         },
         Ok( (idx, FromLearners::Cands(cands)) ) => {
           profile!{ self mark "waiting" }

@@ -16,9 +16,8 @@
 //! )
 //! ```
 //!
-//! Hence the signature of a qualifier is sorted by the order of apparition of
-//! each variable in the qualifier. For instance, say we want to have the
-//! following qualifier
+//! Hence the signature of a qualifier is sorted by the ordering over types.
+//! For instance, say we want to have the following qualifier
 //!
 //! ```smt
 //! (define-fun qual ((v_1 Int) (v_2 Bool) (v_3 Int))
@@ -26,8 +25,9 @@
 //! )
 //! ```
 //!
-//! Then, the signature is re-ordered as `v_2`, `v_3`, `v_1`. The qualifier
-//! becomes
+//! Then, assuming `Bool <= Int`, the signature is re-ordered either as `v_2`,
+//! `v_3`, `v_1` or `v_2`, `v_1`, `v_3`. Either way, the signature of the
+//! qualifier is `Bool Int Int`. Say `v_3` is first, then the qualifier becomes
 //!
 //! ```smt
 //! (define-fun qual ((v_1 Bool) (v_2 Int) (v_3 Int))
@@ -89,6 +89,21 @@ pub type QSig = VarMap<Typ> ;
 
 
 /// Information about a qualifier.
+///
+/// `preds` contains the predicates the qualifier `q` was created for. That is,
+/// the predicate passed when `q` was first inserted, and all the predicates
+/// that triggered the same insertion afterwards.
+///
+/// `is_new` is set to
+///
+/// - `true` when the qualifier is added and when a new predicate is inserted
+///   in `preds`. That is, whenever a call to [`insert`][quals insert]
+///   generates this qualifier with a predicate that was not in `preds` yet;
+/// - `false` whenever it is passed to the criterion function in
+///   [`maximize`][quals max].
+///
+/// [quals max]: struct.Qualifiers.html#method.maximize (Qualifiers' maximize function)
+/// [quals insert]: struct.Qualifiers.html#method.insert (Qualifiers' insert function)
 pub struct QInfo {
   /// Indicates whether the qualifier has been evaluated at least once.
   pub is_new: bool,
@@ -517,7 +532,7 @@ impl QualClass {
 /// This type is in fact a temporary structure created internally by
 /// `Qualifiers` for its [`maximize`][quals max] function.
 ///
-/// [quals max]: struct.Qualifiers.html#methods.maximize (Qualifiers' maximize function)
+/// [quals max]: struct.Qualifiers.html#method.maximize (Qualifiers' maximize function)
 pub struct Qual<'a> {
   /// The qualifier.
   pub qual: & 'a Term,
@@ -544,8 +559,8 @@ impl<'a> Qual<'a> {
   }
 
   /// Evaluates this qualifier.
-  pub fn bool_eval<E>(& mut self, vals: & E) -> Res<Option<bool>>
-  where E: term::Evaluator {
+  pub fn bool_eval<E>(& self, vals: & E) -> Res<Option<bool>>
+  where E: Evaluator {
     self.qual.bool_eval( & (self.map, vals) )
   }
 
@@ -557,6 +572,12 @@ impl<'a> Qual<'a> {
     } else {
       panic!("bug in new qualifier system, could not retrieve term")
     }
+  }
+}
+impl<'a> CanBEvaled for Qual<'a> {
+  fn evaluate<E>(& self, args: & E) -> Res< Option<bool> >
+  where E: Evaluator {
+    self.bool_eval(args)
   }
 }
 
@@ -635,6 +656,20 @@ impl Qualifiers {
     let mut count = 0 ;
     for class in self.classes.values() {
       count += class.quals.len()
+    }
+    count
+  }
+
+  /// Real number of qualifiers considered.
+  pub fn real_qual_count(& self) -> usize {
+    let mut count = 0 ;
+    let mut mul ;
+    for class in self.classes.values() {
+      mul = 0 ;
+      for transforms in class.transforms.values() {
+        mul += transforms.len() ;
+      }
+      count += mul * class.quals.len()
     }
     count
   }
@@ -812,7 +847,7 @@ impl Qualifiers {
     }
   }
 
-  /// Logs itself.
+  /// Logs itself regardless of the verbosity level.
   pub fn log(& self) {
     let pref = ";" ;
     println!("{}quals {{", pref) ;

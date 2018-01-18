@@ -112,43 +112,6 @@ impl_fmt!{
 }
 
 
-
-/// Implemented by types lending themselves to evaluation.
-pub trait Evaluator {
-  /// Retrieves the value associated with a variable.
-  fn get(& self, var: VarIdx) -> & Val ;
-  /// Number of variables the evaluator supports.
-  fn len(& self) -> usize ;
-}
-impl Evaluator for VarMap<Val> {
-  #[inline]
-  fn get(& self, var: VarIdx) -> & Val {
-    & self[var]
-  }
-  #[inline]
-  fn len(& self) -> usize { VarMap::len(self) }
-}
-impl Evaluator for () {
-  #[inline]
-  fn get(& self, _: VarIdx) -> & Val {
-    panic!("trying actual evaluation with unit")
-  }
-  #[inline]
-  fn len(& self) -> usize { 0 }
-}
-/// This implements a redirection `(map, vals)`, where a variable `var` from
-/// the term evaluated is evaluated to `vals[ map[var] ]`.
-impl<'a, E> Evaluator for (& 'a VarMap<VarIdx>, & 'a E)
-where E: Evaluator {
-  #[inline]
-  fn get(& self, var: VarIdx) -> & Val {
-    self.1.get( self.0[var] )
-  }
-  #[inline]
-  fn len(& self) -> usize { self.0.len() }
-}
-
-
 /// A real term.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {

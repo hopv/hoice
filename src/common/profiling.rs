@@ -42,6 +42,32 @@ impl ProfileTree {
     ProfileTree { duration: None, branches: HashMap::new() }
   }
 
+  /// Debug printing (multi-line).
+  fn print(& self, pref: & 'static str, set_sum: & [ & 'static str ]) {
+    self.iter(
+      |scope, time, sub_time| if let Some(last) = scope.last() {
+        println!(
+          "; {5}{0: >1$}|- {2}s {3}{4}",
+          "", 2 * scope.len(), time.to_str(), last,
+          if sub_time != Duration::from_secs(0) {
+            format!(" ({}s)", sub_time.to_str())
+          } else {
+            "".into()
+          }, pref
+        )
+      } else {
+        println!(
+          "; {}total {}s{}", pref, time.to_str(),
+          if sub_time != Duration::from_secs(0) {
+            format!(" ({}s)", sub_time.to_str())
+          } else {
+            "".into()
+          }
+        )
+      }, set_sum
+    )
+  }
+
   /// Forces a scope to be equal to the sum of its sub branches.
   ///
   /// Only legal if the scope exists and its duration is `None`.
@@ -151,50 +177,35 @@ pub type Stats = HashMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// Debug print (multi-line).
-  fn print(& self, & [ & 'static str ]) ;
+  fn print(& self, & 'static str) ;
 }
 static STAT_LEN: usize = 40 ;
 impl CanPrint for Stats {
-  fn print(& self, _: & [ & 'static str ]) {
+  fn print(& self, pref: & 'static str) {
     let mut stats: Vec<_> = self.iter().collect() ;
     stats.sort_unstable() ;
     for (stat, count) in stats {
       if * count > 0 {
         let stat_len = ::std::cmp::min( STAT_LEN, stat.len() ) ;
         println!(
-          ";   {0: >1$}{2}: {3: >5}",
-          "", STAT_LEN - stat_len, conf.emph(stat), count
+          "; {4}  {0: >1$}{2}: {3: >5}",
+          "", STAT_LEN - stat_len, conf.emph(stat), count, pref
         )
       }
     }
   }
 }
-impl CanPrint for ProfileTree {
-  fn print(& self, set_sum: & [ & 'static str ]) {
-    self.iter(
-      |scope, time, sub_time| if let Some(last) = scope.last() {
-        println!(
-          "; {0: >1$}|- {2}s {3}{4}", "", 2 * scope.len(), time.to_str(), last,
-          if sub_time != Duration::from_secs(0) {
-            format!(" ({}s)", sub_time.to_str())
-          } else {
-            "".into()
-          }
-        )
-      } else {
-        println!(
-          "; total {}s{}", time.to_str(),
-          if sub_time != Duration::from_secs(0) {
-            format!(" ({}s)", sub_time.to_str())
-          } else {
-            "".into()
-          }
-        )
-      }, set_sum
-    )
-  }
-}
 
+
+/// Maps scopes to
+///
+/// - a (start) instant option: `Some` if the scope is currently active, and
+/// - a duration representing the total runtime of this scope.
+pub type InstantMap = HashMap<
+  Vec<& 'static str>, (Option<Instant>, Duration)
+> ;
+
+use std::cell::RefCell ;
 
 /// Profiling structure, only in `not(bench)`.
 ///
@@ -205,13 +216,13 @@ impl CanPrint for ProfileTree {
 #[cfg( not(feature = "bench") )]
 pub struct Profiler {
   /// String-indexed durations.
-  map: ::std::cell::RefCell<
-    HashMap< Vec<& 'static str>, (Option<Instant>, Duration)>
-  >,
+  map: RefCell<InstantMap>,
   /// Starting tick, for total time.
   start: Instant,
   /// Other statistics.
-  stats: ::std::cell::RefCell< Stats >,
+  stats: RefCell<Stats>,
+  /// Sub-profilers.
+  subs: RefCell< Vec<(String, ProfileTree, Stats)> >,
 }
 #[cfg(feature = "bench")]
 pub struct Profiler ;
@@ -224,6 +235,7 @@ impl Profiler {
       map: RefCell::new( HashMap::new() ),
       start: Instant::now(),
       stats: RefCell::new( HashMap::new() ),
+      subs: RefCell::new( Vec::new() ),
     }
   }
   #[cfg(feature = "bench")]
@@ -314,5 +326,41 @@ impl Profiler {
       tree.insert( scope.clone(), * time )
     }
     ( tree, self.stats.into_inner() )
+  }
+
+  /// Adds a sub-profiler.
+  #[cfg( not(feature = "bench") )]
+  pub fn add_sub< S: Into<String> >(
+    & self, name: S, tree: ProfileTree, stats: Stats
+  ) {
+    self.subs.borrow_mut().push( (name.into(), tree, stats) )
+  }
+  #[cfg(feature = "bench")]
+  pub fn add_sub(& self, _: Self) {}
+
+
+  /// Consumes and prints a profiler.
+  ///
+  /// - `set_sum` is a slice of scopes which have no duration and will be set
+  ///   to the sum of their branches (without triggering a warning)
+  #[cfg( not(feature = "bench") )]
+  pub fn print(self, set_sum: & [ & 'static str ]) {
+    {
+      let mut subs = self.subs.borrow_mut() ;
+      for (name, tree, stats) in subs.drain(0..) {
+        println!("; {} {{", name) ;
+        tree.print("  ", set_sum) ;
+        println!("; ") ;
+        println!(";   stats:") ;
+        stats.print("  ") ;
+        println!("; }}") ;
+        println!("; ")
+      }
+    }
+    let (tree, stats) = self.extract_tree() ;
+    tree.print("", set_sum) ;
+    println!("; ") ;
+    println!("; stats:") ;
+    stats.print("") ;
   }
 }

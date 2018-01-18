@@ -277,12 +277,7 @@ fn print_stats(_: Profiler) {}
 fn print_stats(profiler: Profiler) {
   if conf.stats {
     println!("") ;
-    let (tree, stats) = profiler.extract_tree() ;
-    tree.print( & [] ) ;
-    if ! stats.is_empty() {
-      println!("; stats:") ;
-      stats.print( & vec![ "data" ] )
-    }
+    profiler.print( & [ "data" ] ) ;
     println!("") ;
   }
 }

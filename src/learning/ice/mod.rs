@@ -7,8 +7,10 @@ use common::msg::* ;
 use self::smt::* ;
 
 pub mod quals ;
+pub mod data ;
 
-use self::quals::{ Qualifiers, Qual } ;
+use self::quals::Qualifiers ;
+use self::data::CData ;
 
 
 /// Launcher.
@@ -64,6 +66,14 @@ impl Learner for Launcher {
     "ice".into()
   }
 }
+
+
+/// A branch of a decision tree.
+///
+/// Boolean is `false` if the term should be negated.
+pub type Branch = Vec<(Term, bool)> ;
+
+
 
 /// Ice learner.
 pub struct IceLearner<'core, Slver> {
@@ -145,8 +155,12 @@ where Slver: Solver<'kid, Parser> {
   /// Runs the learner.
   pub fn run(mut self) -> Res<()> {
     let mut teacher_alive = true ;
-    profile!{ self "qualifier synthesized" => add 0 }
-    profile!{ self "qualifiers initially" => add self.qualifiers.qual_count() }
+    profile!{ self "quals synthesized" => add 0 }
+    profile!{ self "quals initially" => add self.qualifiers.qual_count() }
+    profile!{
+      self "qual count initially" =>
+        add self.qualifiers.real_qual_count()
+    }
     // if_verb!{
     //   teacher_alive = msg!{ & self => "Qualifiers:" } ;
     //   for quals in self.qualifiers.qualifiers() {
@@ -180,7 +194,10 @@ where Slver: Solver<'kid, Parser> {
   /// Finalizes the learning process.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(self) -> Res<()> {
-    profile!{ self "qualifiers once done" => add self.qualifiers.qual_count() }
+    profile!{ self "quals once done" => add self.qualifiers.qual_count() }
+    profile!{
+      self "qual count once done" => add self.qualifiers.real_qual_count()
+    }
 
     let success = self.core.stats(
       self._profiler, vec![ vec!["learning", "smt", "data"] ]
@@ -578,24 +595,32 @@ where Slver: Solver<'kid, Parser> {
     macro_rules! best_qual {
       (only new: $new:expr) => ({
         if simple {
+          profile!{ self tick "learning", "qual", "simple gain" }
           let res = self.qualifiers.maximize(
             pred, |qual| data.simple_gain(qual), $new
           ) ? ;
+          profile!{ self mark "learning", "qual", "simple gain" }
           if res.is_none() {
             let qualifiers = & mut self.qualifiers ;
             let all_data = & self.data ;
-            qualifiers.maximize(
+            profile!{ self tick "learning", "qual", "gain" }
+            let res = qualifiers.maximize(
               pred, |qual| data.gain(pred, all_data, qual), false
-            )
+            ) ;
+            profile!{ self mark "learning", "qual", "gain" }
+            res
           } else {
             Ok(res)
           }
         } else {
           let qualifiers = & mut self.qualifiers ;
           let all_data = & self.data ;
-          qualifiers.maximize(
+          profile!{ self tick "learning", "qual", "gain" }
+          let res = qualifiers.maximize(
             pred, |qual| data.gain(pred, all_data, qual), $new
-          )
+          ) ;
+          profile!{ self mark "learning", "qual", "gain" }
+          res
         }
       }) ;
     }
@@ -605,7 +630,9 @@ where Slver: Solver<'kid, Parser> {
     }
 
     if let Some( (qual, _gain) ) = best_qual!(only new: false) ? {
+      profile!{ self tick "learning", "qual", "data split" }
       let (q_data, nq_data) = data.split(& qual) ;
+      profile!{ self mark "learning", "qual", "data split" }
       return Ok( (qual, q_data, nq_data) )
     }
 
@@ -630,35 +657,156 @@ where Slver: Solver<'kid, Parser> {
     //   msg!{ self => msg } ;
     // }
 
-    // Synthesize qualifier separating the data.
-    profile!{ self tick "learning", "qual", "synthesis" }
-
     if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
       bail!("[bug] cannot synthesize qualifier based on no data")
     }
 
-    let mut new = 0 ;
+    // Synthesize qualifier separating the data.
+    self.synthesize(pred, data)
+  }
 
-    for sample in & data.pos {
-      new += self.synthesize(pred, sample) ?
-    }
-    for sample in & data.neg {
-      new += self.synthesize(pred, sample) ?
-    }
-    for sample in & data.unc {
-      new += self.synthesize(pred, sample) ?
-    }
+  /// Qualifier synthesis.
+  pub fn synthesize(
+    & mut self, pred: PrdIdx, data: CData
+  ) -> Res<(Term, CData, CData)> {
+    let mut best = None ;
+    let mut max_gain = vec![] ;
 
+    profile!{ self tick "learning", "qual", "synthesis" }
+    {
+      let mut treatment = |term: Term| {
+        if let Some(gain) = data.gain(pred, & self.data, & term) ? {
+          if gain == 1.0 {
+            max_gain.push( term.clone() )
+          }
+          if let Some((ref mut old_gain, ref mut old_term)) = best {
+            if * old_gain < gain {
+              * old_gain = gain ;
+              * old_term = term
+            }
+          } else {
+            best = Some((gain, term))
+          }
+          Ok(false)
+        } else {
+          Ok(false)
+        }
+      } ;
+
+      for sample in data.iter() {
+        let done = self.sample_synth(sample, & mut treatment).chain_err(
+          || "during synthesis from sample"
+        ) ? ;
+        if done { break }
+      }
+    }
     profile!{ self mark "learning", "qual", "synthesis" }
 
-    profile!{ self "qualifier synthesized" => add new }
-    
-    if let Some( (qual, _gain) ) = best_qual!(only new: true) ? {
+    if let Some((_, qual)) = best {
+      self.qualifiers.insert(& qual, pred) ? ;
+      for qual in max_gain {
+        self.qualifiers.insert(& qual, pred) ? ;
+      }
+      profile!{ self tick "learning", "qual", "data split" }
       let (q_data, nq_data) = data.split(& qual) ;
-      Ok( (qual, q_data, nq_data) )
+      profile!{ self mark "learning", "qual", "data split" }
+      profile!{ self "qualifier synthesized" => add 1 }
+      Ok((qual, q_data, nq_data))
     } else {
-      bail!("[bug] unable to split the data after synthesis...")
+      bail!("unable to synthesize a relevant qualifier")
     }
+  }
+
+  /// Synthesizes qualifiers for a sample, stops if input function returns
+  /// `true`.
+  ///
+  /// Returns `true` iff `f` returned true at some point.
+  pub fn sample_synth<F>(& self, sample: & HSample, mut f: F) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
+    macro_rules! apply {
+      ($term:expr) => (
+        if f($term)? { return Ok(true) }
+      ) ;
+    }
+
+    let mut previous_int: Vec<(VarIdx, & Int)> = Vec::with_capacity(
+      sample.len()
+    ) ;
+
+    for (var_idx, val) in sample.index_iter() {
+      
+      match * val {
+        
+        Val::I(ref val) => {
+          let var = term::var(var_idx) ;
+
+          let val_term = term::int( val.clone() ) ;
+          let term = term::app(
+            Op::Ge, vec![ var.clone(), val_term.clone() ]
+          ) ;
+          apply! { term }
+          let term = term::app(
+            Op::Le, vec![ var.clone(), val_term.clone() ]
+          ) ;
+          apply! { term }
+          let term = term::app(
+            Op::Eql, vec![ var.clone(), val_term ]
+          ) ;
+          apply! { term }
+          for & (pre_var, pre_val) in & previous_int {
+            let other_var = term::var(pre_var) ;
+            if val == pre_val {
+              let term = term::eq(
+                var.clone(), other_var.clone()
+              ) ;
+              apply! { term }
+            }
+            if - val == * pre_val {
+              let term = term::eq(
+                var.clone(), term::sub( vec![ other_var.clone() ] )
+              ) ;
+              apply! { term }
+            }
+
+            let add = term::app(
+              Op::Add, vec![ var.clone(), other_var.clone() ]
+            ) ;
+            let add_val = term::int( val + pre_val ) ;
+            let term = term::app(
+              Op::Ge, vec![ add.clone(), add_val.clone() ]
+            ) ;
+            apply! { term }
+            let term = term::app(
+              Op::Le, vec![ add, add_val ]
+            ) ;
+            apply! { term }
+
+            let sub = term::app(
+              Op::Sub, vec![ var.clone(), other_var.clone() ]
+            ) ;
+            let sub_val = term::int( val - pre_val ) ;
+            let term = term::app(
+              Op::Ge, vec![ sub.clone(), sub_val.clone() ]
+            ) ;
+            apply! { term }
+            let term = term::app(
+              Op::Le, vec![ sub, sub_val ]
+            ) ;
+            apply! { term }
+          }
+
+          previous_int.push( (var_idx, val) )
+        },
+
+        Val::B(_) => (),
+
+        Val::N => continue,
+
+      }
+
+    }
+
+    Ok(false)
   }
 
 
@@ -816,103 +964,6 @@ where Slver: Solver<'kid, Parser> {
 
     Ok(false)
   }
-
-
-  /// Qualifier synthesis, fpice style.
-  pub fn synthesize(
-    & mut self, pred: PrdIdx, sample: & HSample
-  ) -> Res<usize> {
-    let mut previous_int: Vec<(VarIdx, & Int)> = Vec::with_capacity(
-      sample.len()
-    ) ;
-
-    let mut count = 0 ;
-    macro_rules! insert {
-      ($term:expr) => (
-        // println!("synthesizing {}", $term) ;
-        if self.qualifiers.insert($term, pred) ? {
-          // println!("  new") ;
-          count += 1
-        } else {
-          // println!("  not new")
-        }
-      ) ;
-    }
-
-    for (var_idx, val) in sample.index_iter() {
-      
-      match * val {
-        
-        Val::I(ref val) => {
-          let var = term::var(var_idx) ;
-
-          let val_term = term::int( val.clone() ) ;
-          let term = term::app(
-            Op::Ge, vec![ var.clone(), val_term.clone() ]
-          ) ;
-          insert! { & term }
-          let term = term::app(
-            Op::Le, vec![ var.clone(), val_term.clone() ]
-          ) ;
-          insert! { & term }
-          let term = term::app(
-            Op::Eql, vec![ var.clone(), val_term ]
-          ) ;
-          insert! { & term }
-          for & (pre_var, pre_val) in & previous_int {
-            let other_var = term::var(pre_var) ;
-            if val == pre_val {
-              let term = term::eq(
-                var.clone(), other_var.clone()
-              ) ;
-              insert!{ & term }
-            }
-            if - val == * pre_val {
-              let term = term::eq(
-                var.clone(), term::sub( vec![ other_var.clone() ] )
-              ) ;
-              insert!{ & term }
-            }
-
-            let add = term::app(
-              Op::Add, vec![ var.clone(), other_var.clone() ]
-            ) ;
-            let add_val = term::int( val + pre_val ) ;
-            let term = term::app(
-              Op::Ge, vec![ add.clone(), add_val.clone() ]
-            ) ;
-            insert!{ & term }
-            let term = term::app(
-              Op::Le, vec![ add, add_val ]
-            ) ;
-            insert!{ & term }
-
-            let sub = term::app(
-              Op::Sub, vec![ var.clone(), other_var.clone() ]
-            ) ;
-            let sub_val = term::int( val - pre_val ) ;
-            let term = term::app(
-              Op::Ge, vec![ sub.clone(), sub_val.clone() ]
-            ) ;
-            insert!{ & term }
-            let term = term::app(
-              Op::Le, vec![ sub, sub_val ]
-            ) ;
-            insert!{ & term }
-          }
-
-          previous_int.push( (var_idx, val) )
-        },
-
-        Val::B(_) => (),
-
-        Val::N => continue,
-
-      }
-
-    }
-    Ok(count)
-  }
 }
 
 impl<
@@ -920,335 +971,6 @@ impl<
 > HasLearnerCore for IceLearner<'core, Slver> {
   fn core(& self) -> & LearnerCore { self.core }
 }
-
-
-
-
-
-
-/// A branch of a decision tree.
-///
-/// Boolean is `false` if the term should be negated.
-pub type Branch = Vec<(Term, bool)> ;
-
-/// Projected data to classify.
-#[derive(Clone)]
-pub struct CData {
-  /// Positive samples.
-  pub pos: HSamples,
-  /// Negative samples.
-  pub neg: HSamples,
-  /// Unclassified samples.
-  pub unc: HSamples,
-}
-impl CData {
-
-  /// Shannon entropy given the number of positive and negative samples.
-  fn shannon_entropy(pos: f64, neg: f64) -> f64 {
-    if pos == 0. && neg == 0. { return 1. }
-    let den = pos + neg ;
-    let (pos, neg) = (pos / den, neg / den) ;
-    let (pos, neg) = (
-      if pos <= 0. { 0. } else { - ( pos * pos.log2() ) },
-      if neg <= 0. { 0. } else { - ( neg * neg.log2() ) }
-    ) ;
-    pos + neg
-  }
-
-  /// Shannon-entropy-based information gain of a qualifier (simple, ignores
-  /// unclassified data).
-  pub fn simple_gain(& self, qual: & mut Qual) -> Res< Option<f64> > {
-    let my_entropy = Self::shannon_entropy(
-      self.pos.len() as f64, self.neg.len() as f64
-    ) ;
-    let card = (self.pos.len() as f64) + (self.neg.len() as f64) ;
-    let (
-      mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
-    ) = (0., 0., 0., 0., 0., 0.) ;
-    for pos in & self.pos {
-      match qual.bool_eval( pos.get() ) ? {
-        Some(true) => q_pos += 1.,
-        Some(false) => nq_pos += 1.,
-        None => return Ok(None),
-      }
-    }
-    for neg in & self.neg {
-      match qual.bool_eval( neg.get() ) ? {
-        Some(true) => q_neg += 1.,
-        Some(false) => nq_neg += 1.,
-        None => return Ok(None),
-      }
-    }
-    for unc in & self.unc {
-      match qual.bool_eval( unc.get() ) ? {
-        Some(true) => q_unc += 1.,
-        Some(false) => nq_unc += 1.,
-        None => return Ok(None),
-      }
-    }
-    if q_pos + q_neg + q_unc == 0. || nq_pos + nq_neg + nq_unc == 0. {
-      Ok( None )
-    } else {
-      let (q_entropy, nq_entropy) = (
-        Self::shannon_entropy( q_pos,  q_neg),
-        Self::shannon_entropy(nq_pos, nq_neg)
-      ) ;
-
-      Ok(
-        Some((
-          my_entropy - (
-            ( (q_pos + q_neg) *  q_entropy / card ) +
-            ( (nq_pos + nq_neg) * nq_entropy / card )
-          )
-        ))
-      )
-    }
-  }
-
-
-  /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
-  ///
-  /// Only takes into account unclassified data when `conf.ice.simple_gain`
-  /// is false.
-  pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
-    let mut proba = EntropyBuilder::new() ;
-    proba.set_pos_count( self.pos.len() ) ;
-    proba.set_neg_count( self.neg.len() ) ;
-    for unc in & self.unc {
-      proba.add_unc(data, pred, unc) ?
-    }
-    Ok( proba.entropy() )
-  }
-
-  /// Modified gain, uses `entropy`.
-  ///
-  /// Only takes into account unclassified data when `conf.ice.simple_gain`
-  /// is false.
-  pub fn gain(
-    & self, pred: PrdIdx, data: & Data, qual: & mut Qual
-  ) -> Res< Option<f64> > {
-    let my_entropy = self.entropy(pred, data) ? ;
-    let my_card = (
-      self.pos.len() + self.neg.len() + self.unc.len()
-    ) as f64 ;
-    let (mut q_ent, mut nq_ent) = (
-      EntropyBuilder::new(), EntropyBuilder::new()
-    ) ;
-    let (
-      mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
-    ) = (0, 0, 0., 0, 0, 0.) ;
-    for pos in & self.pos {
-      match qual.bool_eval( pos.get() ) ? {
-        Some(true) => q_pos += 1,
-        Some(false) => nq_pos += 1,
-        None => return Ok(None),
-      }
-    }
-    q_ent.set_pos_count(q_pos) ;
-    nq_ent.set_pos_count(nq_pos) ;
-
-    for neg in & self.neg {
-      match qual.bool_eval( neg.get() ) ? {
-        Some(true) => q_neg += 1,
-        Some(false) => nq_neg += 1,
-        None => return Ok(None),
-      }
-    }
-    q_ent.set_neg_count(q_neg) ;
-    nq_ent.set_neg_count(nq_neg) ;
-
-    for unc in & self.unc {
-      match qual.bool_eval( unc.get() ) ? {
-        Some(true) => {
-          q_unc += 1. ;
-          q_ent.add_unc(data, pred, unc) ?
-        },
-        Some(false) => {
-          nq_unc += 1. ;
-          nq_ent.add_unc(data, pred, unc) ?
-        },
-        None => return Ok(None),
-      }
-    }
-    
-    let (q_pos, q_neg, nq_pos, nq_neg) = (
-      q_pos as f64, q_neg as f64, nq_pos as f64, nq_neg as f64
-    ) ;
-
-    // Is this qualifier separating anything?
-    if q_pos + q_neg + q_unc == 0.
-    || nq_pos + nq_neg + nq_unc == 0. {
-      return Ok(None)
-    }
-
-    let (q_entropy, nq_entropy) = (q_ent.entropy(), nq_ent.entropy()) ;
-
-    let gain = my_entropy - (
-      (q_pos + q_neg + q_unc) * q_entropy / my_card +
-      (nq_pos + nq_neg + nq_unc) * nq_entropy / my_card
-    ) ;
-
-    Ok( Some(gain) )
-  }
-
-  /// Splits the data given some qualifier. First is the data for which the
-  /// qualifier is true.
-  pub fn split(self, qual: & Term) -> (Self, Self) {
-    let (mut q, mut nq) = (
-      CData {
-        pos: Vec::with_capacity( self.pos.len() ),
-        neg: Vec::with_capacity( self.neg.len() ),
-        unc: Vec::with_capacity( self.unc.len() ),
-      },
-      CData {
-        pos: Vec::with_capacity( self.pos.len() ),
-        neg: Vec::with_capacity( self.neg.len() ),
-        unc: Vec::with_capacity( self.unc.len() ),
-      }
-    ) ;
-
-    for pos in self.pos {
-      if qual.bool_eval( pos.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.pos.push( pos )
-      } else {
-        nq.pos.push( pos )
-      }
-    }
-    for neg in self.neg {
-      if qual.bool_eval( neg.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.neg.push( neg )
-      } else {
-        nq.neg.push( neg )
-      }
-    }
-    for unc in self.unc {
-      if qual.bool_eval( unc.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.unc.push( unc )
-      } else {
-        nq.unc.push( unc )
-      }
-    }
-
-    q.pos.shrink_to_fit() ;
-    q.neg.shrink_to_fit() ;
-    q.unc.shrink_to_fit() ;
-    nq.pos.shrink_to_fit() ;
-    nq.neg.shrink_to_fit() ;
-    nq.unc.shrink_to_fit() ;
-
-    (q, nq)
-  }
-}
-
-
-
-/// Wrapper around an `f64` used to compute an approximation of the ratio
-/// between legal positive classifications and negative ones, without actually
-/// splitting the data.
-///
-/// See the paper for more details.
-pub struct EntropyBuilder { num: f64, den: usize }
-impl EntropyBuilder {
-  /// Constructor.
-  pub fn new() -> Self {
-    EntropyBuilder { num: 0., den: 0 }
-  }
-
-  /// Sets the number of positive samples.
-  pub fn set_pos_count(& mut self, pos: usize) {
-    self.num += pos as f64 ;
-    self.den += pos
-  }
-  /// Sets the number of negative samples.
-  pub fn set_neg_count(& mut self, neg: usize) {
-    self.den += neg
-  }
-
-  /// Adds the degree of an unclassified example.
-  pub fn add_unc(
-    & mut self, data: & Data, prd: PrdIdx, sample: & HSample
-  ) -> Res<()> {
-    self.den += 1 ;
-    self.num += (1. / 2.) + (
-      Self::degree(data, prd, sample) ? / ::std::f64::consts::PI
-    ).atan() ;
-    Ok(())
-  }
-
-  /// Probability stored in the builder.
-  pub fn proba(& self) -> f64 {
-    self.num / (self.den as f64)
-  }
-
-  /// Destroys the builder and returns the entropy.
-  pub fn entropy(self) -> f64 {
-    let proba = self.proba() ;
-    let (pos, neg) = (
-      if proba == 0. { 0. } else {
-        proba * proba.log2()
-      },
-      if proba == 1. { 0. } else {
-        (1. - proba) * (1. - proba).log2()
-      }
-    ) ;
-    - pos - neg
-  }
-
-  /// Degree of a sample, refer to the paper for details.
-  pub fn degree(
-    data: & Data, prd: PrdIdx, sample: & HSample
-  ) -> Res<f64> {
-    let (
-      mut sum_imp_rhs,
-      mut sum_imp_lhs,
-      mut sum_neg,
-    ) = (0., 0., 0.) ;
-
-    if let Some(constraints) = data.map[prd].get(& sample) {
-      for constraint in constraints {
-        let constraint = & data.constraints[* constraint] ;
-        match constraint.rhs {
-          None => sum_neg = sum_neg + 1. / (constraint.lhs.len() as f64),
-          Some( Sample { pred, ref args } )
-          if pred == prd
-          && args == sample => sum_imp_rhs = sum_imp_rhs + 1. / (
-            1. + (constraint.lhs.len() as f64)
-          ),
-          _ => {
-            debug_assert!(
-              constraint.lhs.iter().fold(
-                false,
-                |b, & Sample { pred, ref args }|
-                  b || ( pred == prd && args == sample )
-              )
-            ) ;
-            sum_imp_lhs = sum_imp_lhs + 1. / (
-              1. + (constraint.lhs.len() as f64)
-            )
-          },
-        }
-      }
-    }
-
-    Ok(sum_imp_rhs - sum_imp_lhs - sum_neg)
-  }
-}
-
-
-
-
 
 
 

@@ -122,6 +122,57 @@ pub type TArgs = VarMap<Term> ;
 /// Set of term arguments.
 pub type TArgss = HashSet< VarMap<Term> > ;
 
+
+
+/// Implemented by types lending themselves to evaluation.
+pub trait Evaluator {
+  /// Retrieves the value associated with a variable.
+  fn get(& self, var: VarIdx) -> & Val ;
+  /// Number of variables the evaluator supports.
+  fn len(& self) -> usize ;
+}
+impl Evaluator for Args {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    & self[var]
+  }
+  #[inline]
+  fn len(& self) -> usize { VarMap::len(self) }
+}
+impl Evaluator for () {
+  #[inline]
+  fn get(& self, _: VarIdx) -> & Val {
+    panic!("trying actual evaluation with unit")
+  }
+  #[inline]
+  fn len(& self) -> usize { 0 }
+}
+/// This implements a redirection `(map, vals)`, where a variable `var` from
+/// the term evaluated is evaluated to `vals[ map[var] ]`.
+impl<'a, E> Evaluator for (& 'a VarMap<VarIdx>, & 'a E)
+where E: Evaluator {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    self.1.get( self.0[var] )
+  }
+  #[inline]
+  fn len(& self) -> usize { self.0.len() }
+}
+
+
+/// Something that can be evaluated to a boolean.
+pub trait CanBEvaled {
+  /// Evaluates self.
+  fn evaluate<E>(& self, & E) -> Res< Option<bool> >
+  where E: Evaluator ;
+}
+impl CanBEvaled for Term {
+  fn evaluate<E>(& self, args: & E) -> Res< Option<bool> >
+  where E: Evaluator {
+    self.bool_eval(args)
+  }
+}
+
 /// Alias trait for a solver with this module's parser.
 pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
 

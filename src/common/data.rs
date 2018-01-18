@@ -8,7 +8,7 @@ use common::* ;
 use instance::Instance ;
 use instance::info::* ;
 
-use learning::ice::CData ;
+use learning::ice::data::CData ;
 
 
 

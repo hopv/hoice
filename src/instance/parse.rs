@@ -27,27 +27,59 @@ pub enum Parsed {
 
 lazy_static!{
   /// Set of legal special characters in identifiers.
-  static ref id_special_chars: HashSet<char> = {
+  static ref id_special_chars: HashSet<& 'static str> = {
     let mut set = HashSet::with_capacity(17) ;
-    set.insert('~') ;
-    set.insert('!') ;
-    set.insert('@') ;
-    set.insert('$') ;
-    set.insert('%') ;
-    set.insert('^') ;
-    set.insert('&') ;
-    set.insert('*') ;
-    set.insert('_') ;
-    set.insert('-') ;
-    set.insert('+') ;
-    set.insert('=') ;
-    set.insert('<') ;
-    set.insert('>') ;
-    set.insert('.') ;
-    set.insert('?') ;
-    set.insert('/') ;
+    set.insert("~") ;
+    set.insert("!") ;
+    set.insert("@") ;
+    set.insert("$") ;
+    set.insert("%") ;
+    set.insert("^") ;
+    set.insert("&") ;
+    set.insert("*") ;
+    set.insert("_") ;
+    set.insert("-") ;
+    set.insert("+") ;
+    set.insert("=") ;
+    set.insert("<") ;
+    set.insert(">") ;
+    set.insert(".") ;
+    set.insert("?") ;
+    set.insert("/") ;
     set
   } ;
+}
+
+
+
+/// String extensions, lift char functions.
+pub trait StringExt {
+  /// Lifts `char::is_alphanumeric`.
+  fn is_alphanumeric(& self) -> bool ;
+  /// Lifts `char::is_alphabetic`.
+  fn is_alphabetic(& self) -> bool ;
+  /// Lifts `char::is_numeric`.
+  fn is_numeric(& self) -> bool ;
+}
+impl StringExt for str {
+  fn is_alphanumeric(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_alphanumeric() { return false }
+    }
+    true
+  }
+  fn is_alphabetic(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_alphabetic() { return false }
+    }
+    true
+  }
+  fn is_numeric(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_numeric() { return false }
+    }
+    true
+  }
 }
 
 
@@ -119,15 +151,16 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 }
 
 
+/// String cursor.
+pub type Cursor = usize ;
+
 
 /// Parser context.
 pub struct ParserCxt {
   /// Term stack to avoid recursion.
   term_stack: Vec< (Op, Vec<Term>, LetCount) >,
-  /// Buffer used when backtracking.
-  buff: Vec<(usize, char)>,
-  /// Memory when parsing tags.
-  mem: Vec<(usize, char)>,
+  /// Memory for backtracking.
+  mem: Vec<Cursor>,
   /// Map from predicate names to predicate indices.
   pred_name_map: HashMap<String, PrdIdx>,
 }
@@ -136,7 +169,6 @@ impl ParserCxt {
   pub fn new() -> Self {
     ParserCxt {
       term_stack: Vec::with_capacity(17),
-      buff: Vec::with_capacity(17),
       mem: Vec::with_capacity(17),
       pred_name_map: HashMap::with_capacity(42),
     }
@@ -145,10 +177,12 @@ impl ParserCxt {
   pub fn parser<'cxt, 's>(
     & 'cxt mut self, string: & 's str, line_off: usize
   ) -> Parser<'cxt, 's> {
+    debug_assert!( self.mem.is_empty() ) ;
     Parser {
       cxt: self,
-      chars: string.char_indices(),
-      string, line_off,
+      string,
+      cursor: 0,
+      line_off,
       bindings: Vec::with_capacity(7),
     }
   }
@@ -175,10 +209,10 @@ impl LetCount {
 pub struct Parser<'cxt, 's> {
   /// Parsing context.
   cxt: & 'cxt mut ParserCxt,
-  /// Characters being read.
-  chars: ::std::str::CharIndices<'s>,
   /// Text being read (for errors).
   string: & 's str,
+  /// Current position in the text.
+  cursor: Cursor,
   /// Line offset (for errors).
   line_off: usize,
   /// Stack of bindings.
@@ -190,8 +224,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Generates a parse error at the current position.
   fn error_here<S: Into<String>>(& mut self, msg: S) -> ErrorKind {
-    if let Some( (pos, _) ) = self.next() {
-      self.error(pos, msg)
+    if self.cursor < self.string.len() {
+      self.error(self.cursor, msg)
     } else {
       self.error(self.string.len(), msg)
     }
@@ -199,7 +233,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Generates a parse error at the given position.
   fn error<S: Into<String>>(
-    & self, mut char_pos: usize, msg: S
+    & self, mut char_pos: Cursor, msg: S
   ) -> ErrorKind {
     let msg = msg.into() ;
     let mut line_count = self.line_off ;
@@ -231,46 +265,93 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
   /// Returns `true` if there's still things to parse.
-  fn has_next(& mut self) -> bool {
-    if ! self.cxt.buff.is_empty() { true } else {
-      if let Some(next) = self.chars.next() {
-        self.cxt.buff.push(next) ;
-        true
-      } else {
-        false
-      }
+  #[inline]
+  fn has_next(& self) -> bool {
+    self.cursor < self.string.len()
+  }
+  /// The next character, does not move the cursor.
+  fn peek(& self) -> Option<& 's str> {
+    if self.has_next() {
+      Some(
+        & self.string[ self.cursor .. self.cursor + 1 ]
+      )
+    } else {
+      None
     }
   }
   /// The next character.
-  fn next(& mut self) -> Option<(usize, char)> {
-    if let Some(res) = self.cxt.buff.pop() {
-      Some(res)
+  fn next(& mut self) -> Option<& 's str> {
+    if self.has_next() {
+      self.cursor += 1 ;
+      Some(
+        & self.string[ self.cursor - 1 .. self.cursor ]
+      )
     } else {
-      self.chars.next()
+      None
     }
   }
-  /// Opposite of `next`, pushes a character back.
-  fn txen(& mut self, pos: usize, c: char) {
-    self.cxt.buff.push( (pos, c) )
+  /// Moves the cursor back by `n` character.
+  ///
+  /// # Panic
+  ///
+  /// - if `self.cursor < n`
+  fn move_back(& mut self, n: usize) {
+    debug_assert! { self.cursor >= n }
+    self.cursor -= n
   }
 
-  /// Pushes something on the memory.
-  fn mem(& mut self, pos: usize, char: char) {
-    self.cxt.mem.push((pos, char))
+  /// Memorizes the current position.
+  fn mem(& mut self) {
+    self.cxt.mem.push(self.cursor)
   }
 
-  /// Backtracks whatever's in the memory.
-  fn backtrack_mem(& mut self) {
-    self.cxt.mem.reverse() ;
-    for elem in self.cxt.mem.drain(0..) {
-      self.cxt.buff.push(elem)
+  /// Backtracks to a precise position.
+  fn backtrack_to(& mut self, position: Cursor) {
+    self.cursor = position
+  }
+  /// Backtracks to the previous memorized position.
+  fn backtrack(& mut self) {
+    if let Some(prev) = self.cxt.mem.pop() {
+      debug_assert! { prev <= self.cursor }
+      self.cursor = prev
     }
   }
-  /// Clears the memory.
-  fn clear_mem(& mut self) {
-    self.cxt.mem.clear()
+  /// Pops the last memorized position.
+  fn pop_mem(& mut self) {
+    let prev = self.cxt.mem.pop() ;
+    debug_assert! { prev.is_some() }
   }
+  // /// Clears the memory.
+  // fn clear_mem(& mut self) {
+  //   self.cxt.mem.clear()
+  // }
 
+  /// Consumes whitespaces and comments.
+  fn ws_cmt(& mut self) {
+    let mut done = false ;
+    while ! done {
+      // Eat spaces.
+      let rest = & self.string[ self.cursor .. ] ;
+      let trimmed = rest.trim_left() ;
+      let diff = rest.len() - trimmed.len() ;
+      done = diff == 0 ;
+      self.cursor += diff ;
+
+      // Eat comments.
+      match self.next() {
+        Some(";") => {
+          done = false ;
+          'eat_line: while let Some(char) = self.next() {
+            if char == "\n" || char == "\r" {
+              break 'eat_line
+            }
+          }
+        },
+        Some(_) => self.move_back(1),
+        None => (),
+      }
+    }
+  }
 
   /// Parses a string or fails.
   fn tag(& mut self, tag: & str) -> Res<()> {
@@ -286,43 +367,26 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
   /// Tries parsing a string.
   fn tag_opt(& mut self, tag: & str) -> bool {
-    for c in tag.chars() {
-      if let Some( (pos, char) ) = self.next() {
-        self.mem(pos, char) ;
-        if char != c {
-          self.backtrack_mem() ;
-          return false
-        }
-      } else {
-        self.backtrack_mem() ;
-        return false
-      }
-    }
-    self.clear_mem() ;
-    true
+    self.tag_opt_pos(tag).is_some()
   }
-
-  /// Consumes whitespaces and comments.
-  fn ws_cmt(& mut self) {
-    'ws_cmt: while let Some( (pos, char) ) = self.next() {
-      if ! char.is_whitespace() {
-        if char == ';' {
-          'comment: while let Some( (_, char) ) = self.next() {
-            match char {
-              '\n' => break 'comment,
-              _ => (),
-            }
-          }
-        } else {
-          self.txen(pos, char) ;
-          break 'ws_cmt
-        }
-      }
+  /// Tries parsing a string. Returns the position of the start of the tag.
+  fn tag_opt_pos(& mut self, tag: & str) -> Option<Cursor> {
+    self.ws_cmt() ;
+    if self.string.len() < self.cursor + tag.len() {
+      None
+    } else if & self.string[
+      self.cursor .. self.cursor + tag.len()
+    ] == tag {
+      let res = Some(self.cursor) ;
+      self.cursor = self.cursor + tag.len() ;
+      res
+    } else {
+      None
     }
   }
 
   /// Parses an ident of fails.
-  fn ident(& mut self) -> Res<(usize, & 's str)> {
+  fn ident(& mut self) -> Res< (Cursor, & 's str) > {
     if let Some(id) = self.ident_opt() ? {
       Ok(id)
     } else {
@@ -331,69 +395,77 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       )
     }
   }
-  fn ident_opt(& mut self) -> Res< Option<(usize, & 's str)> > {
-    let res = self.unsafe_ident_opt() ? ;
-    if let Some(& (start_pos, ref id)) = res.as_ref() {
+  /// Tries to parse an ident.
+  fn ident_opt(& mut self) -> Res< Option< (Cursor, & 's str) > > {
+    let ident_start_pos = self.cursor ;
+    if let Some(id) = self.unsafe_ident_opt() ? {
       if keywords::is_keyword(id) {
         bail!(
           self.error(
-            start_pos,
+            ident_start_pos,
             format!(
               "expected identifier, found keyword `{}`",
               conf.bad(id)
             )
           )
         )
+      } else {
+        Ok( Some((ident_start_pos, id)) )
       }
+    } else {
+      Ok(None)
     }
-    Ok(res)
   }
   /// Tries to parse an ident, does not check anything about the ident.
-  fn unsafe_ident_opt(& mut self) -> Res< Option<(usize, & 's str)> > {
-    if let Some( (start_pos, char) ) = self.next() {
-      if char == '|' {
+  fn unsafe_ident_opt(& mut self) -> Res< Option<& 's str> > {
+    self.ws_cmt() ;
+    let ident_start_pos = self.cursor ;
+    if let Some(char) = self.next() {
+      if char == "|" {
         let (mut legal_unquoted, mut is_first) = (true, true) ;
-        'quoted: while let Some((pos, char)) = self.next() {
-          if char == '|' {
-            let (start, end) = if legal_unquoted {
-              (start_pos + 1, pos)
-            } else {
-              (start_pos, pos + 1)
-            } ;
+        'quoted: while let Some(char) = self.next() {
+          if char == "|" {
             return Ok(
-              Some( (start_pos, & self.string[start..end]) )
+              Some(
+                if legal_unquoted {
+                  & self.string[ ident_start_pos + 1 .. self.cursor - 1 ]
+                } else {
+                  & self.string[ ident_start_pos .. self.cursor ]
+                }
+              )
             )
           } else {
             legal_unquoted = legal_unquoted && (
-              (! is_first && char.is_alphanumeric()) ||
-              (is_first && char.is_alphabetic()) ||
-              id_special_chars.contains(& char)
+              ( ! is_first && char.is_alphanumeric() ) ||
+              (   is_first && char.is_alphabetic()   ) ||
+              id_special_chars.contains(char)
             ) ;
             is_first = false ;
           }
         }
         bail!(
           self.error(
-            start_pos,
-            format!("expected `|` closing this quoted identifier, found eof")
+            ident_start_pos, format!(
+              "expected `|` closing this quoted identifier, found eof"
+            )
           )
         )
       } else if char.is_alphabetic() || id_special_chars.contains(& char) {
-        let mut end_pos = self.string.len() ;
-        'unquoted: while let Some((pos, char)) = self.next() {
-          if char.is_alphanumeric() || id_special_chars.contains(& char) {
-            ()
-          } else {
-            self.txen(pos, char) ;
-            end_pos = pos ;
+        'unquoted: while let Some(char) = self.next() {
+          if ! (
+            char.is_alphanumeric() || id_special_chars.contains(& char)
+          ) {
+            self.move_back(1) ;
             break
           }
         }
         Ok(
-          Some( (start_pos, & self.string[start_pos..end_pos]) )
+          Some(
+            & self.string[ ident_start_pos .. self.cursor ]
+          )
         )
       } else {
-        self.txen(start_pos, char) ;
+        self.backtrack_to(ident_start_pos) ;
         Ok(None)
       }
     } else {
@@ -401,58 +473,31 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
-  /// Tries to parse a character.
-  fn char_opt(& mut self, char: char) -> bool {
-    if let Some( (pos, c) ) = self.next() {
-      if c != char {
-        self.txen(pos, c) ;
-        false
-      } else {
-        true
+  /// Consumes characters until and **including** some character.
+  ///
+  /// Returns `true` iff `char` was found. Hence, returns `false` iff `eof` was
+  /// reached.
+  fn eat_until(& mut self, char: char) -> bool {
+    for c in self.string[ self.cursor .. ].chars() {
+      self.cursor += 1 ;
+      if char == c {
+        return true
       }
-    } else {
-      false
     }
-  }
-  /// Tries to parse a character, yielding its position.
-  fn char_opt_pos(& mut self, char: char) -> Option<usize> {
-    if let Some( (pos, c) ) = self.next() {
-      if c != char {
-        self.txen(pos, c) ;
-        None
-      } else {
-        Some(pos)
-      }
-    } else {
-      None
-    }
-  }
-  /// Parses a character or fails.
-  fn char(& mut self, char: char) -> Res<()> {
-    if self.char_opt(char) { Ok(()) } else {
-      bail!(
-        self.error_here(
-          format!("expected `{}`", conf.emph(& char.to_string()))
-        )
-      )
-    }
-  }
-
-  /// Consumes characters until some character.
-  fn eat_until(& mut self, char: char) {
-    while let Some((_, c)) = self.next() {
-      if c == char { break }
-    }
+    false
   }
 
   /// Returns all the characters until some character.
-  fn get_until(& mut self, char: char) -> String {
-    let mut s = String::new() ;
-    while let Some((_, c)) = self.next() {
-      if c == char { break }
-      s.push(c)
+  ///
+  /// `None` iff `char` was not found, i.e. `eat_until` returns `false`.
+  fn get_until(& mut self, char: char) -> Option<& 's str> {
+    let start_pos = self.cursor ;
+    let found_id = self.eat_until(char) ;
+    if found_id {
+      Some( & self.string[ start_pos .. self.cursor ] )
+    } else {
+      None
     }
-    s
   }
 
   /// Parses a set-info.
@@ -460,12 +505,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt("set-info") {
       return Ok(false)
     }
-    self.ws_cmt() ;
-    self.char(':') ? ;
+    self.tag(":") ? ;
     let _ = self.ident() ? ;
-    self.ws_cmt() ;
-    if self.char_opt('"') {
-      self.eat_until('"')
+    if self.tag_opt("\"") {
+      let found_it = self.eat_until('"') ;
+      if ! found_it {
+        bail!(
+          self.error_here("expected closing `\"`, found <eof>")
+        )
+      }
     } else if self.ident_opt()?.is_some() {
       ()
     }
@@ -473,14 +521,19 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses an echo.
-  fn echo(& mut self) -> Res< Option<String> > {
+  fn echo(& mut self) -> Res< Option<& 's str> > {
     if ! self.tag_opt("echo") {
       return Ok(None)
     }
-    self.ws_cmt() ;
-    self.char('"') ? ;
+    self.tag("\"") ? ;
     let blah = self.get_until('"') ;
-    Ok( Some(blah) )
+    if let Some(blah) = blah {
+      Ok( Some(blah) )
+    } else {
+      bail!(
+        self.error_here("expected closing `\"`, found <eof>")
+      )
+    }
   }
 
   /// Parses a set-logic.
@@ -488,7 +541,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt("set-logic") {
       return Ok(false)
     }
-    self.ws_cmt() ;
     if ! self.tag_opt("HORN") {
       bail!( self.error_here("unknown logic: ") )
     }
@@ -519,21 +571,16 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt("declare-fun") {
       return Ok(false)
     }
-    self.ws_cmt() ;
     let (pos, ident) = self.ident() ? ;
-    self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
+    self.tag("(") ? ;
 
     let mut sorts = Vec::with_capacity(11) ;
     while let Some(ty) = self.sort_opt() {
       sorts.push(ty) ;
-      self.ws_cmt()
     }
     sorts.shrink_to_fit() ;
 
-    self.char(')') ? ;
-    self.ws_cmt() ;
+    self.tag(")") ? ;
     if ! self.tag_opt("Bool") {
       bail!(
         self.error_here("expected Bool sort")
@@ -564,30 +611,25 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     & mut self,
     var_map: & mut VarMap<VarInfo>, hash_map: & mut HashMap<& 's str, VarIdx>
   ) -> Res<()> {
-    self.char('(') ? ;
-    self.ws_cmt() ;
-    while self.char_opt('(') {
-      self.ws_cmt() ;
+    self.tag("(") ? ;
+    while self.tag_opt("(") {
       let (pos, ident) = self.ident() ? ;
-      self.ws_cmt() ;
       let sort = self.sort() ? ;
-      self.ws_cmt() ;
-      self.char(')') ? ;
-      self.ws_cmt() ;
+      self.tag(")") ? ;
       let idx = var_map.next_index() ;
       let prev = hash_map.insert(ident, idx) ;
       if let Some(_) = prev {
         bail!(
           self.error(
             pos, format!(
-              "found two qualifier variables named `{}`", conf.bad(ident)
+              "found two quantifier variables named `{}`", conf.bad(ident)
             )
           )
         )
       }
       var_map.push( VarInfo::new(ident.into(), sort, idx) )
     }
-    self.char(')') ? ;
+    self.tag(")") ? ;
     var_map.shrink_to_fit() ;
     hash_map.shrink_to_fit() ;
     Ok(())
@@ -628,8 +670,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   #[inline]
   fn close_let_bindings(& mut self, count: LetCount) -> Res<()> {
     for _ in 0..count.n {
-      self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
       self.pop_bind() ?
     }
     Ok(())
@@ -651,35 +692,30 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res<LetCount> {
     let mut n = 0 ;
+    self.ws_cmt() ;
+    
     'parse_lets: loop {
-      self.ws_cmt() ;
-      if let Some((pos, c)) = self.next() {
-        if c == '(' && {
-          self.ws_cmt() ; self.tag_opt( keywords::let_ )
-        } {
+      if let Some(pos) = self.tag_opt_pos("(") {
+        if self.tag_opt( keywords::let_ ) {
+          n += 1 ;
           self.push_bind() ;
-          self.ws_cmt() ;
-          self.char('(') ? ;
-          while { self.ws_cmt() ; self.char_opt('(') } {
-            self.ws_cmt() ;
+          self.tag("(") ? ;
+          while self.tag_opt("(") {
             let (_, id) = self.ident() ? ;
-            self.ws_cmt() ;
             let tterms = self.parse_ptterms(map, instance) ? ;
             self.insert_bind(id, tterms) ? ;
-            self.ws_cmt() ;
-            self.char(')') ?
+            self.tag(")") ?
           }
-          self.ws_cmt() ;
-          self.char(')') ? ;
-          n += 1
+          self.tag(")") ? ;
         } else {
+          self.backtrack_to(pos) ;
           break 'parse_lets
-          self.txen(pos, c)
         }
       } else {
         break 'parse_lets
       }
     }
+
     Ok( LetCount { n } )
   }
 
@@ -696,23 +732,26 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Integer parser.
   fn int(& mut self) -> Option<Int> {
-    if let Some((start_pos, char)) = self.next() {
+    self.ws_cmt() ;
+    let start_pos = self.cursor ;
+
+    if let Some(char) = self.next() {
       if char.is_numeric() {
-        let mut end_pos = self.string.len() ;
-        while let Some((pos, char)) = self.next() {
+        while let Some(char) = self.next() {
           if ! char.is_numeric() {
-            self.txen(pos, char) ;
-            end_pos = pos ;
+            self.move_back(1) ;
             break
           }
         }
         Some(
           Int::parse_bytes(
-            self.string[start_pos..end_pos].as_bytes(), 10
+            self.string[
+              start_pos .. self.cursor
+            ].as_bytes(), 10
           ).expect("[bug] in integer parsing")
         )
       } else {
-        self.txen(start_pos, char) ;
+        self.move_back(1) ;
         None
       }
     } else {
@@ -730,74 +769,86 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
   /// Tries to parse an operator.
   fn op_opt(& mut self) -> Option<Op> {
-    match self.next() {
-      Some( (pos_1, 'a') ) => if self.tag_opt("nd") {
-        Some(Op::And)
+    macro_rules! none_if_ident_char_else {
+      ($e:expr) => (
+        if let Some(char) = self.peek() {
+          if char.is_alphanumeric()
+          || id_special_chars.contains(& char) {
+            None
+          } else {
+            Some($e)
+          }
+        } else { Some($e) }
+      )
+    }
+    self.ws_cmt() ;
+    self.mem() ;
+    let res = match self.next() {
+      Some("a") => if self.tag_opt("nd") {
+        none_if_ident_char_else!(Op::And)
       } else {
-        self.txen(pos_1, 'a') ;
         None
       },
-      Some( (pos_1, 'o') ) => if self.char_opt('r') {
-        Some(Op::Or)
+      Some("o") => if self.tag_opt("r") {
+        none_if_ident_char_else!(Op::Or)
       } else {
-        self.txen(pos_1, 'o') ;
         None
       },
-      Some( (pos_1, 'n') ) => if self.tag_opt("ot") {
-        Some(Op::Not)
+      Some("n") => if self.tag_opt("ot") {
+        none_if_ident_char_else!(Op::Not)
       } else {
-        self.txen(pos_1, 'n') ;
         None
       },
-      Some( (pos_1, 'i') ) => if self.tag_opt("te") {
-        Some(Op::Ite)
+      Some("i") => if self.tag_opt("te") {
+        none_if_ident_char_else!(Op::Ite)
       } else {
-        self.txen(pos_1, 'i') ;
         None
       },
-      Some( (pos_1, 'm') ) => if self.tag_opt("od") {
-        Some(Op::Mod)
+      Some("m") => if self.tag_opt("od") {
+        none_if_ident_char_else!(Op::Mod)
       } else {
-        self.txen(pos_1, 'm') ;
         None
       },
-      Some( (pos_1, 'r') ) => if self.tag_opt("em") {
-        Some(Op::Rem)
+      Some("r") => if self.tag_opt("em") {
+        none_if_ident_char_else!(Op::Rem)
       } else {
-        self.txen(pos_1, 'r') ;
         None
       },
-      Some( (pos_1, 'd') ) => if self.tag_opt("iv") {
-        Some(Op::IDiv)
+      Some("d") => if self.tag_opt("iv") {
+        none_if_ident_char_else!(Op::IDiv)
       } else {
-        self.txen(pos_1, 'd') ;
         None
       },
-      Some( (_, '=') ) => if self.char_opt('>') {
+      Some("=") => if self.tag_opt(">") {
         Some(Op::Impl)
       } else {
         Some(Op::Eql)
       },
-      Some( (_, '>') ) => if self.char_opt('=') {
+      Some(">") => if self.tag_opt("=") {
         Some(Op::Ge)
       } else {
         Some(Op::Gt)
       },
-      Some( (_, '<') ) => if self.char_opt('=') {
+      Some("<") => if self.tag_opt("=") {
         Some(Op::Le)
       } else {
         Some(Op::Lt)
       },
-      Some( (_, '+') ) => Some(Op::Add),
-      Some( (_, '-') ) => Some(Op::Sub),
-      Some( (_, '*') ) => Some(Op::Mul),
-      // Some( (_, '/') ) => Some(Op::Div),
-      Some( (pos, char) ) => {
-        self.txen(pos, char) ;
-        None
-      },
+      Some("+") => Some(Op::Add),
+      Some("-") => Some(Op::Sub),
+      Some("*") => Some(Op::Mul),
+      // Some("/") => Some(Op::Div),
+      Some(_) => None,
       None => None,
+    } ;
+
+    if res.is_some() {
+      self.pop_mem()
+    } else {
+      self.backtrack()
     }
+
+    res
   }
 
   /// Parses a sequence of terms.
@@ -808,11 +859,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let mut seq = Vec::with_capacity(11) ;
 
     'read_kids: loop {
-      self.ws_cmt() ;
       let bind_count = self.let_bindings(map, instance) ? ;
-      self.ws_cmt() ;
-      let mut term = if self.char_opt('(') {
-        self.ws_cmt() ;
+      
+      let mut term = if self.tag_opt("(") {
         let op = self.op() ? ;
         let kids = Vec::with_capacity(11) ;
         self.cxt.term_stack.push( (op, kids, bind_count) ) ;
@@ -847,7 +896,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ) = self.cxt.term_stack.pop() {
         kids.push(term) ;
         self.ws_cmt() ;
-        if self.char_opt(')') {
+        if self.tag_opt(")") {
           term = term::app(op, kids) ;
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
@@ -881,28 +930,31 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
   ) -> Res< Option< PTTerms > > {
     let bind_count = self.let_bindings(map, instance) ? ;
-    let res = if self.char_opt('(') {
-      self.ws_cmt() ;
+    let res = if self.tag_opt("(") {
+
       if let Some(op) = self.op_opt() {
-        self.ws_cmt() ;
         let args = self.term_seq(map, instance) ? ;
-        self.ws_cmt() ;
-        self.char(')') ? ;
+        self.tag(")") ? ;
         Ok( Some(
           PTTerms::tterm( TTerm::T( term::app(op, args) ) )
         ) )
-      } else if let Some((pos,ident)) = self.ident_opt()? {
-        if ident == keywords::forall || ident == keywords::exists {
-          bail!(
-            self.error(
-              pos, format!("unable to work on clauses that are not ground")
-            )
+      } else if self.tag_opt(keywords::forall) {
+        bail!(
+          self.error(
+            self.cursor - keywords::forall.len(),
+            format!("unable to work on clauses that are not ground")
           )
-        }
-        self.ws_cmt() ;
+        )
+      } else if self.tag_opt(keywords::exists) {
+        bail!(
+          self.error(
+            self.cursor - keywords::exists.len(),
+            format!("unable to work on clauses that are not ground")
+          )
+        )
+      } else if let Some((pos,ident)) = self.ident_opt()? {
         let args = self.term_seq(map, instance) ? ;
-        self.ws_cmt() ;
-        self.char(')') ? ;
+        self.tag(")") ? ;
         let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
           * idx
         } else {
@@ -931,7 +983,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         ) )
       } else {
         bail!(
-          self.error_here("expected operator or predicate")
+          self.error_here("expected operator, let binding or predicate")
         )
       }
     } else if let Some(b) = self.bool() {
@@ -980,31 +1032,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
     ) ;
     while parse_args {
-      self.ws_cmt() ;
       self.args(& mut var_map, & mut hash_map) ? ;
-      self.ws_cmt() ;
-      parse_args = if let Some(pos) = self.char_opt_pos('(') {
-        self.ws_cmt() ;
+      parse_args = if let Some(pos) = self.tag_opt_pos("(") {
         if self.tag_opt(keywords::forall) {
           closing_parens += 1 ;
           true
         } else {
-          self.txen(pos, '(') ;
+          self.backtrack_to(pos) ;
           false
         }
       } else {
         false
       }
     }
-    self.ws_cmt() ;
-    let outter_bind_count = self.let_bindings(& hash_map, instance) ? ;
-    self.ws_cmt() ;
-    self.parse_clause(var_map, hash_map, instance, false) ? ;
-    self.ws_cmt() ;
+    let outter_bind_count = self.let_bindings(
+      & hash_map, instance
+    ) ? ;
+    self.parse_clause(
+      var_map, hash_map, instance, false
+    ) ? ;
     self.close_let_bindings(outter_bind_count) ? ;
     for _ in 0..closing_parens {
-      self.ws_cmt() ;
-      self.char(')') ?
+      self.tag(")") ?
     }
     Ok(true)
   }
@@ -1015,42 +1064,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt(keywords::op::not_) {
       return Ok(false)
     }
-    self.ws_cmt() ;
     let outter_bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
-    self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
+    self.tag("(") ? ;
     self.tag(keywords::exists) ? ;
-    self.ws_cmt() ;
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
       VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
     ) ;
     while parse_args {
-      self.ws_cmt() ;
       self.args(& mut var_map, & mut hash_map) ? ;
       self.ws_cmt() ;
-      parse_args = if let Some(pos) = self.char_opt_pos('(') {
-        self.ws_cmt() ;
+      parse_args = if let Some(pos) = self.tag_opt_pos("(") {
         if self.tag_opt(keywords::exists) {
           closing_parens += 1 ;
           true
         } else {
-          self.txen(pos, '(') ;
+          self.backtrack_to(pos) ;
           false
         }
       } else {
         false
       }
     }
-    self.ws_cmt() ;
     self.parse_clause(var_map, hash_map, instance, true) ? ;
-    self.ws_cmt() ;
-    self.char(')') ? ;
-    self.ws_cmt() ;
+    self.tag(")") ? ;
     self.close_let_bindings(outter_bind_count) ? ;
     for _ in 0..closing_parens {
-      self.ws_cmt() ;
-      self.char(')') ?
+      self.tag(")") ?
     }
     Ok(true)
   }
@@ -1095,12 +1134,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt(keywords::cmd::assert) {
       return Ok(false)
     }
-    self.ws_cmt() ;
     let bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
-    self.ws_cmt() ;
 
-    if self.char_opt('(') {
-      self.ws_cmt() ;
+    if self.tag_opt("(") {
 
       if self.forall(instance) ? {
         ()
@@ -1111,8 +1147,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.error_here("expected forall or negated exists")
         )
       } ;
-      self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
     } else if self.tag_opt("true") {
       ()
     } else if self.tag_opt("false") {
@@ -1123,7 +1158,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       )
     }
 
-    self.ws_cmt() ;
     self.close_let_bindings(bind_count) ? ;
 
     Ok(true)
@@ -1174,8 +1208,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.cxt.term_stack.clear() ;
 
     while self.has_next() {
-      self.char('(') ? ;
-      self.ws_cmt() ;
+      self.tag("(") ? ;
 
       res = if self.set_info() ? {
         Parsed::Items
@@ -1203,13 +1236,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } ;
 
       self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
       self.ws_cmt() ;
 
       debug_assert!( self.cxt.term_stack.is_empty() ) ;
-      debug_assert!( self.cxt.buff.is_empty() ) ;
       debug_assert!( self.cxt.mem.is_empty() ) ;
-      debug_assert!( self.chars.next().is_none() ) ;
 
       if res != Parsed::Items {
         return Ok(res)
@@ -1217,9 +1248,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     debug_assert!( self.cxt.term_stack.is_empty() ) ;
-    debug_assert!( self.cxt.buff.is_empty() ) ;
     debug_assert!( self.cxt.mem.is_empty() ) ;
-    debug_assert!( self.chars.next().is_none() ) ;
 
     Ok(res)
   }
@@ -1263,18 +1292,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       let bind_count = self.let_bindings(& map, instance) ? ;
       if ! bind_count.is_zero() {
         stack.push( Frame::Let(bind_count) ) ;
-        self.ws_cmt()
       }
 
-      let mut ptterm = if let Some(pos) = self.char_opt_pos('(') {
-        self.ws_cmt() ;
+      let mut ptterm = if let Some(pos) = self.tag_opt_pos("(") {
 
         if self.tag_opt("and") {
-          self.ws_cmt() ;
           stack.push( Frame::And(vec![]) ) ;
           continue 'go_down
         } else if self.tag_opt("or") {
-          self.ws_cmt() ;
           stack.push( Frame::Or(vec![]) ) ;
           continue 'go_down
         } else if self.tag_opt("not") {
@@ -1284,7 +1309,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           stack.push( Frame::Impl(vec![]) ) ;
           continue 'go_down
         } else {
-          self.txen(pos, '(') ;
+          self.backtrack_to(pos) ;
           self.top_term(& map, instance) ?
         }
 
@@ -1293,11 +1318,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } ;
 
       'go_up: loop {
-        self.ws_cmt() ;
         match stack.pop() {
           Some( Frame::And(mut args) ) => {
             args.push(ptterm) ;
-            if self.char_opt(')') {
+            if self.tag_opt(")") {
               ptterm = PTTerms::and(args) ;
               continue 'go_up
             } else {
@@ -1307,7 +1331,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           },
           Some( Frame::Or(mut args) ) => {
             args.push(ptterm) ;
-            if self.char_opt(')') {
+            if self.tag_opt(")") {
               ptterm = PTTerms::or(args) ;
               continue 'go_up
             } else {
@@ -1317,7 +1341,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           },
           Some( Frame::Impl(mut args) ) => {
             args.push(ptterm) ;
-            if self.char_opt(')') {
+            if self.tag_opt(")") {
               if args.len() != 2 {
                 bail!(
                   "unexpected implication over {} (!= 2) arguments", args.len()
@@ -1333,7 +1357,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           },
           Some( Frame::Not ) => {
             ptterm = PTTerms::not(ptterm) ? ;
-            self.char(')') ? ;
+            self.tag(")") ? ;
             continue 'go_up
           },
           Some( Frame::Let(bind_count) ) => {
