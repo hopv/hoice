@@ -137,34 +137,33 @@ macro_rules! msg {
 }
 
 
-#[doc = r#"Yields the value if the type (int or bool) matches, otherwise
-`return`s `Ok(Val::N)`.
-
-```
-use hoice::term::Val ;
-use hoice::errors ;
-
-fn int(val: Val) -> Res<Val> {
-  Ok( try_val!{ int val } )
-}
-fn bool(val: Val) -> Res<Val> {
-  Ok( try_val!{ bool val } )
-}
-
-let none = Val::N ;
-
-let val: Val = 7.into() ;
-assert_eq!{ int( val.clone() ), val }
-assert_eq!{ bool( val.clone() ), none }
-
-let val: Val = false.into() ;
-assert_eq!{ int( val.clone() ), none }
-assert_eq!{ bool( val.clone() ), val }
-
-assert_eq!{ int( none.clone() ), none }
-assert_eq!{ bool( none.clone() ), none }
-```
-"#]
+/// Yields the value if the type (int or bool) matches, otherwise
+/// `return`s `Ok(Val::N)`.
+///
+/// ```rust
+/// use hoice::term::Val ;
+/// use hoice::errors ;
+///
+/// fn int(val: Val) -> Res<Val> {
+///   Ok( try_val!{ int val } )
+/// }
+/// fn bool(val: Val) -> Res<Val> {
+///   Ok( try_val!{ bool val } )
+/// }
+///
+/// let none = Val::N ;
+///
+/// let val: Val = 7.into() ;
+/// assert_eq!{ int( val.clone() ), val }
+/// assert_eq!{ bool( val.clone() ), none }
+///
+/// let val: Val = false.into() ;
+/// assert_eq!{ int( val.clone() ), none }
+/// assert_eq!{ bool( val.clone() ), val }
+///
+/// assert_eq!{ int( none.clone() ), none }
+/// assert_eq!{ bool( none.clone() ), none }
+/// ```
 macro_rules! try_val {
   (int $e:expr) => (
     if let Some(i) = $e.to_int()? { i } else {

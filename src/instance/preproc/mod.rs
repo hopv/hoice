@@ -1,9 +1,7 @@
-#![doc = r#"Reduction strategies.
-
-The strategies are attached `struct`s so that they can be put in a
-vector using single dispatch. That way, they can be combined however we want.
-
-"#]
+//! Reduction strategies.
+//!
+//! The strategies are attached `struct`s so that they can be put in a vector
+//! using single dispatch. That way, they can be combined however we want.
 
 use common::* ;
 use instance::* ;

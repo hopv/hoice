@@ -797,31 +797,32 @@ impl Config {
 
 
 
-#[doc = r#"Verbose level.
-
-```
-# use hoice::common::Verb ;
-let mut verb = Verb::Quiet ;
-assert!( ! verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.inc() ;
-assert_eq!( verb, Verb::Verb ) ;
-assert!( verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.inc() ;
-assert_eq!( verb, Verb::Debug ) ;
-assert!( verb.verbose() ) ;
-assert!( verb.debug() ) ;
-verb.dec() ;
-assert_eq!( verb, Verb::Verb ) ;
-assert!( verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.dec() ;
-assert_eq!( verb, Verb::Quiet ) ;
-assert!( ! verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-```
-"#]
+/// Verbose level.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::Verb ;
+/// let mut verb = Verb::Quiet ;
+/// assert!( ! verb.verbose() ) ;
+/// assert!( ! verb.debug() ) ;
+/// verb.inc() ;
+/// assert_eq!( verb, Verb::Verb ) ;
+/// assert!( verb.verbose() ) ;
+/// assert!( ! verb.debug() ) ;
+/// verb.inc() ;
+/// assert_eq!( verb, Verb::Debug ) ;
+/// assert!( verb.verbose() ) ;
+/// assert!( verb.debug() ) ;
+/// verb.dec() ;
+/// assert_eq!( verb, Verb::Verb ) ;
+/// assert!( verb.verbose() ) ;
+/// assert!( ! verb.debug() ) ;
+/// verb.dec() ;
+/// assert_eq!( verb, Verb::Quiet ) ;
+/// assert!( ! verb.verbose() ) ;
+/// assert!( ! verb.debug() ) ;
+/// ```
 #[derive(PartialEq, Eq, Debug)]
 pub enum Verb {
   /// Quiet.

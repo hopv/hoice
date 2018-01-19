@@ -9,28 +9,6 @@
 //! accessible. Terms are created *via* the functions in this module, such as
 //! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
 //!
-//! ```
-//! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm } ;
-//! let some_term = term::eq(
-//!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::var(5), term::int(2) ]
-//!   )
-//! ) ;
-//! // A `Term` dereferences to an `RTerm`:
-//! match * some_term {
-//!   RTerm::App { op: Op::Eql, ref args } => {
-//!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( term::int(11), args[0] ) ;
-//!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
-//!       assert_eq!( term::var(5), args[0] ) ;
-//!       assert_eq!( term::int(2), args[1] )
-//!     } else { panic!("not a multiplication") }
-//!   },
-//!   _ => panic!("not an equality"),
-//! }
-//! ```
-//!
 //! Terms are not typed at all. A predicate application is **not** a term, only
 //! operator applications are.
 //!
@@ -54,6 +32,30 @@
 //! - the [`VarInfo`s](../instance/info/struct.VarInfo.html) stored in a
 //!   [`Clause`](../instance/struct.Clause.html), which give them a name and a
 //!   type.
+//!
+//! # Examples
+//!
+//! ```rust
+//! # use hoice::term ;
+//! # use hoice::term::{ Op, RTerm } ;
+//! let some_term = term::eq(
+//!   term::int(11), term::app(
+//!     Op::Mul, vec![ term::var(5), term::int(2) ]
+//!   )
+//! ) ;
+//! // A `Term` dereferences to an `RTerm`:
+//! match * some_term {
+//!   RTerm::App { op: Op::Eql, ref args } => {
+//!     assert_eq!( args.len(), 2 ) ;
+//!     assert_eq!( term::int(11), args[0] ) ;
+//!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
+//!       assert_eq!( term::var(5), args[0] ) ;
+//!       assert_eq!( term::int(2), args[1] )
+//!     } else { panic!("not a multiplication") }
+//!   },
+//!   _ => panic!("not an equality"),
+//! }
+//! ```
 
 use hashconsing::* ;
 
@@ -216,7 +218,9 @@ impl RTerm {
 
   /// True if the term has no variables and evaluates to true.
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   /// use hoice::term::Op ;
   ///
@@ -258,7 +262,9 @@ impl RTerm {
   
   /// True if the term has no variables and evaluates to true.
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   /// use hoice::term::Op ;
   ///
@@ -577,7 +583,9 @@ impl RTerm {
   ///
   /// Also, only works when all operators are binary (expect for unary minus).
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   ///
   /// let term = term::u_minus( term::var(0) ) ;
