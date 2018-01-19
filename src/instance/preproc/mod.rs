@@ -431,15 +431,15 @@ impl RedStrat for SimpleOneRhs {
 
     for pred in instance.pred_indices() {
 
-      if instance.clauses_of_pred(pred).1.len() == 1 {
+      if instance.clauses_of(pred).1.len() == 1 {
         log_debug! {
           "  looking at {} ({}, {})",
           instance[pred],
-          instance.clauses_of_pred(pred).0.len(),
-          instance.clauses_of_pred(pred).1.len(),
+          instance.clauses_of(pred).0.len(),
+          instance.clauses_of(pred).1.len(),
         }
 
-        let clause = * instance.clauses_of_pred(
+        let clause = * instance.clauses_of(
           pred
         ).1.iter().next().unwrap() ;
         log_debug! {
@@ -577,7 +577,7 @@ impl RedStrat for SimpleOneLhs {
     for pred in instance.pred_indices() {
 
       let clause_idx = {
-        let mut lhs_clauses = instance.clauses_of_pred(pred).0.iter() ;
+        let mut lhs_clauses = instance.clauses_of(pred).0.iter() ;
         if let Some(clause) = lhs_clauses.next() {
           if lhs_clauses.next().is_none() {
             * clause
@@ -592,8 +592,8 @@ impl RedStrat for SimpleOneLhs {
       log_debug! {
         "  looking at {} ({}, {})",
         instance[pred],
-        instance.clauses_of_pred(pred).0.len(),
-        instance.clauses_of_pred(pred).1.len(),
+        instance.clauses_of(pred).0.len(),
+        instance.clauses_of(pred).1.len(),
       }
 
       // Skip if the clause mentions this predicate more than once.
@@ -752,17 +752,17 @@ impl RedStrat for OneRhs {
 
     'all_preds: for pred in instance.pred_indices() {
 
-      if instance.clauses_of_pred(pred).1.len() == 1 {
+      if instance.clauses_of(pred).1.len() == 1 {
         log_debug! {
           "  looking at {} ({}, {})",
           instance[pred],
-          instance.clauses_of_pred(pred).0.len(),
-          instance.clauses_of_pred(pred).1.len(),
+          instance.clauses_of(pred).0.len(),
+          instance.clauses_of(pred).1.len(),
         }
         let clause =
-          * instance.clauses_of_pred(pred).1.iter().next().unwrap() ;
+          * instance.clauses_of(pred).1.iter().next().unwrap() ;
 
-        if instance.clauses_of_pred(pred).0.contains(& clause) {
+        if instance.clauses_of(pred).0.contains(& clause) {
         // || instance[clause].lhs_pred_apps_len() > 1 {
           continue 'all_preds
         }
@@ -910,7 +910,7 @@ impl RedStrat for OneLhs {
     for pred in instance.pred_indices() {
 
       let clause_idx = {
-        let mut lhs_clauses = instance.clauses_of_pred(pred).0.iter() ;
+        let mut lhs_clauses = instance.clauses_of(pred).0.iter() ;
         if let Some(clause) = lhs_clauses.next() {
           if lhs_clauses.next().is_none() {
             * clause
@@ -925,8 +925,8 @@ impl RedStrat for OneLhs {
       log_debug! {
         "  looking at {} ({}, {})",
         instance[pred],
-        instance.clauses_of_pred(pred).0.len(),
-        instance.clauses_of_pred(pred).1.len(),
+        instance.clauses_of(pred).0.len(),
+        instance.clauses_of(pred).1.len(),
       }
 
       // Skip if the clause mentions this predicate more than once.

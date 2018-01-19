@@ -138,7 +138,6 @@ pub fn read_and_work<R: ::std::io::Read>(
     let parse_res = match parse_res {
       Ok(res) => res,
       Err(e) => {
-        println!("parse err") ;
         if stop_on_err { return Err(e) }
         // error = true ;
         print_err(e) ;

@@ -84,6 +84,8 @@ pub use self::val::Val ;
 pub enum Typ {
   /// Integers.
   Int,
+  /// Rationals.
+  Rat,
   /// Booleans.
   Bool,
 }
@@ -92,6 +94,7 @@ impl Typ {
   pub fn default_val(& self) -> Val {
     match * self {
       Typ::Int => Val::I( Int::zero() ),
+      Typ::Rat => unimplemented!(),
       Typ::Bool => Val::B( true ),
     }
   }
@@ -108,6 +111,7 @@ impl_fmt!{
   Typ(self, fmt) {
     match * self {
       Typ::Int => fmt.write_str("Int"),
+      Typ::Rat => fmt.write_str("Rat"),
       Typ::Bool => fmt.write_str("Bool"),
     }
   }
@@ -121,6 +125,8 @@ pub enum RTerm {
   Var(VarIdx),
   /// An integer.
   Int(Int),
+  /// A rational.
+  Rat(Rat),
   /// A boolean.
   Bool(bool),
   /// An operator application.
@@ -187,6 +193,16 @@ impl RTerm {
               write!(w, "(- {})", - i) ?
             } else {
               write!(w, "{}", i) ?
+            }
+          },
+          Rat(ref r) => {
+            write!(w, "{}", sep) ? ;
+            let (num, den) = ( r.numer(), r.denom() ) ;
+            debug_assert!( ! den.is_negative() ) ;
+            if num.is_negative() {
+              write!(w, "(- (/ {} {}))", - r.numer(), r.denom()) ?
+            } else {
+              write!(w, "(/ {} {})", - r.numer(), r.denom()) ?
             }
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
@@ -389,6 +405,7 @@ impl RTerm {
           bail!("model is too short")
         },
         Int(ref i) => Val::I( i.clone() ),
+        Rat(_) => bail!("evaluation of rationals is not implemented"),
         Bool(b) => Val::B(b),
       } ;
 
@@ -418,9 +435,13 @@ impl RTerm {
     }
   }
 
-  /// If the term's an integer constants, returns the value.
-  pub fn int_val(& self) -> Option<Int> {
-    if let RTerm::Int(ref i) = * self { Some( i.clone() ) } else { None }
+  /// If the term's an integer constant, returns the value.
+  pub fn int_val(& self) -> Option<& Int> {
+    if let RTerm::Int(ref i) = * self { Some( i ) } else { None }
+  }
+  /// If the term's a rational constant, returns the value.
+  pub fn rat_val(& self) -> Option<& Rat> {
+    if let RTerm::Rat(ref r) = * self { Some( r ) } else { None }
   }
 
   /// The highest variable index appearing in the term.
@@ -432,7 +453,8 @@ impl RTerm {
         RTerm::Var(i) => max = Some(
           ::std::cmp::max( i, max.unwrap_or(0.into()) )
         ),
-        RTerm::Int(_) => (),
+        RTerm::Int(_) |
+        RTerm::Rat(_) |
         RTerm::Bool(_) => (),
         RTerm::App{ ref args, .. } => for arg in args {
           to_do.push(arg)
@@ -1886,8 +1908,10 @@ pub enum Op {
   Sub,
   /// Multiplication.
   Mul,
-  /// Division.
+  /// Integer division.
   IDiv,
+  /// Division.
+  Div,
   /// Remainder.
   Rem,
   /// Modulo.
@@ -1919,7 +1943,7 @@ impl Op {
     use self::Op::* ;
     match * self {
       Add => "+", Sub => "-", Mul => "*",
-      IDiv => "div", Rem => "rem", Mod => "mod",
+      IDiv => "div", Div => "/", Rem => "rem", Mod => "mod",
       Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
       Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
     }
@@ -1975,6 +1999,7 @@ impl Op {
         }
         if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
       },
+      Div => bail!("evaluation of divisions is not implemented"),
       IDiv => {
         if args.len() != 2 {
           bail!("unexpected division over {} numbers", args.len())

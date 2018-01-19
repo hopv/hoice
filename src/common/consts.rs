@@ -1,6 +1,14 @@
 //! Constants of the crate.
 
 
+lazy_static! {
+  /// The constant `10` as an [`Int`][int].
+  ///
+  /// [int]: ../type.Int.html
+  /// (Int type)
+  pub static ref ten: ::common::Int = 10.into() ;
+}
+
 
 /// Use this macro to declare keywords.
 ///

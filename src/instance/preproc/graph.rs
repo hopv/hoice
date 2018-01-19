@@ -398,7 +398,7 @@ impl Graph {
 
       // read_line("to continue...") ;
 
-      let (lhs_clauses, clauses) = instance.clauses_of_pred(pred) ;
+      let (lhs_clauses, clauses) = instance.clauses_of(pred) ;
       let mut def = Vec::with_capacity( clauses.len() ) ;
 
       'clause_iter: for clause in clauses {
@@ -563,7 +563,7 @@ impl Graph {
 
       }
 
-      let rmed = instance.clauses_of_pred(pred).1.len() ;
+      let rmed = instance.clauses_of(pred).1.len() ;
       this_pred_increase = if this_pred_increase >= rmed {
         this_pred_increase - rmed
       } else {

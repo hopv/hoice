@@ -564,10 +564,6 @@ impl Instance {
   }
 
 
-  /// Clauses a predicate appears in. Lhs and rhs.
-  pub fn clauses_of_pred(& self, pred: PrdIdx) -> ( & ClsSet, & ClsSet ) {
-    ( & self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1 )
-  }
   /// Lhs and rhs predicates of a clause.
   #[inline]
   pub fn preds_of_clause(
@@ -1037,6 +1033,22 @@ impl Instance {
   pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
     for clause in & self.clauses {
       self.qualifiers_of_clause(clause, quals) ?
+    }
+    // Add boolean qualifiers for all predicate's bool vars.
+    for pred in & self.preds {
+      for (var, typ) in pred.sig.index_iter() {
+        let mut bool_vars = Vec::new() ;
+        if * typ == Typ::Bool {
+          let var = term::var(var) ;
+          quals.insert( & var, pred.idx ) ? ;
+          bool_vars.push(var)
+        }
+        if bool_vars.len() > 1 {
+          quals.insert( & term::and( bool_vars.clone() ), pred.idx ) ? ;
+          quals.insert( & term::or( bool_vars ), pred.idx ) ? ;
+          ()
+        }
+      }
     }
     Ok(())
   }

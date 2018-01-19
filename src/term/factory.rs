@@ -33,6 +33,7 @@ fn scan_vars(t: & Term) -> VarSet {
         let _ = set.insert(i) ; ()
       },
       RTerm::Int(_) => (),
+      RTerm::Rat(_) => (),
       RTerm::Bool(_) => (),
       RTerm::App{ ref args, .. } => for arg in args {
         to_do.push(arg)
@@ -75,6 +76,17 @@ pub fn var<V: Into<VarIdx>>(v: V) -> Term {
 pub fn int<I: Into<Int>>(i: I) -> Term {
   factory.mk(
     RTerm::Int( i.into() )
+  )
+}
+/// Creates a rational constant.
+#[inline(always)]
+pub fn rat<R: Into<Rat>>(r: R) -> Term {
+  let r = r.into() ;
+  let r = if r.numer().is_negative() {
+    Rat::new( - r.denom(), r.numer().abs() )
+  } else { r } ;
+  factory.mk(
+    RTerm::Rat( r.into() )
   )
 }
 /// Creates the constant `0`.
@@ -494,6 +506,17 @@ fn normalize_app(
       (op, args)
     },
 
+    Op::Sub => {
+      if args.len() == 1 {
+        if let Some(i) = args[0].int_val() {
+          return Either::Left( int(- i) )
+        } else if let Some(r) = args[0].rat_val() {
+          return Either::Left( rat( -r ) )
+        }
+      }
+      (op, args)
+    },
+
     Op::Add => {
       let mut cnt = 0 ;
       if args.is_empty() {
@@ -501,7 +524,7 @@ fn normalize_app(
       }
       let mut sum: Int = 0.into() ;
       while cnt < args.len() {
-        if let Some(i) = args[cnt].int_val() {
+        if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
           sum = sum + i
         } else {
@@ -521,12 +544,6 @@ fn normalize_app(
       }
     },
 
-    Op::Sub if args.len() == 1 => if let Some(i) = args[0].int() {
-      return Either::Left( int(- i) )
-    } else {
-      (op, args)
-    },
-
     Op::Mul => {
       let mut cnt = 0 ;
       if args.is_empty() {
@@ -534,9 +551,9 @@ fn normalize_app(
       }
       let mut mul: Int = 1.into() ;
       while cnt < args.len() {
-        if let Some(i) = args[cnt].int_val() {
+        if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
           if i.is_zero() {
-            return Either::Left( int(i) )
+            return Either::Left( int( i.clone() ) )
           }
           args.swap_remove(cnt) ;
           mul = mul * i
@@ -635,9 +652,12 @@ fn normalize_app(
     } else {
       (op, args)
     },
-    
 
-    _ => (op, args),
+    // Not implemented.
+    Op::Div => panic!("simplification of division is not implemented"),
+
+    Op::Rem |
+    Op::Impl => (op, args),
 
   } ;
 

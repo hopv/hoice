@@ -237,7 +237,7 @@ where Slver: Solver<'skid, ()> {
     // lhs.
     for (pred, argss) in self[clause_idx].lhs_preds() {
       if argss.len() == 1 {
-        if self.clauses_of_pred(* pred).0.len() == 1 {
+        if self.clauses_of(* pred).0.len() == 1 {
           return Ok(info)
         }
       }
