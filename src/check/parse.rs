@@ -3,9 +3,6 @@
 use check::* ;
 
 
-/// Check 
-
-
 
 
 /// Parser.
@@ -168,22 +165,8 @@ impl<'a> InParser<'a> {
     if cnt != 0 {
       bail!("found eof while parsing sexpr")
     }
-    // println!("sexpr {{") ;
-    // println!("{}", s) ;
-    // println!("}}") ;
     Ok(s)
   }
-
-  // /// Parses everything until a whitespace.
-  // fn not_ws(& mut self) {
-  //   // let mut s = String::new() ;
-  //   while let Some(next) = self.next() {
-  //     if ! next.is_whitespace() { self.txen(next) ; break } else {
-  //       // next.push(next)
-  //     }
-  //   }
-  //   // s
-  // }
 
   /// Reads whitespaces and comments.
   fn ws_cmt(& mut self) {

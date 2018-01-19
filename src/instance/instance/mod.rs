@@ -299,11 +299,6 @@ impl Clause {
     }
   }
 
-  // /// Replaces a predicate application by some top terms.
-  // ///
-  // /// Does not preserve the order of the top terms.
-  // pub fn subst_top(& mut self, pred: PrdIdx, top) -> 
-
   /// Writes a clause given a special function to write predicates.  
   fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
@@ -772,20 +767,6 @@ impl Instance {
     }
   }
 
-  // /// Evaluates the term a predicate is forced to, if any.
-  // pub fn eval_term_of(
-  //   & self, pred: PrdIdx, model: & VarMap<Val>
-  // ) -> Res< Option<bool> > {
-  //   if let Some(term) = self.term_of(pred) {
-  //     match term.bool_eval(model) {
-  //       Ok(None) => bail!("partial model during predicate term evaluation"),
-  //       res => res,
-  //     }
-  //   } else {
-  //     Ok(None)
-  //   }
-  // }
-
   /// Set of int constants **appearing in the predicates**. If more constants
   /// are created after the instance building step, they will not appear here.
   pub fn consts(& self) -> & HConSet<Term> {
@@ -977,30 +958,14 @@ impl Instance {
     Ok(())
   }
 
-  // /// Unlinks a predicate from a clause.
-  // fn unlink_pred_and_clause(
-  //   & mut self, pred: PrdIdx, clause: ClsIdx
-  // ) -> Res<()> {
-  //   let in_lhs = self.pred_to_clauses[pred].0.remove(& clause) ;
-  //   let in_rhs = self.pred_to_clauses[pred].1.remove(& clause) ;
-  //   if ! (in_lhs && in_rhs ) {
-  //     bail!(
-  //       "predicate {} is not linked to clause number {}, failed to unlink",
-  //       conf.sad(& self[pred].name), clause
-  //     )
-  //   } else {
-  //     Ok(())
-  //   }
-  // }
-
   /// Forget some clauses.
   ///
   /// Duplicates are handled as if there was only one.
   pub fn forget_clauses(
     & mut self, clauses: & mut Vec<ClsIdx>
   ) -> Res<()> {
-    // Forgetting is done by swap remove, so we sort in DESCENDING order so
-    // that indices always make sense.
+    // Forgetting is done by swap remove, we sort in DESCENDING order so that
+    // indices always make sense.
     clauses.sort_unstable_by(
       |c_1, c_2| c_2.cmp(c_1)
     ) ;

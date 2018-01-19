@@ -321,10 +321,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let prev = self.cxt.mem.pop() ;
     debug_assert! { prev.is_some() }
   }
-  // /// Clears the memory.
-  // fn clear_mem(& mut self) {
-  //   self.cxt.mem.clear()
-  // }
 
   /// Consumes whitespaces and comments.
   fn ws_cmt(& mut self) {

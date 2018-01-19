@@ -63,25 +63,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     }
   }
 
-  // /// True if a conjunction of terms is a tautology.
-  // ///
-  // /// True if `terms.is_empty()`.
-  // pub fn trivial_conj<'a, Terms>(
-  //   & mut self, vars: & VarMap<VarInfo>, terms: Terms
-  // ) -> Res<bool>
-  // where Terms: Iterator<Item = & 'a Term> {
-  //   self.solver.push(1) ? ;
-  //   for var in vars {
-  //     if var.active {
-  //       self.solver.declare_const(& var.idx, & var.typ) ?
-  //     }
-  //   }
-  //   self.solver.assert( & NegConj::new(terms) ) ? ;
-  //   let sat = self.solver.check_sat() ? ;
-  //   self.solver.pop(1) ? ;
-  //   Ok(! sat)
-  // }
-
   /// True if an implication of terms is a tautology.
   pub fn trivial_impl<'a>(
     & mut self, vars: & VarMap<VarInfo>, lhs: & 'a Vec<& 'a Term>

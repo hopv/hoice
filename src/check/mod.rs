@@ -56,12 +56,6 @@ pub struct Clause {
   pub args: Args,
   /// Body.
   pub body: Term,
-  // /// Let bindings.
-  // pub lets: Vec< Vec<(Ident, String)> >,
-  // /// LHS.
-  // pub lhs: Vec<Term>,
-  // /// RHS.
-  // pub rhs: Term,
 }
 
 /// Data from the input file.

@@ -17,6 +17,7 @@ use self::data::CData ;
 pub struct Launcher ;
 unsafe impl Sync for Launcher {}
 unsafe impl Send for Launcher {}
+
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
@@ -85,8 +86,6 @@ pub struct IceLearner<'core, Slver> {
   data: Data,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
-  // /// Solver used to synthesize an hyperplane separating two points.
-  // synth_solver: Slver,
   /// Learner core.
   core: & 'core LearnerCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -230,33 +229,7 @@ where Slver: Solver<'kid, Parser> {
     Ok(res)
   }
 
-  // /// Applies the information in the classifier to some data.
-  // pub fn classify(& self, data: & mut CData) {
-  //   let mut count = 0 ;
-  //   for (classified, val) in & self.classifier {
-  //     let val = * val ;
-  //     let classified = data.unc.take(classified) ;
-  //     if let Some(sample) = classified {
-  //       count += 1 ;
-  //       if val {
-  //         let _ = data.pos.insert( sample ) ;
-  //       } else if ! val {
-  //         let _ = data.neg.insert( sample ) ;
-  //       }
-  //     }
-  //   }
-  //   if count != 0 {
-  //     println!("classified {} samples", count)
-  //   } else {
-  //     msg!{ self => "no new classification detected" } ;
-  //   }
-  // }
-
   /// Looks for a classifier.
-  ///
-  /// # TO DO
-  ///
-  /// - factor vectors created in this function to avoid reallocation
   pub fn learn(
     & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
@@ -264,6 +237,7 @@ where Slver: Solver<'kid, Parser> {
     profile! { self tick "learning", "setup" }
     let _new_samples = data.drain_new_samples() ;
     self.data = data ;
+
     // self.qualifiers.clear_blacklist() ;
     profile!{ self mark "learning", "setup" }
     // profile!{ self tick "learning", "new sample registration" }

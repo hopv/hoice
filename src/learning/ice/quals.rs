@@ -67,7 +67,7 @@ use instance::info::VarInfo ;
 /// Hashconsed version of `RQArgs`.
 pub type QArgs = HConsed< VarMap<Val> > ;
 
-// /// Type of the `QArgs` factory.
+/// Type of the predicate signatures factory.
 type Factory = HashConsign<VarMap<Typ>> ;
 
 
@@ -528,7 +528,7 @@ impl<'a> CanBEvaled for Qual<'a> {
 ///
 /// - `classes` is probably not deterministic right now: fix
 pub struct Qualifiers {
-  // /// `QArgs` factory.
+  /// Predicate signature factory.
   factory: Factory,
   /// Map from **qualifier** signatures to qualifier classes.
   pub classes: HConMap< HConsed<VarMap<Typ>>, QualClass >,
@@ -678,17 +678,6 @@ impl Qualifiers {
     Ok(prev)
   }
 
-
-
-  // /// Blacklists a qualifier.
-  // pub fn blacklist(& mut self, qual: & Term) {
-  //   let is_new = self.blacklist.insert( qual.clone() ) ;
-  //   debug_assert! { is_new }
-  // }
-  // /// Clears the qualifier blacklist.
-  // pub fn clear_blacklist(& mut self) {
-  //   self.blacklist.clear()
-  // }
 
 
 
