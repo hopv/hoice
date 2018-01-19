@@ -475,7 +475,7 @@ impl IceConf {
         bool_format
       ).default_value("off").takes_value(
         true
-      ).hidden(true).number_of_values(1)
+      ).number_of_values(1)
 
     ).arg(
 
@@ -485,9 +485,9 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(
+      ).default_value("on").takes_value(
         true
-      ).hidden(true).number_of_values(1)
+      ).number_of_values(1)
 
     ).arg(
 

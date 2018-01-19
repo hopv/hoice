@@ -205,7 +205,11 @@ pub type InstantMap = HashMap<
   Vec<& 'static str>, (Option<Instant>, Duration)
 > ;
 
+
+// The following import is not used in bench mode.
+#[allow(unused_imports)]
 use std::cell::RefCell ;
+
 
 /// Profiling structure, only in `not(bench)`.
 ///

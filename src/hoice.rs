@@ -5,6 +5,8 @@
 //! [hoice]: https://github.com/hopv/hoice (hoice repository on github)
 //! [ice]: http://madhu.cs.illinois.edu/CAV14ice.pdf (ICE paper (PDF))
 
+#![doc(test(attr(deny(warnings))))]
+
 #![allow(non_upper_case_globals)]
 
 #[macro_use]

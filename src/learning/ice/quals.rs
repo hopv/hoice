@@ -64,18 +64,6 @@ use instance::info::VarInfo ;
 
 
 
-// /// Arguments for qualifiers. Different from predicate arguments.
-// #[derive(PartialEq, Eq, Hash)]
-// pub struct RQArgs {
-//   /// Actual arguments.
-//   pub args: VarMap<Val>,
-// }
-// impl Deref for RQArgs {
-//   type Target = VarMap<Val> ;
-//   fn deref(& self) -> & VarMap<Val> {
-//     & self.args
-//   }
-// }
 /// Hashconsed version of `RQArgs`.
 pub type QArgs = HConsed< VarMap<Val> > ;
 
@@ -167,6 +155,10 @@ impl Transforms {
 
 /// For a specific qualifier signature, maps a predicate signature to all the
 /// predicate var to qualifier var mappings that work type-wise.
+///
+/// The [constructor][new] is where the magic happens.
+///
+/// [new]: struct.SigTransforms.html#method.new (SigTransforms constructor)
 pub struct SigTransforms {
   /// Actual map.
   pub map: HashMap< VarMap<Typ>, Transforms >,
@@ -262,8 +254,6 @@ impl SigTransforms {
       if res > 100 {
         partial_and_continue!()
       }
-
-      // println!("{}({})", info, info.sig.len()) ;
 
       let mut res = Vec::with_capacity(103) ;
       let mut p_sig = info.sig.index_iter() ;
@@ -363,67 +353,6 @@ impl SigTransforms {
 }
 
 
-// /// For a specific qualifier signature, maps samples (predicate input values)
-// /// to `QArgs`.
-// pub struct SampleMap {
-//   /// Actual map.
-//   map: HConMap< HSample, Option< HConSet<QArgs> > >,
-//   /// Signature transformations.
-//   transforms: SigTransforms,
-// }
-// impl SampleMap {
-//   /// Constructor.
-//   pub fn new(
-//     preds: & PrdMap<::instance::info::PrdInfo>, qual_sig: & QSig
-//   ) -> Self {
-//     let transforms = SigTransforms::new(preds, qual_sig) ;
-//     SampleMap {
-//       map: HConMap::with_capacity(1001), transforms
-//     }
-//   }
-
-//   /// Returns the `QArgs` corresponding to a sample, no cache.
-//   fn extract(
-//     transforms: & SigTransforms, factory: & mut Factory,
-//     sample: & HSample, sample_sig: & VarMap<Typ>
-//   ) -> Option< HConSet<QArgs> > {
-//     if let Some(trans) = transforms.get(sample_sig) {
-//       debug_assert! { ! trans.is_empty() }
-//       let mut res: HConSet<QArgs> = HConSet::with_capacity( trans.len() ) ;
-//       for map in trans {
-//         let mut qargs = VarMap::with_capacity( map.len() ) ;
-//         for p_idx in map {
-//           qargs.push( sample[* p_idx].clone() )
-//         }
-//         let qargs = factory.mk(qargs) ;
-//         res.insert(qargs) ;
-//       }
-//       Some(res)
-//     } else {
-//       None
-//     }
-//   }
-
-//   /// Gets the `QArgs` corresponding to a sample.
-//   ///
-//   /// The `factory` is required to create `QArgs`.
-//   ///
-//   /// The `sample_sig` is required to know which `QArgs` to create. It's the
-//   /// signature of the predicate the sample comes from.
-//   pub fn get<'a>(
-//     & mut self, factory: & mut Factory,
-//     sample: & HSample, sample_sig: & VarMap<Typ>
-//   ) -> Option< & HConSet<QArgs> > {
-//     use std::collections::hash_map::Entry ;
-//     match self.map.entry( sample.clone() ) {
-//       Entry::Occupied(entry) => entry.into_mut().as_ref(),
-//       Entry::Vacant(entry) => entry.insert(
-//         Self::extract(& self.transforms, factory, sample, sample_sig)
-//       ).as_ref(),
-//     }
-//   }
-// }
-
 
 /// Stores qualifiers that have the same signature.
 pub struct QualClass {
@@ -465,6 +394,8 @@ impl QualClass {
 
 
   /// Constructor.
+  ///
+  /// Returns `None` if `transforms.is_empty()`.
   pub fn new(transforms: SigTransforms, qual_capa: usize) -> Option<Self> {
     if transforms.is_empty() {
       None
@@ -485,9 +416,12 @@ impl QualClass {
   /// - `pred_sig`: (predicate) signature this new term was extracted from,
   /// - `hint_map`: map from term's variables to predicate's.
   ///
-  /// These two hints are only useful when the transforms for `pred_sig` are
-  /// stored in a partial manner. In this case, `hint_map` is added to the list
-  /// of partial maps.
+  /// These two arguments are only useful when the transforms for `pred_sig`
+  /// are stored in a partial manner ([`SigTransforms::Partial`][partial]). In
+  /// this case, `hint_map` is added to the list of partial maps for
+  /// `pred_sig`.
+  ///
+  /// [partial]: /learning/ice/quals/enum.Transforms.html#variant.Partial (SigTransforms' Partial variant)
   pub fn insert(
     & mut self, term: Term, pred: PrdIdx,
     pred_sig: & VarMap<Typ>, hint_map: VarMap<VarIdx>
