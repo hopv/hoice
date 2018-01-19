@@ -2,8 +2,10 @@
 //! original approach was modified to handle non-linear Horn clauses and
 //! multi-predicates natively.
 //!
-//! [hoice]: https://github.com/hopv/hoice (hoice repository on github)
-//! [ice]: http://madhu.cs.illinois.edu/CAV14ice.pdf (ICE paper (PDF))
+//! [hoice]: https://github.com/hopv/hoice
+//! (hoice repository on github)
+//! [ice]: http://madhu.cs.illinois.edu/CAV14ice.pdf
+//! (ICE paper (PDF))
 
 #![doc(test(attr(deny(warnings))))]
 
@@ -82,16 +84,18 @@ pub fn work() -> Res<()> {
 
 /// Reads from a [Read][read]er.
 ///
-/// The `file_input` flag indicates whether we're reading from a file. If true,
-/// parse errors will mention the line where the error occured.
+/// Arguments:
+/// 
+/// - `file_input`: indicates whether we're reading from a file. If true, parse
+///   errors will mention the line where the error occured.
 ///
-/// The `stop_on_check` flag forces the function to return once the first check
-/// is complete. Only used in tests.
+/// - `stop_on_check`: forces the function to return once the first check is
+///   complete. Only used in tests.
 ///
-/// The `stop_on_err` flag forces to stop at the first error. Only used in
-/// tests.
+/// - `stop_on_err`: forces to stop at the first error. Only used in tests.
 ///
-/// [read]: https://doc.rust-lang.org/std/io/trait.Read.html (Read trait)
+/// [read]: https://doc.rust-lang.org/std/io/trait.Read.html
+/// (Read trait)
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
 ) -> Res< (Option<Model>, Instance) > {
@@ -147,10 +151,6 @@ pub fn read_and_work<R: ::std::io::Read>(
     profile!{ |profiler| mark "parsing" }
     
     match parse_res {
-
-      // Parsed::CheckSat if error => {
-      //   println!("unknown")
-      // },
 
       // Check-sat, start class.
       Parsed::CheckSat => {

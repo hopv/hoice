@@ -1,4 +1,4 @@
-#![doc = "Learning data-related types."]
+//! Learning-data-related types.
 
 use std::sync::RwLock ;
 

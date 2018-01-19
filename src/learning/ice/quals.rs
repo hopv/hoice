@@ -90,8 +90,10 @@ pub type QSig = VarMap<Typ> ;
 /// - `false` whenever it is passed to the criterion function in
 ///   [`maximize`][quals max].
 ///
-/// [quals max]: struct.Qualifiers.html#method.maximize (Qualifiers' maximize function)
-/// [quals insert]: struct.Qualifiers.html#method.insert (Qualifiers' insert function)
+/// [quals max]: struct.Qualifiers.html#method.maximize
+/// (Qualifiers' maximize function)
+/// [quals insert]: struct.Qualifiers.html#method.insert
+/// (Qualifiers' insert function)
 pub struct QInfo {
   /// Indicates whether the qualifier has been evaluated at least once.
   pub is_new: bool,
@@ -158,7 +160,8 @@ impl Transforms {
 ///
 /// The [constructor][new] is where the magic happens.
 ///
-/// [new]: struct.SigTransforms.html#method.new (SigTransforms constructor)
+/// [new]: struct.SigTransforms.html#method.new
+/// (SigTransforms' constructor)
 pub struct SigTransforms {
   /// Actual map.
   pub map: HashMap< VarMap<Typ>, Transforms >,
@@ -421,7 +424,8 @@ impl QualClass {
   /// this case, `hint_map` is added to the list of partial maps for
   /// `pred_sig`.
   ///
-  /// [partial]: /learning/ice/quals/enum.Transforms.html#variant.Partial (SigTransforms' Partial variant)
+  /// [partial]: enum.Transforms.html#variant.Partial
+  /// (SigTransforms' Partial variant)
   pub fn insert(
     & mut self, term: Term, pred: PrdIdx,
     pred_sig: & VarMap<Typ>, hint_map: VarMap<VarIdx>
@@ -466,7 +470,8 @@ impl QualClass {
 /// This type is in fact a temporary structure created internally by
 /// `Qualifiers` for its [`maximize`][quals max] function.
 ///
-/// [quals max]: struct.Qualifiers.html#method.maximize (Qualifiers' maximize function)
+/// [quals max]: /learning/ice/quals/struct.Qualifiers.html#method.maximize
+/// (Qualifiers' maximize function)
 pub struct Qual<'a> {
   /// The qualifier.
   pub qual: & 'a Term,

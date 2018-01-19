@@ -1,11 +1,12 @@
-#![doc = r#"The teacher. Queries an SMT-solver to check candidates.
-
-# TO DO
-
-- clean `teach` function, it's a mess and the way it's currently written
-  doesn't make sense
-
-"#]
+//! The teacher. Queries an SMT-solver to check candidates.
+//! 
+//! # TODO
+//!
+//! - clean [`teach`][teach] function, it's a mess and the way it's currently
+//!   written doesn't make sense
+//!
+//! [teach]: fn.teach.html
+//! (Teacher's teach function)
 
 use rsmt2::Kid ;
 
@@ -47,7 +48,7 @@ pub fn start_class(
 
 
 /// Teaching to the learners.
-fn teach< 'kid, S: Solver<'kid, Parser> >(
+pub fn teach< 'kid, S: Solver<'kid, Parser> >(
   instance: Arc<Instance>, solver: S, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }

@@ -86,7 +86,10 @@ error_chain!{
 }
 
 impl Error {
-  /// True if the kind of the error is `ErrorKind::Unsat`.
+  /// True if the kind of the error is [`ErrorKind::Unsat`][unsat].
+  ///
+  /// [unsat]: enum.ErrorKind.html#variant.Unsat
+  /// (ErrorKind's Unsat variant)
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,

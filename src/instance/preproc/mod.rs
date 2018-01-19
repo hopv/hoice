@@ -348,7 +348,8 @@ impl RedStrat for Simplify {
 
 /// Calls [`Instance::arg_reduce`][arg_reduce].
 ///
-/// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce (Instance's arg_reduce method)
+/// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce
+/// (Instance's arg_reduce method)
 pub struct ArgReduce ;
 impl ArgReduce {
   /// Pre-processor's name.

@@ -1,8 +1,10 @@
-#![doc = r#"Profiling stuff.
-
-In `bench` mode, `Profiler` is a unit structure. Also, all macros are
-deactivated, so all profiling is completely removed.
-"#]
+//! Profiling stuff.
+//!
+//! In `bench` mode, [`Profiler`][profiler] is a unit structure. Also, all
+//! macros are deactivated, so all profiling is completely removed.
+//!
+//! [profiler]: struct.Profiler.html
+//! (Profiler type)
 
 #[allow(unused_imports)]
 use std::time::{ Instant, Duration } ;
