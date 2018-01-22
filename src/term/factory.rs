@@ -33,7 +33,7 @@ fn scan_vars(t: & Term) -> VarSet {
         let _ = set.insert(i) ; ()
       },
       RTerm::Int(_) => (),
-      RTerm::Rat(_) => (),
+      RTerm::Real(_) => (),
       RTerm::Bool(_) => (),
       RTerm::App{ ref args, .. } => for arg in args {
         to_do.push(arg)
@@ -86,7 +86,7 @@ pub fn rat<R: Into<Rat>>(r: R) -> Term {
     Rat::new( - r.denom(), r.numer().abs() )
   } else { r } ;
   factory.mk(
-    RTerm::Rat( r.into() )
+    RTerm::Real( r.into() )
   )
 }
 /// Creates the constant `0`.

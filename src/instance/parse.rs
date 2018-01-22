@@ -570,9 +570,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.backtrack_to(start_pos) ;
         None
       }
-    } else if self.tag_opt("Rat") {
+    } else if self.tag_opt("Real") {
       if ! self.legal_id_char() {
-        Some(Typ::Rat)
+        Some(Typ::Real)
       } else {
         self.backtrack_to(start_pos) ;
         None

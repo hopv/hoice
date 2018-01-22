@@ -84,8 +84,8 @@ pub use self::val::Val ;
 pub enum Typ {
   /// Integers.
   Int,
-  /// Rationals.
-  Rat,
+  /// Reals.
+  Real,
   /// Booleans.
   Bool,
 }
@@ -94,7 +94,7 @@ impl Typ {
   pub fn default_val(& self) -> Val {
     match * self {
       Typ::Int => Val::I( Int::zero() ),
-      Typ::Rat => unimplemented!(),
+      Typ::Real => unimplemented!(),
       Typ::Bool => Val::B( true ),
     }
   }
@@ -111,7 +111,7 @@ impl_fmt!{
   Typ(self, fmt) {
     match * self {
       Typ::Int => fmt.write_str("Int"),
-      Typ::Rat => fmt.write_str("Rat"),
+      Typ::Real => fmt.write_str("Real"),
       Typ::Bool => fmt.write_str("Bool"),
     }
   }
@@ -125,8 +125,8 @@ pub enum RTerm {
   Var(VarIdx),
   /// An integer.
   Int(Int),
-  /// A rational.
-  Rat(Rat),
+  /// A real (actually a rational).
+  Real(Rat),
   /// A boolean.
   Bool(bool),
   /// An operator application.
@@ -174,8 +174,8 @@ impl RTerm {
   where W: Write, WriteVar: Fn(& mut W, VarIdx) -> IoRes<()> {
     let mut stack = vec![
       (vec![self], "", "")
-    // ^^^^^^^^^|  ^|  ^^~~~ termination string (written once vector's empty)
-    //          |   |~~~~~~~ prefix string      (written before next element)
+    // ^^^^^^^^^|  ^^| ^^~~~ termination string (written once vector's empty)
+    //          |    |~~~~~~ prefix string      (written before next element)
     //          |~~~~~~~~~~~ elements to write
     ] ;
     while let Some( (mut to_do, sep, end) ) = stack.pop() {
@@ -189,21 +189,11 @@ impl RTerm {
           },
           Int(ref i) => {
             write!(w, "{}", sep) ? ;
-            if i.is_negative() {
-              write!(w, "(- {})", - i) ?
-            } else {
-              write!(w, "{}", i) ?
-            }
+            int_to_smt!(w, i) ?
           },
-          Rat(ref r) => {
+          Real(ref r) => {
             write!(w, "{}", sep) ? ;
-            let (num, den) = ( r.numer(), r.denom() ) ;
-            debug_assert!( ! den.is_negative() ) ;
-            if num.is_negative() {
-              write!(w, "(- (/ {} {}))", - r.numer(), r.denom()) ?
-            } else {
-              write!(w, "(/ {} {})", - r.numer(), r.denom()) ?
-            }
+            rat_to_smt!(w, r) ?
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
           App { op, ref args } => {
@@ -405,7 +395,7 @@ impl RTerm {
           bail!("model is too short")
         },
         Int(ref i) => Val::I( i.clone() ),
-        Rat(_) => bail!("evaluation of rationals is not implemented"),
+        Real(_) => bail!("evaluation of rationals is not implemented"),
         Bool(b) => Val::B(b),
       } ;
 
@@ -441,7 +431,7 @@ impl RTerm {
   }
   /// If the term's a rational constant, returns the value.
   pub fn rat_val(& self) -> Option<& Rat> {
-    if let RTerm::Rat(ref r) = * self { Some( r ) } else { None }
+    if let RTerm::Real(ref r) = * self { Some( r ) } else { None }
   }
 
   /// The highest variable index appearing in the term.
@@ -454,7 +444,7 @@ impl RTerm {
           ::std::cmp::max( i, max.unwrap_or(0.into()) )
         ),
         RTerm::Int(_) |
-        RTerm::Rat(_) |
+        RTerm::Real(_) |
         RTerm::Bool(_) => (),
         RTerm::App{ ref args, .. } => for arg in args {
           to_do.push(arg)

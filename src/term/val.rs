@@ -7,7 +7,7 @@
 //! - `Val::N` from `()`
 
 use errors::* ;
-use common::{ Int, Signed } ;
+use common::{ Int, Rat, Signed } ;
 
 
 /// Values.
@@ -17,6 +17,8 @@ pub enum Val {
   B(bool),
   /// Integer value.
   I(Int),
+  /// Real value (actually a rational).
+  R(Rat),
   /// No value (context was incomplete).
   N,
 }
@@ -26,14 +28,25 @@ impl Val {
     match self {
       Val::B(b) => Ok( Some(b) ),
       Val::I(_) => bail!("expected boolean value, found integer"),
+      Val::R(_) => bail!("expected boolean value, found real"),
       Val::N => Ok(None),
     }
   }
   /// Extracts an integer value.
   pub fn to_int(self) -> Res<Option<Int>> {
     match self {
-      Val::B(_) => bail!("expected integer value, found boolean"),
       Val::I(i) => Ok( Some(i) ),
+      Val::B(_) => bail!("expected integer value, found boolean"),
+      Val::R(_) => bail!("expected integer value, found rational"),
+      Val::N => Ok(None),
+    }
+  }
+  /// Extracts a real value.
+  pub fn to_real(self) -> Res<Option<Rat>> {
+    match self {
+      Val::R(r) => Ok( Some(r) ),
+      Val::B(_) => bail!("expected rational value, found boolean"),
+      Val::I(_) => bail!("expected rational value, found integer"),
       Val::N => Ok(None),
     }
   }
@@ -49,11 +62,8 @@ impl Val {
 impl_fmt!{
   Val(self, fmt) {
     match * self {
-      Val::I(ref i) => if i.is_negative() {
-        write!(fmt, "(- {})", - i)
-      } else {
-        write!(fmt, "{}", i)
-      },
+      Val::I(ref i) => int_to_smt!(fmt, i),
+      Val::R(ref r) => rat_to_smt!(fmt, r),
       Val::B(b) => write!(fmt, "{}", b),
       Val::N => fmt.write_str("?"),
     }

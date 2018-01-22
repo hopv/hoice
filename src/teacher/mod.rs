@@ -538,6 +538,18 @@ mod smt {
         Ok( Val::I(val) )
       } else if let Some(val) = input.try_bool() ? {
         Ok( Val::B(val) )
+      } else if let Some(val) = input.try_rat::<
+        _, _, ::num::bigint::ParseBigIntError
+      >(
+        |num, den, pos| {
+          let (num, den) = (
+            Int::from_str(num) ?, Int::from_str(den) ?
+          ) ;
+          let rat = Rat::new(num, den) ;
+          Ok( if ! pos { - rat } else { rat } )
+        }
+      ) ? {
+        Ok( Val::R(val) )
       } else {
         input.fail_with("unexpected value")
       }

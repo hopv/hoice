@@ -710,7 +710,9 @@ where Slver: Solver<'kid, Parser> {
     for (var_idx, val) in sample.index_iter() {
       
       match * val {
-        
+
+        Val::R(_) => bail!("synthesis over reals is not implemented"),
+
         Val::I(ref val) => {
           let var = term::var(var_idx) ;
 

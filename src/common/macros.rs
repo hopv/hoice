@@ -1,6 +1,30 @@
 //! Macros.
 
 
+/// `Int` printer.
+
+macro_rules! int_to_smt {
+  ($writer:expr, $i:expr) => (
+    if $i.is_negative() {
+      write!($writer, "(- {})", - $i)
+    } else {
+      write!($writer, "{}", $i)
+    }
+  )
+}
+macro_rules! rat_to_smt {
+  ($writer:expr, $r:expr) => ({
+    let (num, den) = ( $r.numer(), $r.denom() ) ;
+    debug_assert!( ! den.is_negative() ) ;
+    if num.is_negative() {
+      write!($writer, "(- (/ {} {}))", - num, den)
+    } else {
+      write!($writer, "(/ {} {})", - num, den)
+    }
+  })
+}
+
+
 /// Does something if not in bench mode.
 #[macro_export]
 #[cfg(not (feature = "bench") )]
