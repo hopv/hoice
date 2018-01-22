@@ -94,7 +94,9 @@ impl Typ {
   pub fn default_val(& self) -> Val {
     match * self {
       Typ::Int => Val::I( Int::zero() ),
-      Typ::Real => unimplemented!(),
+      Typ::Real => Val::R(
+        Rat::new( Int::zero(), Int::one() )
+      ),
       Typ::Bool => Val::B( true ),
     }
   }
@@ -1926,16 +1928,36 @@ pub enum Op {
   Or,
   /// If-then-else.
   Ite,
+  /// Conversion from `Int` to `Real`.
+  ToInt,
+  /// Conversion from `Real` to `Int`.
+  ToReal,
 }
 impl Op {
   /// String representation.
   pub fn as_str(& self) -> & str {
     use self::Op::* ;
+    use keywords::op::* ;
     match * self {
-      Add => "+", Sub => "-", Mul => "*",
-      IDiv => "div", Div => "/", Rem => "rem", Mod => "mod",
-      Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
-      Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
+      Add => add_,
+      Sub => sub_,
+      Mul => mul_,
+      IDiv => idiv_,
+      Div => div_,
+      Rem => rem_,
+      Mod => mod_,
+      Gt => gt_,
+      Ge => ge_,
+      Le => le_,
+      Lt => lt_,
+      Eql => eq_,
+      Not => not_,
+      And => and_,
+      Or => or_,
+      Impl => impl_,
+      Ite => ite_,
+      ToInt => to_int_,
+      ToReal => to_real_,
     }
   }
 
@@ -1946,33 +1968,45 @@ impl Op {
     if args.is_empty() {
       bail!("evaluating operator on 0 elements")
     }
+
+    macro_rules! arith_app {
+      (relation $op:tt $str:tt => $args:expr) => ({
+        let mut args = $args.into_iter() ;
+        if let (
+          Some(fst), Some(mut pre)
+        ) = (args.next(), args.next()) {
+          let mut res = fst.$op(& pre) ? ;
+          for arg in args {
+            res = res.and( & pre.$op(& arg) ? ) ? ;
+            pre = arg
+          }
+          Ok(res)
+        } else {
+          bail!("`{}` applied to 0 or 1 argument(s)")
+        }
+      }) ;
+      ($op:tt $str:tt => $args:expr) => ({
+        let mut args = $args.into_iter() ;
+        if let Some(mut acc) = args.next() {
+          for arg in args {
+            acc = acc.$op(& arg) ?
+          }
+          Ok(acc)
+        } else {
+          bail!("`{}` applied to zero arguments", $str)
+        }
+      }) ;
+    }
+
     match * self {
-      Add => {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res + try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
-        }
-      },
+      Add => arith_app!(add "+" => args),
+
       Sub => if args.len() == 1 {
-        Ok(
-          Val::I(
-            - try_val!( int args.pop().unwrap() )
-          )
-        )
+        args.pop().unwrap().minus()
       } else {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res - try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
-        }
+        arith_app!(sub "-" => args)
       },
+
       Mul => {
         let mut unknown = false ;
         let mut res: Int = 1.into() ;
@@ -1989,7 +2023,9 @@ impl Op {
         }
         if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
       },
+
       Div => bail!("evaluation of divisions is not implemented"),
+
       IDiv => {
         if args.len() != 2 {
           bail!("unexpected division over {} numbers", args.len())
@@ -2047,68 +2083,20 @@ impl Op {
 
       // Bool operators.
 
-      Gt => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last > nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
+      Gt => arith_app! {
+        relation gt ">" => args
       },
 
-      Ge => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last >= nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
+      Ge => arith_app! {
+        relation ge ">=" => args
       },
 
-      Le => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last <= nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
+      Le => arith_app! {
+        relation le "<=" => args
       },
 
-      Lt => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last < nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
+      Lt => arith_app! {
+        relation lt "<" => args
       },
 
       Eql => {
@@ -2203,6 +2191,41 @@ impl Op {
           _ => Ok(Val::N),
         }
       }
+
+      ToInt => if let Some(val) = args.pop() {
+        if ! args.is_empty() {
+          bail!(
+            "expected two arguments for `{}`, found {}", ToInt, args.len() + 1
+          )
+        }
+        if let Some(rat) = val.to_real() ? {
+          let res = rat.denom() / rat.denom() ;
+          if rat.denom().is_negative() ^ rat.denom().is_negative() {
+            Ok( Val::I(- res) )
+          } else {
+            Ok( Val::I(res) )
+          }
+        } else {
+          Ok(Val::N)
+        }
+      } else {
+        bail!("expected one argument for `{}`, found none", ToInt)
+      },
+
+      ToReal => if let Some(val) = args.pop() {
+        if ! args.is_empty() {
+          bail!(
+            "expected two arguments for `{}`, found {}", ToReal, args.len() + 1
+          )
+        }
+        if let Some(i) = val.to_int() ? {
+          Ok( Val::R( Rat::new(i.clone(), 1.into()) ) )
+        } else {
+          Ok(Val::N)
+        }
+      } else {
+        bail!("expected one argument for `{}`, found none", ToReal)
+      },
 
     }
   }

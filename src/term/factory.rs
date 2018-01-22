@@ -657,6 +657,8 @@ fn normalize_app(
     Op::Div => panic!("simplification of division is not implemented"),
 
     Op::Rem |
+    Op::ToInt |
+    Op::ToReal |
     Op::Impl => (op, args),
 
   } ;

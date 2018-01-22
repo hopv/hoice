@@ -642,7 +642,7 @@ impl Qualifiers {
             qual.check() ? ;
             // println!("- {}", qual.to_term()) ;
             let res = if let Some(res) = crit(qual).chain_err(
-              || "during criterion evaluation"
+              || format!("during criterion evaluation on {}", qual.qual)
             ) ? {
               res
             } else {

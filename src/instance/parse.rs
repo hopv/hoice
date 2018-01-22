@@ -927,6 +927,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else {
         None
       },
+      Some("t") => if self.tag_opt("o_int") {
+        none_if_ident_char_else!(Op::ToInt)
+      } else if self.tag_opt("o_real") {
+        none_if_ident_char_else!(Op::ToReal)
+      } else {
+        None
+      },
       Some("=") => if self.tag_opt(">") {
         Some(Op::Impl)
       } else {

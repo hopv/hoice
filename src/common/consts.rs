@@ -110,6 +110,7 @@ pub mod keywords {
         mod_  ("mod", doc = "Modulo.")
         rem_  ("rem", doc = "Remainder.")
 
+        to_int_ ("to_int", doc = "Conversion from `Real` to `Int`.")
         to_real_ ("to_real", doc = "Conversion from `Int` to `Real`.")
 
         as_ ("as", doc = "As.")
