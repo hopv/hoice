@@ -18,8 +18,6 @@ extern crate mylib ;
 #[macro_use]
 extern crate error_chain ;
 #[macro_use]
-extern crate log ;
-#[macro_use]
 extern crate clap ;
 extern crate ansi_term as ansi ;
 extern crate regex ;

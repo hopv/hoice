@@ -26,10 +26,8 @@ clap = "*"
 regex = "*"
 hashconsing = "*"
 error-chain = "*"
-log = "0.3.9"
-env_logger = "*"
 ansi_term = "*"
-rsmt2 = "*"
+rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 either = "*"

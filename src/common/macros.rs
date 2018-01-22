@@ -1,5 +1,44 @@
 //! Macros.
 
+/// In verbose mode, same as `println` but with a "; " prefix.
+macro_rules! info {
+  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
+    if ::common::conf.verb == ::common::config::Verb::Verb {
+      $(
+        print!("; ") ;
+        println!( $str $(, $args)* ) ;
+      )*
+      ()
+    }
+  ) ;
+}
+/// In debug mode, same as `println` but with a "; " prefix.
+macro_rules! debug {
+  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
+    if ::common::conf.verb == ::common::config::Verb::Debug {
+      $(
+        print!("; ") ;
+        println!( $str $(, $args)* ) ;
+      )*
+      ()
+    }
+  ) ;
+}
+/// Formats a warning.
+macro_rules! warn {
+  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    println!(
+      "; {}", conf.sad("|===| Warning:")
+    ) ;
+    $(
+      print!("; {} ", conf.sad("|")) ;
+      println!( $str $(, $args)* ) ;
+    )*
+    println!("{}", conf.sad("; |===|"))
+  }) ;
+}
+
+
 
 /// `Int` printer.
 

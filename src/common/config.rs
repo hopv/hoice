@@ -853,14 +853,6 @@ impl Verb {
       _ => ()
     }
   }
-  /// Log filter from verbosity.
-  pub fn filter(& self) -> ::log::LogLevelFilter {
-    match * self {
-      Verb::Debug => ::log::LogLevelFilter::Debug,
-      Verb::Verb => ::log::LogLevelFilter::Info,
-      Verb::Quiet => ::log::LogLevelFilter::Warn,
-    }
-  }
 
   /// True iff verbose or debug.
   pub fn verbose(& self) -> bool {

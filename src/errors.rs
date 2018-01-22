@@ -101,12 +101,13 @@ impl Error {
 
 /// Prints an error.
 pub fn print_err(errs: Error) {
-  let mut lines ;
-  for_first!(
-    errs.iter() => {
-      |err| lines = format!("{}", err),
-      then |err| lines = format!("{}\n{}", lines, err),
-      yild error!{"{}", lines}
-    } else ()
-  )
+  println!(
+    "({} \"", conf.bad("error")
+  ) ;
+  for err in errs.iter() {
+    for line in format!("{}", err).lines() {
+      println!("  {}", line)
+    }
+  }
+  println!("\")")
 }
