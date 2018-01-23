@@ -669,7 +669,11 @@ where Slver: Solver<'kid, Parser> {
       } ;
 
       for sample in data.iter() {
-        let done = self.sample_synth(sample, & mut treatment).chain_err(
+        use self::synth::SynthSys ;
+        let mut synth_sys = SynthSys::new( & self.instance[pred].sig ) ;
+        let done = synth_sys.sample_synth(
+          sample, & mut treatment, & self._profiler
+        ).chain_err(
           || "during synthesis from sample"
         ) ? ;
         if done { break }
@@ -690,28 +694,6 @@ where Slver: Solver<'kid, Parser> {
     } else {
       bail!("unable to synthesize a relevant qualifier")
     }
-  }
-
-  /// Synthesizes qualifiers for a sample, stops if input function returns
-  /// `true`.
-  ///
-  /// Returns `true` iff `f` returned true at some point.
-  pub fn sample_synth<F>(& self, sample: & HSample, mut f: F) -> Res<bool>
-  where F: FnMut(Term) -> Res<bool> {
-    
-    let mut int_synth = ::learning::ice::synth::int::IntSynth::new() ;
-    let unused = & mut HConMap::new() ;
-
-    loop {
-      use learning::ice::synth::TheoSynth ;
-      if int_synth.is_done() { break }
-      let done = int_synth.synth(& mut f, sample, unused) ? ;
-      if done {
-        return Ok(true)
-      }
-    }
-
-    Ok(false)
   }
 
 

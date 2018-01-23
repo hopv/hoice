@@ -1,4 +1,4 @@
-//! Qualifier synthesis in the theory of integers.
+//! Qualifier synthesis in the theory of reals.
 
 use common::* ;
 use common::data::HSample ;
@@ -6,23 +6,23 @@ use common::data::HSample ;
 use super::{ TermVals, TheoSynth } ;
 
 
-/// Integer qualifier synthesizer.
-pub struct IntSynth {
+/// Real qualifier synthesizer.
+pub struct RealSynth {
   /// Expressivity level.
   expressivity: usize,
-  /// The int type.
+  /// The real type.
   typ: Typ,
 }
-impl IntSynth {
+impl RealSynth {
   /// Creates a new integer synthesizer.
   pub fn new() -> Self {
-    IntSynth {
+    RealSynth {
       expressivity: 0,
-      typ: Typ::Int,
+      typ: Typ::Real
     }
   }
 }
-impl TheoSynth for IntSynth {
+impl TheoSynth for RealSynth {
   fn typ(& self) -> & Typ { & self.typ }
   fn is_done(& self) -> bool {
     self.expressivity > 0
@@ -37,23 +37,23 @@ impl TheoSynth for IntSynth {
     match self.expressivity {
       0 => {
         self.expressivity += 1 ;
-        simple_int_synth(sample, others, f)
+        simple_real_synth(sample, others, f)
       },
       _ => Ok(false),
     }
   }
 
-  /// Only generates reals for now (using `to_real`).
+  /// Only generates ints for now (using `to_int`).
   fn project(
     & self, sample: & HSample, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
     match * typ {
-      Typ::Real => for (var, val) in sample.index_iter() {
+      Typ::Int => for (var, val) in sample.index_iter() {
         match * val {
-          Val::I(ref i) => {
-            let val = Op::ToReal.eval( vec![ Val::I( i.clone() ) ] ) ? ;
+          Val::R(ref r) => {
+            let val = Op::ToInt.eval( vec![ Val::R( r.clone() ) ] ) ? ;
             let prev = map.insert(
-              term::to_real( term::var(var) ), val
+              term::to_int( term::var(var) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -67,7 +67,7 @@ impl TheoSynth for IntSynth {
 }
 
 
-/// Lowest level of int synthesis.
+/// Lowest level of real synthesis.
 ///
 /// All `v*` are variables. Synthesizes qualifiers of the form
 ///
@@ -75,20 +75,20 @@ impl TheoSynth for IntSynth {
 /// - `v_1 = v_2`, `v_1 = - v_2`,
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
-pub fn simple_int_synth<F>(
+pub fn simple_real_synth<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+  let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
     sample.len()
   ) ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
     match * val {
-      Val::I(ref val) => {
+      Val::R(ref val) => {
         let var = term::var(var_idx) ;
-        simple_arith_synth! { previous_int, f, int | var = ( val.clone() ) }
+        simple_arith_synth! { previous_real, f, real | var = ( val.clone() ) }
       },
       _ => (),
     }
@@ -97,11 +97,11 @@ where F: FnMut(Term) -> Res<bool> {
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
     match val {
-      Val::I(val) => {
-        simple_arith_synth! { previous_int, f, int | term = val }
+      Val::R(val) => {
+        simple_arith_synth! { previous_real, f, real | term = val }
       }
       val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+        "real synthesis expects projected reals, got {} for {}", val, term
       )
     }
   }

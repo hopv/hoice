@@ -873,6 +873,54 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     num
   }
 
+  /// Real parser.
+  ///
+  /// Decimal or fraction.
+  fn real(& mut self) -> Res< Option<Rat> > {
+    let start_pos = self.pos() ;
+
+    if let Some(res) = self.decimal() {
+      return Ok( Some(res) )
+    }
+
+    if self.tag_opt("(") {
+      self.ws_cmt() ;
+      if self.tag_opt("/") {
+        self.ws_cmt() ;
+        if let Some(num) = self.numeral() {
+          self.tag_opt(".0") ;
+          self.ws_cmt() ;
+          let den_pos = self.pos() ;
+          if let Some(den) = self.numeral() {
+            self.tag_opt(".0") ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              if den.is_zero() {
+                bail!(
+                  self.error(
+                    den_pos, "division by zero is not supported"
+                  )
+                )
+              }
+              return Ok(
+                Some( Rat::new(num, den) )
+              )
+            } else {
+              bail!(
+                self.error(
+                  start_pos, "division applied to more than two operands"
+                )
+              )
+            }
+          }
+        }
+      }
+    }
+
+    self.backtrack_to(start_pos) ;
+    Ok(None)
+  }
+
   /// Parses an operator or fails.
   fn op(& mut self) -> Res<Op> {
     if let Some(op) = self.op_opt() {
@@ -976,14 +1024,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       let bind_count = self.let_bindings(map, instance) ? ;
 
       self.ws_cmt() ;
-      let mut term = if self.tag_opt("(") {
-        self.ws_cmt() ;
-        let op = self.op() ? ;
-        let kids = Vec::with_capacity(11) ;
-        self.cxt.term_stack.push( (op, kids, bind_count) ) ;
-        continue 'read_kids
-      } else if let Some(int) = self.int() {
+      let mut term = if let Some(int) = self.int() {
         term::int(int)
+      } else if let Some(real) = self.real() ? {
+        term::real(real)
       } else if let Some(b) = self.bool() {
         term::bool(b)
       } else if let Some((pos, id)) = self.ident_opt()? {
@@ -998,6 +1042,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             )
           )
         }
+      } else if self.tag_opt("(") {
+        self.ws_cmt() ;
+        let op = self.op() ? ;
+        let kids = Vec::with_capacity(11) ;
+        self.cxt.term_stack.push( (op, kids, bind_count) ) ;
+        continue 'read_kids
       } else {
         if self.cxt.term_stack.is_empty() {
           self.ws_cmt() ;

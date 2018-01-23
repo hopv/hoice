@@ -78,9 +78,9 @@ pub fn int<I: Into<Int>>(i: I) -> Term {
     RTerm::Int( i.into() )
   )
 }
-/// Creates a rational constant.
+/// Creates a real constant.
 #[inline(always)]
-pub fn rat<R: Into<Rat>>(r: R) -> Term {
+pub fn real<R: Into<Rat>>(r: R) -> Term {
   let r = r.into() ;
   let r = if r.numer().is_negative() {
     Rat::new( - r.denom(), r.numer().abs() )
@@ -521,7 +521,7 @@ fn normalize_app(
         if let Some(i) = args[0].int_val() {
           return Either::Left( int(- i) )
         } else if let Some(r) = args[0].rat_val() {
-          return Either::Left( rat( -r ) )
+          return Either::Left( real( -r ) )
         }
       }
       (op, args)

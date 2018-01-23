@@ -394,11 +394,11 @@ pub fn to_keep(
   'all_clauses: for clause in instance.clauses() {
     cxt.check(instance) ? ;
 
-    log_debug! {
-      "    working on clause {}", clause.to_string_info(
-        instance.preds()
-      ).unwrap()
-    }
+    // log_debug! {
+    //   "    working on clause {}", clause.to_string_info(
+    //     instance.preds()
+    //   ).unwrap()
+    // }
 
     // All the variables appearing in the lhs's terms are off limits.
     for term in clause.lhs_terms() {
@@ -419,11 +419,11 @@ pub fn to_keep(
     }
     cxt.check(instance) ? ;
 
-    cxt.log_debug_internal(instance, clause, "    ") ;
+    // cxt.log_debug_internal(instance, clause, "    ") ;
 
     cxt.commit() ;
 
-    cxt.log_debug(instance, "    ")
+    // cxt.log_debug(instance, "    ")
   }
 
   // println!("dependencies:") ;

@@ -79,6 +79,9 @@ pub type Rat = ::num::BigRational ;
 /// A trivially hashed set of variable maps.
 pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 
+/// A signature.
+pub type Sig = VarMap<Typ> ;
+
 /// A predicate application.
 pub type PredApp = (PrdIdx, VarMap<Term>) ;
 

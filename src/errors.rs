@@ -46,8 +46,7 @@ impl_fmt!{
     writeln!(
       fmt, "{0: ^1$}| {0: ^2$}{3}", "", line_str.len(), self.pref.len(),
       conf.bad( & format!("{0:^>1$}", "", self.token.len()) )
-    ) ? ;
-    writeln!(fmt, "")
+    )
   }
 }
 

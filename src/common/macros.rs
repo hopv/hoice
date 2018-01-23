@@ -3,10 +3,11 @@
 /// In verbose mode, same as `println` but with a "; " prefix.
 macro_rules! info {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb == ::common::config::Verb::Verb {
+    if ::common::conf.verb.verbose() {
       $(
-        print!("; ") ;
-        println!( $str $(, $args)* ) ;
+        for line in format!($str $(, $args)*).lines() {
+          println!("; {}", line)
+        }
       )*
       ()
     }
@@ -15,10 +16,11 @@ macro_rules! info {
 /// In debug mode, same as `println` but with a "; " prefix.
 macro_rules! debug {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb == ::common::config::Verb::Debug {
+    if ::common::conf.verb.debug() {
       $(
-        print!("; ") ;
-        println!( $str $(, $args)* ) ;
+        for line in format!($str $(, $args)*).lines() {
+          println!("; {}", line)
+        }
       )*
       ()
     }

@@ -279,6 +279,8 @@ impl<'a> InParser<'a> {
       Some( "Bool".to_string() )
     } else if self.tag_opt("Int") {
       Some( "Int".to_string() )
+    } else if self.tag_opt("Real") {
+      Some( "Real".to_string() )
     } else {
       None
     }

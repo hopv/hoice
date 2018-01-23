@@ -397,7 +397,7 @@ impl RTerm {
           bail!("model is too short")
         },
         Int(ref i) => Val::I( i.clone() ),
-        Real(_) => bail!("evaluation of rationals is not implemented"),
+        Real(ref r) => Val::R( r.clone() ),
         Bool(b) => Val::B(b),
       } ;
 
