@@ -7,6 +7,7 @@ use common::msg::* ;
 use self::smt::* ;
 
 pub mod quals ;
+pub mod synth ;
 pub mod data ;
 
 use self::quals::Qualifiers ;
@@ -697,89 +698,17 @@ where Slver: Solver<'kid, Parser> {
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(& self, sample: & HSample, mut f: F) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
-    macro_rules! apply {
-      ($term:expr) => (
-        if f($term)? { return Ok(true) }
-      ) ;
-    }
+    
+    let mut int_synth = ::learning::ice::synth::int::IntSynth::new() ;
+    let unused = & mut HConMap::new() ;
 
-    let mut previous_int: Vec<(VarIdx, & Int)> = Vec::with_capacity(
-      sample.len()
-    ) ;
-
-    for (var_idx, val) in sample.index_iter() {
-      
-      match * val {
-
-        Val::R(_) => bail!("synthesis over reals is not implemented"),
-
-        Val::I(ref val) => {
-          let var = term::var(var_idx) ;
-
-          let val_term = term::int( val.clone() ) ;
-          let term = term::app(
-            Op::Ge, vec![ var.clone(), val_term.clone() ]
-          ) ;
-          apply! { term }
-          let term = term::app(
-            Op::Le, vec![ var.clone(), val_term.clone() ]
-          ) ;
-          apply! { term }
-          let term = term::app(
-            Op::Eql, vec![ var.clone(), val_term ]
-          ) ;
-          apply! { term }
-          for & (pre_var, pre_val) in & previous_int {
-            let other_var = term::var(pre_var) ;
-            if val == pre_val {
-              let term = term::eq(
-                var.clone(), other_var.clone()
-              ) ;
-              apply! { term }
-            }
-            if - val == * pre_val {
-              let term = term::eq(
-                var.clone(), term::sub( vec![ other_var.clone() ] )
-              ) ;
-              apply! { term }
-            }
-
-            let add = term::app(
-              Op::Add, vec![ var.clone(), other_var.clone() ]
-            ) ;
-            let add_val = term::int( val + pre_val ) ;
-            let term = term::app(
-              Op::Ge, vec![ add.clone(), add_val.clone() ]
-            ) ;
-            apply! { term }
-            let term = term::app(
-              Op::Le, vec![ add, add_val ]
-            ) ;
-            apply! { term }
-
-            let sub = term::app(
-              Op::Sub, vec![ var.clone(), other_var.clone() ]
-            ) ;
-            let sub_val = term::int( val - pre_val ) ;
-            let term = term::app(
-              Op::Ge, vec![ sub.clone(), sub_val.clone() ]
-            ) ;
-            apply! { term }
-            let term = term::app(
-              Op::Le, vec![ sub, sub_val ]
-            ) ;
-            apply! { term }
-          }
-
-          previous_int.push( (var_idx, val) )
-        },
-
-        Val::B(_) => (),
-
-        Val::N => continue,
-
+    loop {
+      use learning::ice::synth::TheoSynth ;
+      if int_synth.is_done() { break }
+      let done = int_synth.synth(& mut f, sample, unused) ? ;
+      if done {
+        return Ok(true)
       }
-
     }
 
     Ok(false)

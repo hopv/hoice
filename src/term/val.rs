@@ -113,6 +113,13 @@ macro_rules! arith_bin_rel {
   ) ;
 }
 impl Val {
+  /// Returns true iff the value is not `Val::N`.
+  pub fn is_known(& self) -> bool {
+    match * self {
+      Val::N => true,
+      _ => false,
+    }
+  }
   /// Extracts a boolean value.
   pub fn to_bool(self) -> Res<Option<bool>> {
     match self {

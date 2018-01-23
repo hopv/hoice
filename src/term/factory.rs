@@ -210,6 +210,16 @@ pub fn modulo(a: Term, b: Term) -> Term {
   app(Op::Mod, vec![a, b])
 }
 
+/// Creates a conversion from `Int` to `Real`.
+#[inline(always)]
+pub fn to_real(int: Term) -> Term {
+  app(Op::ToReal, vec![int])
+}
+/// Creates a conversion from `Real` to `Int`.
+#[inline(always)]
+pub fn to_int(real: Term) -> Term {
+  app(Op::ToInt, vec![real])
+}
 
 
 
