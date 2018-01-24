@@ -40,25 +40,25 @@ macro_rules! bin_op {
       Val::N => match * $rgt {
         Val::N | Val::I(_) | Val::R(_) => Ok(Val::N),
         ref rgt => bail!(
-          "expected arith values, found {} and {}", "?", rgt
+          "expected compatible arith values, found {} and {}", "?", rgt
         ),
       },
       Val::I(lft) => match * $rgt {
         Val::N => Ok(Val::N),
         Val::I(ref rgt) => Ok( Val::I(lft $op rgt) ),
         ref rgt => bail!(
-          "expected arith values, found {} and {}", lft, rgt
+          "expected compatible arith values, found {} and {}", lft, rgt
         ),
       }
       Val::R(lft) => match * $rgt {
         Val::N => Ok(Val::N),
         Val::R(ref rgt) => Ok( Val::R(lft $op rgt) ),
         ref rgt => bail!(
-          "expected arith values, found {} and {}", lft, rgt
+          "expected compatible arith values, found {} and {}", lft, rgt
         ),
       }
       lft => bail!(
-        "expected arith values, found {} and {}", lft, $rgt
+        "expected compatible arith values, found {} and {}", lft, $rgt
       ),
     }
   ) ;

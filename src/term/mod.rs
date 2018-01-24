@@ -90,6 +90,17 @@ pub enum Typ {
   Bool,
 }
 impl Typ {
+  /// True if the type is boolean.
+  pub fn is_bool(& self) -> bool {
+    * self == Typ::Bool
+  }
+  /// True if the type is arithmetic.
+  pub fn is_arith(& self) -> bool {
+    match * self {
+      Typ::Int | Typ::Real => true,
+      _ => false,
+    }
+  }
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
@@ -1959,6 +1970,154 @@ impl Op {
       ToInt => to_int_,
       ToReal => to_real_,
     }
+  }
+
+
+  /// Type checking.
+  ///
+  /// Checks that a potentially incomplete list of types makes sense for an
+  /// operator.
+  ///
+  /// **NB**: this operation should be called incrementally by the parser, so
+  /// the error, if any, should always be about the last type in the list.
+  ///
+  /// Returns the type the last argument should have (if this type it should
+  /// have is known) and the one found if there is an error.
+  pub fn type_check(& self, total: bool, typs: & Vec<Typ>) -> Result<
+    Option<Typ>, Either< (Option<Typ>, Typ), String >
+  > {
+    use Op::* ;
+    let mut iter = typs.iter() ;
+
+    macro_rules! err {
+      (lft $($lft:tt)*) => (
+        return Err( Either::Left($($lft)*) )
+      ) ;
+      (rgt $($lft:tt)*) => (
+        return Err( Either::Right($($lft)*) )
+      ) ;
+    }
+
+    macro_rules! arity_check {
+      ( [ $min:tt, . ] => $e:expr ) => (
+        if total && typs.len() < $min {
+          err!(rgt
+            format!(
+              "illegal application of `{}` to {} arguments (> {})",
+              self, typs.len(), $min
+            )
+          )
+        } else {
+          $e
+        }
+      ) ;
+      ( [ $min:tt, $max:tt ] => $e:expr ) => (
+        if typs.len() > $max {
+          err!(rgt
+            format!(
+              "illegal application of `{}` to {} arguments (> {})",
+              self, typs.len(), $max
+            )
+          )
+        } else {
+          arity_check!( [ $min, .] => $e )
+        }
+      ) ;
+    }
+
+    macro_rules! all_same {
+      (arith) => (
+        if let Some(fst) = iter.next() {
+          if ! fst.is_arith() {
+            err!(lft (None, * fst))
+          }
+          while let Some(typ) = iter.next() {
+            if typ != fst {
+              debug_assert_eq! { iter.next(), None }
+              err!(lft (Some(* fst), * typ) )
+            }
+          }
+          Some(* fst)
+        } else {
+          None
+        }
+      ) ;
+      (bool) => ({
+        while let Some(typ) = iter.next() {
+          if typ != & Typ::Bool {
+            debug_assert_eq! { iter.next(), None }
+            err!(lft (Some(Typ::Bool), * typ) )
+          }
+        }
+        Some(Typ::Bool)
+      }) ;
+      () => ({
+        if let Some(fst) = iter.next() {
+          while let Some(typ) = iter.next() {
+            if typ != fst {
+              debug_assert_eq! { iter.next(), None }
+              err!(lft (Some(* fst), * typ) )
+            }
+          }
+          Some(* fst)
+        } else {
+          None
+        }
+      }) ;
+      ($typ:expr) => ({
+        while let Some(typ) = iter.next() {
+          if typ != & $typ {
+            debug_assert_eq! { iter.next(), None }
+            err!(lft (Some($typ), * typ))
+          }
+        }
+        Some($typ)
+      }) ;
+    }
+
+    let res = match * self {
+      Add | Sub | Mul | Div => {
+        all_same!(arith)
+      },
+      IDiv | Rem | Mod => arity_check!(
+        [ 2, 2 ] => {
+          all_same!(Typ::Int)
+        }
+      ),
+      Gt | Ge | Le | Lt => arity_check!(
+        [ 2, 2 ] => {
+          all_same!(arith) ;
+          Some(Typ::Bool)
+        }
+      ),
+      Eql => {
+        all_same!() ;
+        Some(Typ::Bool)
+      },
+      Not => arity_check!(
+        [ 1, 1 ] => all_same!(Typ::Bool)
+      ),
+      And | Or | Impl => arity_check!(
+        [ 1, . ] => all_same!(bool)
+      ),
+      ToInt => arity_check!(
+        [ 1, 1 ] => all_same!(Typ::Real)
+      ),
+      ToReal => arity_check!(
+        [ 1, 1 ] => all_same!(Typ::Int)
+      ),
+      Ite => arity_check!(
+        [ 3, 3 ] => if let Some(typ) = iter.next() {
+          if ! typ.is_bool() {
+            err!(lft (Some(Typ::Bool), * typ))
+          }
+          all_same!()
+        } else {
+          None
+        }
+      ),
+    } ;
+    Ok(res)
   }
 
 

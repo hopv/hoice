@@ -60,8 +60,6 @@ use hashconsing::* ;
 
 
 use common::* ;
-use instance::info::VarInfo ;
-
 
 
 /// Hashconsed version of `RQArgs`.
@@ -819,25 +817,3 @@ impl Qualifiers {
 
 }
 
-
-
-
-/// Signature trait, for polymorphic term insertion.
-pub trait Signature {
-  /// Type of a variable.
-  fn get(& self, VarIdx) -> Typ ;
-  /// Length of the signature.
-  fn len(& self) -> usize ;
-}
-impl Signature for VarMap<VarInfo> {
-  fn len(& self) -> usize { VarMap::len(self) }
-  fn get(& self, var: VarIdx) -> Typ {
-    self[var].typ
-  }
-}
-impl Signature for VarMap<Typ> {
-  fn len(& self) -> usize { VarMap::len(self) }
-  fn get(& self, var: VarIdx) -> Typ {
-    self[var]
-  }
-}

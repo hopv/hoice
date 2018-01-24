@@ -671,11 +671,13 @@ where Slver: Solver<'kid, Parser> {
       for sample in data.iter() {
         use self::synth::SynthSys ;
         let mut synth_sys = SynthSys::new( & self.instance[pred].sig ) ;
+        msg! { self => "starting synthesis" } ;
         let done = synth_sys.sample_synth(
           sample, & mut treatment, & self._profiler
         ).chain_err(
           || "during synthesis from sample"
         ) ? ;
+        msg! { self => "done with synthesis" } ;
         if done { break }
       }
     }

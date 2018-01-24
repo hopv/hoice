@@ -129,6 +129,29 @@ pub type TArgss = HashSet< VarMap<Term> > ;
 
 
 
+/// Signature trait, for polymorphic term insertion.
+pub trait Signature {
+  /// Type of a variable.
+  fn get(& self, VarIdx) -> Typ ;
+  /// Length of the signature.
+  fn len(& self) -> usize ;
+}
+impl Signature for VarMap<
+  ::instance::info::VarInfo
+> {
+  fn len(& self) -> usize { VarMap::len(self) }
+  fn get(& self, var: VarIdx) -> Typ {
+    self[var].typ
+  }
+}
+impl Signature for VarMap<Typ> {
+  fn len(& self) -> usize { VarMap::len(self) }
+  fn get(& self, var: VarIdx) -> Typ {
+    self[var]
+  }
+}
+
+
 /// Implemented by types lending themselves to evaluation.
 pub trait Evaluator {
   /// Retrieves the value associated with a variable.
