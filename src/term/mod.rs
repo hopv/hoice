@@ -1983,40 +1983,49 @@ impl Op {
   ///
   /// Returns the type the last argument should have (if this type it should
   /// have is known) and the one found if there is an error.
-  pub fn type_check(& self, total: bool, typs: & Vec<Typ>) -> Result<
-    Option<Typ>, Either< (Option<Typ>, Typ), String >
-  > {
+  pub fn type_check<Pos>(
+    & self, args: Vec<(Typ, Pos)>
+  ) -> Result<
+    Typ, Either< (Option<Typ>, (Typ, Pos)), String >
+  > where Pos: PartialEq + ::std::fmt::Debug {
     use Op::* ;
-    let mut iter = typs.iter() ;
-
+    let mut args = args.into_iter() ;
     macro_rules! err {
       (lft $($lft:tt)*) => (
         return Err( Either::Left($($lft)*) )
       ) ;
+
       (rgt $($lft:tt)*) => (
         return Err( Either::Right($($lft)*) )
+      ) ;
+
+      (nullary) => (
+        err!(rgt
+          format!("illegal nullary application of `{}`", self)
+        )
       ) ;
     }
 
     macro_rules! arity_check {
       ( [ $min:tt, . ] => $e:expr ) => (
-        if total && typs.len() < $min {
+        if args.len() < $min {
           err!(rgt
             format!(
               "illegal application of `{}` to {} arguments (> {})",
-              self, typs.len(), $min
+              self, args.len(), $min
             )
           )
         } else {
           $e
         }
       ) ;
+
       ( [ $min:tt, $max:tt ] => $e:expr ) => (
-        if typs.len() > $max {
+        if args.len() > $max {
           err!(rgt
             format!(
               "illegal application of `{}` to {} arguments (> {})",
-              self, typs.len(), $max
+              self, args.len(), $max
             )
           )
         } else {
@@ -2027,51 +2036,54 @@ impl Op {
 
     macro_rules! all_same {
       (arith) => (
-        if let Some(fst) = iter.next() {
+        if let Some((fst, pos)) = args.next() {
           if ! fst.is_arith() {
-            err!(lft (None, * fst))
+            err!(lft (None, (fst, pos)))
           }
-          while let Some(typ) = iter.next() {
+          while let Some((typ, pos)) = args.next() {
             if typ != fst {
-              debug_assert_eq! { iter.next(), None }
-              err!(lft (Some(* fst), * typ) )
+              debug_assert_eq! { args.next(), None }
+              err!(lft (Some(fst), (typ, pos)) )
             }
           }
-          Some(* fst)
+          fst
         } else {
-          None
+          err!(nullary)
         }
       ) ;
+
       (bool) => ({
-        while let Some(typ) = iter.next() {
-          if typ != & Typ::Bool {
-            debug_assert_eq! { iter.next(), None }
-            err!(lft (Some(Typ::Bool), * typ) )
+        while let Some((typ, pos)) = args.next() {
+          if typ != Typ::Bool {
+            debug_assert_eq! { args.next(), None }
+            err!(lft (Some(Typ::Bool), (typ, pos)) )
           }
         }
-        Some(Typ::Bool)
+        Typ::Bool
       }) ;
+
       () => ({
-        if let Some(fst) = iter.next() {
-          while let Some(typ) = iter.next() {
+        if let Some((fst, _)) = args.next() {
+          while let Some((typ, pos)) = args.next() {
             if typ != fst {
-              debug_assert_eq! { iter.next(), None }
-              err!(lft (Some(* fst), * typ) )
+              debug_assert_eq! { args.next(), None }
+              err!(lft (Some(fst), (typ, pos)) )
             }
           }
-          Some(* fst)
+          fst
         } else {
-          None
+          err!(nullary)
         }
       }) ;
+
       ($typ:expr) => ({
-        while let Some(typ) = iter.next() {
-          if typ != & $typ {
-            debug_assert_eq! { iter.next(), None }
-            err!(lft (Some($typ), * typ))
+        while let Some((typ, pos)) = args.next() {
+          if typ != $typ {
+            debug_assert_eq! { args.next(), None }
+            err!(lft (Some($typ), (typ, pos)))
           }
         }
-        Some($typ)
+        $typ
       }) ;
     }
 
@@ -2087,12 +2099,12 @@ impl Op {
       Gt | Ge | Le | Lt => arity_check!(
         [ 2, 2 ] => {
           all_same!(arith) ;
-          Some(Typ::Bool)
+          Typ::Bool
         }
       ),
       Eql => {
         all_same!() ;
-        Some(Typ::Bool)
+        Typ::Bool
       },
       Not => arity_check!(
         [ 1, 1 ] => all_same!(Typ::Bool)
@@ -2107,13 +2119,13 @@ impl Op {
         [ 1, 1 ] => all_same!(Typ::Int)
       ),
       Ite => arity_check!(
-        [ 3, 3 ] => if let Some(typ) = iter.next() {
+        [ 3, 3 ] => if let Some((typ, pos)) = args.next() {
           if ! typ.is_bool() {
-            err!(lft (Some(Typ::Bool), * typ))
+            err!(lft (Some(Typ::Bool), (typ, pos)))
           }
           all_same!()
         } else {
-          None
+          err!(nullary)
         }
       ),
     } ;
@@ -2127,6 +2139,12 @@ impl Op {
     if args.is_empty() {
       bail!("evaluating operator on 0 elements")
     }
+
+    // print!("evaluating `({}", self) ;
+    // for val in & args {
+    //   print!(" {}", val)
+    // }
+    // println!(")`") ;
 
     macro_rules! arith_app {
       (relation $op:tt $str:tt => $args:expr) => ({

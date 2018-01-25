@@ -57,10 +57,10 @@ macro_rules! rat_to_smt {
   ($writer:expr, $r:expr) => ({
     let (num, den) = ( $r.numer(), $r.denom() ) ;
     debug_assert!( ! den.is_negative() ) ;
-    if num.is_negative() {
-      write!($writer, "(- (/ {} {}))", - num, den)
+    if ! num.is_negative() {
+      write!($writer, "(/ {} {})", num, den)
     } else {
-      write!($writer, "(/ {} {})", - num, den)
+      write!($writer, "(- (/ {} {}))", - num, den)
     }
   })
 }

@@ -82,12 +82,12 @@ pub fn int<I: Into<Int>>(i: I) -> Term {
 #[inline(always)]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
   let r = r.into() ;
-  let r = if r.numer().is_negative() {
-    Rat::new( - r.denom(), r.numer().abs() )
-  } else { r } ;
-  factory.mk(
-    RTerm::Real( r.into() )
-  )
+  let r = if r.numer().is_negative() == r.denom().is_negative() {
+    r
+  } else {
+    - r.abs()
+  } ;
+  factory.mk( RTerm::Real(r) )
 }
 /// Creates the constant `0`.
 #[inline(always)]

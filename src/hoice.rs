@@ -133,6 +133,8 @@ pub fn read_and_work<R: ::std::io::Read>(
       & buf, line_off
     ).parse(& mut instance) ;
 
+    line_off += lines_parsed ;
+
     let parse_res = match parse_res {
       Ok(res) => res,
       Err(e) => {
@@ -142,8 +144,6 @@ pub fn read_and_work<R: ::std::io::Read>(
         continue 'parse_work
       },
     } ;
-
-    line_off += lines_parsed ;
 
     profile!{ |profiler| mark "parsing" }
     

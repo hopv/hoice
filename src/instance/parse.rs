@@ -121,8 +121,6 @@ impl<T: ::std::io::BufRead> ItemRead for T {
       }
 
       'inspect_chars: while let Some(c) = chars.next() {
-        debug_assert!( opn_parens >= cls_parens ) ;
-        
         match c {
           '(' => opn_parens += 1,
           ')' => cls_parens += 1,
@@ -141,6 +139,9 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 
       if opn_parens > 0 && opn_parens == cls_parens {
         break 'read_lines
+      } else if opn_parens < cls_parens {
+        // Something's wrong, let the parser handle it.
+        break 'read_lines
       }
 
       start = buf.len()
@@ -154,7 +155,7 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 /// String cursor.
 pub type Cursor = usize ;
 /// Position in the text.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pos(usize) ;
 impl ::std::ops::Deref for Pos {
   type Target = usize ;
@@ -165,7 +166,9 @@ impl ::std::ops::Deref for Pos {
 /// Parser context.
 pub struct ParserCxt {
   /// Term stack to avoid recursion.
-  term_stack: Vec< (Op, Pos, Vec<Typ>, Vec<Term>, LetCount) >,
+  term_stack: Vec<
+    (Op, Pos, Vec<(Typ, Pos)>, Vec<Term>, LetCount)
+  >,
   /// Memory for backtracking.
   mem: Vec<Cursor>,
   /// Map from predicate names to predicate indices.
@@ -367,6 +370,19 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       )
     }
   }
+  /// Parses a string or fails with error customization.
+  fn tag_err<S>(& mut self, tag: & str, err: S) -> Res<()>
+  where S: Into<String> {
+    if self.tag_opt(tag) {
+      Ok(())
+    } else {
+      bail!(
+        self.error_here(
+          format!("{}", err.into())
+        )
+      )
+    }
+  }
   /// Tries parsing a string.
   fn tag_opt(& mut self, tag: & str) -> bool {
     self.tag_opt_pos(tag).is_some()
@@ -405,7 +421,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.error(
             ident_start_pos,
             format!(
-              "expected identifier, found keyword `{}`",
+              "illegal usage of keyword `{}`",
               conf.bad(id)
             )
           )
@@ -762,7 +778,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.tag(")") ?
           }
           self.ws_cmt() ;
-          self.tag(")") ? ;
+          self.tag_err(
+            ")", format!(
+              "expected binding or `{}` closing the list of bindings",
+              conf.emph(")")
+            )
+          ) ? ;
         } else {
           self.backtrack_to(pos) ;
           break 'parse_lets
@@ -883,6 +904,45 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       }
     }
     num
+  }
+
+  /// Type checks an operator application.
+  fn op_type_check(
+    & self, op: Op, op_pos: Pos, args: Vec<(Typ, Pos)>
+  ) -> Res<Typ> {
+    match op.type_check(args) {
+      Ok(typ) => Ok(typ),
+      Err(Either::Left((Some(exp), (found, pos)))) => {
+        let err: Error = self.error(
+          pos, format!(
+            "expected an expression of sort {}, found {}", exp, found
+          )
+        ).into() ;
+        bail!(
+          err.chain_err(
+            || self.error(op_pos, "in this operator application")
+          )
+        )
+      },
+      Err(Either::Left((None, (found, pos)))) => {
+        let err: Error = self.error(
+          pos, format!(
+            "expected the expression starting here has sort {} \
+            which is illegal here", found
+          )
+        ).into() ;
+        bail!(
+          err.chain_err(
+            || self.error(op_pos, "in this operator application")
+          )
+        )
+      },
+      Err(Either::Right(blah)) => bail!(
+        self.error(
+          op_pos, blah
+        )
+      ),
+    }
   }
 
   /// Real parser.
@@ -1032,13 +1092,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     instance: & Instance
   ) -> Res< Option<(Term, Typ)> > {
     debug_assert! { self.cxt.term_stack.is_empty() }
+    let start_pos = self.pos() ;
 
     let res = 'read_kids: loop {
 
       let bind_count = self.let_bindings(var_map, map, instance) ? ;
 
       self.ws_cmt() ;
-      let start_pos = self.pos() ;
+      let mut term_pos = self.pos() ;
       let (mut term, mut typ) = if let Some(int) = self.int() {
         ( term::int(int), Typ::Int )
       } else if let Some(real) = self.real() ? {
@@ -1063,11 +1124,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         self.ws_cmt() ;
         let op_pos = self.pos() ;
-        let op = self.op() ? ;
-        let typs = Vec::with_capacity(11) ;
-        let kids = Vec::with_capacity(11) ;
-        self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
-        continue 'read_kids
+        if let Some(op) = self.op_opt() {
+          let typs = Vec::with_capacity(11) ;
+          let kids = Vec::with_capacity(11) ;
+          self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
+          continue 'read_kids
+        } else if self.cxt.term_stack.is_empty() {
+          self.backtrack_to(start_pos) ;
+          return Ok(None)
+        } else {
+          self.op() ? ;
+          unreachable!()
+        }
 
       } else {
 
@@ -1079,97 +1147,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         (op, op_pos, mut typs, mut kids, bind_count)
       ) = self.cxt.term_stack.pop() {
         debug_assert_eq! { typs.len(), kids.len() }
-        typs.push(typ) ;
+        typs.push( (typ, term_pos) ) ;
         kids.push(term) ;
         self.ws_cmt() ;
         if self.tag_opt(")") {
-          match op.type_check(true, & typs) {
-            Ok(Some(t)) => typ = t,
-            Ok(None) => bail!(
-              "error in type-checking, sorry..."
-            ),
-            Err(Either::Left((Some(exp), found))) => {
-              let err: Error = self.error(
-                start_pos, format!(
-                  "expected an expression of sort {}, found {}", exp, found
-                )
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-            Err(Either::Left((None, found))) => {
-              let err: Error = self.error(
-                start_pos, format!(
-                  "expected the expression starting here has sort {} \
-                  which is illegal here", found
-                )
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-            Err(Either::Right(blah)) => {
-              let err: Error = self.error(
-                start_pos, blah
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-          }
+          typ = self.op_type_check(op, op_pos, typs) ? ;
           term = term::app(op, kids) ;
+          term_pos = op_pos ;
           self.ws_cmt() ;
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
         } else {
-          match op.type_check(false, & typs) {
-            Ok(Some(_)) => (),
-            Ok(None) => bail!(
-              "error in type-checking, sorry..."
-            ),
-            Err(Either::Left((Some(exp), found))) => {
-              let err: Error = self.error(
-                start_pos, format!(
-                  "expected an expression of sort {}, found {}", exp, found
-                )
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-            Err(Either::Left((None, found))) => {
-              let err: Error = self.error(
-                start_pos, format!(
-                  "expected the expression starting here has sort {} \
-                  which is illegal here", found
-                )
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-            Err(Either::Right(blah)) => {
-              let err: Error = self.error(
-                start_pos, blah
-              ).into() ;
-              bail!(
-                err.chain_err(
-                  || self.error(op_pos, "in this operator application")
-                )
-              )
-            },
-          }
           self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
           continue 'read_kids
         }
@@ -1183,75 +1171,76 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(res)
   }
 
-  /// Parses a sequence of boolean terms.
-  fn term_seq(
+  /// Parses arguments for a predicate application and type-checks it.
+  fn pred_args(
     & mut self,
-    op: Option<(Op, Pos)>,
+    pred: PrdIdx,
+    pred_pos: Pos,
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
-  ) -> Res< Vec<Term> > {
-    let mut seq = Vec::with_capacity(11) ;
+  ) -> Res< Option<PTTerms> > {
+    let mut args = Vec::with_capacity(11) ;
     let mut typs = Vec::with_capacity(11) ;
 
     let mut backtrack_pos = self.pos() ;
     let mut term_pos = self.pos() ;
+
     while let Some((term, typ)) = self.term(
       var_map, map, instance
     ) ? {
-      typs.push(typ) ;
-      if let Some((op, op_pos)) = op.clone() {
-        match op.type_check(false, & typs) {
-          Ok(Some(_)) => (),
-          Ok(None) => bail!(
-            "error in type-checking, sorry..."
-          ),
-          Err(Either::Left((Some(exp), found))) => {
-            let err: Error = self.error(
-              term_pos, format!(
-                "expected an expression of sort {}, found {}", exp, found
-              )
-            ).into() ;
-            bail!(
-              err.chain_err(
-                || self.error(op_pos, "in this operator application")
-              )
-            )
-          },
-          Err(Either::Left((None, found))) => {
-            let err: Error = self.error(
-              term_pos, format!(
-                "expected the expression starting here has sort {} \
-                which is illegal here", found
-              )
-            ).into() ;
-            bail!(
-              err.chain_err(
-                || self.error(op_pos, "in this operator application")
-              )
-            )
-          },
-          Err(Either::Right(blah)) => {
-            let err: Error = self.error(
-              term_pos, blah
-            ).into() ;
-            bail!(
-              err.chain_err(
-                || self.error(op_pos, "in this operator application")
-              )
-            )
-          },
-        }
-      }
-      seq.push(term) ;
+      typs.push( (typ, term_pos) ) ;
+      args.push(term) ;
       backtrack_pos = self.pos() ;
       self.ws_cmt() ;
       term_pos = self.pos()
     }
+
     self.backtrack_to(backtrack_pos) ;
 
-    seq.shrink_to_fit() ;
-    Ok(seq)
+    args.shrink_to_fit() ;
+
+    let sig = & instance[pred].sig ;
+
+    if sig.len() != typs.len() {
+      bail!(
+        self.error(
+          pred_pos, format!(
+            "predicate {} takes {} arguments, but is applied to {}",
+            conf.emph(& instance[pred].name), sig.len(), typs.len()
+          )
+        )
+      )
+    } else {
+      let mut count = 0 ;
+      for (exp, (found, pos)) in sig.iter().zip( typs.into_iter() ) {
+        count += 1 ;
+        if exp != & found {
+          let err: Error = self.error(
+            pos, format!(
+              "expected an expression of sort {}, found {}",
+              exp, found
+            )
+          ).into() ;
+          bail!(
+            err.chain_err(
+              || self.error(
+                pred_pos, format!(
+                  "in this application of {}, parameter #{}",
+                  conf.emph(& instance[pred].name), count
+                )
+              )
+            )
+          )
+        }
+      }
+    }
+
+    Ok(
+      Some(
+        PTTerms::tterm( TTerm::P { pred, args: args.into() } )
+      )
+    )
   }
 
 
@@ -1279,21 +1268,26 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     self.ws_cmt() ;
     let start_pos = self.pos() ;
-    let res = if self.tag_opt("(") {
-      self.ws_cmt() ;
-      let start_pos = self.pos() ;
 
-      if let Some(op) = self.op_opt() {
-        self.ws_cmt() ;
-        let args = self.term_seq(
-          Some((op, start_pos)), var_map, map, instance
-        ) ? ;
-        self.ws_cmt() ;
-        self.tag(")") ? ;
-        Ok( Some(
-          PTTerms::tterm( TTerm::T( term::app(op, args) ) )
-        ) )
-      } else if self.tag_opt(keywords::forall) {
+    let res = if let Some((term, typ)) = self.term(
+      var_map, map, instance
+    ) ? {
+      if ! typ.is_bool() {
+        bail!(
+          self.error(
+            start_pos, format!(
+              "expected expression of sort Bool, found {}", typ
+            )
+          )
+        )
+      }
+      Ok( Some(
+        PTTerms::tterm( TTerm::T( term ) )
+      ) )
+    } else if self.tag_opt("(") {
+      self.ws_cmt() ;
+
+      if self.tag_opt(keywords::forall) {
         bail!(
           self.error(
             start_pos,
@@ -1307,87 +1301,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             format!("unable to work on clauses that are not ground")
           )
         )
-      } else if let Some((pos,ident)) = self.ident_opt()? {
-        self.ws_cmt() ;
-        let args = self.term_seq(None, var_map, map, instance) ? ;
-        self.ws_cmt() ;
-        self.tag(")") ? ;
-        let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
-          * idx
+      } else if let Some((pred_pos,ident)) = self.ident_opt()? {
+        if let Some(idx) = self.cxt.pred_name_map.get(ident).map(|i| * i) {
+          let res = self.pred_args(idx, pred_pos, var_map, map, instance) ;
+          self.ws_cmt() ;
+          self.tag(")") ? ;
+          res
         } else {
           bail!(
             self.error(
-              pos,
+              pred_pos,
               format!("unknown predicate `{}`", conf.bad(ident))
             )
           )
-        } ;
-        if instance[pred].sig.len() != args.len() {
-          bail!(
-            self.error(
-              pos, format!(
-                "illegal application of predicate `{}` to {} arguments, \
-                expected {} arguments",
-                conf.bad(ident),
-                conf.emph(& format!("{}", args.len())),
-                conf.emph(& format!("{}", instance[pred].sig.len())),
-              )
-            )
-          )
         }
-        Ok( Some(
-          PTTerms::tterm( TTerm::P { pred, args: args.into() } )
-        ) )
       } else {
         bail!(
           self.error_here("expected operator, let binding or predicate")
-        )
-      }
-
-    } else if let Some(b) = self.bool() {
-      Ok( Some( PTTerms::tterm( TTerm::T( term::bool(b) ) ) ) )
-
-    } else if let Some(int) = self.int() {
-      Ok( Some( PTTerms::tterm( TTerm::T( term::int(int) ) ) ) )
-
-    } else if let Some((pos,id)) = self.ident_opt()? {
-
-      if let Some(idx) = map.get(id) {
-        if var_map[* idx].typ != Typ::Bool {
-          bail!(
-            self.error(
-              start_pos,
-              format!(
-                "expected term of sort Bool, found variable of sort {}",
-                var_map[* idx].typ
-              )
-            )
-          )
-        }
-        Ok( Some( PTTerms::tterm( TTerm::T( term::var(* idx) ) ) ) )
-      } else if let Some((tterms, typ)) = self.get_bind(id) {
-        if typ != Typ::Bool {
-          bail!(
-            self.error(
-              start_pos,
-              format!("expected term of sort Bool, found {}", typ)
-            )
-          )
-        }
-        Ok( Some( tterms.clone() ) )
-      } else if let Some(idx) = self.cxt.pred_name_map.get(id) {
-        Ok(
-          Some(
-            PTTerms::tterm(
-              TTerm::P { pred: * idx, args: VarMap::with_capacity(0) }
-            )
-          )
-        )
-      } else {
-        bail!(
-          self.error(
-            pos, format!("unknown variable `{}`", conf.bad(id))
-          )
         )
       }
 
@@ -1770,7 +1700,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     while self.has_next() {
       self.ws_cmt() ;
-      self.tag("(") ? ;
+      self.tag_err(
+        "(", format!(
+          "expected `{}` opening top-level item",
+          conf.emph("(")
+        )
+      ) ? ;
       self.ws_cmt() ;
 
       res = if self.set_info() ? {
