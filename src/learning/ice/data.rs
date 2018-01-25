@@ -92,7 +92,7 @@ impl CData {
     for unc in & self.unc {
       proba.add_unc(data, pred, unc) ?
     }
-    Ok( proba.entropy() )
+    proba.entropy()
   }
 
   /// Modified gain, uses `entropy`.
@@ -156,12 +156,32 @@ impl CData {
       return Ok(None)
     }
 
-    let (q_entropy, nq_entropy) = (q_ent.entropy(), nq_ent.entropy()) ;
+    let (q_entropy, nq_entropy) = (
+      q_ent.entropy() ?, nq_ent.entropy() ?
+    ) ;
 
     let gain = my_entropy - (
       (q_pos + q_neg + q_unc) * q_entropy / my_card +
       (nq_pos + nq_neg + nq_unc) * nq_entropy / my_card
     ) ;
+
+    if gain.is_nan() {
+      bail!(
+        format!(
+          "gain is NaN :(
+  my_entropy: {}
+  my_card: {}
+  q  numerator: {} * {} = {}
+  nq numerator: {} * {} = {}", my_entropy, my_card,
+          (q_pos + q_neg + q_unc),
+          q_entropy,
+          (q_pos + q_neg + q_unc) * q_entropy,
+          (nq_pos + nq_neg + nq_unc),
+          nq_entropy,
+          (nq_pos + nq_neg + nq_unc) * nq_entropy,
+        )
+      )
+    }
 
     Ok( Some(gain) )
   }
@@ -281,10 +301,11 @@ impl EntropyBuilder {
   pub fn add_unc(
     & mut self, data: & Data, prd: PrdIdx, sample: & HSample
   ) -> Res<()> {
+    let degree = Self::degree(data, prd, sample) ? ;
     self.den += 1 ;
     self.num += (1. / 2.) + (
-      Self::degree(data, prd, sample) ? / ::std::f64::consts::PI
-    ).atan() ;
+      degree
+    ).atan() / ::std::f64::consts::PI ;
     Ok(())
   }
 
@@ -294,7 +315,7 @@ impl EntropyBuilder {
   }
 
   /// Destroys the builder and returns the entropy.
-  pub fn entropy(self) -> f64 {
+  pub fn entropy(self) -> Res<f64> {
     let proba = self.proba() ;
     let (pos, neg) = (
       if proba == 0. { 0. } else {
@@ -304,7 +325,20 @@ impl EntropyBuilder {
         (1. - proba) * (1. - proba).log2()
       }
     ) ;
-    - pos - neg
+    let res = - pos - neg ;
+    if res.is_nan() {
+      bail!(
+        format!(
+          "entropy is NaN :(
+  num  : {}
+  den  : {}
+  proba: {}
+  pos  : {}
+  neg  : {}", self.num, self.den, proba, pos, neg
+        )
+      )
+    }
+    Ok(res)
   }
 
   /// Degree of a sample, refer to the paper for details.
@@ -343,6 +377,8 @@ impl EntropyBuilder {
       }
     }
 
-    Ok(sum_imp_rhs - sum_imp_lhs - sum_neg)
+    let res = sum_imp_rhs - sum_imp_lhs - sum_neg ;
+
+    Ok(res)
   }
 }

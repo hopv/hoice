@@ -435,6 +435,10 @@ pub struct IceConf {
   pub qual_bias: bool,
   /// Activates qualifier printing.
   pub qual_print: bool,
+  /// Gain above which a qualifier is considered acceptable for splitting data.
+  pub gain_pivot: f64,
+  /// Same as `gain_pivot` but for qualifier synthesis.
+  pub gain_pivot_synth: f64,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -501,6 +505,31 @@ impl IceConf {
         true
       ).number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("gain_pivot").long("--gain_pivot").help(
+        "qualifiers with a gain lower than this value will be ignored\n\
+        value in percent, between 0 and 100"
+      ).validator(
+        int_validator
+      ).value_name(
+        "<int>"
+      ).default_value("0").takes_value(
+        true
+      ).number_of_values(1).hidden(true)
+
+    ).arg(
+
+      Arg::with_name("gain_pivot_synth").long("--gain_pivot_synth").help(
+        "same as `--gain_pivot` but for qualifier synthesis"
+      ).validator(
+        int_validator
+      ).value_name(
+        "<int>"
+      ).default_value("100").takes_value(
+        true
+      ).number_of_values(1).hidden(true)
+
     )
   }
 
@@ -511,8 +540,33 @@ impl IceConf {
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
     let qual_print = bool_of_matches(matches, "qual_print") ;
+    let gain_pivot = {
+      let mut value = int_of_matches(matches, "gain_pivot") as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 100.0 < value {
+        100.0
+      } else {
+        value
+      }
+    } ;
+    let gain_pivot_synth = {
+      let mut value = int_of_matches(
+        matches, "gain_pivot_synth"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 100.0 < value {
+        100.0
+      } else {
+        value
+      }
+    } ;
 
-    IceConf { simple_gain, sort_preds, complete, qual_bias, qual_print }
+    IceConf {
+      simple_gain, sort_preds, complete,
+      qual_bias, qual_print, gain_pivot, gain_pivot_synth,
+    }
   }
 }
 

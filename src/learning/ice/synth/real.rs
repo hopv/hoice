@@ -24,21 +24,26 @@ impl RealSynth {
 }
 impl TheoSynth for RealSynth {
   fn typ(& self) -> & Typ { & self.typ }
+
   fn is_done(& self) -> bool {
-    self.expressivity > 0
+    self.expressivity > 1
   }
+
   fn restart(& mut self) {
     * self = Self::new()
   }
+
+  fn increment(& mut self) {
+    self.expressivity += 1
+  }
+
   fn synth<F>(
     & mut self, f: F, sample: & HSample, others: & mut TermVals
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
-      0 => {
-        self.expressivity += 1 ;
-        simple_real_synth(sample, others, f)
-      },
+      0 => simple_real_synth(sample, others, f),
+      1 => real_synth_1(sample, others, f),
       _ => Ok(false),
     }
   }
@@ -102,6 +107,42 @@ where F: FnMut(Term) -> Res<bool> {
       }
       val => bail!(
         "real synthesis expects projected reals, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+/// Level 1 for real synthesis.
+pub fn real_synth_1<F>(
+  sample: & HSample, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val {
+      Val::I(ref val) => {
+        let var = term::var(var_idx) ;
+        arith_synth_1! { previous_real, f, real | var = ( val.clone() ) }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val {
+      Val::I(val) => {
+        arith_synth_1! { previous_real, f, real | term = val }
+      }
+      val => bail!(
+        "real synthesis expects projected integers, got {} for {}", val, term
       )
     }
   }

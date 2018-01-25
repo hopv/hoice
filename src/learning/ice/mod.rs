@@ -604,14 +604,22 @@ where Slver: Solver<'kid, Parser> {
       self.qualifiers.log()
     }
 
-    if let Some( (qual, _gain) ) = best_qual!(only new: false) ? {
-      profile!{ self tick "learning", "qual", "data split" }
-      let (q_data, nq_data) = data.split(& qual) ;
-      profile!{ self mark "learning", "qual", "data split" }
-      return Ok( (qual, q_data, nq_data) )
+    let mut best_qual = best_qual! ( only new: false ) ? ;
+
+    if let Some((qual, gain)) = best_qual {
+      // println!("gain: {}", gain) ;
+      best_qual = if gain >= conf.ice.gain_pivot {
+        // This qualifier is satisfactory.
+        profile!{ self tick "learning", "qual", "data split" }
+        let (q_data, nq_data) = data.split(& qual) ;
+        profile!{ self mark "learning", "qual", "data split" }
+        return Ok( (qual, q_data, nq_data) )
+      } else {
+        // Not good enough, maybe synthesis can do better.
+        Some((qual, gain))
+      }
     }
 
-    // Reachable only if none of our qualifiers can split the data.
     // if_verb!{
     //   let mut msg = format!(
     //     "\ncould not split remaining data for {}:\n", self.instance[pred]
@@ -637,65 +645,79 @@ where Slver: Solver<'kid, Parser> {
     }
 
     // Synthesize qualifier separating the data.
-    self.synthesize(pred, data)
+    self.synthesize(pred, & data, & mut best_qual) ? ;
+
+    if let Some((qual, _)) = best_qual {
+      profile!{ self tick "learning", "qual", "data split" }
+      let (q_data, nq_data) = data.split(& qual) ;
+      profile!{ self mark "learning", "qual", "data split" }
+      Ok( (qual, q_data, nq_data) )
+    } else {
+      bail!("unable to split data after synthesis...")
+    }
   }
 
   /// Qualifier synthesis.
   pub fn synthesize(
-    & mut self, pred: PrdIdx, data: CData
-  ) -> Res<(Term, CData, CData)> {
-    let mut best = None ;
-    let mut max_gain = vec![] ;
+    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>
+  ) -> Res<()> {
+
+    // println!("synth") ;
 
     profile!{ self tick "learning", "qual", "synthesis" }
     {
+      let self_data = & self.data ;
+      let quals = & mut self.qualifiers ;
+      let instance = & self.instance ;
+      let profiler = & self._profiler ;
+      let self_msg = & self.core ;
+
       let mut treatment = |term: Term| {
-        if let Some(gain) = data.gain(pred, & self.data, & term) ? {
-          if gain == 1.0 {
-            max_gain.push( term.clone() )
+        if let Some(gain) = data.gain(pred, self_data, & term) ? {
+          if gain >= 5.0
+          || gain >= conf.ice.gain_pivot_synth {
+            quals.insert(& term, pred) ? ;
+            ()
           }
-          if let Some((ref mut old_gain, ref mut old_term)) = best {
+          if let Some((ref mut old_term, ref mut old_gain)) = * best {
             if * old_gain < gain {
               * old_gain = gain ;
               * old_term = term
             }
           } else {
-            best = Some((gain, term))
+            * best = Some((term, gain))
           }
-          Ok(false)
+          Ok(gain >= conf.ice.gain_pivot_synth)
         } else {
           Ok(false)
         }
       } ;
 
-      for sample in data.iter() {
-        use self::synth::SynthSys ;
-        let mut synth_sys = SynthSys::new( & self.instance[pred].sig ) ;
-        msg! { self => "starting synthesis" } ;
-        let done = synth_sys.sample_synth(
-          sample, & mut treatment, & self._profiler
-        ).chain_err(
-          || "during synthesis from sample"
-        ) ? ;
-        msg! { self => "done with synthesis" } ;
-        if done { break }
-      }
-    }
-    profile!{ self mark "learning", "qual", "synthesis" }
+      use self::synth::SynthSys ;
+      let mut synth_sys = SynthSys::new( & instance[pred].sig ) ;
 
-    if let Some((_, qual)) = best {
-      self.qualifiers.insert(& qual, pred) ? ;
-      for qual in max_gain {
-        self.qualifiers.insert(& qual, pred) ? ;
+      'synth: loop {
+
+        for sample in data.iter() {
+          msg! { * self_msg => "starting synthesis" } ;
+          let done = synth_sys.sample_synth(
+            sample, & mut treatment, profiler
+          ).chain_err(
+            || "during synthesis from sample"
+          ) ? ;
+          msg! { * self_msg => "done with synthesis" } ;
+          if done { break }
+        }
+
+        synth_sys.increment() ;
+        if synth_sys.is_done() {
+          break 'synth
+        }
+
       }
-      profile!{ self tick "learning", "qual", "data split" }
-      let (q_data, nq_data) = data.split(& qual) ;
-      profile!{ self mark "learning", "qual", "data split" }
-      profile!{ self "qualifier synthesized" => add 1 }
-      Ok((qual, q_data, nq_data))
-    } else {
-      bail!("unable to synthesize a relevant qualifier")
     }
+    profile!{ self mark "learning", "qual", "synthesis" } ;
+    Ok(())
   }
 
 
