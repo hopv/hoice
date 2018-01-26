@@ -10,7 +10,7 @@
 )
 
 (assert
-  (let ( (n 7) )
+  (let ( (n 7) (m (* (- 1) 7)) )
     (forall ((a Int) (b Int))
       (=>
         (and (> a 0) (< b n))
@@ -45,7 +45,5 @@
 )
 
 (check-sat)
-
-(get-model)
 
 (exit)

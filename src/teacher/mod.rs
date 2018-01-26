@@ -460,7 +460,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       log_debug!{ "    sat, getting model..." }
       let model = self.solver.get_model_const() ? ;
       let mut map: VarMap<_> = clause.vars().iter().map(
-        |info| info.typ.default_val()
+        |info| info.typ.default_val() // Val::N
       ).collect() ;
       for (var, _, val) in model {
         log_debug!{ "    - {} = {}", var.default_str(), val }

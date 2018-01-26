@@ -292,11 +292,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// True if the current character is a legal unquoted identifier character.
   fn legal_id_char(& self) -> bool {
     if self.cursor >= self.string.len() {
+      false
+    } else {
       let char = & self.string[ self.cursor .. self.cursor + 1 ] ;
       char.is_alphanumeric()
       || id_special_chars.contains(& char)
-    } else {
-      false
     }
   }
 
@@ -766,7 +766,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
-            let (tterms, typ) = if let Some((term, typ)) = self.term(
+            let (tterms, typ) = if let Some((term, typ)) = self.term_opt(
               var_map, map, instance
             ) ? {
               ( PTTerms::tterm( TTerm::T(term) ), typ )
@@ -775,7 +775,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             } ;
             self.insert_bind(id, tterms, typ) ? ;
             self.ws_cmt() ;
-            self.tag(")") ?
+            self.tag(")") ? ;
+            self.ws_cmt() ;
           }
           self.ws_cmt() ;
           self.tag_err(
@@ -1085,7 +1086,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses a single term.
-  pub fn term(
+  pub fn term_opt(
     & mut self,
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
@@ -1094,6 +1095,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     debug_assert! { self.cxt.term_stack.is_empty() }
     let start_pos = self.pos() ;
 
+    // The correct (non-error) way to exit this loop is
+    //
+    // `break 'read_kids <val>`
+    //
+    // If `<val> == None`, the code below will automatically backtrack to
+    // `start_pos` and clear the `term_stack`, so there's no need to do it in
+    // the loop.
     let res = 'read_kids: loop {
 
       let bind_count = self.let_bindings(var_map, map, instance) ? ;
@@ -1111,11 +1119,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         if let Some(idx) = map.get(id) {
           ( term::var(* idx), var_map[* idx].typ )
         } else if let Some((ptterms, typ)) = self.get_bind(id) {
-          ( ptterms.to_term() ?, typ )
+          if let Some(term) = ptterms.to_term().chain_err(
+            || format!("while retrieving binding for {}", conf.emph(id))
+          ) ? {
+            (term, typ)
+          } else {
+            // Not in a legal term.
+            break 'read_kids None
+          }
+        } else if self.cxt.pred_name_map.get(id).is_some() {
+          // Identifier is a predicate, we're not in a legal term.
+          break 'read_kids None
         } else {
           bail!(
             self.error(
-              pos, format!("unknown variable `{}`", conf.bad(id))
+              pos, format!("unknown identifier `{}`", conf.bad(id))
             )
           )
         }
@@ -1130,8 +1148,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
           continue 'read_kids
         } else if self.cxt.term_stack.is_empty() {
-          self.backtrack_to(start_pos) ;
-          return Ok(None)
+          break 'read_kids None
         } else {
           self.op() ? ;
           unreachable!()
@@ -1168,6 +1185,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       break 'read_kids Some((term, typ))
     } ;
 
+    if res.is_none() {
+      self.cxt.term_stack.clear() ;
+      self.backtrack_to(start_pos) ;
+    }
+
     Ok(res)
   }
 
@@ -1186,7 +1208,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let mut backtrack_pos = self.pos() ;
     let mut term_pos = self.pos() ;
 
-    while let Some((term, typ)) = self.term(
+    while let Some((term, typ)) = self.term_opt(
       var_map, map, instance
     ) ? {
       typs.push( (typ, term_pos) ) ;
@@ -1269,7 +1291,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     let start_pos = self.pos() ;
 
-    let res = if let Some((term, typ)) = self.term(
+    let res = if let Some((term, typ)) = self.term_opt(
       var_map, map, instance
     ) ? {
       if ! typ.is_bool() {
@@ -1284,6 +1306,46 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       Ok( Some(
         PTTerms::tterm( TTerm::T( term ) )
       ) )
+    } else if let Some((pos, id)) = self.ident_opt() ? {
+      if let Some(idx) = self.cxt.pred_name_map.get(id) {
+        let idx = * idx ;
+        if instance[idx].sig.is_empty() {
+          Ok( Some(
+            PTTerms::TTerm(
+              TTerm::P { pred: idx, args: VarMap::with_capacity(0) }
+            )
+          ) )
+        } else {
+          bail!(
+            self.error(
+              pos, format!(
+                "illegal nullary application of predicate `{}`, \
+                this predicate takes {} arguments",
+                conf.bad(& instance[idx].name), instance[idx].sig.len()
+              )
+            )
+          )
+        }
+      } else if let Some((ptterms, typ)) = self.get_bind(id) {
+        if typ != Typ::Bool {
+          bail!(
+            self.error(
+              start_pos, format!(
+                "expected expression of sort Bool, found {}", typ
+              )
+            )
+          )
+        }
+        Ok( Some( ptterms.clone() ) )
+      } else {
+        bail!(
+          self.error(
+            pos, format!(
+              "unknown ident `{}`", conf.bad(id)
+            )
+          )
+        )
+      }
     } else if self.tag_opt("(") {
       self.ws_cmt() ;
 
@@ -1950,7 +2012,7 @@ impl PTTerms {
                       positive_preds.push( tterm )
                     },
                   },
-                  ptt => if let Ok(term) = ptt.to_term() {
+                  ptt => if let Some(term) = ptt.to_term() ? {
                     tts.push( TTerm::T( term::not(term) ) )
                   } else {
                     bail!("ill-formed horn clause (or, 2)")
@@ -2057,7 +2119,7 @@ impl PTTerms {
   }
 
   /// Transforms a parser's combination of top terms into a term, if possible.
-  pub fn to_term(& self) -> Res<Term> {
+  pub fn to_term(& self) -> Res<Option<Term>> {
     let mut stack = Vec::with_capacity(17) ;
 
     let mut ptterm = self ;
@@ -2088,12 +2150,12 @@ impl PTTerms {
         PTTerms::TTerm(ref tterm) => if let Some(term) = tterm.term() {
           term.clone()
         } else {
-          bail!("failed to convert `PTTerms` to `Term` (1)")
+          return Ok(None)
         },
         PTTerms::NTTerm(ref tterm) => if let Some(term) = tterm.term() {
           term::not( term.clone() )
         } else {
-          bail!("failed to convert `PTTerms` to `Term` (2)")
+          return Ok(None)
         },
       } ;
 
@@ -2108,7 +2170,7 @@ impl PTTerms {
             continue 'go_up
           }
         } else {
-          break 'go_down Ok(term)
+          break 'go_down Ok( Some(term) )
         }
       }
 

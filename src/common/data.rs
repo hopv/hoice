@@ -1,6 +1,7 @@
 //! Learning-data-related types.
 
 use std::sync::RwLock ;
+use std::cmp::Ordering ;
 
 use hashconsing::{ HConser, HConsed, HashConsign } ;
 
@@ -14,6 +15,65 @@ use learning::ice::data::CData ;
 
 /// Hash consed samples.
 pub type HSample = HConsed< Args > ;
+/// Helper functions for `HSample`.
+pub trait HSampleExt {
+  /// Compares two samples w.r.t. subsumption.
+  ///
+  /// Returns
+  ///
+  /// - `Some(Greater)` if `self` subsumes `other`,
+  /// - `Some(Equal)` if `self` is equal to `other`,
+  /// - `Some(Less)` if `other` subsumes `self`,
+  /// - `None` if `self` and `other` cannot be compared.
+  ///
+  /// Returns an error if `self` and `other` do not have the same length.
+  fn compare(& self, other: & Self) -> Res< Option<Ordering> > ;
+
+  /// True iff `self` subsumes or is equal to `other`.
+  fn subsumes(& self, other: & Self) -> Res<bool> {
+    Ok(
+      match self.compare(other) ? {
+        Some(Ordering::Greater) | Some(Ordering::Equal) => true,
+        _ => false,
+      }
+    )
+  }
+  /// True iff `other` subsumes or is equal to `self`.
+  fn subsumed_by(& self, other: & Self) -> Res<bool> {
+    other.subsumes(self)
+  }
+}
+impl HSampleExt for HSample {
+  fn compare(& self, other: & Self) -> Res< Option<Ordering> > {
+    if_debug! {
+      if self.len() != other.len() {
+        bail!("attempting to compare two hsamples of different length")
+      }
+    }
+
+    if self == other { return Ok( Some(Ordering::Equal) ) }
+
+    let (mut less, mut greater) = (true, true) ;
+
+    for (val, other_val) in self.iter().zip( other.iter() ) {
+      greater = greater && (
+        ! val.is_known() || val == other_val
+      ) ;
+      less = less && (
+        ! other_val.is_known() || val == other_val
+      ) ;
+    }
+
+    match (less, greater) {
+      (false, false) => Ok(None),
+      (true, false) => Ok( Some(Ordering::Less) ),
+      (false, true) => Ok( Some(Ordering::Greater) ),
+      (true, true) => bail!(
+        "problem in hsample hconsing..."
+      ),
+    }
+  }
+}
 
 /// Consign for hash consed samples.
 pub type HSampleConsign = Arc< RwLock<HashConsign<Args>> > ;
@@ -338,6 +398,7 @@ impl Data {
   pub fn add_propagate_pos(& mut self) -> Res<()> {
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.pos_to_add.len() ) ;
+
     // The stack is updated here and at the end of the `'propagate` loop below.
     // Be careful when using `continue 'propagate` as this will skip the stack
     // update.
@@ -348,7 +409,7 @@ impl Data {
     'propagate: while let Some(
       (curr_pred, curr_samples)
     ) = to_propagate.pop() {
-      if curr_samples.is_empty() { continue }
+      if curr_samples.is_empty() { continue 'propagate }
 
       log_debug!(
         "propagating {} samples for predicate {}",
@@ -361,6 +422,8 @@ impl Data {
         new_stuff = new_stuff || is_new
       }
       if ! new_stuff { continue 'propagate }
+
+      // Look for 
 
       // Get the constraints mentioning the positive samples.
       let mut constraints ;

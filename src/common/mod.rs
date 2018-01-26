@@ -1,4 +1,4 @@
-  //! Base types and functions.
+//! Base types and functions.
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
