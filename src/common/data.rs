@@ -223,6 +223,27 @@ pub struct Data {
   new_samples: Vec<HSample>,
 }
 impl Data {
+  /// Shrinks the list of constraints.
+  ///
+  /// - pops all empty constraints from `self.constraints`.
+  fn shrink_constraints(& mut self) {
+    loop {
+      scoped! {
+        if let Some(last) = self.constraints.last() {
+          if ! last.is_tautology() {
+            return ()
+          }
+        } else {
+          return ()
+        }
+      }
+      let last = self.constraints.pop() ;
+      debug_assert_eq!(
+        last.map(|c| c.is_tautology()), Some(true)
+      )
+    }
+  }
+
   /// Constructor.
   pub fn new(instance: Arc<Instance>) -> Self {
     let pred_count = instance.preds().len() ;
@@ -262,24 +283,68 @@ impl Data {
     if ! self.neg_to_add.is_empty() {
       bail!("neg_to_add is not empty...")
     }
+
+    // Pos/neg data cannot appear in constraints.
     for pred in self.instance.pred_indices() {
-      for pos in & self.pos[pred] {
-        if let Some(set) = self.map[pred].get(pos) {
+      let pos = self.pos[pred].iter().map(
+        |p| (p, "positive")
+      ) ;
+      let neg = self.neg[pred].iter().map(
+        |n| (n, "negative")
+      ) ;
+      for (sample, polarity) in pos.chain(neg) {
+        if let Some(set) = self.map[pred].get(sample) {
+          let mut s: String = "{".into() ;
+          for idx in set {
+            s.push_str(& format!(" {}", idx))
+          }
+          s.push_str(" }") ;
           bail!(
-            "{}{} is positive but appears in constraint(s) {:?}",
-            self.instance[pred], pos, set
-          )
-        }
-      }
-      for neg in & self.neg[pred] {
-        if let Some(set) = self.map[pred].get(neg) {
-          bail!(
-            "{}{} is negative but appears in constraint(s) {:?}",
-            self.instance[pred], neg, set
+            "{}\n({} {}) is {} but appears in constraint(s) {}",
+            self.string_do(& (), |s| s.to_string()).unwrap(),
+            self.instance[pred], sample, polarity, s
           )
         }
       }
     }
+
+    // Constraints are consistent with map.
+    for (idx, constraint) in self.constraints.index_iter() {
+      for & Sample { pred, ref args } in constraint.lhs.iter().chain(
+        constraint.rhs.iter()
+      ) {
+        if ! self.map[pred].get(args).map(
+          |set| set.contains(& idx)
+        ).unwrap_or(false) {
+          bail!(
+            "{}\n({} {}) appears in constraint #{} \
+            but is not registered in map",
+            self.string_do(& (), |s| s.to_string()).unwrap(),
+            self.instance[pred], args, idx
+          )
+        }
+      }
+    }
+
+    // Map is consistent with constraints.
+    for (pred, map) in self.map.index_iter() {
+      for (sample, set) in map {
+        for idx in set {
+          let c = & self.constraints[* idx] ;
+          if ! c.lhs.iter().chain( c.rhs.iter() ).any(
+            |& Sample { pred: p, ref args }| p == pred && args == sample
+          ) {
+            bail!(
+              "{}\n({} {}) registered in map for constraint #{} \
+              but does not appear in this constraint",
+              self.string_do(& (), |s| s.to_string()).unwrap(),
+              self.instance[pred], sample, idx
+            )
+          }
+        }
+      }
+    }
+
     Ok(())
   }
   #[cfg(not(debug_assertions))]
@@ -387,7 +452,7 @@ impl Data {
     Ok(())
   }
 
-  /// Adds some positive examples.
+  /// Adds some positive examples from `pos_to_add`.
   ///
   /// Simplifies constraints containing these samples.
   ///
@@ -395,7 +460,7 @@ impl Data {
   ///
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
-  pub fn add_propagate_pos(& mut self) -> Res<()> {
+  fn add_propagate_pos(& mut self) -> Res<()> {
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.pos_to_add.len() ) ;
 
@@ -555,7 +620,7 @@ impl Data {
     Ok(())
   }
 
-  /// Adds some negative examples.
+  /// Adds some negative examples from `neg_to_add`.
   ///
   /// Simplifies constraints containing these samples.
   ///
@@ -563,7 +628,7 @@ impl Data {
   ///
   /// - added to the set when it is modified (but not tautologized)
   /// - removed from the set when it is tautologized
-  pub fn add_propagate_neg(& mut self) -> Res<()> {
+  fn add_propagate_neg(& mut self) -> Res<()> {
     // Stack of things to propagate.
     let mut to_propagate = Vec::with_capacity( self.neg_to_add.len() ) ;
     // The stack is updated here and at the end of the `'propagate` loop below.
@@ -722,9 +787,11 @@ impl Data {
       Ok(true)
     } else {
       if ! self.pos[pred].contains(& args) {
-        self.stage_pos(pred, args)
+        self.stage_pos(pred, args) ;
+        Ok(true)
+      } else {
+        Ok(false)
       }
-      Ok(false)
     }
   }
 
@@ -740,8 +807,10 @@ impl Data {
     } else {
       if ! self.neg[pred].contains(& args) {
         self.stage_neg(pred, args) ;
+        Ok(true)
+      } else {
+        Ok(false)
       }
-      Ok(false)
     }
   }
 
@@ -750,6 +819,7 @@ impl Data {
     & mut self, lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
   ) -> Res<bool> {
     self.propagate() ? ;
+    self.shrink_constraints() ;
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     'smpl_iter: for (pred, args) in lhs {
       let (args, is_new) = self.mk_sample(args) ;

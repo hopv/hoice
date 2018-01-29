@@ -68,7 +68,10 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
     return Ok( Some(cands) )
   }
   log_debug!{ "  generating data from initial cex..." }
-  teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
+  let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
+  if ! nu_stuff {
+    bail! { "translation of initial cexs to data generated no new data" }
+  }
 
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
@@ -131,27 +134,24 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
         // }
         let _ = teacher.data.drain_new_samples() ;
         profile!{ teacher tick "data", "registration" }
-        if let Err(e) = teacher.instance.cexs_to_data(
+        let res = teacher.instance.cexs_to_data(
           & mut teacher.data, cexs
-        ) {
-          match e.kind() {
+        ) ;
+        profile!{ teacher mark "data", "registration" }
+        match res {
+          Ok(true) => (),
+          Ok(false) => bail! {
+            "translation of cexs to data generated no new data"
+          },
+          Err(e) => match e.kind() {
             & ErrorKind::Unsat => {
               teacher.finalize(profiler) ? ;
               return Ok(None)
             },
             _ => bail!(e),
-          }
+          },
         }
-        profile!{ teacher mark "data", "registration" }
-        // if ! teacher.data.has_new_samples() {
-        //   bail!( "candidates do not verify the clauses but no new data found" )
-        // }
-        // log_info!{
-        //   "\nlearning data before propagation:\n{}",
-        //   teacher.data.string_do(
-        //     & (), |s| s.to_string()
-        //   ) ?
-        // }
+
         profile!{ teacher tick "data", "propagation" }
         teacher.data.propagate() ? ;
         profile!{ teacher mark "data", "propagation" }

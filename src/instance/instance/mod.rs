@@ -1218,24 +1218,26 @@ impl Instance {
     & self, data: & mut ::common::data::Data, cexs: Cexs
   ) -> Res<bool> {
     let mut nu_stuff = false ;
+    debug! { "start" }
     for (clause, cex) in cexs.into_iter() {
-      log_debug!{ "    working on clause {}...", clause }
+      if_debug! {
+        debug! { "    working on clause {}...", clause }
+        debug! { "    cex:" }
+        for (index, val) in cex.index_iter() {
+          debug! { "    - v_{}: {}", index, val }
+        }
+      }
       let clause = & self[clause] ;
-      log_debug!{ "    getting antecedents..." }
       let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
-      log_debug!{ "    translating tterms..." }
 
-
-      log_debug!{ "    working on lhs..." }
+      debug! { "    working on lhs..." }
       for (pred, argss) in & clause.lhs_preds {
         let pred = * pred ;
-        log_debug!{
-          "        pred: {} / {} ({})",
-          pred, self.preds.len(), self.pred_terms.len()
-        }
+        debug! { "        {}", self[pred] }
         if self.pred_terms[pred].is_none() {
-          log_debug!{ "        -> is none, {} args", argss.len() }
+          debug! { "        -> is none, {} args", argss.len() }
           for args in argss {
+            debug! { "        {}", args }
             let mut values = VarMap::with_capacity( args.len() ) ;
             for arg in args {
               values.push(
@@ -1244,22 +1246,20 @@ impl Instance {
                 ) ?
               )
             }
+            debug! { "          {}", values }
             antecedents.push(
               (pred, values)
             )
           }
         } else {
-          log_debug!{ "      -> is some" }
+          debug! { "      -> is some" }
         }
       }
       antecedents.shrink_to_fit() ;
 
-      log_debug!{ "    working on rhs..." }
+      debug! { "    working on rhs..." }
       let consequent = if let Some((pred, args)) = clause.rhs() {
-        log_debug!{
-          "        pred: {} / {} ({})",
-          pred, self.preds.len(), self.pred_terms.len()
-        }
+        debug! { "        ({} {})", self[pred], args }
         let mut values = VarMap::with_capacity( args.len() ) ;
         'pred_args: for arg in args {
           values.push(
@@ -1268,13 +1268,11 @@ impl Instance {
             ) ?
           )
         }
+        debug! { "          {}", values }
         Some( (pred, values) )
       } else {
         None
       } ;
-
-      log_debug!{ "    antecedent: {:?}", antecedents }
-      log_debug!{ "    consequent: {:?}", consequent }
 
       match ( antecedents.len(), consequent ) {
         (0, None) => bail!(

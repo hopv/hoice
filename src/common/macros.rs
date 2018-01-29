@@ -1,5 +1,14 @@
 //! Macros.
 
+
+/// Introduces a scope, usually to please borrow-checking.
+macro_rules! scoped {
+  ($($tokens:tt)*) => ({
+    $($tokens)*
+  })
+}
+
+
 /// In verbose mode, same as `println` but with a "; " prefix.
 macro_rules! info {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (

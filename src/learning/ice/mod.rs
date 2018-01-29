@@ -674,8 +674,7 @@ where Slver: Solver<'kid, Parser> {
 
       let mut treatment = |term: Term| {
         if let Some(gain) = data.gain(pred, self_data, & term) ? {
-          if gain >= 5.0
-          || gain >= conf.ice.gain_pivot_synth {
+          if gain >= conf.ice.gain_pivot_synth {
             quals.insert(& term, pred) ? ;
             ()
           }
