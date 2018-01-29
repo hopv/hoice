@@ -192,18 +192,14 @@ impl_fmt!{
 }
 
 
-
-/// Structure storing unprojected learning data.
+/// Structure manipulating unprojected learning data.
 ///
-/// Used by the teacher to simplify constraints as it hads samples.
-///
-/// Also used by the ice learner to propagate the choices it makes.
+/// Cannot create new samples as it does not contain the factory. This is the
+/// structure manipulated by learners.
 #[derive(Clone)]
-pub struct Data {
+pub struct DataCore {
   /// Instance, only used for printing.
-  instance: Arc<Instance>,
-  /// Consign for hash consed samples.
-  pub samples: HSampleConsign,
+  pub instance: Arc<Instance>,
   /// Positive examples.
   pub pos: PrdMap< HConSet<HSample> >,
   /// Negative examples.
@@ -219,10 +215,33 @@ pub struct Data {
   neg_to_add: PrdHMap< HConSet<HSample> >,
   /// Constraints that have changed since the last reset.
   modded_constraints: CstrSet,
-  /// New samples since the last reset.
-  new_samples: Vec<HSample>,
 }
-impl Data {
+impl DataCore {
+
+  /// Constructor.
+  pub fn new(instance: Arc<Instance>) -> Self {
+    let pred_count = instance.preds().len() ;
+    let (
+      mut map, mut pos, mut neg
+    ) = (
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count)
+    ) ;
+    for _ in instance.preds() {
+      map.push( HConMap::with_capacity(103) ) ;
+      pos.push( HConSet::with_capacity(103) ) ;
+      neg.push( HConSet::with_capacity(103) ) ;
+    }
+    let constraints = CstrMap::with_capacity(103) ;
+    DataCore {
+      instance, pos, neg, constraints, map,
+      pos_to_add: PrdHMap::with_capacity(pred_count),
+      neg_to_add: PrdHMap::with_capacity(pred_count),
+      modded_constraints: CstrSet::new(),
+    }
+  }
+
   /// Shrinks the list of constraints.
   ///
   /// - pops all empty constraints from `self.constraints`.
@@ -241,34 +260,6 @@ impl Data {
       debug_assert_eq!(
         last.map(|c| c.is_tautology()), Some(true)
       )
-    }
-  }
-
-  /// Constructor.
-  pub fn new(instance: Arc<Instance>) -> Self {
-    let pred_count = instance.preds().len() ;
-    let (
-      mut map, mut pos, mut neg
-    ) = (
-      PrdMap::with_capacity(pred_count),
-      PrdMap::with_capacity(pred_count),
-      PrdMap::with_capacity(pred_count)
-    ) ;
-    for _ in instance.preds() {
-      map.push( HConMap::with_capacity(103) ) ;
-      pos.push( HConSet::with_capacity(103) ) ;
-      neg.push( HConSet::with_capacity(103) ) ;
-    }
-    let constraints = CstrMap::with_capacity(103) ;
-    let samples = Arc::new(
-      RwLock::new( HashConsign::with_capacity(1007) )
-    ) ;
-    Data {
-      instance, samples, pos, neg, constraints, map,
-      pos_to_add: PrdHMap::with_capacity(pred_count),
-      neg_to_add: PrdHMap::with_capacity(pred_count),
-      modded_constraints: CstrSet::new(),
-      new_samples: Vec::with_capacity(11),
     }
   }
 
@@ -351,14 +342,51 @@ impl Data {
   #[inline(always)]
   pub fn check(& self) -> Res<()> { Ok(()) }
 
-  /// The new samples since the last drain.
-  pub fn drain_new_samples(& mut self) -> Vec<HSample> {
-    self.new_samples.drain(0..).collect()
+
+  /// Applies the classification represented by the data to some projected
+  /// data.
+  pub fn classify(& self, pred: PrdIdx, data: & mut CData) {
+    let mut index = 0 ;
+    while index < data.unc.len() {
+      if self.pos[pred].contains(& data.unc[index]) {
+        let to_pos = data.unc.swap_remove(index) ;
+        data.pos.push(to_pos)
+      } else if self.neg[pred].contains(& data.unc[index]) {
+        let to_neg = data.unc.swap_remove(index) ;
+        data.neg.push(to_neg)
+      } else {
+        index += 1
+      }
+    }
   }
 
-  /// True if there are new samples.
-  pub fn has_new_samples(& mut self) -> bool {
-    ! self.new_samples.is_empty()
+
+  /// Sets all the unknown data of a given predicate to be false, and
+  /// propagates.
+  pub fn pred_all_false(& mut self, pred: PrdIdx) -> Res<()> {
+    {
+      let set = self.neg_to_add.entry(pred).or_insert_with(
+        || HConSet::new()
+      ) ;
+      for (sample, _) in & self.map[pred] {
+        set.insert( sample.clone() ) ;
+      }
+    }
+    self.propagate()
+  }
+
+  /// Sets all the unknown data of a given predicate to be true, and
+  /// propagates.
+  pub fn pred_all_true(& mut self, pred: PrdIdx) -> Res<()> {
+    {
+      let set = self.pos_to_add.entry(pred).or_insert_with(
+        || HConSet::new()
+      ) ;
+      for (sample, _) in & self.map[pred] {
+        set.insert( sample.clone() ) ;
+      }
+    }
+    self.propagate()
   }
 
   /// Remember a positive example to add.
@@ -760,6 +788,132 @@ impl Data {
 
     Ok(())
   }
+}
+
+impl<'a> PebcakFmt<'a> for DataCore {
+  type Info = & 'a () ;
+  fn pebcak_err(& self) -> ErrorKind {
+    "during data pebcak formatting".into()
+  }
+  fn pebcak_io_fmt<W: Write>(
+    & self, w: & mut W, _: & 'a ()
+  ) -> IoRes<()> {
+    let map = self.instance.preds() ;
+    write!(w, "pos (") ? ;
+    for (pred, set) in self.pos.index_iter() {
+      for args in set.iter() {
+        write!(w, "\n  ({}", map[pred]) ? ;
+        for arg in args.iter() {
+          write!(w, " {}", arg)?
+        }
+        write!(w, ")") ?
+      }
+    }
+    write!(w, "\n) neg (") ? ;
+    for (pred, set) in self.neg.index_iter() {
+      for args in set.iter() {
+        write!(w, "\n  ({}", map[pred]) ? ;
+        for arg in args.iter() {
+          write!(w, " {}", arg)?
+        }
+        write!(w, ")") ?
+      }
+    }
+    write!(w, "\n) constraints (") ? ;
+    for (index, cstr) in self.constraints.index_iter() {
+      write!(w, "\n  {: >3} | ", index) ? ;
+      if cstr.is_tautology() {
+        write!(w, "_") ?
+      } else {
+        for & Sample { pred, ref args } in cstr.lhs.iter() {
+          write!(w, "({}", map[pred]) ? ;
+          for arg in args.iter() {
+            write!(w, " {}", arg) ?
+          }
+          write!(w, ") ") ?
+        }
+        write!(w, "=> ") ? ;
+        if let Some(& Sample { pred, ref args }) = cstr.rhs.as_ref() {
+          write!(w, "({}", map[pred]) ? ;
+          for arg in args.iter() {
+            write!(w, " {}", arg) ?
+          }
+          write!(w, ")") ?
+        } else {
+          write!(w, "false") ?
+        }
+      }
+    }
+    write!(w, "\n) constraint map(") ? ;
+    for (pred, samples) in self.map.index_iter() {
+      for (sample, set) in samples.iter() {
+        write!(w, "\n  ({}", map[pred]) ? ;
+        for arg in sample.iter() {
+          write!(w, " {}", arg) ?
+        }
+        write!(w, ") ->") ? ;
+        for pred in set.iter() {
+          write!(w, " {}", pred) ?
+        }
+      }
+    }
+    write!(w, "\n) positive examples staged (") ? ;
+    for (pred, set) in & self.pos_to_add {
+      write!(w, "\n  {} |", self.instance[* pred]) ? ;
+      for sample in set {
+        write!(w, " {}", sample) ?
+      }
+    }
+    write!(w, "\n) negative examples staged (\n") ? ;
+    for (pred, set) in & self.neg_to_add {
+      write!(w, "  {} |", self.instance[* pred]) ? ;
+      for sample in set {
+        write!(w, " {}", sample) ?
+      }
+      write!(w, "\n") ?
+    }
+    write!(w, ")\n")
+  }
+}
+
+
+/// Structure storing unprojected learning data.
+///
+/// Used by the teacher to simplify constraints as it adds samples. Basically a
+/// `DataCore` and a factory for samples.
+pub struct Data {
+  /// Data core.
+  core: DataCore,
+  /// Consign for hash consed samples.
+  samples: HSampleConsign,
+}
+impl ::std::ops::Deref for Data {
+  type Target = DataCore ;
+  fn deref(& self) -> & DataCore {
+    & self.core
+  }
+}
+impl ::std::ops::DerefMut for Data {
+  fn deref_mut(& mut self) -> & mut DataCore {
+    & mut self.core
+  }
+}
+impl Data {
+
+  /// Constructor.
+  pub fn new(instance: Arc<Instance>) -> Self {
+    let samples = Arc::new(
+      RwLock::new( HashConsign::with_capacity(1007) )
+    ) ;
+    Data {
+      core: DataCore::new(instance), samples
+    }
+  }
+
+  /// Clones the data core.
+  pub fn clone_core(& self) -> DataCore {
+    self.core.clone()
+  }
 
   /// Creates a new sample. Returns true if it's new.
   ///
@@ -768,50 +922,7 @@ impl Data {
     & mut self, args: Args
   ) -> (HSample, bool) {
     let (args, is_new) = self.samples.mk_is_new(args) ;
-    if is_new {
-      self.new_samples.push( args.clone() )
-    }
     (args, is_new)
-  }
-
-  /// Adds positive data after hash consing. True if new.
-  ///
-  /// Stages propagation but does not run it.
-  pub fn stage_raw_pos(
-    & mut self, pred: PrdIdx, args: Args
-  ) -> Res<bool> {
-    let (args, is_new) = self.mk_sample(args) ;
-    if is_new {
-      let is_new = self.pos[pred].insert(args) ;
-      debug_assert!( is_new ) ;
-      Ok(true)
-    } else {
-      if ! self.pos[pred].contains(& args) {
-        self.stage_pos(pred, args) ;
-        Ok(true)
-      } else {
-        Ok(false)
-      }
-    }
-  }
-
-  /// Adds negative data after hash consing. True if new.
-  pub fn stage_raw_neg(
-    & mut self, pred: PrdIdx, args: Args
-  ) -> Res<bool> {
-    let (args, is_new) = self.mk_sample(args) ;
-    if is_new {
-      let is_new = self.neg[pred].insert(args) ;
-      debug_assert!( is_new ) ;
-      Ok(true)
-    } else {
-      if ! self.neg[pred].contains(& args) {
-        self.stage_neg(pred, args) ;
-        Ok(true)
-      } else {
-        Ok(false)
-      }
-    }
   }
 
   /// Adds a constraint. Propagates positive and negative samples.
@@ -898,137 +1009,44 @@ impl Data {
     Ok(true)
   }
 
-
-  /// Applies the classification represented by the data to some projected
-  /// data.
-  pub fn classify(& self, pred: PrdIdx, data: & mut CData) {
-    let mut index = 0 ;
-    while index < data.unc.len() {
-      if self.pos[pred].contains(& data.unc[index]) {
-        let to_pos = data.unc.swap_remove(index) ;
-        data.pos.push(to_pos)
-      } else if self.neg[pred].contains(& data.unc[index]) {
-        let to_neg = data.unc.swap_remove(index) ;
-        data.neg.push(to_neg)
+  /// Adds positive data after hash consing. True if new.
+  ///
+  /// Stages propagation but does not run it.
+  pub fn stage_raw_pos(
+    & mut self, pred: PrdIdx, args: Args
+  ) -> Res<bool> {
+    let (args, is_new) = self.mk_sample(args) ;
+    if is_new {
+      let is_new = self.pos[pred].insert(args) ;
+      debug_assert!( is_new ) ;
+      Ok(true)
+    } else {
+      if ! self.pos[pred].contains(& args) {
+        self.stage_pos(pred, args) ;
+        Ok(true)
       } else {
-        index += 1
+        Ok(false)
       }
     }
   }
 
-
-  /// Sets all the unknown data of a given predicate to be false, and
-  /// propagates.
-  pub fn pred_all_false(& mut self, pred: PrdIdx) -> Res<()> {
-    {
-      let set = self.neg_to_add.entry(pred).or_insert_with(
-        || HConSet::new()
-      ) ;
-      for (sample, _) in & self.map[pred] {
-        set.insert( sample.clone() ) ;
-      }
-    }
-    self.propagate()
-  }
-
-  /// Sets all the unknown data of a given predicate to be true, and
-  /// propagates.
-  pub fn pred_all_true(& mut self, pred: PrdIdx) -> Res<()> {
-    {
-      let set = self.pos_to_add.entry(pred).or_insert_with(
-        || HConSet::new()
-      ) ;
-      for (sample, _) in & self.map[pred] {
-        set.insert( sample.clone() ) ;
-      }
-    }
-    self.propagate()
-  }
-}
-
-impl<'a> PebcakFmt<'a> for Data {
-  type Info = & 'a () ;
-  fn pebcak_err(& self) -> ErrorKind {
-    "during data pebcak formatting".into()
-  }
-  fn pebcak_io_fmt<W: Write>(
-    & self, w: & mut W, _: & 'a ()
-  ) -> IoRes<()> {
-    let map = self.instance.preds() ;
-    write!(w, "pos (") ? ;
-    for (pred, set) in self.pos.index_iter() {
-      for args in set.iter() {
-        write!(w, "\n  ({}", map[pred]) ? ;
-        for arg in args.iter() {
-          write!(w, " {}", arg)?
-        }
-        write!(w, ")") ?
-      }
-    }
-    write!(w, "\n) neg (") ? ;
-    for (pred, set) in self.neg.index_iter() {
-      for args in set.iter() {
-        write!(w, "\n  ({}", map[pred]) ? ;
-        for arg in args.iter() {
-          write!(w, " {}", arg)?
-        }
-        write!(w, ")") ?
-      }
-    }
-    write!(w, "\n) constraints (") ? ;
-    for (index, cstr) in self.constraints.index_iter() {
-      write!(w, "\n  {: >3} | ", index) ? ;
-      if cstr.is_tautology() {
-        write!(w, "_") ?
+  /// Adds negative data after hash consing. True if new.
+  pub fn stage_raw_neg(
+    & mut self, pred: PrdIdx, args: Args
+  ) -> Res<bool> {
+    let (args, is_new) = self.mk_sample(args) ;
+    if is_new {
+      let is_new = self.neg[pred].insert(args) ;
+      debug_assert!( is_new ) ;
+      Ok(true)
+    } else {
+      if ! self.neg[pred].contains(& args) {
+        self.stage_neg(pred, args) ;
+        Ok(true)
       } else {
-        for & Sample { pred, ref args } in cstr.lhs.iter() {
-          write!(w, "({}", map[pred]) ? ;
-          for arg in args.iter() {
-            write!(w, " {}", arg) ?
-          }
-          write!(w, ") ") ?
-        }
-        write!(w, "=> ") ? ;
-        if let Some(& Sample { pred, ref args }) = cstr.rhs.as_ref() {
-          write!(w, "({}", map[pred]) ? ;
-          for arg in args.iter() {
-            write!(w, " {}", arg) ?
-          }
-          write!(w, ")") ?
-        } else {
-          write!(w, "false") ?
-        }
+        Ok(false)
       }
     }
-    write!(w, "\n) constraint map(") ? ;
-    for (pred, samples) in self.map.index_iter() {
-      for (sample, set) in samples.iter() {
-        write!(w, "\n  ({}", map[pred]) ? ;
-        for arg in sample.iter() {
-          write!(w, " {}", arg) ?
-        }
-        write!(w, ") ->") ? ;
-        for pred in set.iter() {
-          write!(w, " {}", pred) ?
-        }
-      }
-    }
-    write!(w, "\n) positive examples staged (") ? ;
-    for (pred, set) in & self.pos_to_add {
-      write!(w, "\n  {} |", self.instance[* pred]) ? ;
-      for sample in set {
-        write!(w, " {}", sample) ?
-      }
-    }
-    write!(w, "\n) negative examples staged (\n") ? ;
-    for (pred, set) in & self.neg_to_add {
-      write!(w, "  {} |", self.instance[* pred]) ? ;
-      for sample in set {
-        write!(w, " {}", sample) ?
-      }
-      write!(w, "\n") ?
-    }
-    write!(w, ")\n")
   }
 }
 

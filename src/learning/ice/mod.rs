@@ -22,7 +22,7 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: Data
+    core: & LearnerCore, instance: Arc<Instance>, data: DataCore
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::new( conf.solver.conf() ).chain_err(
@@ -58,7 +58,7 @@ impl Launcher {
 }
 impl Learner for Launcher {
   fn run(
-    & self, core: LearnerCore, instance: Arc<Instance>, data: Data
+    & self, core: LearnerCore, instance: Arc<Instance>, data: DataCore
   ) {
     if let Err(e) = Self::launch(& core, instance, data) {
       let _ = core.err(e) ;
@@ -84,7 +84,7 @@ pub struct IceLearner<'core, Slver> {
   /// Qualifiers for the predicates.
   pub qualifiers: Qualifiers,
   /// Current data.
-  data: Data,
+  data: DataCore,
   /// Solver used to check if the constraints are respected.
   solver: Slver,
   /// Learner core.
@@ -111,7 +111,7 @@ impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
   /// Ice learner constructor.
   pub fn new(
-    core: & 'core LearnerCore, instance: Arc<Instance>, data: Data,
+    core: & 'core LearnerCore, instance: Arc<Instance>, data: DataCore,
     solver: Slver, // synth_solver: Slver
   ) -> Res<Self> {
     let _profiler = Profiler::new() ;
@@ -232,18 +232,13 @@ where Slver: Solver<'kid, Parser> {
 
   /// Looks for a classifier.
   pub fn learn(
-    & mut self, mut data: Data
+    & mut self, data: DataCore
   ) -> Res< Option<Candidates> > {
     profile! { self tick "learning" }
     profile! { self tick "learning", "setup" }
-    let _new_samples = data.drain_new_samples() ;
     self.data = data ;
 
-    // self.qualifiers.clear_blacklist() ;
     profile!{ self mark "learning", "setup" }
-    // profile!{ self tick "learning", "new sample registration" }
-    // self.qualifiers.register_samples( new_samples ) ? ;
-    // profile!{ self mark "learning", "new sample registration" }
 
     let contradiction = self.setup_solver().chain_err(
       || "while initializing the solver"
@@ -674,7 +669,7 @@ where Slver: Solver<'kid, Parser> {
 
       let mut treatment = |term: Term| {
         if let Some(gain) = data.gain(pred, self_data, & term) ? {
-          if gain >= conf.ice.gain_pivot_synth {
+          if gain >= conf.ice.gain_pivot {
             quals.insert(& term, pred) ? ;
             ()
           }

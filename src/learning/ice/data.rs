@@ -1,7 +1,7 @@
 //! Contains stuff related to ICE's projected data representation.
 
 use common::* ;
-use common::data::{ Data, Sample, HSample, HSamples } ;
+use common::data::{ DataCore, Sample, HSample, HSamples } ;
 
 use super::quals::{ Qual } ;
 
@@ -85,7 +85,7 @@ impl CData {
   ///
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
-  pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
+  pub fn entropy(& self, pred: PrdIdx, data: & DataCore) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
@@ -100,7 +100,7 @@ impl CData {
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain<Trm: CanBEvaled>(
-    & self, pred: PrdIdx, data: & Data, qual: & Trm
+    & self, pred: PrdIdx, data: & DataCore, qual: & Trm
   ) -> Res< Option<f64> > {
     let my_entropy = self.entropy(pred, data) ? ;
     let my_card = (
@@ -299,7 +299,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & Data, prd: PrdIdx, sample: & HSample
+    & mut self, data: & DataCore, prd: PrdIdx, sample: & HSample
   ) -> Res<()> {
     let degree = Self::degree(data, prd, sample) ? ;
     self.den += 1 ;
@@ -343,7 +343,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & Data, prd: PrdIdx, sample: & HSample
+    data: & DataCore, prd: PrdIdx, sample: & HSample
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,

@@ -126,13 +126,6 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
           return Ok( Some(candidates) )
         }
 
-        // log_info!{
-        //   "\nlearning data before adding cex:\n{}",
-        //   teacher.data.string_do(
-        //     & (), |s| s.to_string()
-        //   ) ?
-        // }
-        let _ = teacher.data.drain_new_samples() ;
         profile!{ teacher tick "data", "registration" }
         let res = teacher.instance.cexs_to_data(
           & mut teacher.data, cexs
@@ -180,7 +173,7 @@ pub struct Teacher<'a, S> {
   /// Sender used by learners. Becomes `None` when the learning process starts.
   pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
   /// Learners sender and description.
-  pub learners: LrnMap<( Option< Sender<Data> >, String )>,
+  pub learners: LrnMap<( Option< Sender<DataCore> >, String )>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
   /// Number of guesses.
@@ -225,7 +218,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       let index = self.learners.next_index() ;
       let name = learner.description() ;
       let instance = self.instance.clone() ;
-      let data = self.data.clone() ;
+      let data = self.data.clone_core() ;
       let (to_learner, learner_recv) = new_to_learner() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
@@ -250,7 +243,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     log_info!{ "broadcasting..." }
     for & (ref sender, ref name) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
-        if let Err(_) = sender.send( self.data.clone() ) {
+        if let Err(_) = sender.send( self.data.clone_core() ) {
           warn!( "learner `{}` is dead...", name )
         } else {
           one_alive = true
