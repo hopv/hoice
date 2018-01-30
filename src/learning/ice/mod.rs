@@ -195,9 +195,9 @@ where Slver: Solver<'kid, Parser> {
           profile!{ self mark "waiting" }
           if let Some(candidates) = self.learn(data) ? {
             teacher_alive = self.send_cands(candidates) ? ;
-            if self.restart() {
-              self.qualifiers.wipe()
-            }
+            // if self.restart() {
+            //   self.qualifiers.wipe()
+            // }
           } else {
             bail!("can't synthesize candidates for this, sorry")
           }
@@ -679,7 +679,7 @@ where Slver: Solver<'kid, Parser> {
     // println!("synth") ;
 
     profile!{ self tick "learning", "qual", "synthesis" }
-    {
+    scoped! {
       let self_data = & self.data ;
       let quals = & mut self.qualifiers ;
       let instance = & self.instance ;
@@ -692,7 +692,7 @@ where Slver: Solver<'kid, Parser> {
             quals.insert(& term, pred) ? ;
             ()
           }
-          if let Some((ref mut old_term, ref mut old_gain)) = * best {
+          if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
             if * old_gain < gain {
               * old_gain = gain ;
               * old_term = term

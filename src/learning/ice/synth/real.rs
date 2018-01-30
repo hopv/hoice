@@ -129,7 +129,9 @@ where F: FnMut(Term) -> Res<bool> {
     match * val {
       Val::I(ref val) => {
         let var = term::var(var_idx) ;
-        arith_synth_1! { previous_real, f, real | var = ( val.clone() ) }
+        arith_synth_three_terms! {
+          previous_real, f, real | var = ( val.clone() )
+        }
       },
       _ => (),
     }
@@ -139,7 +141,9 @@ where F: FnMut(Term) -> Res<bool> {
   for (term, val) in others.drain() {
     match val {
       Val::I(val) => {
-        arith_synth_1! { previous_real, f, real | term = val }
+        arith_synth_three_terms! {
+          previous_real, f, real | term = val
+        }
       }
       val => bail!(
         "real synthesis expects projected integers, got {} for {}", val, term

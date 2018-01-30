@@ -43,7 +43,12 @@ impl TheoSynth for IntSynth {
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
       0 => simple_int_synth(sample, others, f),
-      1 => int_synth_1(sample, others, f),
+      1 => {
+        // let res = int_synth_1(sample, others, & mut f) ? ;
+        // let res = int_synth_2(sample, others, f) ? || res ;
+        // Ok(res)
+        int_synth_2(sample, others, f)
+      },
       _ => Ok(false),
     }
   }
@@ -129,7 +134,9 @@ where F: FnMut(Term) -> Res<bool> {
     match * val {
       Val::I(ref val) => {
         let var = term::var(var_idx) ;
-        arith_synth_1! { previous_int, f, int | var = ( val.clone() ) }
+        arith_synth_non_lin! {
+          previous_int, f, int | var = ( val.clone() )
+        }
       },
       _ => (),
     }
@@ -139,7 +146,49 @@ where F: FnMut(Term) -> Res<bool> {
   for (term, val) in others.drain() {
     match val {
       Val::I(val) => {
-        arith_synth_1! { previous_int, f, int | term = val }
+        arith_synth_non_lin! {
+          previous_int, f, int | term = val
+        }
+      }
+      val => bail!(
+        "int synthesis expects projected integers, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+/// Level 2 for int synthesis.
+pub fn int_synth_2<F>(
+  sample: & HSample, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val {
+      Val::I(ref val) => {
+        let var = term::var(var_idx) ;
+        arith_synth_three_terms! {
+          previous_int, f, int | var = ( val.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val {
+      Val::I(val) => {
+        arith_synth_three_terms! {
+          previous_int, f, int | term = val
+        }
       }
       val => bail!(
         "int synthesis expects projected integers, got {} for {}", val, term

@@ -82,7 +82,49 @@ macro_rules! simple_arith_synth {
   }) ;
 }
 
-/// Level 1 arithmetic synthesis.
+/// Non-linear arithmetic synthesis for integer terms.
+#[macro_export]
+macro_rules! arith_synth_non_lin {
+  ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
+    let zero: Int = 0.into() ;
+    for & (ref other_term, ref other_val) in & $previous {
+      let (lft, rgt, div, rem) = {
+        if ! other_val.is_zero() && & $val / other_val != zero {
+          (
+            $term.clone(), other_term.clone(),
+            & $val / other_val, & $val % other_val
+          )
+        } else if ! $val.is_zero() {
+          (
+            other_term.clone(), $term.clone(),
+            other_val / & $val, other_val % & $val
+          )
+        } else {
+          continue
+        }
+      } ;
+      let lhs = term::sub(
+        vec![
+          lft,
+          term::mul( vec![ term::int(div), rgt ] ),
+          term::int(rem)
+        ]
+      ) ;
+
+      let term = term::ge( lhs.clone(), term::int(0) ) ;
+      apply! { $f to term }
+
+      let term = term::le( lhs.clone(), term::int(0) ) ;
+      apply! { $f to term }
+
+      let term = term::eq( lhs, term::int(0) ) ;
+      apply! { $f to term }
+    }
+    $previous.push(($term, $val))
+  }) ;
+}
+
+/// Arithmetic synthesis over three terms.
 ///
 /// All `t*` are terms, `<op>` is `=`, `ge` or `le. Synthesizes qualifiers
 /// of the form
@@ -96,7 +138,7 @@ macro_rules! simple_arith_synth {
 /// - `- t_1 - t_2 + t_3 <op> n`
 /// - `- t_1 - t_2 - t_3 <op> n`
 #[macro_export]
-macro_rules! arith_synth_1 {
+macro_rules! arith_synth_three_terms {
   ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
     {
       let mut previous = $previous.iter() ;
@@ -106,7 +148,7 @@ macro_rules! arith_synth_1 {
       ) = previous.next() {
         for & (ref another_term, ref another_val) in previous.clone() {
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::add(
                 vec![ $term.clone(), other_term.clone(), another_term.clone() ]
@@ -115,7 +157,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::add(
                 vec![
@@ -128,7 +170,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::add(
                 vec![
@@ -141,7 +183,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::sub(
                 vec![
@@ -152,7 +194,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::add(
                 vec![
@@ -165,7 +207,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::sub(
                 vec![
@@ -178,7 +220,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::sub(
                 vec![
@@ -191,7 +233,7 @@ macro_rules! arith_synth_1 {
             )
           }
 
-          arith_synth_1! { @internal
+          arith_synth_three_terms! { @internal
             $f(
               term::sub(
                 vec![
