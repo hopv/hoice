@@ -11,6 +11,8 @@ use self::utils::{ ExtractRes } ;
 pub mod graph ;
 pub mod args ;
 
+use self::graph::Graph ;
+
 
 /// Runs pre-processing
 pub fn work(
@@ -89,14 +91,14 @@ where S: Solver<'skid, ()> {
       ) ;
       ($red:ident |if| $cond:expr) => (
         if $cond {
-          Some( $red::new() )
+          Some( $red::new(& instance) )
         } else {
           None
         }
       ) ;
     }
 
-    let simplify = Some( Simplify::new() ) ;
+    let simplify = Some( Simplify::new(& instance) ) ;
     let arg_red = some_new! { ArgReduce if arg_red } ;
     let s_one_rhs = some_new! { SimpleOneRhs if one_rhs } ;
     let s_one_lhs = some_new! { SimpleOneLhs if one_lhs } ;
@@ -317,7 +319,7 @@ where S: Solver<'skid, ()> {
 /// Reduction strategy trait.
 pub trait RedStrat {
   /// Constructor.
-  fn new() -> Self ;
+  fn new(& Instance) -> Self ;
 
   /// Applies the reduction strategy. Returns the number of predicates reduced
   /// and the number of clauses forgotten.
@@ -335,7 +337,7 @@ impl Simplify {
   fn name(& self) -> & 'static str { "simplify" }
 }
 impl RedStrat for Simplify {
-  fn new() -> Self { Simplify }
+  fn new(_: & Instance) -> Self { Simplify }
 
   fn apply<'a, 'skid, S>(
     & mut self, instance:& mut PreInstance<'a, S>
@@ -357,7 +359,7 @@ impl ArgReduce {
   fn name(& self) -> & 'static str { "arg_reduce" }
 }
 impl RedStrat for ArgReduce {
-  fn new() -> Self { ArgReduce }
+  fn new(_: & Instance) -> Self { ArgReduce }
 
   fn apply<'a, 'skid, S>(
     & mut self, instance:& mut PreInstance<'a, S>
@@ -412,7 +414,7 @@ impl SimpleOneRhs {
   fn name(& self) -> & 'static str { "simple_one_rhs" }
 }
 impl RedStrat for SimpleOneRhs {
-  fn new() -> Self {
+  fn new(_: & Instance) -> Self {
     SimpleOneRhs {
       true_preds: PrdSet::with_capacity(7),
       false_preds: PrdSet::with_capacity(7),
@@ -557,7 +559,7 @@ impl SimpleOneLhs {
   fn name(& self) -> & 'static str { "simple_one_lhs" }
 }
 impl RedStrat for SimpleOneLhs {
-  fn new() -> Self {
+  fn new(_: & Instance) -> Self {
     SimpleOneLhs {
       true_preds: PrdSet::with_capacity(7),
       false_preds: PrdSet::with_capacity(7),
@@ -737,7 +739,7 @@ impl OneRhs {
   fn name(& self) -> & 'static str { "one_rhs" }
 }
 impl RedStrat for OneRhs {
-  fn new() -> Self {
+  fn new(_: & Instance) -> Self {
     OneRhs {
       new_vars: VarSet::with_capacity(17)
     }
@@ -890,7 +892,7 @@ impl OneLhs {
   fn name(& self) -> & 'static str { "one_lhs" }
 }
 impl RedStrat for OneLhs {
-  fn new() -> Self {
+  fn new(_: & Instance) -> Self {
     OneLhs {
       true_preds: PrdSet::with_capacity(7),
       false_preds: PrdSet::with_capacity(7),
@@ -1048,7 +1050,9 @@ pub struct CfgRed {
   cnt: usize,
   /// Upper bound computed once at the beginning to avoid a progressive
   /// blow-up.
-  upper_bound: Option<usize>
+  upper_bound: Option<usize>,
+  /// Graph, factored to avoid reallocation.
+  graph: Graph,
 }
 impl CfgRed {
   /// Pre-processor's name.
@@ -1056,14 +1060,21 @@ impl CfgRed {
   fn name(& self) -> & 'static str { "cfg_red" }
 }
 impl RedStrat for CfgRed {
-  fn new() -> Self {
-    CfgRed { cnt: 0, upper_bound: None }
+  fn new(instance: & Instance) -> Self {
+    CfgRed {
+      cnt: 0,
+      upper_bound: None,
+      graph: Graph::new(instance),
+    }
   }
 
   fn apply<'a, 'skid, S>(
     & mut self, instance: & mut PreInstance<'a, S>
   ) -> Res<RedInfo>
   where S: Solver<'skid, ()> {
+    // use std::time::Instant ;
+    // use common::profiling::DurationExt ;
+
     let upper_bound = if let Some(upper_bound) = self.upper_bound {
       upper_bound
     } else {
@@ -1087,14 +1098,23 @@ impl RedStrat for CfgRed {
 
       let mut info = RedInfo::new() ;
 
-      let mut graph = graph::new(instance) ;
-      graph.check(& instance) ? ;
-      let mut to_keep = graph.break_cycles(instance) ? ;
-      graph.to_dot(
+      // let start = Instant::now() ;
+      self.graph.setup(instance) ;
+      // let setup_duration = Instant::now() - start ;
+      // println!("setup time: {}", setup_duration.to_str()) ;
+
+      self.graph.check(& instance) ? ;
+
+      // let start = Instant::now() ;
+      let mut to_keep = self.graph.break_cycles(instance) ? ;
+      // let breaking_duration = Instant::now() - start ;
+      // println!("breaking time: {}", breaking_duration.to_str()) ;
+
+      self.graph.to_dot(
         & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
       ) ? ;
 
-      let pred_defs = graph.inline(
+      let pred_defs = self.graph.inline(
         instance, & mut to_keep, upper_bound
       ) ? ;
 
@@ -1102,7 +1122,7 @@ impl RedStrat for CfgRed {
 
       info.preds += pred_defs.len() ;
 
-      graph.check(& instance) ? ;
+      self.graph.check(& instance) ? ;
       log_info! { "inlining {} predicates", pred_defs.len() }
 
       if pred_defs.len() == instance.active_pred_count() {
@@ -1166,9 +1186,9 @@ impl RedStrat for CfgRed {
       info += instance.force_trivial() ? ;
 
       if conf.preproc.dump_pred_dep {
-        let graph = graph::new(instance) ;
-        graph.check(& instance) ? ;
-        graph.to_dot(
+        self.graph.setup(instance) ;
+        self.graph.check(& instance) ? ;
+        self.graph.to_dot(
           & instance, format!("{}_pred_dep_reduced", self.cnt), & to_keep
         ) ? ;
       }

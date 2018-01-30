@@ -44,6 +44,16 @@ impl Clause {
     clause
   }
 
+  /// Cheap unsat check.
+  ///
+  /// Does not use smt-solving, as this is the responsability of the
+  /// preprocessing.
+  pub fn is_unsat(& self) -> bool {
+    self.lhs_terms.is_empty()
+    && self.lhs_preds.is_empty()
+    && self.rhs.is_none()
+  }
+
   /// Sets the internal flag `term_changed` to false.
   ///
   /// Also shrinks the variables.
@@ -51,6 +61,7 @@ impl Clause {
     self.term_changed = false ;
     self.shrink_vars()
   }
+
   /// True iff some terms have been added since the last call to
   /// [`lhs_terms_checked`][checked].
   ///

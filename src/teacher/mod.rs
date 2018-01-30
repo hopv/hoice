@@ -312,7 +312,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     if ! alive {
       warn!( "learner `{}` is dead...", name ) ;
     }
-    profile! { self tick "sending" }
+    profile! { self mark "sending" }
     Ok(alive)
   }
 

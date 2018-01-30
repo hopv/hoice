@@ -240,6 +240,9 @@ where Slver: Solver<'skid, ()> {
     }
 
     if ! self.instance[clause].terms_changed() {
+      if self.instance[clause].is_unsat() {
+        bail!( ErrorKind::Unsat )
+      }
       return Ok( RedInfo::new() )
     }
 
@@ -264,6 +267,11 @@ where Slver: Solver<'skid, ()> {
 
     // Try to split the clause.
     let res = self.split_disj(clause) ;
+
+    if self.instance[clause].is_unsat() {
+      bail!( ErrorKind::Unsat )
+    }
+
     res
   }
 
@@ -1018,7 +1026,11 @@ where Slver: Solver<'skid, ()> {
     'clause_iter: for clause in & self.clauses_to_simplify {
       let clause = * clause ;
       log_debug!{ "    working on clause #{}", clause }
-      log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
+      log_debug! {
+        "{}", self.instance[clause].to_string_info(
+          self.instance.preds()
+        ).unwrap()
+      }
 
       let rhs = self.instance.clauses[clause].unset_rhs() ;
 

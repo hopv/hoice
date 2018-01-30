@@ -7,11 +7,6 @@ use instance::preproc::utils ;
 /// Maps predicates to the predicates they depend on.
 pub type Dep = PrdMap< PrdMap<usize> > ;
 
-/// Creates a new graph.
-pub fn new(instance: & Instance) -> Graph {
-  Graph::new(instance)
-}
-
 /// Graph of dependencies.
 #[derive(Clone)]
 pub struct Graph {
@@ -25,33 +20,57 @@ pub struct Graph {
   pos: PrdMap<usize>,
 }
 impl Graph {
-  /// Constructor.
+  /// Constructs an empty graph.
   pub fn new(instance: & Instance) -> Self {
-    let mut forward: Dep = vec![
+    let forward: Dep = vec![
       vec![ 0 ; instance.preds().len() ].into() ; instance.preds().len()
     ].into() ;
-    let mut bakward = forward.clone() ;
-    let mut neg: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
-    let mut pos: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    let bakward = forward.clone() ;
+    let neg: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    let pos: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    Graph { forward, bakward, neg, pos }
+  }
+
+  /// Resets the graph.
+  fn reset(& mut self) {
+    for forward in self.forward.iter_mut() {
+      for count in forward.iter_mut() {
+        * count = 0
+      }
+    }
+    for bakward in self.bakward.iter_mut() {
+      for count in bakward.iter_mut() {
+        * count = 0
+      }
+    }
+    for count in self.pos.iter_mut() {
+      * count = 0
+    }
+    for count in self.neg.iter_mut() {
+      * count = 0
+    }
+  }
+
+  /// Clears itself and sets everything up for the input instance.
+  pub fn setup(& mut self, instance: & Instance) {
+    self.reset() ;
 
     for clause in instance.clauses() {
       if let Some((tgt, _)) = clause.rhs() {
         if clause.lhs_preds().is_empty() {
-          pos[tgt] += 1 ;
+          self.pos[tgt] += 1 ;
         } else {
           for (prd, _) in clause.lhs_preds() {
-            bakward[tgt][* prd] += 1 ;
-            forward[* prd][tgt] += 1 ;
+            self.bakward[tgt][* prd] += 1 ;
+            self.forward[* prd][tgt] += 1 ;
           }
         }
       } else {
         for (prd, _) in clause.lhs_preds() {
-          neg[* prd] += 1 ;
+          self.neg[* prd] += 1 ;
         }
       }
     }
-
-    Graph { forward, bakward, neg, pos }
   }
 
   /// Dumps a graph in dot format.
