@@ -1081,97 +1081,109 @@ impl RedStrat for CfgRed {
       upper_bound
     } ;
 
-    let mut info = RedInfo::new() ;
+    let mut total_info = RedInfo::new() ;
 
-    let mut graph = graph::new(instance) ;
-    graph.check(& instance) ? ;
-    let mut to_keep = graph.break_cycles(instance) ? ;
-    graph.to_dot(
-      & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
-    ) ? ;
+    loop {
 
-    let pred_defs = graph.inline(
-      instance, & mut to_keep, upper_bound
-    ) ? ;
+      let mut info = RedInfo::new() ;
 
-    if pred_defs.len() == 0 { return Ok(info) }
-
-    info.preds += pred_defs.len() ;
-
-    graph.check(& instance) ? ;
-    log_info! { "inlining {} predicates", pred_defs.len() }
-
-    if pred_defs.len() == instance.active_pred_count() {
-      let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
-      info += this_info ;
-      if ! is_sat {
-        bail!( ErrorKind::Unsat )
-      } else {
-        return Ok(info)
-      }
-    }
-
-    // Remove all clauses leading to the predicates we just inlined.
-    for (pred, def) in pred_defs {
-      info += instance.rm_rhs_clauses_of(pred) ? ;
-
-      if_verb! {
-        let mut s = format!("{}(", instance[pred]) ;
-        let mut is_first = true ;
-        for (var, typ) in instance[pred].sig.index_iter() {
-          if ! is_first {
-            s.push_str(", ")
-          } else {
-            is_first = false
-          }
-          s.push_str( & var.default_str() ) ;
-          s.push_str(& format!(": {}", typ)) ;
-        }
-        log_debug! { "{}) = (or", s }
-        for & (ref qvars, ref conj) in & def {
-          let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
-            let mut s = format!("  (exists") ;
-            for (var, typ) in qvars {
-              s.push_str(" (") ;
-              s.push_str( & var.default_str() ) ;
-              s.push_str( & format!(" {})", typ) )
-            }
-            log_debug! { "{}", s }
-            (Some("  )"), "    ")
-          } ;
-          log_debug! { "{}(and", pref }
-          for term in conj.terms() {
-            log_debug! { "{}  {}", pref, term }
-          }
-          for (pred, argss) in conj.preds() {
-            for args in argss {
-              log_debug! { "{}  ({} {})", pref, instance[* pred], args }
-            }
-          }
-          log_debug! { "{})", pref }
-          if let Some(suff) = suff {
-            log_debug! { "{}", suff }
-          }
-        }
-        log_debug! { ")" }
-      }
-
-      info += instance.force_dnf_left(pred, def) ? ;
-    }
-
-    info += instance.force_trivial() ? ;
-
-    if conf.preproc.dump_pred_dep {
-      let graph = graph::new(instance) ;
+      let mut graph = graph::new(instance) ;
       graph.check(& instance) ? ;
+      let mut to_keep = graph.break_cycles(instance) ? ;
       graph.to_dot(
-        & instance, format!("{}_pred_dep_reduced", self.cnt), & to_keep
+        & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
       ) ? ;
+
+      let pred_defs = graph.inline(
+        instance, & mut to_keep, upper_bound
+      ) ? ;
+
+      if pred_defs.len() == 0 { return Ok(info) }
+
+      info.preds += pred_defs.len() ;
+
+      graph.check(& instance) ? ;
+      log_info! { "inlining {} predicates", pred_defs.len() }
+
+      if pred_defs.len() == instance.active_pred_count() {
+        let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
+        info += this_info ;
+        if ! is_sat {
+          bail!( ErrorKind::Unsat )
+        } else {
+          return Ok(info)
+        }
+      }
+
+      // Remove all clauses leading to the predicates we just inlined.
+      for (pred, def) in pred_defs {
+        info += instance.rm_rhs_clauses_of(pred) ? ;
+
+        if_verb! {
+          let mut s = format!("{}(", instance[pred]) ;
+          let mut is_first = true ;
+          for (var, typ) in instance[pred].sig.index_iter() {
+            if ! is_first {
+              s.push_str(", ")
+            } else {
+              is_first = false
+            }
+            s.push_str( & var.default_str() ) ;
+            s.push_str(& format!(": {}", typ)) ;
+          }
+          log_debug! { "{}) = (or", s }
+          for & (ref qvars, ref conj) in & def {
+            let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
+              let mut s = format!("  (exists") ;
+              for (var, typ) in qvars {
+                s.push_str(" (") ;
+                s.push_str( & var.default_str() ) ;
+                s.push_str( & format!(" {})", typ) )
+              }
+              log_debug! { "{}", s }
+              (Some("  )"), "    ")
+            } ;
+            log_debug! { "{}(and", pref }
+            for term in conj.terms() {
+              log_debug! { "{}  {}", pref, term }
+            }
+            for (pred, argss) in conj.preds() {
+              for args in argss {
+                log_debug! { "{}  ({} {})", pref, instance[* pred], args }
+              }
+            }
+            log_debug! { "{})", pref }
+            if let Some(suff) = suff {
+              log_debug! { "{}", suff }
+            }
+          }
+          log_debug! { ")" }
+        }
+
+        info += instance.force_dnf_left(pred, def) ? ;
+      }
+
+      info += instance.force_trivial() ? ;
+
+      if conf.preproc.dump_pred_dep {
+        let graph = graph::new(instance) ;
+        graph.check(& instance) ? ;
+        graph.to_dot(
+          & instance, format!("{}_pred_dep_reduced", self.cnt), & to_keep
+        ) ? ;
+      }
+
+      self.cnt += 1 ;
+
+      if info.non_zero() {
+        total_info += info
+      } else {
+        break
+      }
+
     }
 
-    self.cnt += 1 ;
-
-    Ok(info)
+    Ok(total_info)
   }
 }
 

@@ -177,12 +177,14 @@ pub struct PreprocConf {
   pub one_rhs_full: bool,
   /// One lhs.
   pub one_lhs: bool,
-  /// Allow to introduce quantifiers.
+  /// Allows to introduce quantifiers.
   pub one_lhs_full: bool,
-  /// Allow cfg reduction.
+  /// Allows cfg reduction.
   pub cfg_red: bool,
-  /// Allow argument reduction.
+  /// Allows argument reduction.
   pub arg_red: bool,
+  /// Allows clause term pruning.
+  pub prune_terms: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -391,6 +393,16 @@ impl PreprocConf {
         bool_format
       ).default_value("no").takes_value(true).number_of_values(1)
 
+    ).arg(
+
+      Arg::with_name("prune_terms").long("--prune_terms").help(
+        "(de)activates clause term pruning"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).number_of_values(1).hidden(true)
+
     )
   }
 
@@ -407,11 +419,12 @@ impl PreprocConf {
     let cfg_red = bool_of_matches(matches, "cfg_red") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
+    let prune_terms = bool_of_matches(matches, "prune_terms") ;
 
     PreprocConf {
       dump, dump_pred_dep, active, smt_red,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red
+      arg_red, prune_terms
     }
   }
 }

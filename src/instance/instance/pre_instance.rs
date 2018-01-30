@@ -38,6 +38,51 @@ impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ConjWrap<'a> {
 }
 
 
+/// Wrapper around a set of terms and a single term.
+///
+/// Encodes `/\ (set \ term) => term`.
+struct ImplWrap<'a> {
+  set: & 'a HConSet<Term>,
+  term: & 'a Term,
+}
+impl<'a> ImplWrap<'a> {
+  /// Constructor.
+  ///
+  /// Returns `None` if `set.is_empty()`.
+  pub fn new(set: & 'a HConSet<Term>, term: & 'a Term) -> Option<Self> {
+    if ! set.is_empty() {
+      Some( ImplWrap { set, term } )
+    } else {
+      None
+    }
+  }
+}
+impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ImplWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    debug_assert! { ! self.set.is_empty() }
+    write!(w, "(and (not ") ? ;
+    self.term.write(w, |w, var| var.default_write(w)) ? ;
+    write!(w, ") ") ? ;
+    if self.set.len() <= 1 {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and ") ? ;
+      for term in self.set {
+        if term != self.term {
+          write!(w, " ") ? ;
+          term.write(w, |w, var| var.default_write(w)) ?
+        }
+      }
+      write!(w, ")") ?
+    }
+    write!(w, ")") ? ;
+    Ok(())
+  }
+}
+
+
 
 /// Wraps a solver to provide helper functions.
 pub struct SolverWrapper<S> {
@@ -67,8 +112,8 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   pub fn trivial_impl<'a>(
     & mut self, vars: & VarMap<VarInfo>, lhs: & 'a Vec<& 'a Term>
   ) -> Res<bool> {
+    self.solver.reset() ? ;
     if lhs.is_empty() { return Ok(false) }
-    self.solver.push(1) ? ;
     for var in vars {
       if var.active {
         self.solver.declare_const(& var.idx, & var.typ) ?
@@ -76,7 +121,6 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     }
     self.solver.assert( & ConjWrap::new(lhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
-    self.solver.pop(1) ? ;
     Ok(! sat)
   }
 }
@@ -195,6 +239,10 @@ where Slver: Solver<'skid, ()> {
       ) ;
     }
 
+    if ! self.instance[clause].term_changed {
+      return Ok( RedInfo::new() )
+    }
+
     // Propagate.
     rm_return! {
       clause if self.simplifier.clause_propagate(
@@ -206,6 +254,13 @@ where Slver: Solver<'skid, ()> {
     rm_return! {
       clause if self.is_clause_trivial(clause) ?
     }
+
+    // Remove redundant atoms.
+    if conf.preproc.prune_terms {
+      self.prune_atoms(clause) ?
+    }
+
+    self.instance[clause].lhs_terms_checked() ;
 
     // Try to split the clause.
     let res = self.split_disj(clause) ;
@@ -279,6 +334,45 @@ where Slver: Solver<'skid, ()> {
     } else {
       Ok(info)
     }
+  }
+
+  /// Removes redundant atoms.
+  fn prune_atoms(& mut self, clause: ClsIdx) -> Res<()> {
+    let atoms: Vec<Term> = self.instance[clause].lhs_terms().iter().map(
+      |atom| atom.clone()
+    ).collect() ;
+
+    if atoms.is_empty() { return Ok(()) }
+
+    let clause = & mut self.instance[clause] ;
+
+    self.solver.reset() ? ;
+
+    for info in clause.vars() {
+      if info.active {
+        self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
+      }
+    }
+
+    for atom in atoms {
+      let keep = if let Some(wrap) = ImplWrap::new(
+        clause.lhs_terms(), & atom
+      ) {
+        let actlit = self.solver.get_actlit() ? ;
+        self.solver.assert_act(& actlit, & wrap) ? ;
+        let res = self.solver.check_sat_act( Some(& actlit) ) ? ;
+        self.solver.de_actlit(actlit) ? ;
+        res
+      } else {
+        bail!("failed to construct implication wrapper")
+      } ;
+      if ! keep {
+        let was_there = clause.rm_term(& atom) ;
+        debug_assert! { was_there }
+      }
+    }
+
+    Ok(())
   }
 
   /// Checks whether a clause is trivial.
@@ -1249,7 +1343,9 @@ where Slver: Solver<'skid, ()> {
     for clause in & self.instance.clauses {
       self.solver.push(1) ? ;
       for info in clause.vars() {
-        self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
+        if info.active {
+          self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
+        }
       }
       self.solver.assert_with(
         clause, & (& set, & set, & self.instance.preds)

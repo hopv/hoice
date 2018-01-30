@@ -26,6 +26,11 @@ pub struct Clause {
   lhs_preds: PredApps,
   /// Single term right-hand side.
   rhs: Option<PredApp>,
+  /// Indicates wether `lhs_terms` has changed since the last call to
+  /// `lhs_terms_checked`.
+  ///
+  /// Used by `PreInstance`'s `prune_atom`.
+  term_changed: bool
 }
 impl Clause {
   /// Creates a clause.
@@ -34,9 +39,58 @@ impl Clause {
   ) -> Self {
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
-    let mut clause = Clause { vars, lhs_terms, lhs_preds, rhs } ;
+    let mut clause = Clause {
+      vars, lhs_terms, lhs_preds, rhs, term_changed: true
+    } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
     clause
+  }
+
+  /// Sets the internal flag `term_changed` to false.
+  ///
+  /// Also shrinks the variables.
+  fn lhs_terms_checked(& mut self) {
+    self.term_changed = false ;
+    self.shrink_vars()
+  }
+
+  /// Shrinks the clause: detects inactive variables.
+  fn shrink_vars(& mut self) {
+    let mut active = 0 ;
+    for var in & self.vars {
+      if var.active { active += 1 }
+    }
+    let mut vars = VarSet::with_capacity( active ) ;
+
+    for term in & self.lhs_terms {
+      term::map_vars(term, |v| { vars.insert(v) ; () }) ;
+      if vars.len() == active {
+        return ()
+      }
+    }
+
+    for (_, argss) in & self.lhs_preds {
+      for args in argss {
+        for arg in args {
+          term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
+        }
+      }
+      if vars.len() == active {
+        return ()
+      }
+    }
+
+    if let Some(& (_, ref args)) = self.rhs.as_ref() {
+      for arg in args {
+        term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
+      }
+    }
+
+    for (index, info) in self.vars.index_iter_mut() {
+      if ! vars.contains(& index) {
+        info.active = false
+      }
+    }
   }
 
   /// Checks a clause is well-formed.
@@ -106,11 +160,6 @@ impl Clause {
     self.lhs_preds.insert_pred_app(pred, args)
   }
 
-  /// Removes a term from the LHS.
-  pub fn rm_term(& mut self, term: & Term) -> bool {
-    self.lhs_terms.remove(term)
-  }
-
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
     if let Some(kids) = term.conj_inspect() {
@@ -150,7 +199,15 @@ impl Clause {
 
   /// Inserts a term in the LHS.
   pub fn insert_term(& mut self, term: Term) -> bool {
-    Self::lhs_insert_term(& mut self.lhs_terms, term)
+    let is_new = Self::lhs_insert_term(& mut self.lhs_terms, term) ;
+    if is_new {
+      self.term_changed = true
+    }
+    is_new
+  }
+  /// Removes a term from the LHS.
+  pub fn rm_term(& mut self, term: & Term) -> bool {
+    self.lhs_terms.remove(term)
   }
 
   /// Length of a clause's LHS.
@@ -202,13 +259,17 @@ impl Clause {
   #[inline(always)]
   pub fn clone_with_rhs(& self, rhs: TTerm) -> Self {
     let mut lhs_terms = self.lhs_terms.clone() ;
-    let rhs = match rhs {
-      TTerm::P { pred, args } => Some((pred, args)),
+    let (rhs, term_changed) = match rhs {
+      TTerm::P { pred, args } => (
+        Some((pred, args)), self.term_changed
+      ),
       TTerm::T(term) => {
-        if term.bool() != Some(false) {
-          lhs_terms.insert( term::not(term) ) ;
-        }
-        None
+        let added = if term.bool() != Some(false) {
+          lhs_terms.insert( term::not(term) )
+        } else {
+          false
+        } ;
+        (None, self.term_changed || added)
       },
     } ;
     Clause {
@@ -216,6 +277,7 @@ impl Clause {
       lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
       rhs,
+      term_changed,
     }
   }
 

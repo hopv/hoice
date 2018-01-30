@@ -38,16 +38,15 @@ impl TheoSynth for IntSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & HSample, others: & mut TermVals
+    & mut self, mut f: F, sample: & HSample, others: & mut TermVals
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
       0 => simple_int_synth(sample, others, f),
       1 => {
-        // let res = int_synth_1(sample, others, & mut f) ? ;
-        // let res = int_synth_2(sample, others, f) ? || res ;
-        // Ok(res)
-        int_synth_2(sample, others, f)
+        let res = int_synth_1(sample, others, & mut f) ? ;
+        let res = int_synth_2(sample, others, f) ? || res ;
+        Ok(res)
       },
       _ => Ok(false),
     }

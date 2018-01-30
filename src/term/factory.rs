@@ -59,6 +59,31 @@ pub fn vars(t: & Term) -> VarSet {
   ).clone()
 }
 
+/// Map over the variables appearing in a term (cached).
+#[inline]
+pub fn map_vars<F>(t: & Term, mut f: F)
+where F: FnMut(VarIdx) {
+  if let Some(vars) = var_cache.read().expect(
+    "variable cache is corrupted..."
+  ).get(t) {
+    for var in vars {
+      f(* var)
+    }
+    return ()
+  }
+
+  let vars = scan_vars(t) ;
+  for var in & vars {
+    f(* var)
+  }
+  var_cache.write().expect(
+    "variable cache is corrupted..."
+  ).entry( t.clone() ).or_insert_with(
+    || vars
+  ) ;
+  ()
+}
+
 /// Creates a term.
 #[inline(always)]
 pub fn term(t: RTerm) -> Term {
