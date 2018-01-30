@@ -22,7 +22,8 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: DataCore
+    core: & LearnerCore, instance: Arc<Instance>, data: DataCore,
+    mine: bool
   ) -> Res<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::new( conf.solver.conf() ).chain_err(
@@ -44,12 +45,14 @@ impl Launcher {
       IceLearner::new(
         & core, instance, data,
         conflict_solver.tee(log), // synth_solver.tee(synth_log)
+        mine
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
         & core, instance, data, conflict_solver, // synth_solver
+        mine
       ).chain_err(
         || "while creating ice learner"
       )?.run()
@@ -58,14 +61,16 @@ impl Launcher {
 }
 impl Learner for Launcher {
   fn run(
-    & self, core: LearnerCore, instance: Arc<Instance>, data: DataCore
+    & self, core: LearnerCore,
+    instance: Arc<Instance>, data: DataCore,
+    mine: bool
   ) {
-    if let Err(e) = Self::launch(& core, instance, data) {
+    if let Err(e) = Self::launch(& core, instance, data, mine) {
       let _ = core.err(e) ;
     }
   }
-  fn description(& self) -> String {
-    "ice".into()
+  fn description(& self, mine: bool) -> String {
+    format!("ice{}", if mine { "" } else { " pure synth" })
   }
 }
 
@@ -106,17 +111,19 @@ pub struct IceLearner<'core, Slver> {
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
   rng: ::rand::StdRng,
+  /// Luby counter for restarts.
+  luby: Option<LubyCount>,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, Parser> {
   /// Ice learner constructor.
   pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: DataCore,
-    solver: Slver, // synth_solver: Slver
+    solver: Slver, mine: bool// synth_solver: Slver
   ) -> Res<Self> {
     let _profiler = Profiler::new() ;
     profile!{ |_profiler| tick "mining" }
-    let qualifiers = Qualifiers::new( instance.clone() ).chain_err(
+    let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
 
@@ -134,6 +141,7 @@ where Slver: Solver<'kid, Parser> {
     ].into() ;
     let candidate = vec![ None ; instance.preds().len() ].into() ;
     let predicates = Vec::with_capacity( instance.preds().len() ) ;
+
     Ok(
       IceLearner {
         instance, qualifiers, data, solver, // synth_solver,
@@ -148,8 +156,16 @@ where Slver: Solver<'kid, Parser> {
           use rand::SeedableRng ;
           ::rand::StdRng::from_seed(& [ 42 ])
         },
+        luby: if mine { None } else {
+          Some( LubyCount::new() )
+        }
       }
     )
+  }
+
+  /// Returns true if all qualifiers should be wiped out.
+  pub fn restart(& mut self) -> bool {
+    self.luby.as_mut().map( |l| l.inc() ).unwrap_or(false)
   }
 
   /// Runs the learner.
@@ -178,7 +194,10 @@ where Slver: Solver<'kid, Parser> {
         Some(data) => {
           profile!{ self mark "waiting" }
           if let Some(candidates) = self.learn(data) ? {
-            teacher_alive = self.send_cands(candidates) ?
+            teacher_alive = self.send_cands(candidates) ? ;
+            if self.restart() {
+              self.qualifiers.wipe()
+            }
           } else {
             bail!("can't synthesize candidates for this, sorry")
           }

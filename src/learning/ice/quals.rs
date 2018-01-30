@@ -569,22 +569,30 @@ impl Qualifiers {
     // factory_capa: usize,
     // class_capa: usize,
     instance: Arc<Instance>,
+    mine: bool,
   ) -> Res<Self> {
     let class_capa = 13 ;
     let mut quals = Qualifiers {
       factory: Factory::with_capacity(17),
       classes: HConMap::with_capacity(class_capa),
       instance: instance.clone(),
-      alpha_map: VarHMap::with_capacity(7)
+      alpha_map: VarHMap::with_capacity(7),
     } ;
 
-    instance.qualifiers(& mut quals).chain_err(
-      || "during qualifier mining"
-    ) ? ;
+    if mine {
+      instance.qualifiers(& mut quals).chain_err(
+        || "during qualifier mining"
+      ) ?
+    }
 
     quals.check().chain_err( || "after creation" ) ? ;
 
     Ok(quals)
+  }
+
+  /// Forgets all qualifiers.
+  pub fn wipe(& mut self) {
+    self.classes.clear()
   }
 
 

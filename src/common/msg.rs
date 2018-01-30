@@ -41,11 +41,14 @@ pub fn from_learners() -> Channel<(LrnIdx, FromLearners)> { channel() }
 /// description.
 pub trait Learner: Sync + Send {
   /// Launches the learner.
+  ///
+  /// The boolean flag `mine` specifies whether the learner should mine the
+  /// instance, typically for qualifiers.
   fn run(
-    & self, LearnerCore, Arc<Instance>, DataCore
+    & self, LearnerCore, Arc<Instance>, DataCore, mine: bool
   ) ;
   /// Short description of the learner.
-  fn description(& self) -> String ;
+  fn description(& self, mine: bool) -> String ;
 }
 
 
@@ -65,7 +68,7 @@ impl LearnerCore {
   pub fn new(
     idx: LrnIdx,
     sender: Sender<(LrnIdx, FromLearners)>,
-    recver: Receiver<DataCore>,
+    recver: Receiver<DataCore>
   ) -> Self {
     LearnerCore { idx, sender, recver }
   }

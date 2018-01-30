@@ -59,7 +59,8 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
   //   teacher.add_learner( ::learning::smt::Launcher ) ?
   // }
   log_debug!{ "  spawning ice learner..." }
-  teacher.add_learner( ::learning::ice::Launcher ) ? ;
+  teacher.add_learner( ::learning::ice::Launcher, false ) ? ;
+  teacher.add_learner( ::learning::ice::Launcher, true ) ? ;
 
   log_debug!{ "  performing initial check..." }
   let (cexs, cands) = teacher.initial_check() ? ;
@@ -73,6 +74,11 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
     bail! { "translation of initial cexs to data generated no new data" }
   }
 
+  // Index of the learner the teacher is currently working for.
+  //
+  // None at the beginning (broadcast).
+  let mut learner: Option<LrnIdx> = None ;
+
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
 
@@ -82,13 +88,25 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
       ) ?
     }
 
-    if conf.teacher.step {
-      read_line("to broadcast data (--step on)...") ;
-    }
-
-    let one_alive = teacher.broadcast() ;
-    if ! one_alive {
-      bail!("all learners are dead")
+    if let Some(idx) = learner {
+      if conf.teacher.step {
+        read_line(
+          & format!(
+            "to send data to {} (--step on)...",
+            & conf.emph(& teacher.learners[idx].1)
+          )
+        ) ;
+      }
+      let _ = teacher.send(idx) ? ;
+      ()
+    } else {
+      if conf.teacher.step {
+        read_line("to broadcast data (--step on)...") ;
+      }
+      let one_alive = teacher.broadcast() ;
+      if ! one_alive {
+        bail!("all learners are dead")
+      }
     }
 
     match teacher.get_candidates(profiler) ? {
@@ -103,11 +121,12 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
       },
 
       // Got a candidate.
-      Some( ( _idx, Some(candidates) ) ) => {
+      Some( ( idx, Some(candidates) ) ) => {
+        learner = Some(idx) ;
         if_verb!{
           log_info!(
             "\nCurrent candidates from {} learner:",
-            conf.emph( & teacher.learners[_idx].1 )
+            conf.emph( & teacher.learners[idx].1 )
           ) ;
           for _pred in teacher.instance.preds() {
             if let Some(term) = candidates[_pred.idx].as_ref() {
@@ -132,9 +151,24 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
         ) ;
         profile!{ teacher mark "data", "registration" }
         match res {
-          Ok(true) => (),
-          Ok(false) => bail! {
-            "translation of cexs to data generated no new data"
+          Ok(true) => {
+            // New data.
+            for (
+              index, & mut (_, _, ref mut changed)
+            ) in teacher.learners.index_iter_mut() {
+              * changed = index != idx
+            }
+          },
+          Ok(false) => if teacher.learners[idx].2 {
+            // Something has changed since the last candidate of this learner.
+            // The fact that the current candidate generated no new data is not
+            // a problem.
+            ()
+          } else {
+            bail! {
+              "translation of cexs for {} to data generated no new data",
+              conf.emph( & teacher.learners[idx].1 )
+            }
           },
           Err(e) => match e.kind() {
             & ErrorKind::Unsat => {
@@ -173,7 +207,11 @@ pub struct Teacher<'a, S> {
   /// Sender used by learners. Becomes `None` when the learning process starts.
   pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
   /// Learners sender and description.
-  pub learners: LrnMap<( Option< Sender<DataCore> >, String )>,
+  ///
+  /// Stores the channel to the learner, its name (for log), and a flag
+  /// indicating whether the data has changed since this learner's last
+  /// candidates.
+  pub learners: LrnMap<( Option< Sender<DataCore> >, String, bool )>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
   /// Number of guesses.
@@ -201,7 +239,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       println!("; Done in {} guess(es)", self.count) ;
       println!("") ;
     }
-    for & mut (ref mut sender, _) in self.learners.iter_mut() {
+    for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       * sender = None
     }
     while self.get_candidates(profiler)?.is_some() {}
@@ -213,22 +251,23 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   pub fn finalize(self, _: & Profiler) -> Res<()> { Ok(()) }
 
   /// Adds a new learner.
-  pub fn add_learner<L: Learner + 'static>(& mut self, learner: L) -> Res<()> {
+  pub fn add_learner<L>(& mut self, learner: L, mine: bool) -> Res<()>
+  where L: Learner + 'static {
     if let Some(to_teacher) = self.to_teacher.clone() {
       let index = self.learners.next_index() ;
-      let name = learner.description() ;
+      let name = learner.description(mine) ;
       let instance = self.instance.clone() ;
       let data = self.data.clone_core() ;
       let (to_learner, learner_recv) = new_to_learner() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
           LearnerCore::new(index, to_teacher.clone(), learner_recv),
-          instance, data
+          instance, data, mine
         )
       ).chain_err(
         || format!("while spawning learner `{}`", conf.emph(& name))
       ) ? ;
-      self.learners.push( ( Some(to_learner), name ) ) ;
+      self.learners.push( ( Some(to_learner), name, false ) ) ;
       Ok(())
     } else {
       bail!("trying to add learner after teacher's finalization")
@@ -237,11 +276,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Broadcasts data to the learners. Returns `true` if there's no more
   /// learner left.
+  ///
+  /// Only used for the data from the first check.
   pub fn broadcast(& self) -> bool {
-    profile!{ self tick "broadcast" }
+    profile!{ self tick "sending" }
     let mut one_alive = false ;
     log_info!{ "broadcasting..." }
-    for & (ref sender, ref name) in self.learners.iter() {
+    for & (ref sender, ref name, _) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
         if let Err(_) = sender.send( self.data.clone_core() ) {
           warn!( "learner `{}` is dead...", name )
@@ -251,8 +292,28 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       }
     }
     log_info!{ "done broadcasting..." }
-    profile!{ self mark "broadcast" }
+    profile!{ self mark "sending" }
     one_alive
+  }
+
+  /// Sends data to a specific learner.
+  pub fn send(& self, learner: LrnIdx) -> Res<bool> {
+    profile! { self tick "sending" }
+    let (ref sender, ref name, _) = self.learners[learner] ;
+    let alive = if let Some(sender) = sender.as_ref() {
+      if let Err(_) = sender.send( self.data.clone_core() ) {
+        false
+      } else {
+        true
+      }
+    } else {
+      false
+    } ;
+    if ! alive {
+      warn!( "learner `{}` is dead...", name ) ;
+    }
+    profile! { self tick "sending" }
+    Ok(alive)
   }
 
   /// Waits for some candidates.

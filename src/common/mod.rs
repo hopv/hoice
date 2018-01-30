@@ -469,3 +469,85 @@ pub fn read_line(blah: & str) -> String {
   let _ = ::std::io::stdin().read_line(& mut line) ;
   line
 }
+
+
+
+/// Luby series.
+///
+/// # Examples
+///
+/// ```
+/// # use hoice::common::Luby ;
+/// let mut luby = Luby::new() ;
+/// let expected = vec![
+///   1,
+///   1, 2,
+///   1, 2, 4,
+///   1, 2, 4, 8,
+///   1, 2, 4, 8, 16,
+///   1, 2, 4, 8, 16, 32,
+///   1, 2, 4, 8, 16, 32, 64,
+///   1, 2, 4, 8, 16, 32, 64, 128,
+///   1, 2, 4, 8, 16, 32, 64, 128, 256,
+/// ] ;
+/// for value in expected {
+///   let luby = luby.next() ;
+/// # println!("{} == {} ?", value, luby) ;
+///   assert_eq! { luby, value.into() }
+/// }
+/// ```
+pub struct Luby {
+  /// Current max power of two.
+  max_pow: usize,
+  /// Current power of two, current values is `2^pow`.
+  pow: usize
+}
+impl Luby {
+  /// Constructor.
+  pub fn new() -> Self {
+    Luby { max_pow: 0, pow: 0 }
+  }
+  /// Next value in the series.
+  pub fn next(& mut self) -> Int {
+    if self.pow > self.max_pow {
+      self.pow = 0 ;
+      self.max_pow += 1
+    }
+    let mut res: Int = 2.into() ;
+    res = ::num::pow::pow(res, self.pow) ;
+    self.pow += 1 ;
+    res
+  }
+}
+
+/// Counts up to the current value of the Luby series, outputs true and moves
+/// on to the next value when it reaches it.
+pub struct LubyCount {
+  /// Luby series.
+  luby: Luby,
+  /// Current max value.
+  max: Int,
+  /// Counter.
+  count: Int,
+}
+impl LubyCount {
+  /// Constructor.
+  pub fn new() -> Self {
+    let mut luby = Luby::new() ;
+    let max = luby.next() ;
+    let count = 0.into() ;
+    LubyCount { luby, max, count }
+  }
+
+  /// Increments the counter, returns true when it reaches the current luby
+  /// value.
+  pub fn inc(& mut self) -> bool {
+    self.count = & self.count + 1 ;
+    let ping = self.count >= self.max ;
+    if ping {
+      self.max = self.luby.next() ;
+      self.count = 0.into()
+    }
+    ping
+  }
+}
