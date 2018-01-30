@@ -239,7 +239,7 @@ where Slver: Solver<'skid, ()> {
       ) ;
     }
 
-    if ! self.instance[clause].term_changed {
+    if ! self.instance[clause].terms_changed() {
       return Ok( RedInfo::new() )
     }
 
@@ -505,8 +505,8 @@ where Slver: Solver<'skid, ()> {
     log_debug! { "  dropping non pos/neg clauses" }
     let mut clause: ClsIdx = 0.into() ;
     while clause < self.instance.clauses.len() {
-      if self.instance.clauses[clause].rhs.is_none()
-      || self.instance.clauses[clause].lhs_preds.is_empty() {
+      if self.instance.clauses[clause].rhs().is_none()
+      || self.instance.clauses[clause].lhs_preds().is_empty() {
         clause.inc() ;
         continue
       } else {
@@ -592,7 +592,7 @@ where Slver: Solver<'skid, ()> {
       debug_assert_eq! {
         self.instance.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
       }
-      self.instance.clauses[clause].rhs = None
+      self.instance.clauses[clause].unset_rhs() ;
     }
     self.check("after force true") ? ;
 
@@ -626,7 +626,7 @@ where Slver: Solver<'skid, ()> {
       pred, & mut self.clauses_to_simplify
     ) ;
     for clause in & self.clauses_to_simplify {
-      let prev = self.instance.clauses[* clause].lhs_preds.remove(& pred) ;
+      let prev = self.instance.clauses[* clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
     }
     self.check("after force true") ? ;
@@ -704,7 +704,7 @@ where Slver: Solver<'skid, ()> {
 
       let argss = if let Some(
         argss
-      ) = self.instance.clauses[clause].lhs_preds.remove(& pred) {
+      ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
         argss
       } else {
         bail!(
@@ -868,7 +868,7 @@ where Slver: Solver<'skid, ()> {
 
       let pred_argss = if let Some(
         argss
-      ) = self.instance.clauses[clause].lhs_preds.remove(& pred) {
+      ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
         argss
       } else {
         bail!("inconsistent instance state")
@@ -1014,19 +1014,15 @@ where Slver: Solver<'skid, ()> {
     self.instance.unlink_pred_rhs(
       pred, & mut self.clauses_to_simplify
     ) ;
-    let mut rhs_swap ;
 
     'clause_iter: for clause in & self.clauses_to_simplify {
       let clause = * clause ;
       log_debug!{ "    working on clause #{}", clause }
       log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
 
-      rhs_swap = None ;
-      ::std::mem::swap(
-        & mut self.instance.clauses[clause].rhs, & mut rhs_swap
-      ) ;
+      let rhs = self.instance.clauses[clause].unset_rhs() ;
 
-      if let Some((prd, subst)) = rhs_swap {
+      if let Some((prd, subst)) = rhs {
         let qual_map = self.instance.clauses[clause].nu_fresh_vars_for(
           & quant
         ) ;
@@ -1048,7 +1044,7 @@ where Slver: Solver<'skid, ()> {
               }
             }
 
-            self.instance.clause_force_rhs(clause, prd, args)
+            self.instance.clause_force_rhs(clause, prd, args) ?
           }
           // No `else`, clause's rhs is already `None`.
 
@@ -1243,7 +1239,7 @@ where Slver: Solver<'skid, ()> {
         self.clauses_to_check.insert(* clause) ;
         if let Some(argss) = self.instance.clauses[
           * clause
-        ].lhs_preds.get_mut(& pred) {
+        ].lhs_pred_mut(pred) {
           for args in argss {
             rm_args! { from args, keep to_keep, swap & mut nu_args }
           }
@@ -1254,8 +1250,8 @@ where Slver: Solver<'skid, ()> {
       for clause in rhs {
         self.clauses_to_check.insert(* clause) ;
         if let Some(
-          & mut (p, ref mut args)
-        ) = self.instance.clauses[* clause].rhs.as_mut() {
+          (p, ref mut args)
+        ) = self.instance.clauses[* clause].rhs_mut() {
           debug_assert_eq!( pred, p ) ;
           rm_args! { from args, keep to_keep, swap & mut nu_args }
         } else {
@@ -1548,7 +1544,7 @@ impl ClauseSimplifier {
     let mut remove ;
 
     // Find equalities in `lhs`.
-    for term in & clause.lhs_terms {
+    for term in clause.lhs_terms() {
       if let Some((Op::Eql, _)) = term.app_inspect() {
         self.eqs.push( term.clone() )
       }
@@ -1674,16 +1670,16 @@ impl ClauseSimplifier {
 
           // Two terms.
           (None, None) => {
-            let inline = if clause.lhs_terms.contains(& args[0]) {
+            let inline = if clause.lhs_terms().contains(& args[0]) {
               Some( args[1].clone() )
-            } else if clause.lhs_terms.contains(& args[1]) {
+            } else if clause.lhs_terms().contains(& args[1]) {
               Some( args[0].clone() )
             } else {
               let not_lhs = term::not( args[0].clone() ) ;
               let not_rhs = term::not( args[1].clone() ) ;
-              if clause.lhs_terms.contains(& not_lhs) {
+              if clause.lhs_terms().contains(& not_lhs) {
                 Some(not_rhs)
-              } else if clause.lhs_terms.contains(& not_rhs) {
+              } else if clause.lhs_terms().contains(& not_rhs) {
                 Some(not_lhs)
               } else {
                 self.other_eqs.push( eq.clone() ) ;
@@ -1708,7 +1704,7 @@ impl ClauseSimplifier {
 
         if remove {
           // log_debug!{ "  removing..." }
-          let was_there = clause.lhs_terms.remove(& eq) ;
+          let was_there = clause.rm_term(& eq) ;
           debug_assert!(was_there)
         } else {
           // log_debug!{ "  skipping..." }

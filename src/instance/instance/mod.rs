@@ -4,494 +4,11 @@ use common::* ;
 use instance::info::* ;
 use learning::ice::quals::Qualifiers ;
 
-pub mod pre_instance ;
+mod clause ;
+mod pre_instance ;
 
+pub use self::clause::Clause ;
 pub use self::pre_instance::PreInstance ;
-
-/// A clause.
-///
-/// Fields are public because a clause is important only if it's in the
-/// instance, from which it can only be accessed immutably.
-///
-/// # Invariants
-///
-/// - if `! vars[var].active`, then `var` does not appear in `lhs` or `rhs`
-#[derive(Clone)]
-pub struct Clause {
-  /// Variables of the clause.
-  pub vars: VarMap<VarInfo>,
-  /// Terms of the left-hand side.
-  lhs_terms: HConSet<Term>,
-  /// Predicate applications of the left-hand side.
-  lhs_preds: PredApps,
-  /// Single term right-hand side.
-  rhs: Option<PredApp>,
-  /// Indicates wether `lhs_terms` has changed since the last call to
-  /// `lhs_terms_checked`.
-  ///
-  /// Used by `PreInstance`'s `prune_atom`.
-  term_changed: bool
-}
-impl Clause {
-  /// Creates a clause.
-  pub fn new(
-    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: Option<PredApp>
-  ) -> Self {
-    let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
-    let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
-    let mut clause = Clause {
-      vars, lhs_terms, lhs_preds, rhs, term_changed: true
-    } ;
-    for tterm in lhs { clause.lhs_insert(tterm) ; }
-    clause
-  }
-
-  /// Sets the internal flag `term_changed` to false.
-  ///
-  /// Also shrinks the variables.
-  fn lhs_terms_checked(& mut self) {
-    self.term_changed = false ;
-    self.shrink_vars()
-  }
-
-  /// Shrinks the clause: detects inactive variables.
-  fn shrink_vars(& mut self) {
-    let mut active = 0 ;
-    for var in & self.vars {
-      if var.active { active += 1 }
-    }
-    let mut vars = VarSet::with_capacity( active ) ;
-
-    for term in & self.lhs_terms {
-      term::map_vars(term, |v| { vars.insert(v) ; () }) ;
-      if vars.len() == active {
-        return ()
-      }
-    }
-
-    for (_, argss) in & self.lhs_preds {
-      for args in argss {
-        for arg in args {
-          term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
-        }
-      }
-      if vars.len() == active {
-        return ()
-      }
-    }
-
-    if let Some(& (_, ref args)) = self.rhs.as_ref() {
-      for arg in args {
-        term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
-      }
-    }
-
-    for (index, info) in self.vars.index_iter_mut() {
-      if ! vars.contains(& index) {
-        info.active = false
-      }
-    }
-  }
-
-  /// Checks a clause is well-formed.
-  #[cfg(debug_assertions)]
-  pub fn check(& self, blah: & 'static str) -> Res<()> {
-    use std::iter::Extend ;
-    let mut vars = VarSet::with_capacity( self.vars.len() ) ;
-    for term in & self.lhs_terms {
-      vars.extend( term::vars( term ) )
-    }
-    for (_, argss) in & self.lhs_preds {
-      for args in argss {
-        for arg in args {
-          vars.extend( term::vars(arg) )
-        }
-      }
-    }
-    if let Some((_, ref args)) = self.rhs {
-      for arg in args {
-        vars.extend( term::vars(arg) )
-      }
-    }
-    for var in vars {
-      if ! self.vars[var].active {
-        bail!(
-          "ill-formed clause: {}, \
-          variable {} appears in the clause but is not active",
-          blah, self[var]
-        )
-      }
-    }
-    Ok(())
-  }
-  #[cfg(not(debug_assertions))]
-  #[inline(always)]
-  pub fn check(& self, _: & 'static str) -> Res<()> {
-    Ok(())
-  }
-
-  /// Deactivates a variable.
-  pub fn deactivate(& mut self, var: VarIdx) -> Res<()> {
-    debug_assert!( self.vars[var].active ) ;
-    self.vars[var].active = false ;
-    self.check( "after `deactivate`" )
-  }
-
-  /// Inserts a top term in the lhs. Returns true if it was not there.
-  #[inline(always)]
-  pub fn lhs_insert(& mut self, tterm: TTerm) -> bool {
-    match tterm {
-      TTerm::T(term) => if let Some(true) = term.bool() {
-        false
-      } else {
-        self.insert_term(term)
-      },
-      TTerm::P { pred, args } => self.insert_pred_app(pred, args),
-    }
-  }
-
-  /// Inserts a predicate application in the LHS.
-  ///
-  /// Returns true if the predicate application is new.
-  #[inline(always)]
-  pub fn insert_pred_app(
-    & mut self, pred: PrdIdx, args: VarMap<Term>
-  ) -> bool {
-    self.lhs_preds.insert_pred_app(pred, args)
-  }
-
-  /// Inserts a term in an LHS. Externalized for ownership reasons.
-  fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
-    if let Some(kids) = term.conj_inspect() {
-      let mut new_stuff = false ;
-      let mut stack = vec![] ;
-      for kid in kids {
-        if let Some(kids) = kid.conj_inspect() {
-          for kid in kids { stack.push(kid) }
-        } else if let Some(true) = term.bool() {
-          ()
-        } else {
-          let is_new = lhs_terms.insert( kid.clone() ) ;
-          new_stuff = new_stuff || is_new
-        }
-      }
-      while let Some(term) = stack.pop() {
-        if let Some(kids) = term.conj_inspect() {
-          for kid in kids { stack.push(kid) }
-        } else if let Some(true) = term.bool() {
-          ()
-        } else {
-          let is_new = lhs_terms.insert( term.clone() ) ;
-          new_stuff = new_stuff || is_new
-        }
-      }
-      return new_stuff
-    }
-
-    // Only reachable when `term.conj_inspect()` is `None`. Needs to be outside
-    // the match because of lexical lifetimes.
-    if let Some(true) = term.bool() {
-      false
-    } else {
-      lhs_terms.insert(term)
-    }
-  }
-
-  /// Inserts a term in the LHS.
-  pub fn insert_term(& mut self, term: Term) -> bool {
-    let is_new = Self::lhs_insert_term(& mut self.lhs_terms, term) ;
-    if is_new {
-      self.term_changed = true
-    }
-    is_new
-  }
-  /// Removes a term from the LHS.
-  pub fn rm_term(& mut self, term: & Term) -> bool {
-    self.lhs_terms.remove(term)
-  }
-
-  /// Length of a clause's LHS.
-  #[inline(always)]
-  pub fn lhs_len(& self) -> usize {
-    self.lhs_terms.len() + self.lhs_preds.len()
-  }
-  /// True if the clause's LHS is empty.
-  #[inline(always)]
-  pub fn lhs_is_empty(& self) -> bool {
-    self.lhs_terms.is_empty() && self.lhs_preds.is_empty()
-  }
-
-  /// LHS accessor (terms).
-  #[inline(always)]
-  pub fn lhs_terms(& self) -> & HConSet<Term> {
-    & self.lhs_terms
-  }
-  /// LHS accessor (predicate applications).
-  #[inline(always)]
-  pub fn lhs_preds(& self) -> & PredApps {
-    & self.lhs_preds
-  }
-  /// Number of predicate applications in the lhs (>= number of predicates).
-  pub fn lhs_pred_apps_len(& self) -> usize {
-    let mut sum = 0 ;
-    for argss in self.lhs_preds.values() {
-      sum += argss.len()
-    }
-    sum
-  }
-  /// RHS accessor.
-  #[inline(always)]
-  pub fn rhs(& self) -> Option<(PrdIdx, & VarMap<Term>)> {
-    if let Some((prd, ref args)) = self.rhs {
-      Some((prd, args))
-    } else {
-      None
-    }
-  }
-
-  /// Variables accessor.
-  #[inline(always)]
-  pub fn vars(& self) -> & VarMap<VarInfo> {
-    & self.vars
-  }
-
-  /// Clones a clause but changes the rhs.
-  #[inline(always)]
-  pub fn clone_with_rhs(& self, rhs: TTerm) -> Self {
-    let mut lhs_terms = self.lhs_terms.clone() ;
-    let (rhs, term_changed) = match rhs {
-      TTerm::P { pred, args } => (
-        Some((pred, args)), self.term_changed
-      ),
-      TTerm::T(term) => {
-        let added = if term.bool() != Some(false) {
-          lhs_terms.insert( term::not(term) )
-        } else {
-          false
-        } ;
-        (None, self.term_changed || added)
-      },
-    } ;
-    Clause {
-      vars: self.vars.clone(),
-      lhs_terms,
-      lhs_preds: self.lhs_preds.clone(),
-      rhs,
-      term_changed,
-    }
-  }
-
-
-
-  /// Variable substitution.
-  ///
-  /// Returns a boolean indicating whether any substitution occured.
-  ///
-  /// Used for substitutions in the same clause / predicate scope.
-  pub fn subst<Map: VarIndexed<Term>>(
-    & mut self, map: & Map
-  ) -> bool {
-    let mut changed = false ;
-    let mut lhs_terms = HConSet::with_capacity( self.lhs_terms.len() ) ;
-    ::std::mem::swap(& mut lhs_terms, & mut self.lhs_terms) ;
-    for term in lhs_terms.drain() {
-      let (term, b) = term.subst(map) ;
-      self.insert_term(term) ;
-      changed = changed || b
-    }
-    for (_, argss) in & mut self.lhs_preds {
-      let mut nu_argss = Vec::with_capacity( argss.len() ) ;
-      debug_assert!( nu_argss.is_empty() ) ;
-      for mut args in argss.drain(0..) {
-        for arg in args.iter_mut() {
-          let (nu_arg, b) = arg.subst(map) ;
-          * arg = nu_arg ;
-          changed = changed || b
-        }
-        nu_argss.push(args) ;
-      }
-      ::std::mem::swap(& mut nu_argss, argss)
-    }
-    if let Some(& mut (_, ref mut args)) = self.rhs.as_mut() {
-      for arg in args.iter_mut() {
-        let (nu_arg, b) = arg.subst(map) ;
-        * arg = nu_arg ;
-        changed = changed || b
-      }
-    }
-    changed
-  }
-
-  /// Adds fresh variables to the clause for each of the input variables.
-  /// Returns a map from the input variables to the fresh ones (as terms).
-  ///
-  /// Used when inlining a predicate with quantified variables.
-  fn fresh_vars_for(& mut self, vars: & Quantfed) -> VarHMap<Term> {
-    let mut map = VarHMap::with_capacity( vars.len() ) ;
-    for (var, typ) in vars {
-      let fresh = self.vars.next_index() ;
-      let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
-      let info = VarInfo::new(fresh_name, * typ, fresh) ;
-      self.vars.push(info) ;
-      let _prev = map.insert(* var, term::var(fresh)) ;
-      debug_assert!( _prev.is_none() )
-    }
-    map
-  }
-
-  /// Adds fresh variables to the clause for each of the input variables.
-  /// Returns a map from the input variables to the fresh ones (as terms).
-  ///
-  /// Used when inlining a predicate with quantified variables.
-  fn nu_fresh_vars_for(& mut self, quant: & Option<Quant>) -> VarHMap<Term> {
-    if let Some(quant) = quant.as_ref() {
-      let vars = quant.vars() ;
-      let mut map = VarHMap::with_capacity( vars.len() ) ;
-      for (var, typ) in vars {
-        let fresh = self.vars.next_index() ;
-        let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
-        let info = VarInfo::new(fresh_name, * typ, fresh) ;
-        self.vars.push(info) ;
-        let _prev = map.insert(* var, term::var(fresh)) ;
-        debug_assert!( _prev.is_none() )
-      }
-      map
-    } else {
-      return VarHMap::new()
-    }
-  }
-
-  /// Writes a clause given a special function to write predicates.  
-  fn write<W, WritePrd>(
-    & self, w: & mut W, write_prd: WritePrd
-  ) -> IoRes<()>
-  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarMap<Term>) -> IoRes<()> {
-
-    write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
-    let mut inactive = 0 ;
-    for var in & self.vars {
-      if var.active {
-        write!(w, " ({} {})", var.name, var.typ) ?
-      } else {
-        inactive += 1 ;
-      }
-    }
-    write!(w, " )") ? ;
-    if inactive > 0 {
-      write!(w, " ; {} inactive variable(s)", inactive) ?
-    }
-    write!(w, "\n") ? ;
-
-    let lhs_len = self.lhs_len() ;
-
-    let (pref, suff) = if lhs_len != 0 {
-      write!(w, "  (=>") ? ;
-      let (pref, suff) = if lhs_len > 1 {
-        write!(w, "\n    (and") ? ;
-        ("      ", Some("    )"))
-      } else {
-        ("    ", None)
-      } ;
-
-      for term in & self.lhs_terms {
-        write!(w, "\n{}", pref) ? ;
-        term.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
-      }
-      for (pred, argss) in & self.lhs_preds {
-        for args in argss {
-          write!(w, "\n{}", pref) ? ;
-          write_prd(w, * pred, args) ?
-        }
-      }
-
-      write!(w, "\n") ? ;
-      if let Some(suff) = suff {
-        write!(w, "{}\n", suff) ?
-      }
-      ("    ", Some("  )"))
-    } else {
-      ("  ", None)
-    } ;
-
-    write!(w, "{}", pref) ? ;
-    if let Some((pred, ref args)) = self.rhs {
-      write_prd(w, pred, args) ?
-    } else {
-      write!(w, "false") ?
-    }
-    write!(w, "\n") ? ;
-    if let Some(suff) = suff {
-      write!(w, "{}\n", suff) ?
-    }
-    write!(w, "))")
-  }
-}
-impl ::std::ops::Index<VarIdx> for Clause {
-  type Output = VarInfo ;
-  fn index(& self, index: VarIdx) -> & VarInfo {
-    & self.vars[index]
-  }
-}
-impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
-  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
-> for Clause {
-  fn expr_to_smt2<Writer: Write>(
-    & self, writer: & mut Writer, info: & 'b (
-      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
-    )
-  ) -> SmtRes<()> {
-    let (ref true_preds, ref false_preds, ref prd_info) = * info ;
-    write!(writer, "(not ") ? ;
-    if ! self.lhs_is_empty() {
-      write!(writer, "(=> (and") ?
-    }
-    for term in & self.lhs_terms {
-      writer.write_all( " ".as_bytes() ) ? ;
-      term.write( writer, |w, var| var.default_write(w) ) ?
-    }
-    for (pred, argss) in & self.lhs_preds {
-      if true_preds.contains(pred) {
-        writer.write_all( " true".as_bytes() ) ?
-      } else if false_preds.contains(pred) {
-        writer.write_all( " false".as_bytes() ) ?
-      } else {
-        for args in argss {
-          writer.write_all( " (".as_bytes() ) ? ;
-          writer.write_all( prd_info[* pred].name.as_bytes() ) ? ;
-          for arg in args {
-            writer.write_all( " ".as_bytes() ) ? ;
-            arg.write(writer, |w, var| var.default_write(w)) ?
-          }
-          writer.write_all( ")".as_bytes() ) ?
-        }
-      }
-    }
-    if ! self.lhs_is_empty() {
-      write!(writer, ") ") ?
-    }
-    if let Some((prd, ref args)) = self.rhs {
-      if true_preds.contains(& prd) {
-        write!(writer, "true") ?
-      } else if false_preds.contains(& prd) {
-        write!(writer, "false") ?
-      } else {
-        write!(writer, "({}", prd_info[prd].name) ? ;
-        for arg in args {
-          write!(writer, " ") ? ;
-          arg.write(writer, |w, var| var.default_write(w)) ?
-        }
-        write!(writer, ")") ?
-      }
-    } else {
-      write!(writer, "false") ?
-    }
-    if ! self.lhs_is_empty() {
-      write!(writer, ")") ?
-    }
-    write!(writer, ")") ? ;
-    Ok(())
-  }
-}
 
 
 
@@ -777,9 +294,9 @@ impl Instance {
   /// Forces the rhs of a clause to a predicate application.
   pub fn clause_force_rhs(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: VarMap<Term>
-  ) {
+  ) -> Res<()> {
     self.pred_to_clauses[pred].1.insert(clause) ;
-    self.clauses[clause].rhs = Some((pred, args))
+    self.clauses[clause].set_rhs(pred, args)
   }
 
   /// Adds some terms to the lhs of a clause.
@@ -808,21 +325,22 @@ impl Instance {
   /// removes.
   pub fn clause_rhs_force(
     & mut self, clause_idx: ClsIdx, tterm: TTerm
-  ) {
+  ) -> Res<()> {
     let clause = & mut self.clauses[clause_idx] ;
     match tterm {
       TTerm::P { pred, args } => {
-        clause.rhs = Some((pred, args)) ;
+        clause.set_rhs(pred, args) ? ;
         let is_new = self.pred_to_clauses[pred].1.insert(clause_idx) ;
         debug_assert!( is_new )
       },
       TTerm::T(term) => {
         if term.bool() != Some(false) {
-          clause.lhs_terms.insert( term::not(term) ) ;
+          clause.insert_term( term::not(term) ) ;
         }
-        clause.rhs = None
+        clause.unset_rhs() ;
       },
     }
+    Ok(())
   }
 
   /// Set of int constants **appearing in the predicates**. If more constants
@@ -853,7 +371,8 @@ impl Instance {
   /// clause.
   fn rm_pred_apps_in_lhs(& mut self, pred: PrdIdx, clause: ClsIdx) {
     self.pred_to_clauses[pred].0.remove(& clause) ;
-    self.clauses[clause].lhs_preds.remove(& pred) ;
+    let prev = self.clauses[clause].drop_lhs_pred(pred) ;
+    debug_assert! { prev.is_none() }
   }
 
 
@@ -883,7 +402,7 @@ impl Instance {
 
       log_debug!{ "  - #{}", clause }
 
-      if let Some(argss) = self[* clause].lhs_preds.get(& pred) {
+      if let Some(argss) = self[* clause].lhs_preds().get(& pred) {
 
         log_debug!{ "    {} applications", argss.len() }
         for args in argss {
@@ -898,10 +417,10 @@ impl Instance {
               match tterm {
                 TTerm::T(ref term) if self[
                   * clause
-                ].lhs_terms.contains(term) => continue 'tterm_iter,
+                ].lhs_terms().contains(term) => continue 'tterm_iter,
                 TTerm::P { ref pred, ref args } if self[
                   * clause
-                ].lhs_preds.get(pred).map(
+                ].lhs_preds().get(pred).map(
                   |argss| argss.contains(args)
                 ).unwrap_or(false) => continue 'tterm_iter,
                 _ => ()
@@ -1002,7 +521,7 @@ impl Instance {
   fn relink_preds_to_clauses(
     & mut self, from: ClsIdx, to: ClsIdx
   ) -> Res<()> {
-    for pred in self.clauses[from].lhs_preds.keys() {
+    for pred in self.clauses[from].lhs_preds().keys() {
       let pred = * pred ;
       let was_there = self.pred_to_clauses[pred].0.remove(& from) ;
       let _ = self.pred_to_clauses[pred].0.insert(to) ;
@@ -1047,7 +566,7 @@ impl Instance {
   ///
   /// Also unlinks predicates from `pred_to_clauses`.
   pub fn forget_clause(& mut self, clause: ClsIdx) -> Res<Clause> {
-    for pred in self.clauses[clause].lhs_preds.keys() {
+    for pred in self.clauses[clause].lhs_preds().keys() {
       let pred = * pred ;
       let was_there = self.pred_to_clauses[pred].0.remove(& clause) ;
       debug_assert!(
@@ -1079,7 +598,7 @@ impl Instance {
   /// Pushes a new clause, does not sanity-check.
   fn push_clause_unchecked(& mut self, clause: Clause) -> () {
     let clause_index = self.clauses.next_index() ;
-    for pred in clause.lhs_preds.keys() {
+    for pred in clause.lhs_preds().keys() {
       let pred = * pred ;
       let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
       debug_assert!(is_new)
@@ -1130,26 +649,15 @@ impl Instance {
     // Qualifiers generated while looking at predicate applications.
     let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;
 
-    let rhs_opt = if let Some((ref pred, ref args)) = clause.rhs {
-      let mut set = Vec::with_capacity(1) ;
-      set.push(args.clone()) ;
-      Some((pred, set))
-    } else { None } ;
-
     {
       // Represents equalities between *pred vars* and terms over *clause
       // variables*. These will be added to `app_quals` if the total
       // substitution of the term by `map` succeeds.
       let mut eq_quals = VarHMap::with_capacity(7) ;
 
-      let rhs_opt = rhs_opt.as_ref().map( |& (pred, ref set)| (pred, set) ) ;
-
-      for (pred, argss) in clause.lhs_preds.iter().chain(
-        rhs_opt.into_iter()
-      ) {
-        let pred = * pred ;
-        debug_assert!( app_quals.is_empty() ) ;
-        for args in argss {
+      clause.all_pred_apps_do(
+        |pred, args| {
+          debug_assert!( app_quals.is_empty() ) ;
           debug_assert!( eq_quals.is_empty() ) ;
 
           // All the *clause var* to *pred var* maps for this predicate
@@ -1176,7 +684,7 @@ impl Instance {
 
             } else {
               // Parameter's not a variable, store potential equality.
-              let _prev = eq_quals.insert(pred_var, term) ;
+              let _prev = eq_quals.insert( pred_var, term.clone() ) ;
               debug_assert!( _prev.is_none() ) ;
               // Try to revert the term.
               if let Some((var, term)) = term.invert(pred_var) {
@@ -1209,9 +717,10 @@ impl Instance {
             }
           }
 
-          maps.push((pred, map))
+          maps.push((pred, map)) ;
+          Ok(())
         }
-      }
+      ) ?
     }
 
     // Build the conjunction of atoms.
@@ -1224,10 +733,10 @@ impl Instance {
     // Now look for atoms and try to apply the mappings above.
     for (pred, map) in maps {
       let mut conj = HConSet::<Term>::with_capacity(
-        clause.lhs_terms.len()
+        clause.lhs_terms().len()
       ) ;
 
-      for term in clause.lhs_terms.iter() {
+      for term in clause.lhs_terms().iter() {
 
         if let Some( (term, true) ) = term.subst_total(& map) {
           conj.insert( term.clone() ) ;
@@ -1293,7 +802,7 @@ impl Instance {
       let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
 
       debug! { "    working on lhs..." }
-      for (pred, argss) in & clause.lhs_preds {
+      for (pred, argss) in clause.lhs_preds() {
         let pred = * pred ;
         debug! { "        {}", self[pred] }
         if self.pred_terms[pred].is_none() {
@@ -1440,7 +949,7 @@ impl Instance {
   #[cfg(debug_assertions)]
   fn check_pred_to_clauses(& self) -> Res<()> {
     for (cls_idx, clause) in self.clauses.index_iter() {
-      for (pred, _) in & clause.lhs_preds {
+      for (pred, _) in clause.lhs_preds() {
         let pred = * pred ;
         if self.is_known(pred) {
           bail!(
@@ -1493,7 +1002,7 @@ impl Instance {
             which is above the maximal clause index", self[pred], clause
           )
         }
-        if self.clauses[* clause].lhs_preds.get(& pred).is_none() {
+        if self.clauses[* clause].lhs_preds().get(& pred).is_none() {
           bail!(
             "predicate {} is registered as appearing in lhs of clause {} \
             but it's not the case\n{}\nlhs: {}\nrhs: {}",
