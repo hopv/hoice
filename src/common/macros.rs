@@ -8,6 +8,17 @@ macro_rules! scoped {
   })
 }
 
+/// Chains some errors and bails.
+macro_rules! err_chain {
+  ($head:expr $(=> $tail:expr)*) => ({
+    let mut err: Error = $head.into() ;
+    $(
+      err = err.chain_err(|| $tail) ;
+    )*
+    bail!(err)
+  })
+}
+
 
 /// In verbose mode, same as `println` but with a "; " prefix.
 macro_rules! info {

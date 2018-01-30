@@ -766,13 +766,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
-            let (tterms, typ) = if let Some((term, typ)) = self.term_opt(
+            let (tterms, typ) = self.parse_ptterms(
               var_map, map, instance
-            ) ? {
-              ( PTTerms::tterm( TTerm::T(term) ), typ )
-            } else {
-              ( self.parse_ptterms(var_map, map, instance) ?, Typ::Bool )
-            } ;
+            ) ? ;
             self.insert_bind(id, tterms, typ) ? ;
             self.ws_cmt() ;
             self.tag(")") ? ;
@@ -913,30 +909,22 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   ) -> Res<Typ> {
     match op.type_check(args) {
       Ok(typ) => Ok(typ),
-      Err(Either::Left((Some(exp), (found, pos)))) => {
-        let err: Error = self.error(
+      Err(Either::Left((Some(exp), (found, pos)))) => err_chain! {
+        self.error(
           pos, format!(
             "expected an expression of sort {}, found {}", exp, found
           )
-        ).into() ;
-        bail!(
-          err.chain_err(
-            || self.error(op_pos, "in this operator application")
-          )
         )
+        => self.error(op_pos, "in this operator application")
       },
-      Err(Either::Left((None, (found, pos)))) => {
-        let err: Error = self.error(
+      Err(Either::Left((None, (found, pos)))) => err_chain! {
+        self.error(
           pos, format!(
             "expected the expression starting here has sort {} \
             which is illegal here", found
           )
-        ).into() ;
-        bail!(
-          err.chain_err(
-            || self.error(op_pos, "in this operator application")
-          )
         )
+        => self.error(op_pos, "in this operator application")
       },
       Err(Either::Right(blah)) => bail!(
         self.error(
@@ -1238,22 +1226,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       for (exp, (found, pos)) in sig.iter().zip( typs.into_iter() ) {
         count += 1 ;
         if exp != & found {
-          let err: Error = self.error(
-            pos, format!(
-              "expected an expression of sort {}, found {}",
-              exp, found
-            )
-          ).into() ;
-          bail!(
-            err.chain_err(
-              || self.error(
-                pred_pos, format!(
-                  "in this application of {}, parameter #{}",
-                  conf.emph(& instance[pred].name), count
-                )
+          err_chain! {
+            self.error(
+              pos, format!(
+                "expected an expression of sort {}, found {}",
+                exp, found
               )
             )
-          )
+            => self.error(
+              pred_pos, format!(
+                "in this application of {}, parameter #{}",
+                conf.emph(& instance[pred].name), count
+              )
+            )
+          }
         }
       }
     }
@@ -1267,14 +1253,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
   /// Parses a top term or fails.
+  #[allow(dead_code)]
   fn top_term(
     & mut self,
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res<PTTerms> {
-    if let Some(term) = self.top_term_opt(var_map, map, instance) ? {
-      Ok(term)
+  ) -> Res<(PTTerms, Typ)> {
+    if let Some(res) = self.top_term_opt(var_map, map, instance) ? {
+      Ok(res)
     } else {
       bail!( self.error_here("expected term") )
     }
@@ -1285,7 +1272,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res< Option< PTTerms > > {
+  ) -> Res< Option< (PTTerms, Typ) > > {
     let bind_count = self.let_bindings(var_map, map, instance) ? ;
 
     self.ws_cmt() ;
@@ -1294,25 +1281,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let res = if let Some((term, typ)) = self.term_opt(
       var_map, map, instance
     ) ? {
-      if ! typ.is_bool() {
-        bail!(
-          self.error(
-            start_pos, format!(
-              "expected expression of sort Bool, found {}", typ
-            )
-          )
-        )
-      }
       Ok( Some(
-        PTTerms::tterm( TTerm::T( term ) )
+        ( PTTerms::tterm( TTerm::T( term ) ), typ )
       ) )
     } else if let Some((pos, id)) = self.ident_opt() ? {
       if let Some(idx) = self.cxt.pred_name_map.get(id) {
         let idx = * idx ;
         if instance[idx].sig.is_empty() {
           Ok( Some(
-            PTTerms::TTerm(
-              TTerm::P { pred: idx, args: VarMap::with_capacity(0) }
+            (
+              PTTerms::TTerm(
+                TTerm::P { pred: idx, args: VarMap::with_capacity(0) }
+              ), Typ::Bool
             )
           ) )
         } else {
@@ -1327,16 +1307,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
         }
       } else if let Some((ptterms, typ)) = self.get_bind(id) {
-        if typ != Typ::Bool {
-          bail!(
-            self.error(
-              start_pos, format!(
-                "expected expression of sort Bool, found {}", typ
-              )
-            )
-          )
-        }
-        Ok( Some( ptterms.clone() ) )
+        Ok( Some( (ptterms.clone(), typ) ) )
       } else {
         bail!(
           self.error(
@@ -1365,10 +1336,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         )
       } else if let Some((pred_pos,ident)) = self.ident_opt()? {
         if let Some(idx) = self.cxt.pred_name_map.get(ident).map(|i| * i) {
-          let res = self.pred_args(idx, pred_pos, var_map, map, instance) ;
+          let res = self.pred_args(idx, pred_pos, var_map, map, instance) ? ;
           self.ws_cmt() ;
           self.tag(")") ? ;
-          res
+          Ok(res.map(|res| (res, Typ::Bool)))
         } else {
           bail!(
             self.error(
@@ -1403,7 +1374,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res<PTTerms> {
+  ) -> Res<(PTTerms, Typ)> {
     enum Frame {
       And(Vec<PTTerms>), Or(Vec<PTTerms>), Impl(Vec<PTTerms>),
       Not, Let(LetCount)
@@ -1420,6 +1391,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
       self.ws_cmt() ;
 
+      let start_pos = self.pos() ;
       let mut ptterm = if let Some(pos) = self.tag_opt_pos("(") {
 
         self.ws_cmt() ;
@@ -1438,11 +1410,114 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           continue 'go_down
         } else {
           self.backtrack_to(pos) ;
-          self.top_term(var_map, & map, instance) ?
+          if let Some((top, typ)) = self.top_term_opt(
+            var_map, & map, instance
+          ) ? {
+            if typ.is_bool() {
+              top
+            } else
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
+            if stack.is_empty() {
+              return Ok(
+                (top, typ)
+              )
+            } else {
+              err_chain! {
+                "while parsing top term"
+                => self.error(
+                  start_pos, format!(
+                    "expected expression of type Bool, found {}", typ
+                  )
+                )
+              }
+            }
+          } else if let Some((top, typ)) = self.term_opt(
+            var_map, & map, instance
+          ) ? {
+            if typ.is_bool() {
+              PTTerms::TTerm( TTerm::T(top) )
+            } else
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
+            if stack.is_empty() {
+              return Ok(
+                ( PTTerms::TTerm( TTerm::T(top) ), typ )
+              )
+            } else {
+              err_chain! {
+                "while parsing subterm"
+                => self.error(
+                  start_pos, format!(
+                    "expected expression of type Bool, found {}", typ
+                  )
+                )
+              }
+            }
+          } else {
+            bail!(
+              self.error(
+                start_pos, "failed to parse expression top term"
+              )
+            )
+          }
         }
-
       } else {
-        self.top_term(var_map, & map, instance) ?
+        if let Some((top, typ)) = self.top_term_opt(
+          var_map, & map, instance
+        ) ? {
+          if typ.is_bool() {
+            top
+          } else
+          // If we get here, it means what we're parsing does not have type
+          // bool. Which means we're not inside a top-term (we're most likely
+          // parsing a let-binding).
+          if stack.is_empty() {
+            return Ok(
+              (top, typ)
+            )
+          } else {
+            err_chain! {
+              "while parsing top term"
+              => self.error(
+                start_pos, format!(
+                  "expected expression of type Bool, found {}", typ
+                )
+              )
+            }
+          }
+        } else if let Some((top, typ)) = self.term_opt(
+          var_map, & map, instance
+        ) ? {
+          if typ.is_bool() {
+            PTTerms::TTerm( TTerm::T(top) )
+          } else
+          // If we get here, it means what we're parsing does not have type
+          // bool. Which means we're not inside a top-term (we're most likely
+          // parsing a let-binding).
+          if stack.is_empty() {
+            return Ok(
+              ( PTTerms::TTerm( TTerm::T(top) ), typ )
+            )
+          } else {
+            err_chain! {
+              "while parsing subterm (ident or constant)"
+              => self.error(
+                start_pos, format!(
+                  "expected expression of type Bool, found {}", typ
+                )
+              )
+            }
+          }
+        } else {
+          bail!(
+            self.error(
+              start_pos, "failed to parse top expression"
+            )
+          )
+        }
       } ;
 
       'go_up: loop {
@@ -1496,7 +1571,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.close_let_bindings(bind_count) ? ;
             continue 'go_up
           },
-          None => break 'go_down Ok(ptterm),
+          None => break 'go_down Ok( (ptterm, Typ::Bool) ),
         }
       }
 
@@ -1623,9 +1698,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   ) -> Res<()> {
     self.ws_cmt() ;
 
-    let mut ptterms = self.parse_ptterms(
+    let start_pos = self.pos() ;
+    let (mut ptterms, typ) = self.parse_ptterms(
       & var_map, & map, instance
     ) ? ;
+    if ! typ.is_bool() {
+      err_chain! {
+        "while parsing clause terms"
+        => self.error(
+          start_pos, format!(
+            "expected expression of type Bool, got {}", typ
+          )
+        )
+      }
+    }
     if negated {
       ptterms = PTTerms::not(ptterms) ?
     }
@@ -2160,7 +2246,8 @@ impl PTTerms {
       } ;
 
       'go_up: loop {
-        if let Some((op, mut to_do, done)) = stack.pop() {
+        if let Some((op, mut to_do, mut done)) = stack.pop() {
+          done.push(term) ;
           if let Some(next) = to_do.next() {
             stack.push( (op, to_do, done) ) ;
             ptterm = next ;
