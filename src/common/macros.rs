@@ -1,7 +1,7 @@
 //! Macros.
 
 
-/// Introduces a scope, usually to please borrow-checking.
+/// Wraps stuff in a block, usually to please borrow-checking.
 macro_rules! scoped {
   ($($tokens:tt)*) => ({
     $($tokens)*
@@ -63,7 +63,6 @@ macro_rules! warn {
 
 
 /// `Int` printer.
-
 macro_rules! int_to_smt {
   ($writer:expr, $i:expr) => (
     if $i.is_negative() {
@@ -73,6 +72,7 @@ macro_rules! int_to_smt {
     }
   )
 }
+/// `Rat` printer.
 macro_rules! rat_to_smt {
   ($writer:expr, $r:expr) => ({
     let (num, den) = ( $r.numer(), $r.denom() ) ;
@@ -104,7 +104,7 @@ macro_rules! if_not_bench {
 }
 
 
-/// Gates something by an `if conf.verbose()`. Inactive in bench mode.
+/// Guards something by an `if conf.verbose()`. Inactive in bench mode.
 #[macro_export]
 #[cfg(not(feature = "bench"))]
 macro_rules! if_verb {
@@ -171,14 +171,28 @@ macro_rules! if_debug {
 #[macro_export]
 #[cfg( not(feature = "bench") )]
 macro_rules! profile {
-  ( | $prof:ident | $stat:expr => add $e:expr ) => (
-    $prof.stat_do( $stat, |val| val + $e )
+  ( | $stuff:ident $(. $prof:ident)* |
+    wrap $b:block $( $scope:expr ),+ $(,)*
+  ) => ({
+    profile! { | $stuff $(. $prof)* | tick $($scope),+ }
+    let res = $b ;
+    profile! { | $stuff $(. $prof)* | mark $($scope),+ }
+    res
+  }) ;
+  ( | $stuff:ident $(. $prof:ident)* | $stat:expr => add $e:expr ) => (
+    $stuff$(.$prof)*.stat_do( $stat, |val| val + $e )
   ) ;
-  ( | $prof:ident | $meth:ident $( $scope:expr ),+ $(,)* ) => (
-    $prof.$meth(
+  ( | $stuff:ident $(. $prof:ident)* |
+    $meth:ident $( $scope:expr ),+ $(,)*
+  ) => (
+    $stuff$(.$prof)*.$meth(
       vec![ $($scope),+ ]
     )
   ) ;
+  ( $slf:ident wrap $b:block $( $scope:expr ),+ $(,)* ) => ({
+    let prof = & $slf._profiler ;
+    profile! { |prof| wrap $b $($scope),+ }
+  }) ;
   ( $slf:ident $stat:expr => add $e:expr ) => ({
     let prof = & $slf._profiler ;
     profile!{ |prof| $stat => add $e }
@@ -207,11 +221,9 @@ macro_rules! msg {
       msg!( $slf => $($tt)* )
     } else { true }
   ) ;
-  ( $slf:expr => $e:expr ) => (
+  ( $core:expr => $e:expr ) => (
     if conf.verbose() {
-      ::common::msg::HasLearnerCore::msg(
-        $slf, $e
-      )
+      $core.msg($e)
     } else { true }
   ) ;
   ( $slf:expr => $($tt:tt)* ) => (

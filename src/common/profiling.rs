@@ -70,28 +70,6 @@ impl ProfileTree {
     )
   }
 
-  /// Forces a scope to be equal to the sum of its sub branches.
-  ///
-  /// Only legal if the scope exists and its duration is `None`.
-  pub fn lift(& mut self, scope: Vec<& 'static str>) -> Res<()> {
-    let mut current = self ;
-    for scp in & scope {
-      let tmp = current ;
-      current = if let Some(current) = tmp.branches.get_mut(scp) {
-        current
-      } else { return Ok(()) }
-    }
-    let mut sum = Duration::from_secs(0) ;
-    for (_, branch) in & current.branches {
-      sum = sum + branch.duration.clone().unwrap_or( Duration::from_secs(0) )
-    }
-    if current.duration.is_some() {
-      bail!( "trying to lift scope with existing duration {:?}", scope )
-    }
-    current.duration = Some(sum) ;
-    Ok(())
-  }
-
   /// Inserts something in the tree.
   pub fn insert(
     & mut self, scope: Vec<& 'static str>, duration: Duration

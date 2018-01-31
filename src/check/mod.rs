@@ -1,12 +1,15 @@
-/// Checks the result of a `hoice` run.
-///
-/// This code is completely separated from the rest of the code, on purpose. It
-/// basically takes the original `smt2` file, a file containing the output of
-/// the `hoice` run, and checks that the result makes sense.
-///
-/// It does so using an SMT solver, and performing string substitution
-/// (roughly) to rewrite the problem as a pure SMT query. In particular, there
-/// is no real notion of term here.
+//! Checks the result of a `hoice` run.
+//!
+//! This code is completely separated from the rest of the code, on purpose. It
+//! basically takes the original [`smt2`][smt2] file, a file containing the
+//! output of the [`hoice`][hoice] run, and checks that the result makes sense.
+//!
+//! It does so using an SMT solver, and performing string substitution
+//! (roughly) to rewrite the problem as a pure SMT query. In particular, there
+//! is no real notion of term here.
+//!
+//! [hoice]: https://github.com/hopv/hoice (hoice github repository)
+//! [smt]: http://smtlib.cs.uiowa.edu/ (SMT-LIB website)
 
 use errors::* ;
 use common::{ conf, ColorExt, Solver, HashMap, Read } ;
@@ -115,7 +118,7 @@ impl Output {
   }
 
   /// Checks the signature of the predicates match the declarations of an input
-  /// `hc` file. Also checks that all predicates are defined *once*.
+  /// `smt2` file. Also checks that all predicates are defined *once*.
   pub fn check_consistency(& mut self, input: & Input) -> Res<()> {
     info!{ "checking predicate signature consistency..." }
     let mut map = HashMap::with_capacity( self.pred_defs.len() ) ;

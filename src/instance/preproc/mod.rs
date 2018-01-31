@@ -65,7 +65,7 @@ pub struct Reductor<'a, S> {
   /// Preinstance simplification.
   simplify: Option<Simplify>,
   /// Optional predicate argument reduction pre-processor.
-  arg_red: Option<ArgReduce>,
+  arg_red: Option<ArgRed>,
   /// Optional simple one rhs pre-processor.
   s_one_rhs: Option<SimpleOneRhs>,
   /// Optional simple one lhs pre-processor.
@@ -99,11 +99,19 @@ where S: Solver<'skid, ()> {
     }
 
     let simplify = Some( Simplify::new(& instance) ) ;
-    let arg_red = some_new! { ArgReduce if arg_red } ;
-    let s_one_rhs = some_new! { SimpleOneRhs if one_rhs } ;
-    let s_one_lhs = some_new! { SimpleOneLhs if one_lhs } ;
-    let one_rhs = some_new! { OneRhs if one_rhs and one_rhs_full } ;
-    let one_lhs = some_new! { OneLhs if one_lhs and one_lhs_full } ;
+    let arg_red = some_new! { ArgRed if arg_red } ;
+    let s_one_rhs = some_new! {
+      SimpleOneRhs if one_rhs and reduction
+    } ;
+    let s_one_lhs = some_new! {
+      SimpleOneLhs if one_lhs and reduction
+    } ;
+    let one_rhs = some_new! {
+      OneRhs if one_rhs and one_rhs_full and reduction
+    } ;
+    let one_lhs = some_new! {
+      OneLhs if one_lhs and one_lhs_full and reduction
+    } ;
     let cfg_red = some_new! { CfgRed if cfg_red } ;
 
     Reductor {
@@ -352,14 +360,14 @@ impl RedStrat for Simplify {
 ///
 /// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce
 /// (Instance's arg_reduce method)
-pub struct ArgReduce ;
-impl ArgReduce {
+pub struct ArgRed ;
+impl ArgRed {
   /// Pre-processor's name.
   #[inline]
   fn name(& self) -> & 'static str { "arg_reduce" }
 }
-impl RedStrat for ArgReduce {
-  fn new(_: & Instance) -> Self { ArgReduce }
+impl RedStrat for ArgRed {
+  fn new(_: & Instance) -> Self { ArgRed }
 
   fn apply<'a, 'skid, S>(
     & mut self, instance:& mut PreInstance<'a, S>

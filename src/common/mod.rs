@@ -420,12 +420,12 @@ mod hash {
     }
   }
 
-  /// Trivial hasher for `usize`. **This hasher is only for hashing `usize`s**.
+  /// Trivial hasher for `u64`. **This hasher is only for hashing `u64`s**.
   pub struct HashU64 {
     buf: [u8 ; u64_bytes]
   }
   impl HashU64 {
-    /// Checks that a slice of bytes has the length of a `usize`. Only active
+    /// Checks that a slice of bytes has the length of a `u64`. Only active
     /// in debug.
     #[cfg(debug_assertions)]
     #[inline(always)]
@@ -438,7 +438,7 @@ mod hash {
         )
       }
     }
-    /// Checks that a slice of bytes has the length of a `usize`. Only active
+    /// Checks that a slice of bytes has the length of a `u64`. Only active
     /// in debug.
     #[cfg( not(debug_assertions) )]
     #[inline(always)]

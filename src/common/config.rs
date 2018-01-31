@@ -45,7 +45,9 @@ impl SubConf for InstanceConf {
 }
 impl InstanceConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App { app }
+  pub fn add_args(app: App, _: usize) -> App {
+    app
+  }
 
   /// Creates itself from some matches.
   pub fn new(_: & Matches) -> Self {
@@ -119,13 +121,20 @@ impl SmtConf {
     }
   }
 
-  /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  /// Adds clap options to a clap `App`.
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("z3_cmd").long("--z3").help(
         "sets the command used to call z3"
-      ).default_value("z3").takes_value(true).number_of_values(1)
+      ).default_value(
+        "z3"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -135,7 +144,9 @@ impl SmtConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
@@ -161,35 +172,102 @@ impl SmtConf {
 
 /// Pre-processing configuration.
 pub struct PreprocConf {
-  /// Dump instance as smt2 flag.
-  pub dump: bool,
-  /// Dump predicate dependency graph.
-  pub dump_pred_dep: bool,
-  /// Pre-processing flag.
+  /// (De)activates the whole preprocessing.
   pub active: bool,
-  /// Reduction flag.
+
+  /// Dump all steps of the preprocessing as smt2 systems.
+  pub dump: bool,
+  /// Dump predicate dependency graphs.
+  ///
+  /// The predicate dependency graphs are constructed by [`CfgRed`][cfg red].
+  /// For each of its runs, it will log the dependencies before and after
+  /// reduction.
+  ///
+  /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
+  /// (CfgRed reduction strategy)
+  pub dump_pred_dep: bool,
+
+  /// Horn reduction flag.
+  ///
+  /// (De)activates [`SimpleOneLhs`][slhs], [`SimpleOneRhs`][srhs],
+  /// [`OneLhs`][lhs], and [`OneRhs`][rhs]. If true, then these strategies are
+  /// controlled separately by the flags below.
+  ///
+  /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
+  /// (SimpleOneLhs reduction strategy)
+  /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
+  /// (SimpleOneRhs reduction strategy)
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
   pub reduction: bool,
-  /// Simple reduction flag.
-  pub smt_red: bool,
-  /// One rhs.
+
+  /// Allows right-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneRhs`][rhs] and [`SimpleOneRhs`][srhs] if false.
+  ///
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
+  /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
+  /// (SimpleOneRhs reduction strategy)
   pub one_rhs: bool,
-  /// Allow to introduce quantifiers.
+  /// Allows full right-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneRhs`][rhs] if false.
+  ///
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
   pub one_rhs_full: bool,
-  /// One lhs.
+  /// Allows left-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneLhs`][lhs] and [`SimpleOneLhs`][slhs] if false.
+  ///
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
+  /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
+  /// (SimpleOneLhs reduction strategy)
   pub one_lhs: bool,
-  /// Allows to introduce quantifiers.
+  /// Allows full left-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneLhs`][lhs] if false.
+  ///
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
   pub one_lhs_full: bool,
+
   /// Allows cfg reduction.
+  ///
+  /// (De)activates [`CfgRed`][cfg red].
+  ///
+  /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
+  /// (CfgRed reduction strategy)
   pub cfg_red: bool,
+
   /// Allows argument reduction.
+  ///
+  /// (De)activates [`ArgRed`][arg red].
+  ///
+  /// [arg red]: ../../instance/preproc/struct.ArgRed.html
+  /// (ArgRed reduction strategy)
   pub arg_red: bool,
+
   /// Allows clause term pruning.
+  ///
+  /// This is part of the [`Simplify`][simpl] strategy as well as the
+  /// simplification that run on the clauses modified by all reduction
+  /// strategies. This can be expensive as it relies on SMT queries for
+  /// pruning.
+  ///
+  /// [simpl]: ../../instance/preproc/struct.Simplify.html
+  /// (Simplify reduction strategy)
   pub prune_terms: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
     self.dump && self.active || self.dump_pred_dep
   }
+
   fn init(& self) -> Res<()> {
     let mut path = self.log_dir() ;
     if self.dump && self.active {
@@ -262,8 +340,13 @@ impl PreprocConf {
     }
   }
 
-  /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  /// Adds clap options to a clap `App`.
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("preproc").long("--preproc").help(
@@ -274,43 +357,31 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
-      Arg::with_name("smt_red").long("--smt_red").help(
-        "(de)activates smt-based reduction strategies"
+      Arg::with_name("dump_preproc").long("--dump_preproc").help(
+        "(de)activates instance dumping during preprocessing"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(
-        true
-      ).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("reduction").long("--reduction").help(
-        "(de)activates Horn reduction"
+        "(de)activates all Horn reduction"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("arg_red").long("--arg_red").help(
-        "(de)activates argument reduction"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true).hidden(
-        true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -322,7 +393,7 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -334,7 +405,7 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -347,7 +418,7 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -359,7 +430,19 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("arg_red").long("--arg_red").help(
+        "(de)activates argument reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -371,37 +454,33 @@ impl PreprocConf {
         bool_format
       ).default_value("on").takes_value(true).hidden(
         true
-      ).number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("dump_preproc").long("--dump_preproc").help(
-        "(de)activates instance dumping during preprocessing"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("dump_pred_dep").long("--dump_pred_dep").help(
-        "(de)activates predicate dependency dumps"
+        "(de)activates predicate dependency dumps (cfg_red)"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("prune_terms").long("--prune_terms").help(
-        "(de)activates clause term pruning"
+        "(de)activates clause term pruning when simplifying clauses"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).number_of_values(1).hidden(true)
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).hidden(
+        true
+      ).display_order( order() )
 
     )
   }
@@ -409,7 +488,6 @@ impl PreprocConf {
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "preproc") ;
-    let smt_red = bool_of_matches(matches, "smt_red") ;
     let reduction = bool_of_matches(matches, "reduction") ;
     let arg_red = bool_of_matches(matches, "arg_red") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
@@ -422,7 +500,7 @@ impl PreprocConf {
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
 
     PreprocConf {
-      dump, dump_pred_dep, active, smt_red,
+      dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
       arg_red, prune_terms
     }
@@ -452,6 +530,8 @@ pub struct IceConf {
   pub gain_pivot: f64,
   /// Same as `gain_pivot` but for qualifier synthesis.
   pub gain_pivot_synth: f64,
+  /// Run a learner that does not mine the instance.
+  pub pure_synth: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -459,16 +539,23 @@ impl SubConf for IceConf {
 }
 impl IceConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("simple_gain").long("--simple_gain").help(
-        "ignore unclassified data when computing entropy"
+        "always ignore unclassified data when computing entropy"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -480,11 +567,11 @@ impl IceConf {
         bool_format
       ).default_value("no").takes_value(true).hidden(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
-      Arg::with_name("complete").long("--complete_quals").help(
+      Arg::with_name("complete").long("--qual_complete").help(
         "generate complete transformations for qualifiers"
       ).validator(
         bool_validator
@@ -492,7 +579,7 @@ impl IceConf {
         bool_format
       ).default_value("off").takes_value(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -504,7 +591,7 @@ impl IceConf {
         bool_format
       ).default_value("on").takes_value(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -516,7 +603,7 @@ impl IceConf {
         bool_format
       ).default_value("off").takes_value(
         true
-      ).number_of_values(1)
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -529,7 +616,7 @@ impl IceConf {
         "<int>"
       ).default_value("0").takes_value(
         true
-      ).number_of_values(1).hidden(true)
+      ).number_of_values(1).hidden(true).display_order( order() )
 
     ).arg(
 
@@ -541,7 +628,19 @@ impl IceConf {
         "<int>"
       ).default_value("100").takes_value(
         true
-      ).number_of_values(1).hidden(true)
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("pure_synth").long("--pure_synth").help(
+        "if true, runs another pure-synthesis learner"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
 
     )
   }
@@ -575,10 +674,12 @@ impl IceConf {
         value
       }
     } ;
+    let pure_synth = bool_of_matches(matches, "pure_synth") ;
 
     IceConf {
       simple_gain, sort_preds, complete,
       qual_bias, qual_print, gain_pivot, gain_pivot_synth,
+      pure_synth,
     }
   }
 }
@@ -599,7 +700,12 @@ impl SubConf for TeacherConf {
 }
 impl TeacherConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("step").long("--step").short("-s").help(
@@ -608,7 +714,9 @@ impl TeacherConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
@@ -683,13 +791,13 @@ impl Config {
   /// Parses command-line arguments and generates the configuration.
   pub fn clap() -> Self {
     let mut app = App::new( crate_name!() ) ;
-    app = Self::add_args(app) ;
-    app = Self::add_check_args(app) ;
-    app = InstanceConf::add_args(app) ;
-    app = PreprocConf::add_args(app) ;
-    app = SmtConf::add_args(app) ;
-    app = IceConf::add_args(app) ;
-    app = TeacherConf::add_args(app) ;
+    app = Self::add_args(app, 0) ;
+    app = PreprocConf::add_args(app, 100) ;
+    app = InstanceConf::add_args(app, 200) ;
+    app = SmtConf::add_args(app, 300) ;
+    app = IceConf::add_args(app, 400) ;
+    app = TeacherConf::add_args(app, 500) ;
+    app = Self::add_check_args(app, 600) ;
 
     let matches = app.get_matches() ;
 
@@ -746,36 +854,43 @@ impl Config {
   }
 
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.author( crate_authors!() ).about(
       "ICE engine for systems described as Horn Clauses."
     ).arg(
 
       Arg::with_name("input file").help(
         "sets the input file to use"
-      ).index(1)
+      ).index(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("verb").short("-v").help(
         "verbose output"
-      ).takes_value(false).multiple(true)
+      ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
 
       Arg::with_name("quiet").short("-q").help(
         "quiet output"
-      ).takes_value(false).multiple(true)
+      ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
 
       Arg::with_name("color").long("--color").short("-c").help(
-        "(de)activates coloring (inactive if output is not a tty)"
+        "(de)activates coloring (off if output is not a tty)"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).number_of_values(1)
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -783,7 +898,9 @@ impl Config {
         "sets the output directory"
       ).value_name(
         "DIR"
-      ).default_value("hoice_out").takes_value(true).number_of_values(1)
+      ).default_value(
+        "hoice_out"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -793,7 +910,9 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -803,20 +922,27 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)//.number_of_values(1)
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
 
   /// Add args related to result checking.
-  pub fn add_check_args(app: App) -> App {
+  pub fn add_check_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("check").long("--check").help(
         "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
-      ).takes_value(true).number_of_values(1)
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -826,7 +952,9 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }

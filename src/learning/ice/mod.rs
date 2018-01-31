@@ -6,6 +6,8 @@ use common::msg::* ;
 
 use self::smt::* ;
 
+use errors::learners::LRes ;
+
 pub mod quals ;
 pub mod synth ;
 pub mod data ;
@@ -24,7 +26,7 @@ impl Launcher {
   pub fn launch(
     core: & LearnerCore, instance: Arc<Instance>, data: DataCore,
     mine: bool
-  ) -> Res<()> {
+  ) -> LRes<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
@@ -46,15 +48,11 @@ impl Launcher {
         & core, instance, data,
         conflict_solver.tee(log), // synth_solver.tee(synth_log)
         mine
-      ).chain_err(
-        || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
         & core, instance, data, conflict_solver, // synth_solver
         mine
-      ).chain_err(
-        || "while creating ice learner"
       )?.run()
     }
   }
@@ -65,9 +63,15 @@ impl Learner for Launcher {
     instance: Arc<Instance>, data: DataCore,
     mine: bool
   ) {
-    if let Err(e) = Self::launch(& core, instance, data, mine) {
-      let _ = core.err(e) ;
+    use errors::learners::LError ;
+    match Self::launch(& core, instance, data, mine) {
+      Err( LError::Exit ) | Ok(()) => (),
+      Err( LError::Error(e) ) => {
+        core.err(e) ;
+        ()
+      },
     }
+    core.exit()
   }
   fn description(& self, mine: bool) -> String {
     format!("ice{}", if mine { "" } else { " pure synth" })
@@ -79,7 +83,6 @@ impl Learner for Launcher {
 ///
 /// Boolean is `false` if the term should be negated.
 pub type Branch = Vec<(Term, bool)> ;
-
 
 
 /// Ice learner.
@@ -105,8 +108,6 @@ pub struct IceLearner<'core, Slver> {
   dec_mem: PrdMap< HashSet<u64> >,
   /// Current candidate, cleared at the beginning of each learning phase.
   candidate: PrdMap< Option<Term> >,
-  /// Profiler.
-  _profiler: Profiler,
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
@@ -120,14 +121,13 @@ where Slver: Solver<'kid, Parser> {
   pub fn new(
     core: & 'core LearnerCore, instance: Arc<Instance>, data: DataCore,
     solver: Slver, mine: bool// synth_solver: Slver
-  ) -> Res<Self> {
-    let _profiler = Profiler::new() ;
-    profile!{ |_profiler| tick "mining" }
+  ) -> LRes<Self> {
+    profile!{ |core._profiler| tick "mining" }
     let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
 
-    profile!{ |_profiler| mark "mining" }
+    profile!{ |core._profiler| mark "mining" }
     // if_verb!{
     //   log_info!{ "qualifiers:" } ;
     //   for quals in qualifiers.qualifiers() {
@@ -149,16 +149,14 @@ where Slver: Solver<'kid, Parser> {
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
         classifier: HashMap::with_capacity(1003),
-        dec_mem, candidate,
-        _profiler,
-        predicates,
+        dec_mem, candidate, predicates,
         rng: {
           use rand::SeedableRng ;
           ::rand::StdRng::from_seed(& [ 42 ])
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
-        }
+        },
       }
     )
   }
@@ -169,7 +167,7 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Runs the learner.
-  pub fn run(mut self) -> Res<()> {
+  pub fn run(mut self) -> LRes<()> {
     let mut teacher_alive = true ;
     profile!{ self "quals synthesized" => add 0 }
     profile!{ self "quals initially" => add self.qualifiers.qual_count() }
@@ -177,65 +175,57 @@ where Slver: Solver<'kid, Parser> {
       self "qual count initially" =>
         add self.qualifiers.real_qual_count()
     }
-    // if_verb!{
-    //   teacher_alive = msg!{ & self => "Qualifiers:" } ;
-    //   for quals in self.qualifiers.qualifiers() {
-    //     for & (ref qual, _) in quals {
-    //       teacher_alive = msg!{ & self => "  {}", qual }
-    //     }
-    //   }
-    // }
+
     'learn: loop {
       if ! teacher_alive {
         bail!("teacher is dead T__T")
       }
-      profile!{ self tick "waiting" }
-      match self.recv() {
+
+      match profile! (
+        |self.core._profiler| wrap { self.recv() } "waiting"
+      ) {
         Some(data) => {
-          profile!{ self mark "waiting" }
-          if let Some(candidates) = self.learn(data) ? {
+          profile! { self "learn steps" => add 1 }
+          if let Some(candidates) = profile!(
+            |self.core._profiler| wrap {
+              self.learn(data)
+            } "learning"
+          ) ? {
             teacher_alive = self.send_cands(candidates) ? ;
-            // if self.restart() {
-            //   self.qualifiers.wipe()
-            // }
+            if self.restart() {
+              profile! { self "restarts" => add 1 }
+              self.qualifiers.wipe()
+            }
           } else {
-            bail!("can't synthesize candidates for this, sorry")
+            return self.finalize()
           }
         },
         None => {
-          profile!{ self mark "waiting" }
           return self.finalize()
         },
       }
+
     }
   }
 
-  /// Finalizes the learning process.
+  /// Finalizes the learning process and exits.
   #[cfg( not(feature = "bench") )]
-  pub fn finalize(self) -> Res<()> {
+  pub fn finalize(self) -> LRes<()> {
     profile!{ self "quals once done" => add self.qualifiers.qual_count() }
     profile!{
       self "qual count once done" => add self.qualifiers.real_qual_count()
     }
-
-    let success = self.core.stats(
-      self._profiler, vec![ vec!["learning", "smt", "data"] ]
-    ) ;
-    if success {
-      Ok(())
-    } else {
-      bail!("could not send statistics to teacher")
-    }
+    Ok(())
   }
   #[cfg(feature = "bench")]
-  pub fn finalize(self) -> Res<()> {
+  pub fn finalize(self) -> LRes<()> {
     Ok(())
   }
 
   /// Sends some candidates.
   ///
   /// Also resets the solver and clears declaration memory.
-  pub fn send_cands(& mut self, candidates: Candidates) -> Res<bool> {
+  pub fn send_cands(& mut self, candidates: Candidates) -> LRes<bool> {
     profile!{ self tick "sending" }
     let res = self.send_candidates(
       candidates
@@ -250,31 +240,35 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Looks for a classifier.
+  ///
+  /// Returns `None` if asked to exit.
   pub fn learn(
     & mut self, data: DataCore
-  ) -> Res< Option<Candidates> > {
-    profile! { self tick "learning" }
-    profile! { self tick "learning", "setup" }
+  ) -> LRes< Option<Candidates> > {
     self.data = data ;
 
-    profile!{ self mark "learning", "setup" }
-
-    let contradiction = self.setup_solver().chain_err(
-      || "while initializing the solver"
+    let contradiction = profile!(
+      |self.core._profiler| wrap {
+        self.setup_solver().chain_err(
+          || "while initializing the solver"
+        )
+      } "learning", "setup"
     ) ? ;
 
-    if contradiction {
-      bail!( ErrorKind::Unsat )
-    }
+    if contradiction { bail!( ErrorKind::Unsat ) }
+
+    self.check_exit() ? ;
 
     let prd_count = self.instance.preds().len() ;
-    debug_assert!{{
-      let mut okay = true ;
-      for term_opt in & self.candidate {
-        okay = okay && term_opt.is_none() ;
+    debug_assert!{
+      scoped! {
+        let mut okay = true ;
+        for term_opt in & self.candidate {
+          okay = okay && term_opt.is_none() ;
+        }
+        okay
       }
-      okay
-    }}
+    }
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     debug_assert! { self.predicates.is_empty() }
 
@@ -299,9 +293,11 @@ where Slver: Solver<'kid, Parser> {
             self.instance[pred], neg_len, unc_len
           ) ;
           self.candidate[pred] = Some( term::fls() ) ;
-          profile!{ self tick "learning", "data" }
-          self.data.pred_all_false(pred) ? ;
-          profile!{ self mark "learning", "data" }
+          profile!(
+            |self.core._profiler| wrap {
+              self.data.pred_all_false(pred)
+            } "learning", "data"
+          ) ? ;
           continue
         }
       }
@@ -324,6 +320,8 @@ where Slver: Solver<'kid, Parser> {
         unc_len, pos_len + neg_len, pred
       ))
     }
+
+    self.check_exit() ? ;
 
     use rand::Rng ;
     // Use simple entropy 30% of the time.
@@ -378,6 +376,8 @@ where Slver: Solver<'kid, Parser> {
 
     }
 
+    self.check_exit() ? ;
+
     'pred_iter: while let Some(
       (_unc, _cla, pred)
     ) = self.predicates.pop() {
@@ -385,7 +385,10 @@ where Slver: Solver<'kid, Parser> {
         self => "{}: {} unclassified, {} classified",
                 self.instance[pred], _unc, _cla
       ) ;
+
       let data = self.data.data_of(pred) ;
+      self.check_exit() ? ;
+      
       if let Some(term) = self.pred_learn(
         pred, data, simple
       ) ? {
@@ -393,21 +396,12 @@ where Slver: Solver<'kid, Parser> {
       } else {
         return Ok(None)
       }
+      self.check_exit() ? ;
     }
     let mut candidates: PrdMap<_> = vec![
       None ; self.instance.preds().len()
     ].into() ;
     ::std::mem::swap(& mut candidates, & mut self.candidate) ;
-    profile!{ self mark "learning" }
-
-    // if conf.ice.decay {
-    //   profile!{ self tick "decay" }
-    //   let _brushed = self.qualifiers.brush_quals(
-    //     used_quals, conf.ice.max_decay
-    //   ) ;
-    //   profile!{ self "brushed qualifiers" => add _brushed }
-    //   profile!{ self mark "decay" }
-    // }
 
     Ok( Some(candidates) )
   }
@@ -422,27 +416,23 @@ where Slver: Solver<'kid, Parser> {
   /// is over.
   pub fn backtrack(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
     profile!{ self tick "learning", "backtrack" }
-    // self.qualifiers.clear_blacklist() ;
+
     // Backtracking or exit loop.
-    if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
-      // Update blacklisted qualifiers.
-      // for & (ref t, _) in & nu_branch {
-      //   self.qualifiers.blacklist(t)
-      // }
+    let res = if let Some( (nu_branch, mut nu_data) ) = self.unfinished.pop() {
       // Update data, some previously unclassified data may be classified now.
       self.data.classify(pred, & mut nu_data) ;
-      profile!{ self mark "learning", "backtrack" }
       Some( (nu_branch, nu_data) )
-    } else {
-      profile!{ self mark "learning", "backtrack" }
-      None
-    }
+    } else { None } ;
+
+    profile!{ self mark "learning", "backtrack" }
+
+    res
   }
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
     & mut self, pred: PrdIdx, mut data: CData, simple: bool
-  ) -> Res< Option<Term> > {
+  ) -> LRes< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
     self.classifier.clear() ;
@@ -455,7 +445,7 @@ where Slver: Solver<'kid, Parser> {
     let mut branch = Vec::with_capacity(17) ;
 
     'learning: loop {
-
+      self.check_exit() ? ;
 
       // Checking whether we can close this branch.
 
@@ -467,14 +457,18 @@ where Slver: Solver<'kid, Parser> {
             "  no more negative data, is_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc.len()
         ) ;
-        profile!{ self tick "learning", "data" }
-        for unc in data.unc {
-          // let prev = self.classifier.insert(unc, true) ;
-          // debug_assert!( prev.is_none() )
-          self.data.stage_pos(pred, unc)
-        }
-        self.data.propagate() ? ;
-        profile!{ self mark "learning", "data" }
+
+        profile!(
+          |self.core._profiler| wrap {
+            for unc in data.unc {
+              // let prev = self.classifier.insert(unc, true) ;
+              // debug_assert!( prev.is_none() )
+              self.data.stage_pos(pred, unc)
+            }
+            self.data.propagate()
+          } "learning", "data"
+        ) ? ;
+
         branch.shrink_to_fit() ;
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;
@@ -502,14 +496,19 @@ where Slver: Solver<'kid, Parser> {
             "  no more positive data, is_legal check ok\n  \
             forcing {} unclassifieds negative...", data.unc.len()
         ) ;
-        profile!{ self tick "learning", "data" }
-        for unc in data.unc {
-          // let prev = self.classifier.insert(unc, false) ;
-          // debug_assert!( prev.is_none() )
-          self.data.stage_neg(pred, unc)
-        }
-        self.data.propagate() ? ;
-        profile!{ self mark "learning", "data" }
+
+        profile!(
+          |self.core._profiler| wrap {
+            for unc in data.unc {
+              // let prev = self.classifier.insert(unc, false) ;
+              // debug_assert!( prev.is_none() )
+              self.data.stage_neg(pred, unc)
+            }
+            self.data.propagate()
+
+          } "learning", "data"
+        ) ? ;
+
         if branch.is_empty() {
           debug_assert!( self.finished.is_empty() ) ;
           debug_assert!( self.unfinished.is_empty() ) ;
@@ -526,14 +525,19 @@ where Slver: Solver<'kid, Parser> {
         }
       }
 
-
+      self.check_exit() ? ;
 
       // Could not close the branch, look for a qualifier.
       profile!{ self tick "learning", "qual" }
-      let (qual, q_data, nq_data) = self.get_qualifier(pred, data, simple) ? ;
+      let res = self.get_qualifier(
+        pred, data, simple
+      ) ;
       profile!{ self mark "learning", "qual" }
-      // msg!{ self => "qual: {}", qual } ;
-      // self.qualifiers.blacklist(& qual) ;
+      let (qual, q_data, nq_data) = if let Some(res) = res ? {
+        res
+      } else {
+        return Ok(None)
+      } ;
 
       // Remember the branch where qualifier is false.
       let mut nq_branch = branch.clone() ;
@@ -579,37 +583,57 @@ where Slver: Solver<'kid, Parser> {
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
-  ) -> Res< (Term, CData, CData) > {
+  ) -> LRes< Option< (Term, CData, CData) > > {
 
     macro_rules! best_qual {
       (only new: $new:expr) => ({
+        let core = & self.core ;
+
         if simple {
+
           profile!{ self tick "learning", "qual", "simple gain" }
           let res = self.qualifiers.maximize(
-            pred, |qual| data.simple_gain(qual), $new
-          ) ? ;
+            pred, |qual| {
+              let res = data.simple_gain(qual) ? ;
+              core.check_exit() ? ;
+              Ok(res)
+            }, $new
+          ) ;
           profile!{ self mark "learning", "qual", "simple gain" }
+          let res = res ? ;
+
           if res.is_none() {
             let qualifiers = & mut self.qualifiers ;
             let all_data = & self.data ;
-            profile!{ self tick "learning", "qual", "gain" }
+            profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
             let res = qualifiers.maximize(
-              pred, |qual| data.gain(pred, all_data, qual), false
+              pred, |qual| {
+                let res = data.gain(pred, all_data, qual) ? ;
+                core.check_exit() ? ;
+                Ok(res)
+              }, false
             ) ;
-            profile!{ self mark "learning", "qual", "gain" }
+            profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
             res
           } else {
             Ok(res)
           }
+
         } else {
+
           let qualifiers = & mut self.qualifiers ;
           let all_data = & self.data ;
-          profile!{ self tick "learning", "qual", "gain" }
+          profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
           let res = qualifiers.maximize(
-            pred, |qual| data.gain(pred, all_data, qual), $new
+            pred, |qual| {
+              let res = data.gain(pred, all_data, qual) ? ;
+              core.check_exit() ? ;
+              Ok(res)
+            }, $new
           ) ;
-          profile!{ self mark "learning", "qual", "gain" }
+          profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
           res
+
         }
       }) ;
     }
@@ -627,10 +651,10 @@ where Slver: Solver<'kid, Parser> {
         profile!{ self tick "learning", "qual", "data split" }
         let (q_data, nq_data) = data.split(& qual) ;
         profile!{ self mark "learning", "qual", "data split" }
-        return Ok( (qual, q_data, nq_data) )
+        return Ok( Some((qual, q_data, nq_data)) )
       } else {
         // Not good enough, maybe synthesis can do better.
-        Some((qual, gain))
+        Some( (qual, gain) )
       }
     }
 
@@ -658,37 +682,48 @@ where Slver: Solver<'kid, Parser> {
       bail!("[bug] cannot synthesize qualifier based on no data")
     }
 
+    self.check_exit() ? ;
+
+
     // Synthesize qualifier separating the data.
-    self.synthesize(pred, & data, & mut best_qual) ? ;
+    profile!{ self tick "learning", "qual", "synthesis" } ;
+    let res = self.synthesize(pred, & data, & mut best_qual) ;
+    profile!{ self mark "learning", "qual", "synthesis" } ;
+    if let None = res ? {
+      return Ok(None)
+    }
 
     if let Some((qual, _)) = best_qual {
       profile!{ self tick "learning", "qual", "data split" }
       let (q_data, nq_data) = data.split(& qual) ;
       profile!{ self mark "learning", "qual", "data split" }
-      Ok( (qual, q_data, nq_data) )
+      Ok( Some((qual, q_data, nq_data)) )
     } else {
       bail!("unable to split data after synthesis...")
     }
   }
 
   /// Qualifier synthesis.
+  ///
+  /// Returns `None` if it received `Exit`.
   pub fn synthesize(
     & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>
-  ) -> Res<()> {
+  ) -> LRes< Option<()> > {
 
-    // println!("synth") ;
-
-    profile!{ self tick "learning", "qual", "synthesis" }
     scoped! {
       let self_data = & self.data ;
       let quals = & mut self.qualifiers ;
       let instance = & self.instance ;
-      let profiler = & self._profiler ;
-      let self_msg = & self.core ;
+      let self_core = & self.core ;
+      let luby = & self.luby ;
 
       let mut treatment = |term: Term| {
+        self_core.check_exit() ? ;
         if let Some(gain) = data.gain(pred, self_data, & term) ? {
-          if gain >= conf.ice.gain_pivot {
+          if luby.is_some() && gain >= conf.ice.gain_pivot_synth {
+            quals.insert(& term, pred) ? ;
+            ()
+          } else if gain >= conf.ice.gain_pivot {
             quals.insert(& term, pred) ? ;
             ()
           }
@@ -700,7 +735,7 @@ where Slver: Solver<'kid, Parser> {
           } else {
             * best = Some((term, gain))
           }
-          Ok(gain >= conf.ice.gain_pivot_synth)
+          Ok( gain >= conf.ice.gain_pivot_synth )
         } else {
           Ok(false)
         }
@@ -712,13 +747,12 @@ where Slver: Solver<'kid, Parser> {
       'synth: loop {
 
         for sample in data.iter() {
-          msg! { * self_msg => "starting synthesis" } ;
+          self_core.check_exit() ? ;
+          msg! { * self_core => "starting synthesis" } ;
           let done = synth_sys.sample_synth(
-            sample, & mut treatment, profiler
-          ).chain_err(
-            || "during synthesis from sample"
+            sample, & mut treatment, & self_core._profiler
           ) ? ;
-          msg! { * self_msg => "done with synthesis" } ;
+          msg! { * self_core => "done with synthesis" } ;
           if done { break }
         }
 
@@ -729,8 +763,8 @@ where Slver: Solver<'kid, Parser> {
 
       }
     }
-    profile!{ self mark "learning", "qual", "synthesis" } ;
-    Ok(())
+
+    Ok( Some(()) )
   }
 
 
@@ -772,7 +806,7 @@ where Slver: Solver<'kid, Parser> {
   /// Otherwise, the actlit is deactivated (`assert (not <actlit>)`).
   pub fn is_legal_pred(
     & mut self, pred: PrdIdx, pos: bool
-  ) -> Res<bool> {
+  ) -> LRes<bool> {
     profile!{ self tick "learning", "smt", "all legal" }
     let unc = & self.data.map[pred] ;
     if unc.is_empty() {
@@ -808,8 +842,6 @@ where Slver: Solver<'kid, Parser> {
   /// - **declares** samples that neither pos nor neg
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<bool> {
-    profile!{ self tick "learning", "smt", "setup" }
-    
     // Dummy arguments used in the `define_fun` for pos (neg) data.
     let args: [ (SWrap, Typ) ; 0 ] = [] ;
 
@@ -884,16 +916,14 @@ where Slver: Solver<'kid, Parser> {
         self.solver.assert( & CWrap(constraint) ) ?
       }
     }
-    profile!{ self mark "learning", "smt", "setup" }
 
     Ok(false)
   }
 }
 
-impl<
-  'core, 'kid, Slver: Solver<'kid, Parser>
-> HasLearnerCore for IceLearner<'core, Slver> {
-  fn core(& self) -> & LearnerCore { self.core }
+impl<'core, 'kid, Slver> ::std::ops::Deref for IceLearner<'core, Slver> {
+  type Target = LearnerCore ;
+  fn deref(& self) -> & LearnerCore { & self.core }
 }
 
 

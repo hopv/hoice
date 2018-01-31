@@ -112,7 +112,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
   pub fn trivial_impl<'a>(
     & mut self, vars: & VarMap<VarInfo>, lhs: & 'a Vec<& 'a Term>
   ) -> Res<bool> {
-    self.solver.reset() ? ;
+    self.solver.push(1) ? ;
     if lhs.is_empty() { return Ok(false) }
     for var in vars {
       if var.active {
@@ -121,6 +121,7 @@ impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
     }
     self.solver.assert( & ConjWrap::new(lhs) ) ? ;
     let sat = self.solver.check_sat() ? ;
+    self.solver.pop(1) ? ;
     Ok(! sat)
   }
 }
@@ -1359,11 +1360,9 @@ where Slver: Solver<'skid, ()> {
         clause, & (& set, & set, & self.instance.preds)
       ) ? ;
 
-      if self.solver.check_sat() ? {
-        return Ok(false)
-      } else {
-        self.solver.pop(1) ?
-      }
+      let sat = self.solver.check_sat() ? ;
+      self.solver.pop(1) ? ;
+      return Ok(! sat)
     }
 
     Ok(true)

@@ -7,6 +7,8 @@
 use common::* ;
 use common::data::HSample ;
 
+use errors::learners::{ LRes } ;
+
 #[macro_use]
 pub mod helpers ;
 pub mod int ;
@@ -34,8 +36,8 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & HSample, & mut TermVals) -> Res<bool>
-  where F: FnMut(Term) -> Res<bool> ;
+  fn synth<F>(& mut self, F, & HSample, & mut TermVals) -> LRes<bool>
+  where F: FnMut(Term) -> LRes<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
   /// Adds them to the input term to value map.
@@ -93,8 +95,8 @@ impl SynthSys {
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(
     & mut self, sample: & HSample, mut f: F, _profiler: & Profiler
-  ) -> Res<bool>
-  where F: FnMut(Term) -> Res<bool> {
+  ) -> LRes<bool>
+  where F: FnMut(Term) -> LRes<bool> {
 
     if let Some(int_synth) = self.int.as_mut() {
       if ! int_synth.is_done() {
@@ -103,19 +105,20 @@ impl SynthSys {
           profile!{
             |_profiler| tick "learning", "qual", "synthesis", "int project"
           }
-          real_synth.project(
+          let res = real_synth.project(
             sample, int_synth.typ(), & mut self.cross_synth
-          ) ? ;
+          ) ;
           profile!{
             |_profiler| mark "learning", "qual", "synthesis", "int project"
           }
+          res ?
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "int" }
         let done = int_synth.synth(
           & mut f, sample, & mut self.cross_synth
-        ) ? ;
+        ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "int" }
-        if done { return Ok(true) }
+        if done ? { return Ok(true) }
       }
     }
 
@@ -123,22 +126,20 @@ impl SynthSys {
       if ! real_synth.is_done() {
         debug_assert! { self.cross_synth.is_empty() }
         if let Some(int_synth) = self.int.as_mut() {
-          profile!{
-            |_profiler| tick "learning", "qual", "synthesis", "real project"
-          }
-          int_synth.project(
-            sample, real_synth.typ(), & mut self.cross_synth
-          ) ? ;
-          profile!{
-            |_profiler| mark "learning", "qual", "synthesis", "real project"
-          }
+          profile! (
+            |_profiler| wrap {
+              int_synth.project(
+                sample, real_synth.typ(), & mut self.cross_synth
+              )
+            } "learning", "qual", "synthesis", "real project"
+          ) ?
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "real" }
         let done = real_synth.synth(
           & mut f, sample, & mut self.cross_synth
-        ) ? ;
+        ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "real" }
-        if done { return Ok(true) }
+        if done ? { return Ok(true) }
       }
     }
 

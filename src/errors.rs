@@ -110,3 +110,32 @@ pub fn print_err(errs: Error) {
   }
   println!("\")")
 }
+
+
+/// Errors specific to learners.
+pub mod learners {
+  /// Learner error.
+  pub enum LError {
+    /// Exit order from teacher.
+    Exit,
+    /// Normal error.
+    Error(::errors::Error)
+  }
+  impl LError {
+    pub fn chain_err<F, EK>(self, error: F) -> LError
+    where F: FnOnce() -> EK, EK: Into<::errors::ErrorKind> {
+      match self {
+        LError::Exit => self,
+        LError::Error(e) => LError::Error( e.chain_err(error) )
+      }
+    }
+  }
+  impl<T: Into<::errors::Error>> From<T> for LError {
+    fn from(e: T) -> Self {
+      LError::Error( e.into() )
+    }
+  }
+
+  /// Result type.
+  pub type LRes<T> = Result<T, LError> ;
+}

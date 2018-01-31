@@ -5,7 +5,7 @@
 //! [hoice]: https://github.com/hopv/hoice
 //! (hoice repository on github)
 //! [ice]: http://madhu.cs.illinois.edu/CAV14ice.pdf
-//! (ICE paper (PDF))
+//! (ICE paper PDF)
 
 #![doc(test(attr(deny(warnings))))]
 
@@ -80,7 +80,7 @@ pub fn work() -> Res<()> {
 
 
 
-/// Reads from a [Read][read]er.
+/// Reads from a `Read`er.
 ///
 /// Arguments:
 /// 
@@ -91,9 +91,6 @@ pub fn work() -> Res<()> {
 ///   complete. Only used in tests.
 ///
 /// - `stop_on_err`: forces to stop at the first error. Only used in tests.
-///
-/// [read]: https://doc.rust-lang.org/std/io/trait.Read.html
-/// (Read trait)
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
 ) -> Res< (Option<Model>, Instance) > {

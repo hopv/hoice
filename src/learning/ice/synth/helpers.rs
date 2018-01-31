@@ -7,7 +7,7 @@
 /// the application yields true.
 macro_rules! apply {
   ($f:ident to $term:expr) => (
-    if $f($term)? { return Ok(true) }
+    if $f($term) ? { return Ok(true) }
   ) ;
 }
 

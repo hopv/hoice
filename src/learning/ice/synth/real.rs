@@ -3,6 +3,8 @@
 use common::* ;
 use common::data::HSample ;
 
+use errors::learners::LRes ;
+
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -39,8 +41,8 @@ impl TheoSynth for RealSynth {
 
   fn synth<F>(
     & mut self, f: F, sample: & HSample, others: & mut TermVals
-  ) -> Res<bool>
-  where F: FnMut(Term) -> Res<bool> {
+  ) -> LRes<bool>
+  where F: FnMut(Term) -> LRes<bool> {
     match self.expressivity {
       0 => simple_real_synth(sample, others, f),
       1 => real_synth_1(sample, others, f),
@@ -82,8 +84,8 @@ impl TheoSynth for RealSynth {
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_real_synth<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
+) -> LRes<bool>
+where F: FnMut(Term) -> LRes<bool> {
   let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
     sample.len()
   ) ;
@@ -118,8 +120,8 @@ where F: FnMut(Term) -> Res<bool> {
 /// Level 1 for real synthesis.
 pub fn real_synth_1<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
+) -> LRes<bool>
+where F: FnMut(Term) -> LRes<bool> {
   let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
     sample.len()
   ) ;

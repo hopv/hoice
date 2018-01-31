@@ -60,6 +60,7 @@ use hashconsing::* ;
 
 
 use common::* ;
+use errors::learners::LRes ;
 
 
 /// Hashconsed version of `RQArgs`.
@@ -628,8 +629,8 @@ impl Qualifiers {
   /// qualifier will be returned.
   pub fn maximize<Crit>(
     & mut self, pred: PrdIdx, mut crit: Crit, new_only: bool
-  ) -> Res< Option<(Term, f64)> >
-  where Crit: FnMut( & mut Qual ) -> Res<Option<f64>> {
+  ) -> LRes< Option<(Term, f64)> >
+  where Crit: FnMut( & mut Qual ) -> LRes< Option<f64> > {
     let sig = & self.instance.preds()[pred].sig ;
     let mut prev = None ;
     for class in self.classes.values_mut() {
@@ -647,9 +648,7 @@ impl Qualifiers {
             let qual = & mut Qual { qual, map } ;
             qual.check() ? ;
             // println!("- {}", qual.to_term()) ;
-            let res = if let Some(res) = crit(qual).chain_err(
-              || format!("during criterion evaluation on {}", qual.qual)
-            ) ? {
+            let res = if let Some(res) = crit(qual) ? {
               res
             } else {
               // println!("  none") ;

@@ -1,4 +1,9 @@
 //! Learning-data-related types.
+//!
+//! The types in this module mostly concern the [`Teacher`][teacher].
+//!
+//! [teacher]: ../../teacher/struct.Teacher.html
+//! (Teacher struct)
 
 use std::sync::RwLock ;
 use std::cmp::Ordering ;
@@ -244,8 +249,13 @@ impl DataCore {
 
   /// Shrinks the list of constraints.
   ///
-  /// - pops all empty constraints from `self.constraints`.
-  fn shrink_constraints(& mut self) {
+  /// - pops all trailing empty constraints from [`self.constraints`][cstrs].
+  ///
+  /// Called at the end of [`propagate`][prop].
+  ///
+  /// [cstrs]: #structfield.constraints (constraints field)
+  /// [prop]: #method.propagate (propagate function)
+  pub fn shrink_constraints(& mut self) {
     loop {
       scoped! {
         if let Some(last) = self.constraints.last() {
@@ -265,7 +275,13 @@ impl DataCore {
 
   /// Checks the state of the data. Does nothing in release.
   ///
-  /// Checks that no positive / negative data is linked to some constraints.
+  /// - no positive / negative data is linked to some constraints
+  /// - `(pred, sample, constraint)` in [`self.map`][map] implies `(pred
+  ///   sample)` in [`self.constraints`][cstrs]`[constraint]`'s lhs or rhs
+  /// - and conversely
+  ///
+  /// [map]: #structfield.map (map field)
+  /// [cstrs]: #structfield.constraints (constraints field)
   #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
     if ! self.pos_to_add.is_empty() {
@@ -339,7 +355,7 @@ impl DataCore {
     Ok(())
   }
   #[cfg(not(debug_assertions))]
-  #[inline(always)]
+  #[inline]
   pub fn check(& self) -> Res<()> { Ok(()) }
 
 
@@ -477,6 +493,7 @@ impl DataCore {
       }
     }
     self.check() ? ;
+    self.shrink_constraints() ;
     Ok(())
   }
 
@@ -880,7 +897,9 @@ impl<'a> PebcakFmt<'a> for DataCore {
 /// Structure storing unprojected learning data.
 ///
 /// Used by the teacher to simplify constraints as it adds samples. Basically a
-/// `DataCore` and a factory for samples.
+/// [`DataCore`][core] and a factory for samples.
+///
+/// [core]: struct.DataCore.html (DataCore struct)
 pub struct Data {
   /// Data core.
   core: DataCore,
@@ -916,8 +935,6 @@ impl Data {
   }
 
   /// Creates a new sample. Returns true if it's new.
-  ///
-  /// Memorizes it in `self.new_samples` if it's new.
   pub fn mk_sample(
     & mut self, args: Args
   ) -> (HSample, bool) {
@@ -925,12 +942,11 @@ impl Data {
     (args, is_new)
   }
 
-  /// Adds a constraint. Propagates positive and negative samples.
+  /// Adds a constraint. Does not propagate.
   pub fn add_cstr(
     & mut self, lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
   ) -> Res<bool> {
     self.propagate() ? ;
-    self.shrink_constraints() ;
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     'smpl_iter: for (pred, args) in lhs {
       let (args, is_new) = self.mk_sample(args) ;
