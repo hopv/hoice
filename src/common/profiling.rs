@@ -45,6 +45,10 @@ impl ProfileTree {
   }
 
   /// Debug printing (multi-line).
+  #[cfg(feature = "bench")]
+  #[allow(dead_code)]
+  fn print(& self, _: & 'static str, _: & [ & 'static str ]) {}
+  #[cfg(not (feature = "bench") )]
   fn print(& self, pref: & 'static str, set_sum: & [ & 'static str ]) {
     self.iter(
       |scope, time, sub_time| if let Some(last) = scope.last() {

@@ -40,6 +40,12 @@ impl Cxt {
   }
 
   /// Log-debugs cvar_to_pvar.
+  #[cfg(feature = "bench")]
+  pub fn log_debug_internal(
+    & self, _: & Instance,
+    _: & ::instance::instance::Clause, _: & str
+  ) {}
+  #[cfg(not (feature = "bench") )]
   pub fn log_debug_internal(
     & self, instance: & Instance,
     clause: & ::instance::instance::Clause, pref: & str
@@ -68,6 +74,9 @@ impl Cxt {
   }
 
   /// Log-debugs the context.
+  #[cfg(feature = "bench")]
+  pub fn log_debug(& self, _: & Instance, _: & str) {}
+  #[cfg(not (feature = "bench") )]
   pub fn log_debug(& self, instance: & Instance, pref: & str) {
     if_debug! {
       macro_rules! logd {

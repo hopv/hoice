@@ -122,7 +122,7 @@ where S: Solver<'skid, ()> {
   }
 
   /// Runs the full pre-processing.
-  pub fn run(& mut self, profiler: & Profiler) -> Res<()> {
+  pub fn run(& mut self, _profiler: & Profiler) -> Res<()> {
     // Counter for preproc dumping.
     //
     // Starts at `1`, `0` is reserved for the fixed point.
@@ -135,12 +135,12 @@ where S: Solver<'skid, ()> {
       ($preproc:ident) => (
         if let Some(preproc) = self.$preproc.as_mut() {
           profile! {
-            |profiler| tick "preproc", preproc.name()
+            |_profiler| tick "preproc", preproc.name()
           }
           log_info! { "running {}", conf.emph( preproc.name() ) }
           let red_info = preproc.apply( & mut self.instance ) ? ;
           profile! {
-            |profiler| mark "preproc", preproc.name()
+            |_profiler| mark "preproc", preproc.name()
           }
           if red_info.non_zero() {
             count += 1 ;
@@ -150,22 +150,22 @@ where S: Solver<'skid, ()> {
               format!("Instance after running `{}`.", preproc.name())
             ) ? ;
             profile!{
-              |profiler| format!(
+              |_profiler| format!(
                 "{:>25}   pred red", preproc.name()
               ) => add red_info.preds
             }
             profile!{
-              |profiler| format!(
+              |_profiler| format!(
                 "{:>25} clause red", preproc.name()
               ) => add red_info.clauses_rmed
             }
             profile!{
-              |profiler| format!(
+              |_profiler| format!(
                 "{:>25} clause add", preproc.name()
               ) => add red_info.clauses_added
             }
             profile!{
-              |profiler| format!(
+              |_profiler| format!(
                 "{:>25}    arg red", preproc.name()
               ) => add red_info.args_rmed
             }
@@ -187,11 +187,11 @@ where S: Solver<'skid, ()> {
         "Instance before pre-processing."
     ) ? ;
     profile!{
-      |profiler|
+      |_profiler|
         "clause count original" => add self.instance.clauses().len()
     }
     profile!{
-      |profiler|
+      |_profiler|
         "nl clause count original" => add {
           let mut count = 0 ;
           'clause_iter: for clause in self.instance.clauses() {
@@ -206,11 +206,11 @@ where S: Solver<'skid, ()> {
         }
     }
     profile!{
-      |profiler|
+      |_profiler|
         "pred count original" => add self.instance.preds().len()
     }
     profile!{
-      |profiler|
+      |_profiler|
         "arg count original" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
@@ -271,11 +271,11 @@ where S: Solver<'skid, ()> {
     ) ? ;
 
     profile!{
-      |profiler|
+      |_profiler|
         "clause count    final" => add self.instance.clauses().len()
     }
     profile!{
-      |profiler|
+      |_profiler|
         "nl clause count    final" => add {
           let mut count = 0 ;
           'clause_iter: for clause in self.instance.clauses() {
@@ -291,7 +291,7 @@ where S: Solver<'skid, ()> {
     }
 
     profile!{
-      |profiler|
+      |_profiler|
         "pred count    final" => add {
           let mut count = 0 ;
           for pred in self.instance.pred_indices() {
@@ -304,7 +304,7 @@ where S: Solver<'skid, ()> {
     }
 
     profile!{
-      |profiler|
+      |_profiler|
         "arg count    final" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {

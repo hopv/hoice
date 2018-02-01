@@ -258,7 +258,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Finalizes the run, does nothing in bench mode.
   #[cfg(feature = "bench")]
   #[inline(always)]
-  pub fn finalize(self, _: & Profiler) -> Res<()> {
+  pub fn finalize(mut self, _: & Profiler) -> Res<()> {
     for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       if let Some(sender) = sender.as_ref() {
         let _ = sender.send( FromTeacher::Exit ) ;

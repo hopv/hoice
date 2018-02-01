@@ -204,7 +204,13 @@ macro_rules! profile {
 }
 #[cfg(feature = "bench")]
 macro_rules! profile {
-  ( $($tt:tt)* ) => (()) ;
+  ( | $stuff:ident $(. $prof:ident)* |
+    wrap $b:block $( $scope:expr ),+ $(,)*
+  ) => ($b) ;
+  ( $slf:ident
+    wrap $b:block $( $scope:expr ),+ $(,)*
+  ) => ($b) ;
+  ( $($stuff:tt)* ) => ( () ) ;
 }
 
 
