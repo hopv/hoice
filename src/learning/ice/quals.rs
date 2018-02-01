@@ -624,9 +624,6 @@ impl Qualifiers {
 
   /// Returns the qualifier that maximized the input criterion in a non-zero
   /// fashion, if any. Early-returns if the criterion is `1.0` at some point.
-  ///
-  /// The criterion `Crit` can return some info, and the info of the best
-  /// qualifier will be returned.
   pub fn maximize<Crit>(
     & mut self, pred: PrdIdx, mut crit: Crit, new_only: bool
   ) -> LRes< Option<(Term, f64)> >
@@ -638,8 +635,11 @@ impl Qualifiers {
         let quals = & mut class.quals ;
         'all_quals: for (qual, info) in quals.iter_mut() {
           
-          if conf.ice.qual_bias && ! info.preds.contains(& pred)
-          || new_only && ! info.is_new {
+          if (
+            conf.ice.qual_bias && ! info.preds.contains(& pred)
+          ) || (
+            new_only && ! info.is_new
+          ) {
             continue 'all_quals
           }
           info.is_new = false ;

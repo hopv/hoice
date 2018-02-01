@@ -613,7 +613,9 @@ impl Instance {
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
     for clause in & self.clauses {
-      self.qualifiers_of_clause(clause, quals) ?
+      if ! clause.from_unrolling {
+        self.qualifiers_of_clause(clause, quals) ?
+      }
     }
     // Add boolean qualifiers for all predicate's bool vars.
     for pred in & self.preds {

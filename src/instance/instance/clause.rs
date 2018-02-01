@@ -28,7 +28,11 @@ pub struct Clause {
   ///
   /// [checked]: #methods.lhs_terms_checked
   /// (lhs_terms_checked method)
-  term_changed: bool
+  term_changed: bool,
+  /// True if the clause is the result of unrolling.
+  ///
+  /// Means the terms will be ignored during mining.
+  pub from_unrolling: bool,
 }
 impl Clause {
   /// Creates a clause.
@@ -38,7 +42,8 @@ impl Clause {
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause {
-      vars, lhs_terms, lhs_preds, rhs, term_changed: true
+      vars, lhs_terms, lhs_preds, rhs,
+      term_changed: true, from_unrolling: false
     } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
     clause
@@ -367,6 +372,7 @@ impl Clause {
       lhs_terms: self.lhs_terms.clone(), lhs_preds,
       rhs: self.rhs.clone(),
       term_changed: true,
+      from_unrolling: true,
     }
   }
 
@@ -392,7 +398,7 @@ impl Clause {
       lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
       rhs,
-      term_changed,
+      term_changed, from_unrolling: false,
     }
   }
 
