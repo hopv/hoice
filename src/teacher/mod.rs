@@ -34,9 +34,17 @@ pub fn start_class(
       || "while constructing the teacher's solver"
     ) ? ;
     if let Some(log) = conf.solver.log_file("teacher") ? {
-      teach( instance, solver.tee(log), profiler )
+      let mut teacher = Teacher::new(
+        solver.tee(log), instance, profiler
+      ) ;
+      let res = teach( & mut teacher ) ;
+      teacher.finalize() ? ;
+      res
     } else {
-      teach( instance, solver, profiler )
+      let mut teacher = Teacher::new(solver, instance, profiler) ;
+      let res = teach( & mut teacher ) ;
+      teacher.finalize() ? ;
+      res
     }
   } ;
 
@@ -49,10 +57,9 @@ pub fn start_class(
 
 /// Teaching to the learners.
 pub fn teach< 'kid, S: Solver<'kid, Parser> >(
-  instance: Arc<Instance>, solver: S, profiler: & Profiler
+  teacher: & mut Teacher<'kid, S>
 ) -> Res< Option<Candidates> > {
   log_debug!{ "  creating teacher" }
-  let mut teacher = Teacher::new(solver, instance, profiler) ;
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
@@ -67,7 +74,6 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
   log_debug!{ "  performing initial check..." }
   let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
-    teacher.finalize(profiler) ? ;
     return Ok( Some(cands) )
   }
   log_debug!{ "  generating data from initial cex..." }
@@ -111,14 +117,13 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
       }
     }
 
-    match teacher.get_candidates(profiler) ? {
+    match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
       Some( (_idx, None) ) => {
         log_info!(
           "\ngot unsat result from {} learner", teacher.learners[_idx].1
         ) ;
-        teacher.finalize(profiler) ? ;
         return Ok(None)
       },
 
@@ -143,7 +148,6 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
         profile!{ teacher mark "cexs" }
 
         if cexs.is_empty() {
-          teacher.finalize(profiler) ? ;
           return Ok( Some(candidates) )
         }
 
@@ -174,12 +178,12 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
               conf.emph( & teacher.learners[idx].1 )
             }
           },
-          Err(e) => match e.kind() {
-            & ErrorKind::Unsat => {
-              teacher.finalize(profiler) ? ;
+          Err(e) => {
+            if e.is_unsat() {
               return Ok(None)
-            },
-            _ => bail!(e),
+            } else {
+              bail!(e)
+            }
           },
         }
 
@@ -240,7 +244,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Finalizes the run.
   #[cfg( not(feature = "bench") )]
-  pub fn finalize(mut self, profiler: & Profiler) -> Res<()> {
+  pub fn finalize(mut self) -> Res<()> {
     if conf.stats {
       println!("; Done in {} guess(es)", self.count) ;
       println!("") ;
@@ -252,13 +256,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       }
       * sender = None
     }
-    while self.get_candidates(profiler)?.is_some() {}
+    while self.get_candidates(true)?.is_some() {}
     Ok(())
   }
   /// Finalizes the run, does nothing in bench mode.
   #[cfg(feature = "bench")]
   #[inline(always)]
-  pub fn finalize(mut self, _: & Profiler) -> Res<()> {
+  pub fn finalize(mut self) -> Res<()> {
     for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       if let Some(sender) = sender.as_ref() {
         let _ = sender.send( FromTeacher::Exit ) ;
@@ -344,51 +348,82 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Returns `None` when there are no more kids. Otherwise, the second
   /// element of the pair is `None` if a learner concluded `unsat`, and
   /// `Some` of the candidates otherwise.
+  ///
+  /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
-    & self, profiler: & Profiler
+    & self, drain: bool
   ) -> Res< Option<(LrnIdx, Option<Candidates>)> > {
     profile!{ self tick "waiting" }
+
     'recv: loop {
-      match self.from_learners.recv() {
-        Ok( (_idx, FromLearners::Msg(_s)) ) => if_verb!{
+
+      let msg = if let Some(timeout) = conf.until_timeout() {
+        if ! drain {
+          match self.from_learners.recv_timeout(timeout) {
+            Ok(msg) => msg,
+            Err(_) => {
+              profile!{ self mark "waiting" }
+              conf.check_timeout() ? ;
+              return Ok(None)
+            },
+          }
+        } else {
+          match self.from_learners.recv() {
+            Ok(msg) => msg,
+            Err(_) => {
+              profile!{ self mark "waiting" }
+              return Ok(None)
+            },
+          }
+        }
+      } else {
+        match self.from_learners.recv() {
+          Ok(msg) => msg,
+          Err(_) => {
+            profile!{ self mark "waiting" }
+            return Ok(None)
+          },
+        }
+      } ;
+
+      match msg {
+
+        (_idx, FromLearners::Msg(_s)) => if_verb!{
           for _line in _s.lines() {
             log_debug!(
               "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
             )
           }
         },
-        Ok( (idx, FromLearners::Err(e)) ) => {
+
+        (idx, FromLearners::Err(e)) => {
           let err: Res<()> = Err(e) ;
           let err: Res<()> = err.chain_err(
             || format!(
               "from {} learner", conf.emph( & self.learners[idx].1 )
             )
           ) ;
-          // println!("receiving:") ;
-          // for err in e.iter() {
-          //   println!("{}", err)
-          // }
           print_err( err.unwrap_err() )
         },
-        Ok( (idx, FromLearners::Stats(tree, stats)) ) => if conf.stats {
-          println!(
-            "; received stats from {}", conf.emph( & self.learners[idx].1 )
-          ) ;
-          profiler.add_sub( self.learners[idx].1.clone(), tree, stats )
+
+        (idx, FromLearners::Stats(tree, stats)) => if conf.stats {
+          self._profiler.add_sub(
+            self.learners[idx].1.clone(), tree, stats
+          )
         },
-        Ok( (idx, FromLearners::Cands(cands)) ) => {
+
+        (idx, FromLearners::Cands(cands)) => {
           profile!{ self mark "waiting" }
           profile!{ self "candidates" => add 1 }
           return Ok( Some( (idx, Some(cands)) ) )
         },
-        Ok( (idx, FromLearners::Unsat) ) => {
-          return Ok( Some( (idx, None) ) )
-        },
-        Err(_) => {
-          profile!{ self mark "waiting" }
-          return Ok( None )
-        },
+
+        (idx, FromLearners::Unsat) => return Ok(
+          Some( (idx, None) )
+        ),
+
       }
+
     }
   }
 

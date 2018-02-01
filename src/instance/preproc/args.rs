@@ -333,7 +333,7 @@ impl Cxt {
   }
 
   /// Destroys the context and returns the predicate variables to keep.
-  pub fn extract(mut self, instance: & Instance) -> PrdHMap<VarSet> {
+  pub fn extract(mut self, instance: & Instance) -> Res< PrdHMap<VarSet> > {
     log_debug! { "  extract..." }
     let mut keep = HashSet::new() ;
     let mut res = PrdHMap::with_capacity( self.keep.len() ) ;
@@ -347,6 +347,7 @@ impl Cxt {
           ).insert(var) ;
         }
       }
+      conf.check_timeout() ? ;
     }
     for index in keep {
       for (pred, vars) in self.dep[index].drain() {
@@ -359,7 +360,8 @@ impl Cxt {
         }
         res.entry(pred).or_insert_with(
           || VarSet::new()
-        ).extend(vars)
+        ).extend(vars) ;
+        conf.check_timeout() ? ;
       }
     }
     for pred in instance.pred_indices() {
@@ -381,7 +383,7 @@ impl Cxt {
       log_debug! { "  }}" }
     }
 
-    res
+    Ok(res)
   }
 }
 
@@ -432,6 +434,8 @@ pub fn to_keep(
 
     cxt.commit() ;
 
+    conf.check_timeout() ? ;
+
     // cxt.log_debug(instance, "    ")
   }
 
@@ -453,6 +457,6 @@ pub fn to_keep(
   // }
   // println!("") ;
 
-  Ok( cxt.extract(instance) )
+  cxt.extract(instance)
 
 }

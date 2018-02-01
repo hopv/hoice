@@ -252,6 +252,14 @@ pub struct PreprocConf {
   /// (ArgRed reduction strategy)
   pub arg_red: bool,
 
+  /// Allows unrolling.
+  ///
+  /// (De)activates [`Unroll`][unroll].
+  ///
+  /// [unroll]: ../../instance/preproc/struct.Unroll.html
+  /// (Unroll strategy)
+  pub unroll: bool,
+
   /// Allows clause term pruning.
   ///
   /// This is part of the [`Simplify`][simpl] strategy as well as the
@@ -373,6 +381,20 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("prune_terms").long("--prune_terms").help(
+        "(de)activates clause term pruning when simplifying clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).hidden(
+        true
+      ).display_order( order() )
+
+    ).arg(
+
       Arg::with_name("reduction").long("--reduction").help(
         "(de)activates all Horn reduction"
       ).validator(
@@ -470,17 +492,15 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("prune_terms").long("--prune_terms").help(
-        "(de)activates clause term pruning when simplifying clauses"
+      Arg::with_name("unroll").long("--unroll").help(
+        "(de)activates unrolling"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value(
-        "on"
-      ).takes_value(true).number_of_values(1).hidden(
+      ).default_value("on").takes_value(true).hidden(
         true
-      ).display_order( order() )
+      ).number_of_values(1).display_order( order() )
 
     )
   }
@@ -498,11 +518,12 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
+    let unroll = bool_of_matches(matches, "unroll") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms
+      arg_red, prune_terms, unroll
     }
   }
 }
@@ -731,6 +752,7 @@ impl TeacherConf {
 
 
 
+use std::time::{ Instant, Duration } ;
 
 
 /// Global configuration.
@@ -742,6 +764,8 @@ pub struct Config {
   pub stats: bool,
   /// Inference flag.
   pub infer: bool,
+  /// Instant at which we'll timeout.
+  timeout: Option<Instant>,
   /// Output directory.
   out_dir: String,
   /// Styles, for coloring.
@@ -768,24 +792,54 @@ impl ColorExt for Config {
 }
 impl Config {
   /// Output directory as a `PathBuf`.
+  #[inline]
   pub fn out_dir(& self) -> PathBuf {
     PathBuf::from(& self.out_dir)
   }
   /// True iff verbose or debug.
+  #[inline]
   pub fn verbose(& self) -> bool {
     self.verb.verbose()
   }
   /// True iff debug.
+  #[inline]
   pub fn debug(& self) -> bool {
     self.verb.debug()
   }
   /// Input file.
+  #[inline]
   pub fn in_file(& self) -> Option<& String> {
     self.file.as_ref()
   }
   /// Result to check file.
+  #[inline]
   pub fn check_file(& self) -> Option<& String> {
     self.check.as_ref()
+  }
+
+  /// Checks if we're out of time.
+  #[inline]
+  pub fn check_timeout(& self) -> Res<()> {
+    if let Some(max) = self.timeout.as_ref() {
+      if & Instant::now() > max {
+        bail!( ErrorKind::Timeout )
+      }
+    }
+    Ok(())
+  }
+  /// Time until timeout.
+  #[inline]
+  pub fn until_timeout(& self) -> Option<Duration> {
+    if let Some(timeout) = self.timeout.as_ref() {
+      let now = Instant::now() ;
+      if & now > timeout {
+        Some( Duration::new(0,0) )
+      } else {
+        Some( * timeout - now )
+      }
+    } else {
+      None
+    }
   }
 
   /// Parses command-line arguments and generates the configuration.
@@ -830,6 +884,14 @@ impl Config {
     // Inference flag.
     let infer = bool_of_matches(& matches, "infer") ;
 
+    // Timeout.
+    let timeout = match int_of_matches(& matches, "timeout") {
+      0 => None,
+      n => Some(
+        Instant::now() + Duration::new(n as u64, 0)
+      ),
+    } ;
+
     // Result checking.
     let check = matches.value_of("check").map(
       |s| s.to_string()
@@ -847,7 +909,7 @@ impl Config {
     let teacher = TeacherConf::new(& matches) ;
 
     Config {
-      file, verb, stats, infer, out_dir, styles,
+      file, verb, stats, infer, timeout, out_dir, styles,
       check, check_eld,
       instance, preproc, solver, ice, teacher
     }
@@ -924,6 +986,18 @@ impl Config {
         bool_format
       ).default_value(
         "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("timeout").long("--timeout").short("-t").help(
+        "sets a timeout in seconds, `0` for none"
+      ).validator(
+        int_validator
+      ).value_name(
+        "<int>"
+      ).default_value(
+        "0"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     )

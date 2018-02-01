@@ -24,8 +24,7 @@ unsafe impl Send for Launcher {}
 impl Launcher {
   /// Launches an smt learner.
   pub fn launch(
-    core: & LearnerCore, instance: Arc<Instance>, data: DataCore,
-    mine: bool
+    core: & LearnerCore, instance: Arc<Instance>, data: DataCore, mine: bool
   ) -> LRes<()> {
     use rsmt2::{ solver, Kid } ;
     let mut kid = Kid::new( conf.solver.conf() ).chain_err(
@@ -34,27 +33,18 @@ impl Launcher {
     let conflict_solver = solver(& mut kid, Parser).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
-    // let mut synth_kid = Kid::new( conf.solver.conf() ).chain_err(
-    //   || "while spawning the teacher's synthesis solver"
-    // ) ? ;
-    // let synth_solver = solver(& mut synth_kid, Parser).chain_err(
-    //   || "while constructing the teacher's synthesis solver"
-    // ) ? ;
+
     if let Some(log) = conf.solver.log_file("ice_learner") ? {
-      // let synth_log = conf.solver.log_file("ice_learner_synth")?.expect(
-      //   "[unreachable] log mod is active"
-      // ) ;
       IceLearner::new(
         & core, instance, data,
-        conflict_solver.tee(log), // synth_solver.tee(synth_log)
-        mine
+        conflict_solver.tee(log), mine
       ).chain_err(
         || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
-        & core, instance, data, conflict_solver, // synth_solver
-        mine
+        & core, instance, data,
+        conflict_solver, mine
       ).chain_err(
         || "while creating ice learner"
       )?.run()

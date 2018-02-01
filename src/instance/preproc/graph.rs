@@ -181,7 +181,7 @@ impl Graph {
   }
 
   /// Checks that the graph makes sense.
-  #[cfg(not(debug_assertions))]
+  #[cfg( not(debug_assertions) )]
   #[inline(always)]
   pub fn check(& self, _: & Instance) -> Res<()> {
     Ok(())
@@ -261,6 +261,7 @@ impl Graph {
     }
 
     while ! to_do.is_empty() {
+      conf.check_timeout() ? ;
       let pred = * to_do.iter().next().unwrap() ;
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
@@ -294,7 +295,7 @@ impl Graph {
     substs: & HashSet<Map>,
     lft: & Vec<(Quantfed, TTermSet)>,
     rgt: & Vec<(Quantfed, TTermSet)>
-  ) -> Vec<(Quantfed, TTermSet)>
+  ) -> Res< Vec<(Quantfed, TTermSet)> >
   where Map: VarIndexed<Term> + Eq + ::std::hash::Hash {
     log_debug! { "    merging..." }
     let first_index = instance[pred].sig.next_index() ;
@@ -313,6 +314,7 @@ impl Graph {
 
       // Generate map for substitution and update left qvars.
       let mut map = VarHMap::with_capacity(0) ;
+      conf.check_timeout() ? ;
       for & (ref l_qvars, ref l_conj) in lft {
         let mut curr_qvar = first_index ;
         map.clear() ;
@@ -340,6 +342,7 @@ impl Graph {
           log_debug! { "    }}" }
         }
 
+        conf.check_timeout() ? ;
 
         'all_substitutions: for subst in substs {
           let mut conj = r_conj.clone() ;
@@ -369,7 +372,7 @@ impl Graph {
       }
     }
 
-    result
+    Ok(result)
   }
 
 
@@ -388,6 +391,8 @@ impl Graph {
     let mut increase: usize = 0 ;
 
     let forced_inlining = keep.len() == 0 ;
+
+    conf.check_timeout() ? ;
 
     'construct: loop {
 
@@ -419,6 +424,8 @@ impl Graph {
 
       let (lhs_clauses, clauses) = instance.clauses_of(pred) ;
       let mut def = Vec::with_capacity( clauses.len() ) ;
+
+      conf.check_timeout() ? ;
 
       'clause_iter: for clause in clauses {
         let mut to_merge: Vec<(
@@ -484,6 +491,7 @@ impl Graph {
 
               let mut curr = vec![ (qvars, tterms) ] ;
               for (_this_pred, argss, p_def) in to_merge.drain(0..) {
+                conf.check_timeout() ? ;
                 if_debug! {
                   let mut first = true ;
                   log_debug! { "  args for {} {{", instance[_this_pred] }
@@ -525,7 +533,9 @@ impl Graph {
                   }
                   log_debug! { "  }}" }
                 }
-                curr = Self::merge(instance, pred, & argss, p_def, & curr)
+                curr = Self::merge(
+                  instance, pred, & argss, p_def, & curr
+                ) ?
               }
               // if_debug! {
               //   log_debug! { "  finally {{" }
@@ -557,6 +567,7 @@ impl Graph {
         )
       }
 
+      conf.check_timeout() ? ;
       for clause in lhs_clauses {
         let count = if let Some(argss) = instance[
           * clause
@@ -631,6 +642,7 @@ impl Graph {
     log_debug! { "breaking cycles in pred dep graph..." }
     let mut set = PrdSet::with_capacity(instance.preds().len() / 3) ;
 
+    conf.check_timeout() ? ;
     for (prd, prds) in self.forward.index_iter() {
       if prds[prd] > 0 {
         let is_new = set.insert(prd) ;
@@ -638,6 +650,7 @@ impl Graph {
       }
     }
 
+    conf.check_timeout() ? ;
     let mut pos = PrdSet::new() ;
     for (prd, cnt) in self.pos.index_iter() {
       if set.contains(& prd) { continue }
@@ -646,6 +659,7 @@ impl Graph {
       }
     }
 
+    conf.check_timeout() ? ;
     let mut forward = PrdHMap::new() ;
     for (prd, prds) in self.forward.index_iter() {
       if set.contains(& prd) { continue }
@@ -662,6 +676,7 @@ impl Graph {
 
     let mut cnt = 0 ;
 
+    conf.check_timeout() ? ;
     'break_cycles: while ! forward.is_empty() {
 
       cnt += 1 ;

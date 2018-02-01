@@ -76,6 +76,8 @@ pub struct Reductor<'a, S> {
   one_lhs: Option<OneLhs>,
   /// Optional cfg pre-processor.
   cfg_red: Option<CfgRed>,
+  /// Optional unroller.
+  unroll: Option<Unroll>,
 }
 impl<'a, 'skid, S> Reductor<'a, S>
 where S: Solver<'skid, ()> {
@@ -113,11 +115,12 @@ where S: Solver<'skid, ()> {
       OneLhs if one_lhs and one_lhs_full and reduction
     } ;
     let cfg_red = some_new! { CfgRed if cfg_red } ;
+    let unroll = some_new! { Unroll if unroll } ;
 
     Reductor {
       instance, simplify, arg_red,
       s_one_rhs, s_one_lhs, one_rhs, one_lhs,
-      cfg_red
+      cfg_red, unroll
     }
   }
 
@@ -170,6 +173,7 @@ where S: Solver<'skid, ()> {
               ) => add red_info.args_rmed
             }
             log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
+            conf.check_timeout() ? ;
             true
           } else {
             log_info! { "{}: did nothing", conf.emph( preproc.name() ) }
@@ -229,6 +233,7 @@ where S: Solver<'skid, ()> {
     loop {
 
       if self.instance.is_solved() { break }
+      conf.check_timeout() ? ;
 
       run! { arg_red } ;
 
@@ -263,6 +268,10 @@ where S: Solver<'skid, ()> {
       }
 
     }
+
+    conf.check_timeout() ? ;
+
+    run ! { unroll } ;
 
     preproc_dump!(
       self.instance =>
@@ -440,6 +449,7 @@ impl RedStrat for SimpleOneRhs {
     let mut red_info = RedInfo::new() ;
 
     for pred in instance.pred_indices() {
+      conf.check_timeout() ? ;
 
       if instance.clauses_of(pred).1.len() == 1 {
         log_debug! {
@@ -585,6 +595,7 @@ impl RedStrat for SimpleOneLhs {
     let mut red_info = RedInfo::new() ;
 
     for pred in instance.pred_indices() {
+      conf.check_timeout() ? ;
 
       let clause_idx = {
         let mut lhs_clauses = instance.clauses_of(pred).0.iter() ;
@@ -761,6 +772,7 @@ impl RedStrat for OneRhs {
     let mut red_info = RedInfo::new() ;
 
     'all_preds: for pred in instance.pred_indices() {
+      conf.check_timeout() ? ;
 
       if instance.clauses_of(pred).1.len() == 1 {
         log_debug! {
@@ -918,6 +930,7 @@ impl RedStrat for OneLhs {
     let mut red_info = RedInfo::new() ;
 
     for pred in instance.pred_indices() {
+      conf.check_timeout() ? ;
 
       let clause_idx = {
         let mut lhs_clauses = instance.clauses_of(pred).0.iter() ;
@@ -1145,6 +1158,7 @@ impl RedStrat for CfgRed {
 
       // Remove all clauses leading to the predicates we just inlined.
       for (pred, def) in pred_defs {
+        conf.check_timeout() ? ;
         info += instance.rm_rhs_clauses_of(pred) ? ;
 
         if_verb! {
@@ -1212,6 +1226,82 @@ impl RedStrat for CfgRed {
     }
 
     Ok(total_info)
+  }
+}
+
+
+
+/// Unrolls positive constraints once.
+pub struct Unroll {}
+impl Unroll {
+  /// Pre-processor's name.
+  #[inline]
+  fn name(& self) -> & 'static str { "unroll" }
+}
+impl RedStrat for Unroll {
+  fn new(_: & Instance) -> Self {
+    Unroll {}
+  }
+
+  fn apply<'a, 'skid, S>(
+    & mut self, instance: & mut PreInstance<'a, S>
+  ) -> Res<RedInfo>
+  where S: Solver<'skid, ()> {
+
+    let mut prd_map: PrdHMap<
+      Vec<(Option<Quant>, TTermSet)>
+    > = PrdHMap::with_capacity(17) ;
+
+    scoped! {
+      let mut insert = |
+        pred: PrdIdx, q: Option<Quant>, ts: TTermSet
+      | prd_map.entry(pred).or_insert_with(
+        || Vec::new()
+      ).push((q, ts)) ;
+
+      'all_clauses: for clause in instance.clause_indices() {
+        conf.check_timeout() ? ;
+        let clause = & instance[clause] ;
+        if clause.lhs_preds().is_empty() {
+          if let Some((pred, args)) = clause.rhs() {
+            match utils::terms_of_rhs_app(
+              true, instance, & clause.vars,
+              clause.lhs_terms(), clause.lhs_preds(),
+              pred, args
+            ) ? {
+              ExtractRes::Success((q, ts)) => insert(
+                pred, Quant::forall(q) , ts
+              ),
+              ExtractRes::SuccessTrue => {
+                let mut set = TTermSet::new() ;
+                set.insert_term( term::tru() ) ;
+                insert(
+                  pred, None, set
+                )
+              },
+              ExtractRes::Trivial => bail!(
+                "found a trivial clause during unrolling"
+              ),
+              ExtractRes::Failed => continue 'all_clauses,
+              ExtractRes::SuccessFalse => bail!(
+                "found a predicate equivalent to false during unrolling"
+              ),
+            }
+          }
+        }
+      }
+    }
+
+    let mut info = RedInfo::new() ;
+    for (pred, terms) in prd_map {
+      log_info! {
+        "unrolling {}, {} term(s)",
+        conf.emph(& instance[pred].name),
+        terms.len()
+      }
+      info += instance.unroll(pred, terms) ?
+    }
+    Ok(info)
   }
 }
 

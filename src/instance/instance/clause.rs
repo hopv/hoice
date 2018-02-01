@@ -353,8 +353,25 @@ impl Clause {
     & self.vars
   }
 
+  /// Clones a clause without the lhs predicate applications.
+  pub fn clone_except_lhs_of(& self, pred: PrdIdx) -> Self {
+    let mut lhs_preds = PredApps::with_capacity( self.lhs_preds.len() ) ;
+    for (p, argss) in & self.lhs_preds {
+      if pred != * p {
+        let prev = lhs_preds.insert(* p, argss.clone()) ;
+        debug_assert_eq! { prev, None }
+      }
+    }
+    Clause {
+      vars: self.vars.clone(),
+      lhs_terms: self.lhs_terms.clone(), lhs_preds,
+      rhs: self.rhs.clone(),
+      term_changed: true,
+    }
+  }
+
   /// Clones a clause but changes the rhs.
-  #[inline(always)]
+  #[inline]
   pub fn clone_with_rhs(& self, rhs: TTerm) -> Self {
     let mut lhs_terms = self.lhs_terms.clone() ;
     let (rhs, term_changed) = match rhs {

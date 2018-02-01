@@ -93,6 +93,11 @@ error_chain!{
       description("unsat")
       display("unsat")
     }
+    #[doc = "Timeout reached."]
+    Timeout {
+      description("timeout")
+      display("timeout")
+    }
   }
 }
 
@@ -104,6 +109,16 @@ impl Error {
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,
+      _ => false,
+    }
+  }
+  /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
+  ///
+  /// [timeout]: enum.ErrorKind.html#variant.Timeout
+  /// (ErrorKind's Timeout variant)
+  pub fn is_timeout(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Timeout => true,
       _ => false,
     }
   }

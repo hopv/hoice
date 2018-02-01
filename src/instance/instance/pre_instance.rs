@@ -195,6 +195,7 @@ where Slver: Solver<'skid, ()> {
     while clause > 0 {
       clause.dec() ;
       info += self.simplify_clause(clause) ? ;
+      conf.check_timeout() ?
     }
 
     info += self.force_trivial() ? ;
@@ -224,7 +225,7 @@ where Slver: Solver<'skid, ()> {
   }
 
 
-  /// Simplifies a clause, returns `true` if it was (swap) removed.
+  /// Simplifies a clause.
   ///
   /// This function might create new clauses. Potentially voids the semantics
   /// of clause indices *after* `clause`. Modifying this function by making it
@@ -232,8 +233,11 @@ where Slver: Solver<'skid, ()> {
   /// pre-processing.
   fn simplify_clause(& mut self, clause: ClsIdx) -> Res<RedInfo> {
     macro_rules! rm_return {
-      ($clause:ident if $should_remove:expr) => (
+      ($clause:ident if $should_remove:expr => $blah:expr) => (
         if $should_remove {
+          log_debug! {
+            "removing clause #{} by {}", clause, $blah
+          }
           self.instance.forget_clause(clause) ? ;
           return Ok( RedInfo::of_clauses_rmed(1) )
         }
@@ -251,12 +255,12 @@ where Slver: Solver<'skid, ()> {
     rm_return! {
       clause if self.simplifier.clause_propagate(
         & mut self.instance[clause]
-      ) ?
+      ) ? => "propagation"
     }
 
     // Check for triviality.
     rm_return! {
-      clause if self.is_clause_trivial(clause) ?
+      clause if self.is_clause_trivial(clause) ? => "clause trivial"
     }
 
     // Remove redundant atoms.
@@ -381,6 +385,7 @@ where Slver: Solver<'skid, ()> {
         let was_there = clause.rm_term(& atom) ;
         debug_assert! { was_there }
       }
+      conf.check_timeout() ? ;
     }
 
     self.solver.comment("Done pruning atoms...") ? ;
@@ -1158,6 +1163,66 @@ where Slver: Solver<'skid, ()> {
   }
 
 
+  /// Unrolls some predicates.
+  ///
+  /// For each clause `(p args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
+  /// for terms in `pred_terms[p]`.
+  pub fn unroll(
+    & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, TTermSet)>
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+    let mut to_add = Vec::with_capacity(17) ;
+
+    for clause in & self.instance.pred_to_clauses[pred].0 {
+      let clause = & self[* clause] ;
+      if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
+        continue
+      }
+      let argss = if let Some(argss) = clause.lhs_preds().get(& pred) {
+        argss
+      } else {
+        bail!( "inconsistent instance state, `pred_to_clauses` out of sync" )
+      } ;
+
+      for & (ref quant, ref tterms) in & terms {
+        let mut nu_clause = clause.clone_except_lhs_of(pred) ;
+        let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
+
+        for args in argss {
+          conf.check_timeout() ? ;
+          if ! tterms.preds().is_empty() {
+            bail!("trying to unroll predicate by another predicate")
+          }
+          for term in tterms.terms() {
+            if let Some((nu_term, _)) = term.subst_total(
+              & (& args, & qual_map)
+            ) {
+              nu_clause.insert_term(nu_term) ;
+            } else {
+              bail!("unexpected failure during total substitution")
+            }
+          }
+        }
+
+        to_add.push( nu_clause )
+      }
+    }
+
+    for clause in to_add {
+      let index = self.clauses.next_index() ;
+      log_debug! {
+        "  adding clause {}",
+        clause.to_string_info(& self.preds).unwrap()
+      }
+      self.instance.push_clause(clause) ? ;
+      info.clauses_added += 1 ;
+      info += self.simplify_clause(index) ? ;
+    }
+
+    Ok(info)
+  }
+
+
   /// Removes irrelevant predicate arguments.
   pub fn arg_reduce(& mut self) -> Res<RedInfo> {
     let to_keep = ::instance::preproc::args::to_keep(self) ? ;
@@ -1265,6 +1330,7 @@ where Slver: Solver<'skid, ()> {
         } else {
           bail!("inconsistent instance state")
         }
+        conf.check_timeout() ?
       }
       for clause in rhs {
         self.clauses_to_check.insert(* clause) ;
@@ -1276,6 +1342,7 @@ where Slver: Solver<'skid, ()> {
         } else {
           bail!("inconsistent instance state")
         }
+        conf.check_timeout() ?
       }
 
       ()

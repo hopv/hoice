@@ -149,7 +149,18 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Check-sat, start class.
       Parsed::CheckSat => {
         if conf.preproc.active {
-          instance::preproc::work(& mut instance, & profiler) ?
+          match instance::preproc::work(& mut instance, & profiler) {
+            Ok(()) => (),
+            Err(e) => if e.is_timeout() {
+              if e.is_timeout() {
+                println!("unknown") ;
+                print_stats(profiler) ;
+                ::std::process::exit(0)
+              }
+            } else {
+              bail!(e)
+            },
+          }
         }
         instance.finalize() ;
 
@@ -199,8 +210,12 @@ pub fn read_and_work<R: ::std::io::Read>(
                   strong references to the instance\
                 ")
               } ;
-              if let ErrorKind::Unsat = * e.kind() {
-                None 
+              if e.is_unsat() {
+                None
+              } else if e.is_timeout() {
+                println!("unknown") ;
+                print_stats(profiler) ;
+                ::std::process::exit(0)
               } else {
                 bail!(e)
               }
