@@ -6,7 +6,7 @@ use common::msg::* ;
 
 use self::smt::* ;
 
-use errors::learners::LRes ;
+use errors::learners::* ;
 
 pub mod quals ;
 pub mod synth ;
@@ -48,11 +48,15 @@ impl Launcher {
         & core, instance, data,
         conflict_solver.tee(log), // synth_solver.tee(synth_log)
         mine
+      ).chain_err(
+        || "while creating ice learner"
       )?.run()
     } else {
       IceLearner::new(
         & core, instance, data, conflict_solver, // synth_solver
         mine
+      ).chain_err(
+        || "while creating ice learner"
       )?.run()
     }
   }
@@ -191,7 +195,9 @@ where Slver: Solver<'kid, Parser> {
               self.learn(data)
             } "learning"
           ) ? {
-            teacher_alive = self.send_cands(candidates) ? ;
+            teacher_alive = self.send_cands(candidates).chain_err(
+              || "while sending candidates"
+            ) ? ;
             if self.restart() {
               profile! { self "restarts" => add 1 }
               self.qualifiers.wipe()
@@ -211,8 +217,10 @@ where Slver: Solver<'kid, Parser> {
   /// Finalizes the learning process and exits.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(self) -> LRes<()> {
-    profile!{ self "quals once done" => add self.qualifiers.qual_count() }
-    profile!{
+    profile! {
+      self "quals once done" => add self.qualifiers.qual_count()
+    }
+    profile! {
       self "qual count once done" => add self.qualifiers.real_qual_count()
     }
     Ok(())
@@ -231,7 +239,9 @@ where Slver: Solver<'kid, Parser> {
       candidates
     ) ;
     // Reset and clear declaration memory.
-    self.solver.reset() ? ;
+    self.solver.reset().chain_err(
+      || "during solver reset"
+    ) ? ;
     for set in self.dec_mem.iter_mut() {
       set.clear()
     } ;
@@ -295,7 +305,11 @@ where Slver: Solver<'kid, Parser> {
           self.candidate[pred] = Some( term::fls() ) ;
           profile!(
             |self.core._profiler| wrap {
-              self.data.pred_all_false(pred)
+              self.data.pred_all_false(pred).chain_err(
+                || format!(
+                  "while setting all false for {}", pred
+                )
+              )
             } "learning", "data"
           ) ? ;
           continue
@@ -312,7 +326,15 @@ where Slver: Solver<'kid, Parser> {
             self.instance[pred], pos_len, unc_len
           ) ;
           self.candidate[pred] = Some( term::tru() ) ;
-          self.data.pred_all_true(pred) ? ;
+          profile!(
+            |self.core._profiler| wrap {
+              self.data.pred_all_true(pred).chain_err(
+                || format!(
+                  "while setting all true for {}", pred
+                )
+              )
+            } "learning", "data"
+          ) ? ;
           continue
         }
       }
@@ -386,7 +408,11 @@ where Slver: Solver<'kid, Parser> {
                 self.instance[pred], _unc, _cla
       ) ;
 
-      let data = self.data.data_of(pred) ;
+      let data = profile!(
+        |self.core._profiler| wrap {
+          self.data.data_of(pred)
+        } "learning", "data"
+      ) ;
       self.check_exit() ? ;
       
       if let Some(term) = self.pred_learn(
@@ -401,7 +427,10 @@ where Slver: Solver<'kid, Parser> {
     let mut candidates: PrdMap<_> = vec![
       None ; self.instance.preds().len()
     ].into() ;
-    ::std::mem::swap(& mut candidates, & mut self.candidate) ;
+
+    ::std::mem::swap(
+      & mut candidates, & mut self.candidate
+    ) ;
 
     Ok( Some(candidates) )
   }

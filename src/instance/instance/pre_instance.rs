@@ -355,7 +355,9 @@ where Slver: Solver<'skid, ()> {
 
     let clause = & mut self.instance[clause] ;
 
-    self.solver.reset() ? ;
+    self.solver.push(1) ? ;
+
+    self.solver.comment("Pruning atoms...") ? ;
 
     for info in clause.vars() {
       if info.active {
@@ -380,6 +382,10 @@ where Slver: Solver<'skid, ()> {
         debug_assert! { was_there }
       }
     }
+
+    self.solver.comment("Done pruning atoms...") ? ;
+
+    self.solver.pop(1) ? ;
 
     Ok(())
   }

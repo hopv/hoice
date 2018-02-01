@@ -477,7 +477,7 @@ impl PreprocConf {
       ).value_name(
         bool_format
       ).default_value(
-        "off"
+        "on"
       ).takes_value(true).number_of_values(1).hidden(
         true
       ).display_order( order() )
@@ -638,7 +638,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(
+      ).default_value("off").takes_value(
         true
       ).number_of_values(1).display_order( order() )
 
