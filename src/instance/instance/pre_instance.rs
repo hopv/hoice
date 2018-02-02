@@ -1183,14 +1183,7 @@ where Slver: Solver<'skid, ()> {
       let clause = & self[* clause] ;
 
       // Negative clause and `pred` is the only application.
-      if clause.rhs().is_none() && clause.lhs_preds().len() == 1
-      // Rhs is some and is not in a positive clause.
-      || clause.rhs().as_ref().map(
-        |& (rhs, _)| self.instance.pred_to_clauses[rhs].1.iter().any(
-          // Positive clause.
-          |clause| self[* clause].lhs_preds().is_empty()
-        )
-      ).unwrap_or(false) {
+      if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
         continue
       }
       let argss = if let Some(argss) = clause.lhs_preds().get(& pred) {

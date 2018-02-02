@@ -553,6 +553,8 @@ pub struct IceConf {
   pub gain_pivot_synth: f64,
   /// Run a learner that does not mine the instance.
   pub pure_synth: bool,
+  /// Mine conjunction of terms.
+  pub mine_conjs: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -635,7 +637,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "<int>"
-      ).default_value("1").takes_value(
+      ).default_value("0").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -662,6 +664,18 @@ impl IceConf {
       ).default_value("off").takes_value(
         true
       ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("mine_conjs").long("--mine_conjs").help(
+        "mine conjunctions of atoms from clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
 
     )
   }
@@ -696,11 +710,12 @@ impl IceConf {
       }
     } ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
+    let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
 
     IceConf {
       simple_gain, sort_preds, complete,
       qual_bias, qual_print, gain_pivot, gain_pivot_synth,
-      pure_synth,
+      pure_synth, mine_conjs
     }
   }
 }

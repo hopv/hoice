@@ -710,18 +710,18 @@ impl Instance {
           }
 
           if ! app_quals.is_empty() {
-            // let build_conj = app_quals.len() > 1 ;
-            // let mut conj = Vec::with_capacity( app_quals.len() ) ;
+            let build_conj = conf.ice.mine_conjs && app_quals.len() > 1 ;
+            let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
-              // if build_conj { conj.push(term.clone()) }
+              if build_conj { conj.push(term.clone()) }
               quals.insert(& term, pred) ? ;
             }
 
-            // if build_conj {
-            //   let term = term::and(conj) ;
-            //   quals.insert(& term, pred) ? ;
-            //   ()
-            // }
+            if build_conj {
+              let term = term::and(conj) ;
+              quals.insert(& term, pred) ? ;
+              ()
+            }
           }
 
           maps.push((pred, map)) ;
@@ -731,7 +731,7 @@ impl Instance {
     }
 
     // Build the conjunction of atoms.
-    // let mut conjs = Vec::with_capacity( maps.len() ) ;
+    let mut conjs = Vec::with_capacity( maps.len() ) ;
 
     // Stores the subterms of `lhs_terms` that are disjunctions or
     // conjunctions.
@@ -739,14 +739,14 @@ impl Instance {
 
     // Now look for atoms and try to apply the mappings above.
     for (pred, map) in maps {
-      // let mut conj = HConSet::<Term>::with_capacity(
-      //   clause.lhs_terms().len()
-      // ) ;
+      let mut conj = HConSet::<Term>::with_capacity(
+        clause.lhs_terms().len()
+      ) ;
 
       for term in clause.lhs_terms().iter() {
 
         if let Some( (term, true) ) = term.subst_total(& map) {
-          // conj.insert( term.clone() ) ;
+          conj.insert( term.clone() ) ;
           let term = if let Some(term) = term.rm_neg() {
             term
           } else { term } ;
@@ -776,16 +776,20 @@ impl Instance {
         }
       }
 
-      // conjs.push((pred, conj))
+      if conf.ice.mine_conjs {
+        conjs.push((pred, conj))
+      }
     }
 
-    // for (pred, conj) in conjs {
-    //   if conj.len() > 1 {
-    //     let term = term::and( conj.into_iter().collect() ) ;
-    //     quals.insert(& term, pred) ? ;
-    //     ()
-    //   }
-    // }
+    if conf.ice.mine_conjs {
+      for (pred, conj) in conjs {
+        if conj.len() > 1 {
+          let term = term::and( conj.into_iter().collect() ) ;
+          quals.insert(& term, pred) ? ;
+          ()
+        }
+      }
+    }
 
     Ok(())
 
