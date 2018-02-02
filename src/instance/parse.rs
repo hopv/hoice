@@ -984,14 +984,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an operator or fails.
   fn op(& mut self) -> Res<Op> {
-    if let Some(op) = self.op_opt() {
+    if let Some(op) = self.op_opt() ? {
       Ok(op)
     } else {
       bail!( self.error_here("expected operator") )
     }
   }
   /// Tries to parse an operator.
-  fn op_opt(& mut self) -> Option<Op> {
+  fn op_opt(& mut self) -> Res< Option<Op> > {
     macro_rules! none_if_ident_char_else {
       ($e:expr) => (
         if self.legal_id_char() {
@@ -1061,7 +1061,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       Some("+") => Some(Op::Add),
       Some("-") => Some(Op::Sub),
       Some("*") => Some(Op::Mul),
-      Some("/") => Some(Op::Div),
+      Some("/") => {
+        bail!(
+          self.error(start_pos, "division operator is not supported yet")
+        )
+        // Some(Op::Div)
+      },
       Some(_) => None,
       None => None,
     } ;
@@ -1070,7 +1075,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.backtrack_to(start_pos)
     }
 
-    res
+    Ok( res )
   }
 
   /// Parses a single term.
@@ -1130,7 +1135,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         self.ws_cmt() ;
         let op_pos = self.pos() ;
-        if let Some(op) = self.op_opt() {
+        if let Some(op) = self.op_opt() ? {
           let typs = Vec::with_capacity(11) ;
           let kids = Vec::with_capacity(11) ;
           self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;

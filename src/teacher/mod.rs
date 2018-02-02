@@ -389,9 +389,10 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match msg {
 
         (_idx, FromLearners::Msg(_s)) => if_verb!{
+          println!(";") ;
           for _line in _s.lines() {
-            log_debug!(
-              "{} > {}", conf.emph( & self.learners[_idx].1 ), _line
+            println!(
+              "; {} | {}", conf.emph( & self.learners[_idx].1 ), _line
             )
           }
         },

@@ -335,6 +335,10 @@ where S: Solver<'skid, ()> {
 
 /// Reduction strategy trait.
 pub trait RedStrat {
+  /// Pre-processor's name.
+  #[inline]
+  fn name(& self) -> & 'static str ;
+
   /// Constructor.
   fn new(& Instance) -> Self ;
 
@@ -348,12 +352,10 @@ pub trait RedStrat {
 
 /// Calls `PredInstance::simplify_all`.
 pub struct Simplify ;
-impl Simplify {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "simplify" }
-}
+
 impl RedStrat for Simplify {
+  fn name(& self) -> & 'static str { "simplify" }
+
   fn new(_: & Instance) -> Self { Simplify }
 
   fn apply<'a, 'skid, S>(
@@ -370,12 +372,10 @@ impl RedStrat for Simplify {
 /// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce
 /// (Instance's arg_reduce method)
 pub struct ArgRed ;
-impl ArgRed {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "arg_reduce" }
-}
+
 impl RedStrat for ArgRed {
+  fn name(& self) -> & 'static str { "arg_reduce" }
+
   fn new(_: & Instance) -> Self { ArgRed }
 
   fn apply<'a, 'skid, S>(
@@ -425,12 +425,10 @@ pub struct SimpleOneRhs {
   /// Predicates to propagate.
   preds: PrdHMap< Vec<TTerm> >,
 }
-impl SimpleOneRhs {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "simple_one_rhs" }
-}
+
 impl RedStrat for SimpleOneRhs {
+  fn name(& self) -> & 'static str { "simple_one_rhs" }
+
   fn new(_: & Instance) -> Self {
     SimpleOneRhs {
       true_preds: PrdSet::with_capacity(7),
@@ -571,12 +569,10 @@ pub struct SimpleOneLhs {
   /// Predicates to propagate.
   preds: PrdHMap< Vec<TTerm> >,
 }
-impl SimpleOneLhs {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "simple_one_lhs" }
-}
+
 impl RedStrat for SimpleOneLhs {
+  fn name(& self) -> & 'static str { "simple_one_lhs" }
+
   fn new(_: & Instance) -> Self {
     SimpleOneLhs {
       true_preds: PrdSet::with_capacity(7),
@@ -752,12 +748,10 @@ pub struct OneRhs {
   /// Stores new variables discovered as we iterate over the lhs of clauses.
   new_vars: VarSet,
 }
-impl OneRhs {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "one_rhs" }
-}
+
 impl RedStrat for OneRhs {
+  fn name(& self) -> & 'static str { "one_rhs" }
+
   fn new(_: & Instance) -> Self {
     OneRhs {
       new_vars: VarSet::with_capacity(17)
@@ -906,12 +900,10 @@ pub struct OneLhs {
   /// Predicates to propagate.
   preds: PrdHMap< Vec<TTerm> >,
 }
-impl OneLhs {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "one_lhs" }
-}
+
 impl RedStrat for OneLhs {
+  fn name(& self) -> & 'static str { "one_lhs" }
+
   fn new(_: & Instance) -> Self {
     OneLhs {
       true_preds: PrdSet::with_capacity(7),
@@ -1075,12 +1067,10 @@ pub struct CfgRed {
   /// Graph, factored to avoid reallocation.
   graph: Graph,
 }
-impl CfgRed {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "cfg_red" }
-}
+
 impl RedStrat for CfgRed {
+  fn name(& self) -> & 'static str { "cfg_red" }
+
   fn new(instance: & Instance) -> Self {
     CfgRed {
       cnt: 0,
@@ -1233,12 +1223,10 @@ impl RedStrat for CfgRed {
 
 /// Unrolls positive constraints once.
 pub struct Unroll {}
-impl Unroll {
-  /// Pre-processor's name.
-  #[inline]
-  fn name(& self) -> & 'static str { "unroll" }
-}
+
 impl RedStrat for Unroll {
+  fn name(& self) -> & 'static str { "unroll" }
+
   fn new(_: & Instance) -> Self {
     Unroll {}
   }

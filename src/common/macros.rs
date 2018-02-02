@@ -225,17 +225,17 @@ macro_rules! msg {
   ( debug $slf:expr => $($tt:tt)* ) => (
     if conf.debug() {
       msg!( $slf => $($tt)* )
-    } else { true }
+    }
   ) ;
   ( $core:expr => $e:expr ) => (
     if conf.verbose() {
-      $core.msg($e)
-    } else { true }
+      $core.msg($e) ;
+    }
   ) ;
   ( $slf:expr => $($tt:tt)* ) => (
     if conf.verbose() {
       msg!{ $slf => format!( $($tt)* ) }
-    } else { true }
+    }
   ) ;
 }
 

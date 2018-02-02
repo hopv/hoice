@@ -228,6 +228,13 @@ impl RTerm {
     self.eval(model)?.to_int()
   }
 
+  /// Term evaluation (real).
+  pub fn real_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<Rat> > {
+    self.eval(model)?.to_real()
+  }
+
   /// Term evaluation (bool).
   pub fn bool_eval<E: Evaluator>(
     & self, model: & E
@@ -333,6 +340,13 @@ impl RTerm {
   pub fn int(& self) -> Option<Int> {
     match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
+      _ => None
+    }
+  }
+  /// Integer a constant integer term evaluates to.
+  pub fn real(& self) -> Option<Rat> {
+    match self.real_eval( & () ) {
+      Ok(Some(r)) => Some(r),
       _ => None
     }
   }
@@ -443,7 +457,7 @@ impl RTerm {
     if let RTerm::Int(ref i) = * self { Some( i ) } else { None }
   }
   /// If the term's a rational constant, returns the value.
-  pub fn rat_val(& self) -> Option<& Rat> {
+  pub fn real_val(& self) -> Option<& Rat> {
     if let RTerm::Real(ref r) = * self { Some( r ) } else { None }
   }
 

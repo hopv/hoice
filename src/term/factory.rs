@@ -533,8 +533,14 @@ fn normalize_app(
         //       )
         //     ]
         //   ))
-        } else if let (Some(i_1), Some(i_2)) = (args[0].int(), args[1].int()) {
+        } else if let (Some(i_1), Some(i_2)) = (
+          args[0].int(), args[1].int()
+        ) {
           return Either::Left( term::bool( i_1 == i_2 ) )
+        } else if let (Some(r_1), Some(r_2)) = (
+          args[0].real(), args[1].real()
+        ) {
+          return Either::Left( term::bool( r_1 == r_2 ) )
         }
       }
       args.sort_unstable() ;
@@ -545,7 +551,7 @@ fn normalize_app(
       if args.len() == 1 {
         if let Some(i) = args[0].int_val() {
           return Either::Left( int(- i) )
-        } else if let Some(r) = args[0].rat_val() {
+        } else if let Some(r) = args[0].real_val() {
           return Either::Left( real( -r ) )
         }
       }
@@ -629,7 +635,13 @@ fn normalize_app(
     Op::Ge => if args.len() == 2 {
       if args[0] == args[1] {
         return Either::Left( tru() )
-      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].int(), args[1].int()
+      ) {
+        return Either::Left( bool(lhs >= rhs) )
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].real(), args[1].real()
+      ) {
         return Either::Left( bool(lhs >= rhs) )
       } else {
         (op, args)
@@ -641,7 +653,13 @@ fn normalize_app(
     Op::Gt => if args.len() == 2 {
       if args[0] == args[1] {
         return Either::Left( fls() )
-      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].int(), args[1].int()
+      ) {
+        return Either::Left( bool(lhs > rhs) )
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].real(), args[1].real()
+      ) {
         return Either::Left( bool(lhs > rhs) )
       } else {
         (op, args)
@@ -653,7 +671,13 @@ fn normalize_app(
     Op::Le => if args.len() == 2 {
       if args[0] == args[1] {
         return Either::Left( tru() )
-      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].int(), args[1].int()
+      ) {
+        return Either::Left( bool(lhs <= rhs) )
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].real(), args[1].real()
+      ) {
         return Either::Left( bool(lhs <= rhs) )
       } else {
         (op, args)
@@ -665,7 +689,13 @@ fn normalize_app(
     Op::Lt => if args.len() == 2 {
       if args[0] == args[1] {
         return Either::Left( fls() )
-      } else if let (Some(lhs), Some(rhs)) = (args[0].int(), args[1].int()) {
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].int(), args[1].int()
+      ) {
+        return Either::Left( bool(lhs < rhs) )
+      } else if let (Some(lhs), Some(rhs)) = (
+        args[0].real(), args[1].real()
+      ) {
         return Either::Left( bool(lhs < rhs) )
       } else {
         (op, args)
@@ -688,9 +718,7 @@ fn normalize_app(
       (op, args)
     },
 
-    // Not implemented.
-    Op::Div => panic!("simplification of division is not implemented"),
-
+    Op::Div |
     Op::Rem |
     Op::ToInt |
     Op::ToReal |

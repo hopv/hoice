@@ -35,19 +35,25 @@ impl Launcher {
     ) ? ;
 
     if let Some(log) = conf.solver.log_file("ice_learner") ? {
-      IceLearner::new(
+      let mut learner = IceLearner::new(
         & core, instance, data,
         conflict_solver.tee(log), mine
       ).chain_err(
         || "while creating ice learner"
-      )?.run()
+      ) ? ;
+      let res = learner.run() ;
+      learner.finalize() ? ;
+      res
     } else {
-      IceLearner::new(
+      let mut learner = IceLearner::new(
         & core, instance, data,
         conflict_solver, mine
       ).chain_err(
         || "while creating ice learner"
-      )?.run()
+      ) ? ;
+      let res = learner.run() ;
+      learner.finalize() ? ;
+      res
     }
   }
 }
@@ -161,7 +167,7 @@ where Slver: Solver<'kid, Parser> {
   }
 
   /// Runs the learner.
-  pub fn run(mut self) -> LRes<()> {
+  pub fn run(& mut self) -> LRes<()> {
     let mut teacher_alive = true ;
     profile!{ self "quals synthesized" => add 0 }
     profile!{ self "quals initially" => add self.qualifiers.qual_count() }
@@ -193,11 +199,11 @@ where Slver: Solver<'kid, Parser> {
               self.qualifiers.wipe()
             }
           } else {
-            return self.finalize()
+            return Ok(())
           }
         },
         None => {
-          return self.finalize()
+          return Ok(())
         },
       }
 
@@ -273,9 +279,7 @@ where Slver: Solver<'kid, Parser> {
     debug_assert! { self.predicates.is_empty() }
 
     for pred in PrdRange::zero_to(prd_count) {
-      // msg!{
-      //   self => "current data:\n{}", self.data.to_string_info(& ()) ?
-      // } ;
+
       if self.instance.is_known(pred) {
         continue
       }
@@ -283,15 +287,15 @@ where Slver: Solver<'kid, Parser> {
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map[pred].len() ;
       if pos_len == 0 && neg_len > 0 {
-        msg!( self => "legal_pred (1)" ) ;
+        msg! { debug self => "legal_pred (1)" }
         // Maybe we can assert everything as negative right away?
         if self.is_legal_pred(pred, false) ? {
-          msg!(
-            self =>
+          msg! {
+            debug self =>
             "{} only has negative ({}) and unclassified ({}) data\n\
             legal check ok, assuming everything negative",
             self.instance[pred], neg_len, unc_len
-          ) ;
+          }
           self.candidate[pred] = Some( term::fls() ) ;
           profile!(
             |self.core._profiler| wrap {
@@ -305,16 +309,17 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
+
       if neg_len == 0 && pos_len > 0 {
-        msg!( self => "legal_pred (2)" ) ;
+        msg! { debug self => "legal_pred (2)" }
         // Maybe we can assert everything as positive right away?
         if self.is_legal_pred(pred, true) ? {
-          msg!(
-            self =>
+          msg! {
+            debug self =>
             "{} only has positive ({}) and unclassified ({}) data\n\
             legal check ok, assuming everything positive",
             self.instance[pred], pos_len, unc_len
-          ) ;
+          }
           self.candidate[pred] = Some( term::tru() ) ;
           profile!(
             |self.core._profiler| wrap {
@@ -328,6 +333,7 @@ where Slver: Solver<'kid, Parser> {
           continue
         }
       }
+
       self.predicates.push((
         unc_len, pos_len + neg_len, pred
       ))
@@ -338,7 +344,9 @@ where Slver: Solver<'kid, Parser> {
     use rand::Rng ;
     // Use simple entropy 30% of the time.
     let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.30 ;
-    msg!{ self => "looking for qualifier (simple: {})...", simple } ;
+    msg! {
+      debug self => "looking for qualifier (simple: {})...", simple
+    }
 
     // Sort the predicates 70% of the time.
     if conf.ice.sort_preds && self.rng.next_f64() <= 0.70 {
@@ -393,10 +401,11 @@ where Slver: Solver<'kid, Parser> {
     'pred_iter: while let Some(
       (_unc, _cla, pred)
     ) = self.predicates.pop() {
-      msg!(
-        self => "{}: {} unclassified, {} classified",
-                self.instance[pred], _unc, _cla
-      ) ;
+      msg! {
+        debug self =>
+        "{}: {} unclassified, {} classified",
+        self.instance[pred], _unc, _cla
+      }
 
       let data = profile!(
         |self.core._profiler| wrap {
@@ -456,10 +465,11 @@ where Slver: Solver<'kid, Parser> {
     debug_assert!( self.unfinished.is_empty() ) ;
     self.classifier.clear() ;
 
-    msg!(
-      self => "  working on predicate {} (pos: {}, neg: {}, unc: {})",
+    msg! {
+      self =>
+      "  working on predicate {} (pos: {}, neg: {}, unc: {})",
       self.instance[pred], data.pos.len(), data.neg.len(), data.unc.len()
-    ) ;
+    }
 
     let mut branch = Vec::with_capacity(17) ;
 
@@ -471,17 +481,15 @@ where Slver: Solver<'kid, Parser> {
       if data.neg.is_empty() && self.is_legal(
         pred, & data.unc, true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
-        msg!(
-          self =>
-            "  no more negative data, is_legal check ok\n  \
-            forcing {} unclassifieds positive...", data.unc.len()
-        ) ;
+        msg! {
+          debug self =>
+          "  no more negative data, is_legal check ok\n  \
+          forcing {} unclassifieds positive...", data.unc.len()
+        }
 
         profile!(
           |self.core._profiler| wrap {
             for unc in data.unc {
-              // let prev = self.classifier.insert(unc, true) ;
-              // debug_assert!( prev.is_none() )
               self.data.stage_pos(pred, unc)
             }
             self.data.propagate()
@@ -510,11 +518,11 @@ where Slver: Solver<'kid, Parser> {
       if data.pos.is_empty() && self.is_legal(
         pred, & data.unc, false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
-        msg!(
-          self =>
-            "  no more positive data, is_legal check ok\n  \
-            forcing {} unclassifieds negative...", data.unc.len()
-        ) ;
+        msg! {
+          debug self =>
+          "  no more positive data, is_legal check ok\n  \
+          forcing {} unclassifieds negative...", data.unc.len()
+        }
 
         profile!(
           |self.core._profiler| wrap {
@@ -664,8 +672,8 @@ where Slver: Solver<'kid, Parser> {
     let mut best_qual = best_qual! ( only new: false ) ? ;
 
     if let Some((qual, gain)) = best_qual {
-      // println!("gain: {}", gain) ;
       best_qual = if gain >= conf.ice.gain_pivot {
+        msg! { self => "using qualifier {}, gain: {}", qual, gain }
         // This qualifier is satisfactory.
         profile!{ self tick "learning", "qual", "data split" }
         let (q_data, nq_data) = data.split(& qual) ;
@@ -712,7 +720,8 @@ where Slver: Solver<'kid, Parser> {
       return Ok(None)
     }
 
-    if let Some((qual, _)) = best_qual {
+    if let Some((qual, gain)) = best_qual {
+      msg! { self => "using synth qualifier {}, gain: {}", qual, gain }
       profile!{ self tick "learning", "qual", "data split" }
       let (q_data, nq_data) = data.split(& qual) ;
       profile!{ self mark "learning", "qual", "data split" }
@@ -767,11 +776,9 @@ where Slver: Solver<'kid, Parser> {
 
         for sample in data.iter() {
           self_core.check_exit() ? ;
-          msg! { * self_core => "starting synthesis" } ;
           let done = synth_sys.sample_synth(
             sample, & mut treatment, & self_core._profiler
           ) ? ;
-          msg! { * self_core => "done with synthesis" } ;
           if done { break }
         }
 

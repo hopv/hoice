@@ -782,7 +782,7 @@ impl Qualifiers {
 
   /// Logs itself regardless of the verbosity level.
   pub fn log(& self) {
-    let pref = ";" ;
+    let pref = "; " ;
     println!("{}quals {{", pref) ;
     for (sig, class) in & self.classes {
       let mut s = String::new() ;

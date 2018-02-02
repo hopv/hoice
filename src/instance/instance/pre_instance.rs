@@ -1165,8 +1165,14 @@ where Slver: Solver<'skid, ()> {
 
   /// Unrolls some predicates.
   ///
-  /// For each clause `(p args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
+  /// For each clause `(pred args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
   /// for terms in `pred_terms[p]`.
+  ///
+  /// Only unrolls clauses where either
+  ///
+  /// - `rhs.is_some()`, and `rhs` does not appear in a positive constraint ;
+  /// - `rhs.is_none()`, and there's at least one other predicate `pred'`
+  ///   application in `lhs`. 
   pub fn unroll(
     & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, TTermSet)>
   ) -> Res<RedInfo> {
@@ -1175,7 +1181,16 @@ where Slver: Solver<'skid, ()> {
 
     for clause in & self.instance.pred_to_clauses[pred].0 {
       let clause = & self[* clause] ;
-      if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
+
+      // Negative clause and `pred` is the only application.
+      if clause.rhs().is_none() && clause.lhs_preds().len() == 1
+      // Rhs is some and is not in a positive clause.
+      || clause.rhs().as_ref().map(
+        |& (rhs, _)| self.instance.pred_to_clauses[rhs].1.iter().any(
+          // Positive clause.
+          |clause| self[* clause].lhs_preds().is_empty()
+        )
+      ).unwrap_or(false) {
         continue
       }
       let argss = if let Some(argss) = clause.lhs_preds().get(& pred) {
@@ -1215,8 +1230,13 @@ where Slver: Solver<'skid, ()> {
         clause.to_string_info(& self.preds).unwrap()
       }
       self.instance.push_clause(clause) ? ;
-      info.clauses_added += 1 ;
-      info += self.simplify_clause(index) ? ;
+      let mut simplinfo = self.simplify_clause(index) ? ;
+      if simplinfo.clauses_rmed > 0 {
+        simplinfo.clauses_rmed -= 1
+      } else {
+        simplinfo.clauses_added += 1
+      }
+      info += simplinfo
     }
 
     Ok(info)
