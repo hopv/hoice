@@ -388,7 +388,7 @@ impl PreprocConf {
       ).value_name(
         bool_format
       ).default_value(
-        "on"
+        "off"
       ).takes_value(true).number_of_values(1).hidden(
         true
       ).display_order( order() )
