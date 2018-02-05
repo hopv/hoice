@@ -23,6 +23,9 @@ pub use term::{
   TTermSet, TTerms,
   Val, Op, Typ, Quant,
 } ;
+pub use term::args::{
+  HTArgs, HTArgss
+} ;
 pub use instance::Instance ;
 pub use common::consts::keywords ;
 
@@ -83,25 +86,20 @@ pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 pub type Sig = VarMap<Typ> ;
 
 /// A predicate application.
-pub type PredApp = (PrdIdx, VarMap<Term>) ;
+pub type PredApp = (PrdIdx, HTArgs) ;
 
 /// Some predicate applications.
-pub type PredApps = PrdHMap< Vec<VarMap<Term>>  > ;
+pub type PredApps = PrdHMap< HTArgss > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
-  fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
+  fn insert_pred_app(& mut self, PrdIdx, HTArgs) -> bool ;
 }
 impl PredAppsExt for PredApps {
-  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
-    let vec = self.entry(pred).or_insert_with(
-      || Vec::with_capacity(4)
-    ) ;
-    for a in vec.iter() {
-      if * a == args { return false }
-    }
-    vec.push(args) ;
-    true
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
+    self.entry(pred).or_insert_with(
+      || HTArgss::with_capacity(4)
+    ).insert(args)
   }
 }
 
@@ -122,12 +120,6 @@ pub type Cexs = ClsHMap<Cex> ;
 
 /// Mapping from variables to values, used for learning data.
 pub type Args = VarMap<Val> ;
-/// Mapping from variables to terms.
-pub type TArgs = VarMap<Term> ;
-/// Set of term arguments.
-pub type TArgss = HashSet< VarMap<Term> > ;
-
-
 
 /// Signature trait, for polymorphic term insertion.
 pub trait Signature {
@@ -336,6 +328,15 @@ pub trait VarIndexed<T> {
 }
 impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
+    if var < self.len() {
+      Some( self[var].clone() )
+    } else {
+      None
+    }
+  }
+}
+impl VarIndexed<Term> for HTArgs {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
       Some( self[var].clone() )
     } else {

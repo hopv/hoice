@@ -1195,7 +1195,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<PTTerms> > {
-    let mut args = Vec::with_capacity(11) ;
+    let mut args = VarMap::with_capacity(11) ;
     let mut typs = Vec::with_capacity(11) ;
 
     let mut backtrack_pos = self.pos() ;
@@ -1296,7 +1296,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           Ok( Some(
             (
               PTTerms::TTerm(
-                TTerm::P { pred: idx, args: VarMap::with_capacity(0) }
+                TTerm::P { pred: idx, args: VarMap::with_capacity(0).into() }
               ), Typ::Bool
             )
           ) )

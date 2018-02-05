@@ -538,7 +538,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         for (pred, argss) in clause.lhs_preds() {
           for args in argss {
             let mut s = format!("  ({}", & self.instance[* pred]) ;
-            for arg in args {
+            for arg in args.iter() {
               s = format!("{} {}", s, arg)
             }
             s.push(')') ;

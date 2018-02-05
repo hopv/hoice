@@ -280,8 +280,10 @@ impl Instance {
   pub fn clause_add_lhs_pred(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: VarMap<Term>
   ) {
-    self.clauses[clause].insert_pred_app(pred, args) ;
     self.pred_to_clauses[pred].0.insert(clause) ;
+    self.clauses[clause].insert_pred_app(
+      pred, args.into()
+    ) ;
   }
 
   /// Adds a term to a clause's lhs.
@@ -296,7 +298,9 @@ impl Instance {
     & mut self, clause: ClsIdx, pred: PrdIdx, args: VarMap<Term>
   ) -> Res<()> {
     self.pred_to_clauses[pred].1.insert(clause) ;
-    self.clauses[clause].set_rhs(pred, args)
+    self.clauses[clause].set_rhs(
+      pred, args.into()
+    )
   }
 
   /// Adds some terms to the lhs of a clause.
@@ -821,7 +825,7 @@ impl Instance {
           for args in argss {
             debug! { "        {}", args }
             let mut values = VarMap::with_capacity( args.len() ) ;
-            for arg in args {
+            for arg in args.iter() {
               values.push(
                 arg.eval(& cex).chain_err(
                   || "during argument evaluation to generate learning data"
@@ -843,7 +847,7 @@ impl Instance {
       let consequent = if let Some((pred, args)) = clause.rhs() {
         debug! { "        ({} {})", self[pred], args }
         let mut values = VarMap::with_capacity( args.len() ) ;
-        'pred_args: for arg in args {
+        'pred_args: for arg in args.iter() {
           values.push(
             arg.eval(& cex).chain_err(
               || "during argument evaluation to generate learning data"
@@ -1086,7 +1090,7 @@ impl Instance {
         w, |w, p, args| {
           write!(w, "(") ? ;
           w.write_all( self[p].name.as_bytes() ) ? ;
-          for arg in args {
+          for arg in args.iter() {
             write!(w, " ") ? ;
             arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
           }
@@ -1192,7 +1196,7 @@ impl<'a> PebcakFmt<'a> for Clause {
       w, |w, prd, args| {
         write!(w, "(") ? ;
         w.write_all( prds[prd].as_bytes() ) ? ;
-        for arg in args {
+        for arg in args.iter() {
           write!(w, " ") ? ;
           arg.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
         }

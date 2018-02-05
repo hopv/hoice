@@ -687,7 +687,7 @@ impl RedStrat for SimpleOneLhs {
               log_debug!{ "  => (or" }
               if let Some((pred, ref args)) = pred_app {
                 let mut s = format!("({}", instance[pred]) ;
-                for arg in args {
+                for arg in args.iter() {
                   s = format!("{} {}", s, arg)
                 }
                 log_debug!{ "    {})", s }
@@ -1018,7 +1018,7 @@ impl RedStrat for OneLhs {
             log_debug!{ "  => (or" }
             if let Some((pred, ref args)) = pred_app {
               let mut s = format!("({}", instance[pred]) ;
-              for arg in args {
+              for arg in args.iter() {
                 s = format!("{} {}", s, arg)
               }
               log_debug!{ "    {})", s }

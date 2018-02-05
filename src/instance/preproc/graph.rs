@@ -290,13 +290,12 @@ impl Graph {
   /// arguments of `pred` and the quantified variables in `rgt`.
   ///
   /// Renames the quantified variables so that they don't clash.
-  fn merge<Map>(
+  fn merge(
     instance: & Instance, pred: PrdIdx,
-    substs: & HashSet<Map>,
+    substs: & HTArgss,
     lft: & Vec<(Quantfed, TTermSet)>,
     rgt: & Vec<(Quantfed, TTermSet)>
-  ) -> Res< Vec<(Quantfed, TTermSet)> >
-  where Map: VarIndexed<Term> + Eq + ::std::hash::Hash {
+  ) -> Res< Vec<(Quantfed, TTermSet)> > {
     log_debug! { "    merging..." }
     let first_index = instance[pred].sig.next_index() ;
     log_debug! { "    first index: {}", first_index }
@@ -352,14 +351,14 @@ impl Graph {
             conj.insert_term( term ) ;
           }
           for (pred, argss) in l_conj.preds() {
-            let mut nu_argss = TArgss::with_capacity( argss.len() ) ;
+            let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
             for args in argss {
-              let mut nu_args = TArgs::with_capacity( args.len() ) ;
-              for arg in args {
+              let mut nu_args = VarMap::with_capacity( args.len() ) ;
+              for arg in args.iter() {
                 let (arg, _) = arg.subst( & (& map, subst) ) ;
                 nu_args.push(arg)
               }
-              nu_argss.insert(nu_args) ;
+              nu_argss.insert( nu_args.into() ) ;
             }
             conj.insert_pred_apps( * pred, nu_argss )
           }
@@ -429,7 +428,7 @@ impl Graph {
 
       'clause_iter: for clause in clauses {
         let mut to_merge: Vec<(
-          PrdIdx, TArgss, & Vec<(Quantfed, TTermSet)>
+          PrdIdx, HTArgss, & Vec<(Quantfed, TTermSet)>
         )> = Vec::with_capacity(7) ;
 
         let clause = & instance[* clause] ;
@@ -490,6 +489,7 @@ impl Graph {
               }
 
               let mut curr = vec![ (qvars, tterms) ] ;
+
               for (_this_pred, argss, p_def) in to_merge.drain(0..) {
                 conf.check_timeout() ? ;
                 if_debug! {

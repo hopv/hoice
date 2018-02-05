@@ -102,7 +102,7 @@ pub struct IceLearner<'core, Slver> {
   /// Branches to construct later, used when constructing a decision tree.
   unfinished: Vec< (Branch, CData) >,
   /// Classifier for constraint data.
-  classifier: HashMap<HSample, bool>,
+  classifier: HConMap<HSample, bool>,
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,
@@ -148,7 +148,7 @@ where Slver: Solver<'kid, Parser> {
         core,
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
-        classifier: HashMap::with_capacity(1003),
+        classifier: HConMap::with_capacity(1003),
         dec_mem, candidate, predicates,
         rng: {
           use rand::SeedableRng ;

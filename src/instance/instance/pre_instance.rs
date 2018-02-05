@@ -555,7 +555,7 @@ where Slver: Solver<'skid, ()> {
       tterms.write_smt2(
         & mut s, |w, pred, args| {
           write!(w, "({}", self[pred]) ? ;
-          for arg in args {
+          for arg in args.iter() {
             write!(w, " {}", arg) ?
           }
           write!(w, ")")
@@ -749,7 +749,7 @@ where Slver: Solver<'skid, ()> {
           let pred = * pred ;
           for app_args in app_argss {
             let mut nu_args = VarMap::with_capacity( args.len() ) ;
-            for arg in app_args {
+            for arg in app_args.iter() {
               if let Some((arg, _)) = arg.subst_total(
                 & (& args, & qual_map)
               ) {
@@ -886,10 +886,10 @@ where Slver: Solver<'skid, ()> {
     for clause in clauses_to_rm {
       info.clauses_rmed += 1 ;
 
-      let pred_argss = if let Some(
+      let pred_argss: Vec< HTArgs > = if let Some(
         argss
       ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
-        argss
+        argss.iter().map(|a| a.clone()).collect()
       } else {
         bail!("inconsistent instance state")
       } ;
@@ -926,7 +926,7 @@ where Slver: Solver<'skid, ()> {
             let pred = * pred ;
             for args in argss {
               let mut nu_args = VarMap::with_capacity( args.len() ) ;
-              for arg in args {
+              for arg in args.iter() {
                 if let Some((arg, _)) = arg.subst_total(
                   & (params, & quant_map)
                 ) {
@@ -938,7 +938,7 @@ where Slver: Solver<'skid, ()> {
                   )
                 }
               }
-              clause.insert_pred_app(pred, nu_args) ;
+              clause.insert_pred_app( pred, nu_args.into() ) ;
             }
           }
         }
@@ -1016,7 +1016,7 @@ where Slver: Solver<'skid, ()> {
   pub fn force_pred_right(
     & mut self, pred: PrdIdx,
     qvars: Quantfed,
-    pred_app: Option< (PrdIdx, VarMap<Term>) >,
+    pred_app: Option< (PrdIdx, HTArgs) >,
     negated: TTermSet,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_right`") ? ;
@@ -1056,19 +1056,22 @@ where Slver: Solver<'skid, ()> {
           log_debug! { "      generating new rhs" }
 
           // New rhs.
-          if let Some( & (ref prd, ref args) ) = pred_app.as_ref() {
-            let (prd, mut args) = (* prd, args.clone()) ;
-            for arg in & mut args {
+          if let Some( & (prd, ref args) ) = pred_app.as_ref() {
+            let mut nu_args = VarMap::with_capacity( args.len() ) ;
+
+            for arg in args.iter() {
               if let Some((nu_arg, _)) = arg.subst_total(
                 & (& subst, & qual_map)
               ) {
-                * arg = nu_arg
+                nu_args.push(nu_arg)
               } else {
                 bail!("unexpected failure during total substitution")
               }
             }
 
-            self.instance.clause_force_rhs(clause, prd, args) ?
+            self.instance.clause_force_rhs(
+              clause, prd, nu_args.into()
+            ) ?
           }
           // No `else`, clause's rhs is already `None`.
 
@@ -1079,7 +1082,7 @@ where Slver: Solver<'skid, ()> {
             let pred = * pred ;
             for args in argss {
               let mut nu_args = VarMap::with_capacity( args.len() ) ;
-              for arg in args {
+              for arg in args.iter() {
                 if let Some((nu_arg, _)) = arg.subst_total(
                   & (& subst, & qual_map)
                 ) {
@@ -1151,7 +1154,11 @@ where Slver: Solver<'skid, ()> {
 
     // Actually force the predicate.
     self.force_pred(
-      pred, TTerms::disj_of_pos_neg(quant, pred_app, negated)
+      pred, TTerms::disj_of_pos_neg(
+        quant, pred_app.map(
+          |(pred, args)| ( pred, args )
+        ), negated
+      )
     ) ? ;
 
     info.clauses_rmed += 1 ;
@@ -1270,20 +1277,15 @@ where Slver: Solver<'skid, ()> {
         ::std::mem::swap($nu_args, $args) ;
         $nu_args.clear() ;
       }) ;
-      (from $args:expr, keep $to_keep:expr, swap $nu_args:expr) => ({
+      (from $args:expr, keep $to_keep:expr, to $nu_args:expr) => ({
         debug_assert!( $nu_args.is_empty() ) ;
         for (var, arg) in $args.index_iter() {
           if $to_keep.contains(& var) {
             $nu_args.push( arg.clone() )
           }
         }
-        ::std::mem::swap( $nu_args, $args ) ;
-        $nu_args.clear() ;
       }) ;
     }
-
-    // Factored list of arguments used when updating the clauses.
-    let mut nu_args = VarMap::with_capacity(7) ;
 
     // Remove args from forced predicates.
     for tterms_opt in & mut self.instance.pred_terms {
@@ -1332,29 +1334,38 @@ where Slver: Solver<'skid, ()> {
 
       // Propagate removal to clauses.
       let (ref lhs, ref rhs) = self.instance.pred_to_clauses[pred] ;
+
       for clause in lhs {
         self.clauses_to_check.insert(* clause) ;
-        if let Some(argss) = self.instance.clauses[
+
+        self.instance.clauses[
           * clause
-        ].lhs_pred_mut(pred) {
-          for args in argss {
-            rm_args! { from args, keep to_keep, swap & mut nu_args }
+        ].lhs_map_args_of(
+          pred, |args| {
+            let mut nu_args = VarMap::with_capacity(
+              args.len() - to_keep.len()
+            ) ;
+            rm_args! { from args, keep to_keep, to nu_args }
+            nu_args.into()
           }
-        } else {
-          bail!("inconsistent instance state")
-        }
+        ) ;
+
         conf.check_timeout() ?
       }
+
       for clause in rhs {
         self.clauses_to_check.insert(* clause) ;
-        if let Some(
-          (p, ref mut args)
-        ) = self.instance.clauses[* clause].rhs_mut() {
-          debug_assert_eq!( pred, p ) ;
-          rm_args! { from args, keep to_keep, swap & mut nu_args }
-        } else {
-          bail!("inconsistent instance state")
-        }
+        debug_assert! { self.instance.clauses[* clause].rhs().is_some() }
+        self.instance.clauses[* clause].rhs_map_args(
+          |p, args| {
+            debug_assert_eq!( pred, p ) ;
+            let mut nu_args = VarMap::with_capacity(
+              args.len() - to_keep.len()
+            ) ;
+            rm_args! { from args, keep to_keep, to nu_args }
+            ( p, nu_args.into() )
+          }
+        ) ;
         conf.check_timeout() ?
       }
 

@@ -66,12 +66,15 @@ use errors::learners::LRes ;
 /// Hashconsed version of `RQArgs`.
 pub type QArgs = HConsed< VarMap<Val> > ;
 
+/// Signature of a qualifier.
+pub type QSig = VarMap<Typ> ;
+
+/// Hash consed signature.
+pub type HQSig = HConsed< QSig > ;
+
 /// Type of the predicate signatures factory.
 type Factory = HashConsign<VarMap<Typ>> ;
 
-
-/// Signature of a qualifier.
-pub type QSig = VarMap<Typ> ;
 
 
 
@@ -163,6 +166,8 @@ impl Transforms {
 /// (SigTransforms' constructor)
 pub struct SigTransforms {
   /// Actual map.
+  ///
+  /// Currently never iterated on, so non-determinism is okay.
   pub map: HashMap< VarMap<Typ>, Transforms >,
 }
 
@@ -220,9 +225,11 @@ impl SigTransforms {
     preds: & PrdMap<::instance::info::PrdInfo>,
     qual_sig: & QSig,
   ) -> Self {
+
     let mut map = HashMap::with_capacity( preds.len() ) ;
     // The stack is explained below.
     let mut stack = Vec::with_capacity(17) ;
+
     'all_preds: for info in preds {
       // Skip if already known.
       if map.contains_key(& info.sig) { continue }
@@ -522,15 +529,11 @@ impl<'a> CanBEvaled for Qual<'a> {
 
 
 /// Stores qualifiers and a lot of stuff for (cached) evaluation.
-///
-/// # TODO
-///
-/// - `classes` is probably not deterministic right now: fix
 pub struct Qualifiers {
   /// Predicate signature factory.
   factory: Factory,
   /// Map from **qualifier** signatures to qualifier classes.
-  pub classes: HConMap< HConsed<VarMap<Typ>>, QualClass >,
+  pub classes: HConMap< HQSig, QualClass >,
   /// Arc to the instance.
   pub instance: Arc<Instance>,
   /// Maps predicate variables to alpha-renamed qualifier variables. Factored
@@ -563,12 +566,7 @@ impl Qualifiers {
   }
 
   /// Constructor.
-  ///
-  /// - `factory_capa`: size of the `QArgs` factory
-  /// - `class_capa`: space allocated for qualifier classes `QualClass`
   pub fn new(
-    // factory_capa: usize,
-    // class_capa: usize,
     instance: Arc<Instance>,
     mine: bool,
   ) -> Res<Self> {

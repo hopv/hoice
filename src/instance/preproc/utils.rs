@@ -82,13 +82,13 @@ pub enum TExtractRes<T> {
 /// needed but `quantifiers` is false.
 fn args_of_pred_app(
   quantifiers: bool, var_info: & VarMap<VarInfo>,
-  args: & VarMap<Term>,
+  args: & HTArgs,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes<VarMap<Term>> > {
+) -> Res< TExtractRes<HTArgs> > {
   log_debug! { "      args_of_pred_app ({})", quantifiers }
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
-  for arg in args {
+  for arg in args.iter() {
     add_vars! {
       if quantifiers: term::vars(arg) =>
         app_vars |> map, qvars, var_info, fresh
@@ -99,7 +99,7 @@ fn args_of_pred_app(
       bail!("unreachable, substitution was not total")
     }
   }
-  Ok( TExtractRes::Success( nu_args ) )
+  Ok( TExtractRes::Success( nu_args.into() ) )
 }
 
 
@@ -115,7 +115,7 @@ fn terms_of_pred_apps<'a>(
   pred: PrdIdx, app_vars: & mut VarSet,
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes< Option<& 'a Vec<VarMap<Term>> > > > {
+) -> Res< TExtractRes< Option<& 'a HTArgss > > > {
   log_debug! { "    terms_of_pred_apps" }
   let mut res = None ;
   for (prd, argss) in src {
@@ -263,7 +263,7 @@ F: Fn(Term) -> Term {
 /// - more doc with examples
 pub fn terms_of_app(
   quantifiers: bool, var_info: & VarMap<VarInfo>,
-  instance: & Instance, pred: PrdIdx, args: & VarMap<Term>,
+  instance: & Instance, pred: PrdIdx, args: & HTArgs,
   fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
 ) -> Res<
   Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
@@ -333,8 +333,8 @@ pub fn terms_of_app(
 pub fn terms_of_lhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  rhs: Option<(PrdIdx, & VarMap<Term>)>,
-  pred: PrdIdx, args: & VarMap<Term>,
+  rhs: Option<(PrdIdx, & HTArgs)>,
+  pred: PrdIdx, args: & HTArgs,
 ) -> Res<
   ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
 > {
@@ -455,7 +455,7 @@ pub fn terms_of_lhs_app(
 pub fn terms_of_rhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  pred: PrdIdx, args: & VarMap<Term>,
+  pred: PrdIdx, args: & HTArgs,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 

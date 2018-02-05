@@ -91,7 +91,7 @@ impl Clause {
 
     for (_, argss) in & self.lhs_preds {
       for args in argss {
-        for arg in args {
+        for arg in args.iter() {
           term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
         }
       }
@@ -101,7 +101,7 @@ impl Clause {
     }
 
     if let Some(& (_, ref args)) = self.rhs.as_ref() {
-      for arg in args {
+      for arg in args.iter() {
         term::map_vars(arg, |v| { vars.insert(v) ; () }) ;
       }
     }
@@ -123,13 +123,13 @@ impl Clause {
     }
     for (_, argss) in & self.lhs_preds {
       for args in argss {
-        for arg in args {
+        for arg in args.iter() {
           vars.extend( term::vars(arg) )
         }
       }
     }
     if let Some((_, ref args)) = self.rhs {
-      for arg in args {
+      for arg in args.iter() {
         vars.extend( term::vars(arg) )
       }
     }
@@ -176,7 +176,7 @@ impl Clause {
   #[inline(always)]
   pub fn drop_lhs_pred(
     & mut self, pred: PrdIdx
-  ) -> Option< Vec<TArgs> > {
+  ) -> Option< HTArgss > {
     self.lhs_preds.remove(& pred)
   }
 
@@ -185,7 +185,7 @@ impl Clause {
   /// Returns true if the predicate application is new.
   #[inline(always)]
   pub fn insert_pred_app(
-    & mut self, pred: PrdIdx, args: TArgs
+    & mut self, pred: PrdIdx, args: HTArgs
   ) -> bool {
     self.lhs_preds.insert_pred_app(pred, args)
   }
@@ -264,8 +264,21 @@ impl Clause {
 
   /// LHS accessor for a predicate, mutable.
   #[inline]
-  pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut Vec<TArgs> > {
+  pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut HTArgss > {
     self.lhs_preds.get_mut(& pred)
+  }
+
+  /// Maps over the arguments of a predicate in the lhs.
+  #[inline]
+  pub fn lhs_map_args_of<F>(& mut self, pred: PrdIdx, mut f: F)
+  where F: FnMut(& HTArgs) -> HTArgs {
+    if let Some(argss) = self.lhs_preds.get_mut(& pred) {
+      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      for args in argss.iter() {
+        nu_argss.insert( f(args) ) ;
+      }
+      ::std::mem::swap( & mut nu_argss, argss )
+    }
   }
 
   /// Number of predicate applications in the lhs (>= number of predicates).
@@ -278,8 +291,8 @@ impl Clause {
   }
 
   /// RHS accessor.
-  #[inline(always)]
-  pub fn rhs(& self) -> Option<(PrdIdx, & TArgs)> {
+  #[inline]
+  pub fn rhs(& self) -> Option<(PrdIdx, & HTArgs)> {
     if let Some((prd, ref args)) = self.rhs {
       Some((prd, args))
     } else {
@@ -288,17 +301,27 @@ impl Clause {
   }
   /// RHS accessor, mutable.
   #[inline]
-  pub fn rhs_mut(& mut self) -> Option<(PrdIdx, & mut TArgs)> {
+  pub fn rhs_mut(& mut self) -> Option<(PrdIdx, & mut HTArgs)> {
     if let Some(& mut (pred, ref mut args)) = self.rhs.as_mut() {
       Some((pred, args))
     } else {
       None
     }
   }
+  /// Map over the arguments of a predicate in the rhs.
+  #[inline]
+  pub fn rhs_map_args<F>(& mut self, mut f: F)
+  where F: FnMut(PrdIdx, & HTArgs) -> (PrdIdx, HTArgs) {
+    if let Some(& mut (ref mut pred, ref mut args)) = self.rhs.as_mut() {
+      let (nu_pred, mut nu_args) = f(* pred, args) ;
+      * args = nu_args ;
+      * pred = nu_pred
+    }
+  }
 
   /// Iterator over all predicate applications (including the rhs).
   pub fn all_pred_apps_do<F>(& self, mut f: F) -> Res<()>
-  where F: FnMut(PrdIdx, & TArgs) -> Res<()> {
+  where F: FnMut(PrdIdx, & HTArgs) -> Res<()> {
     for (pred, argss) in & self.lhs_preds {
       for args in argss {
         f(* pred, args) ?
@@ -321,9 +344,9 @@ impl Clause {
   }
   /// Forces the RHS of a clause.
   #[inline]
-  pub fn set_rhs(& mut self, pred: PrdIdx, args: TArgs) -> Res<()> {
+  pub fn set_rhs(& mut self, pred: PrdIdx, args: HTArgs) -> Res<()> {
     let mut vars = VarSet::new() ;
-    for arg in & args {
+    for arg in args.iter() {
       term::map_vars(arg, |v| { vars.insert(v) ; () })
     }
     debug_assert! {{
@@ -421,25 +444,31 @@ impl Clause {
       changed = changed || b
     }
     for (_, argss) in & mut self.lhs_preds {
-      let mut nu_argss = Vec::with_capacity( argss.len() ) ;
+      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
       debug_assert!( nu_argss.is_empty() ) ;
-      for mut args in argss.drain(0..) {
-        for arg in args.iter_mut() {
+      for args in argss.iter() {
+        let mut nu_args = VarMap::with_capacity( args.len() ) ;
+        for arg in args.iter() {
           let (nu_arg, b) = arg.subst(map) ;
-          * arg = nu_arg ;
-          changed = changed || b
+          changed = changed || b ;
+          nu_args.push(nu_arg)
         }
-        nu_argss.push(args) ;
+        nu_argss.insert( nu_args.into() ) ;
       }
       ::std::mem::swap(& mut nu_argss, argss)
     }
-    if let Some(& mut (_, ref mut args)) = self.rhs.as_mut() {
-      for arg in args.iter_mut() {
-        let (nu_arg, b) = arg.subst(map) ;
-        * arg = nu_arg ;
-        changed = changed || b
+    self.rhs_map_args(
+      |pred, args| {
+        let mut nu_args = VarMap::with_capacity( args.len() ) ;
+        for arg in args.iter() {
+          let (nu_arg, b) = arg.subst(map) ;
+          nu_args.push(nu_arg) ;
+          changed = changed || b
+        }
+        ( pred, nu_args.into() )
       }
-    }
+    ) ;
+
     changed
   }
 
@@ -488,7 +517,7 @@ impl Clause {
   pub fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
-  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
 
     write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
     let mut inactive = 0 ;
@@ -581,7 +610,7 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
         for args in argss {
           writer.write_all( " (".as_bytes() ) ? ;
           writer.write_all( prd_info[* pred].name.as_bytes() ) ? ;
-          for arg in args {
+          for arg in args.iter() {
             writer.write_all( " ".as_bytes() ) ? ;
             arg.write(writer, |w, var| var.default_write(w)) ?
           }
@@ -599,7 +628,7 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
         write!(writer, "false") ?
       } else {
         write!(writer, "({}", prd_info[prd].name) ? ;
-        for arg in args {
+        for arg in args.iter() {
           write!(writer, " ") ? ;
           arg.write(writer, |w, var| var.default_write(w)) ?
         }

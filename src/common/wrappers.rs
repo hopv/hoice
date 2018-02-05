@@ -47,6 +47,12 @@ impl VarIdx {
   }
 }
 
+impl Into< ::common::HTArgs > for VarMap<::term::Term> {
+  fn into(self) -> ::common::HTArgs {
+    ::term::args::new(self)
+  }
+}
+
 impl VarMap<::term::Val> {
   /// Evaluates some arguments and yields the resulting `VarMap`.
   pub fn apply_to(
@@ -65,7 +71,7 @@ impl VarMap< ::term::Term > {
   ///
   /// This is used when useless arguments are detected, to slice predicate
   /// applications.
-  pub fn remove(& mut self, to_keep: & VarSet) {
+  pub fn remove(& self, to_keep: & VarSet) -> ::common::HTArgs {
     debug_assert! { self.len() >= to_keep.len() }
     debug_assert! {{
       let mut okay = true ;
@@ -76,13 +82,13 @@ impl VarMap< ::term::Term > {
       }
       okay
     }}
-    let mut old_vars = VarMap::with_capacity( to_keep.len() ) ;
-    ::std::mem::swap( & mut old_vars, self ) ;
-    for (var, term) in old_vars.into_index_iter() {
+    let mut nu_args = VarMap::with_capacity( self.len() ) ;
+    for (var, term) in self.index_iter() {
       if to_keep.contains(& var) {
-        self.push(term)
+        nu_args.push( term.clone() )
       }
     }
+    nu_args.into()
   }
 }
 
@@ -156,6 +162,8 @@ wrap_usize! {
 wrap_usize!{
   #[doc = "Constraint index."]
   CstrIdx
+  #[doc = "Range over constraint indices."]
+  range: CstrRange
   #[doc = "Constraint set."]
   set: CstrSet
   #[doc = "Constraint total map."]
