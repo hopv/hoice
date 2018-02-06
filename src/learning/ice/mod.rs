@@ -672,7 +672,7 @@ where Slver: Solver<'kid, Parser> {
     let mut best_qual = best_qual! ( only new: false ) ? ;
 
     if let Some((qual, gain)) = best_qual {
-      best_qual = if gain >= conf.ice.gain_pivot {
+      best_qual = if gain >= conf.ice.gain_pivot && gain > 0.0 {
         msg! { self => "using qualifier {}, gain: {}", qual, gain }
         // This qualifier is satisfactory.
         profile!{ self tick "learning", "qual", "data split" }
@@ -743,15 +743,11 @@ where Slver: Solver<'kid, Parser> {
       let quals = & mut self.qualifiers ;
       let instance = & self.instance ;
       let self_core = & self.core ;
-      let luby = & self.luby ;
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
         if let Some(gain) = data.gain(pred, self_data, & term) ? {
-          if luby.is_some() && gain >= conf.ice.gain_pivot_synth {
-            quals.insert(& term, pred) ? ;
-            ()
-          } else if gain >= conf.ice.gain_pivot {
+          if gain >= conf.ice.gain_cut_synth {
             quals.insert(& term, pred) ? ;
             ()
           }
