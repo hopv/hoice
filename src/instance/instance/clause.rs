@@ -401,13 +401,14 @@ impl Clause {
 
   /// Clones a clause but changes the rhs.
   #[inline]
-  pub fn clone_with_rhs(& self, rhs: TTerm) -> Self {
+  pub fn clone_with_rhs(& self, rhs: Option<TTerm>) -> Self {
     let mut lhs_terms = self.lhs_terms.clone() ;
+
     let (rhs, term_changed) = match rhs {
-      TTerm::P { pred, args } => (
+      Some( TTerm::P { pred, args } ) => (
         Some((pred, args)), self.term_changed
       ),
-      TTerm::T(term) => {
+      Some( TTerm::T(term) ) => {
         let added = if term.bool() != Some(false) {
           lhs_terms.insert( term::not(term) )
         } else {
@@ -415,7 +416,9 @@ impl Clause {
         } ;
         (None, self.term_changed || added)
       },
+      None => (None, self.term_changed),
     } ;
+
     Clause {
       vars: self.vars.clone(),
       lhs_terms,

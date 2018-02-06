@@ -1175,11 +1175,8 @@ where Slver: Solver<'skid, ()> {
   /// For each clause `(pred args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
   /// for terms in `pred_terms[p]`.
   ///
-  /// Only unrolls clauses where either
-  ///
-  /// - `rhs.is_some()`, and `rhs` does not appear in a positive constraint ;
-  /// - `rhs.is_none()`, and there's at least one other predicate `pred'`
-  ///   application in `lhs`. 
+  /// Only unrolls negative clauses where `(pred args)` is not the only
+  /// application.
   pub fn unroll(
     & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, TTermSet)>
   ) -> Res<RedInfo> {
@@ -1193,6 +1190,7 @@ where Slver: Solver<'skid, ()> {
       if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
         continue
       }
+
       let argss = if let Some(argss) = clause.lhs_preds().get(& pred) {
         argss
       } else {
@@ -1216,6 +1214,72 @@ where Slver: Solver<'skid, ()> {
             } else {
               bail!("unexpected failure during total substitution")
             }
+          }
+        }
+
+        to_add.push( nu_clause )
+      }
+    }
+
+    for clause in to_add {
+      let index = self.clauses.next_index() ;
+      log_debug! {
+        "  adding clause {}",
+        clause.to_string_info(& self.preds).unwrap()
+      }
+      self.instance.push_clause(clause) ? ;
+      let mut simplinfo = self.simplify_clause(index) ? ;
+      if simplinfo.clauses_rmed > 0 {
+        simplinfo.clauses_rmed -= 1
+      } else {
+        simplinfo.clauses_added += 1
+      }
+      info += simplinfo
+    }
+
+    Ok(info)
+  }
+
+
+  /// Reverse unrolls some predicates.
+  ///
+  /// For each clause `lhs => (pred args)`, adds `(not terms) /\ lhs => false`
+  /// for terms in `pred_terms[p]`.
+  ///
+  /// Only unrolls clauses which have at least on lhs predicate application.
+  pub fn reverse_unroll(
+    & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, HConSet<Term>)>
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+    let mut to_add = Vec::with_capacity(17) ;
+
+    for clause in & self.instance.pred_to_clauses[pred].1 {
+      let clause = & self[* clause] ;
+
+      // Negative clause and `pred` is the only application.
+      if clause.lhs_preds().is_empty() {
+        continue
+      }
+
+      let args = if let Some((p, args)) = clause.rhs() {
+        debug_assert_eq! { p, pred }
+        args
+      } else {
+        bail!("inconsistent instance state")
+      } ;
+
+      for & (ref quant, ref terms) in & terms {
+        let mut nu_clause = clause.clone_with_rhs(None) ;
+        let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
+
+        for term in terms {
+          conf.check_timeout() ? ;
+          if let Some((nu_term, _)) = term.subst_total(
+            & (& args, & qual_map)
+          ) {
+            nu_clause.insert_term(nu_term) ;
+          } else {
+            bail!("unexpected failure during total substitution")
           }
         }
 

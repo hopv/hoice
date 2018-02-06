@@ -78,6 +78,8 @@ pub struct Reductor<'a, S> {
   cfg_red: Option<CfgRed>,
   /// Optional unroller.
   unroll: Option<Unroll>,
+  /// Optional reverse-unroller.
+  runroll: Option<RUnroll>,
 }
 impl<'a, 'skid, S> Reductor<'a, S>
 where S: Solver<'skid, ()> {
@@ -102,25 +104,30 @@ where S: Solver<'skid, ()> {
 
     let simplify = Some( Simplify::new(& instance) ) ;
     let arg_red = some_new! { ArgRed if arg_red } ;
+
     let s_one_rhs = some_new! {
       SimpleOneRhs if one_rhs and reduction
     } ;
     let s_one_lhs = some_new! {
       SimpleOneLhs if one_lhs and reduction
     } ;
+
     let one_rhs = some_new! {
       OneRhs if one_rhs and one_rhs_full and reduction
     } ;
     let one_lhs = some_new! {
       OneLhs if one_lhs and one_lhs_full and reduction
     } ;
+
     let cfg_red = some_new! { CfgRed if cfg_red } ;
+
     let unroll = some_new! { Unroll if unroll } ;
+    let runroll = some_new! { RUnroll if unroll } ;
 
     Reductor {
       instance, simplify, arg_red,
       s_one_rhs, s_one_lhs, one_rhs, one_lhs,
-      cfg_red, unroll
+      cfg_red, unroll, runroll
     }
   }
 
@@ -272,6 +279,7 @@ where S: Solver<'skid, ()> {
     conf.check_timeout() ? ;
 
     run ! { unroll } ;
+    run ! { runroll } ;
 
     preproc_dump!(
       self.instance =>
@@ -1250,6 +1258,7 @@ impl RedStrat for Unroll {
       'all_clauses: for clause in instance.clause_indices() {
         conf.check_timeout() ? ;
         let clause = & instance[clause] ;
+
         if clause.lhs_preds().is_empty() {
           if let Some((pred, args)) = clause.rhs() {
             match utils::terms_of_rhs_app(
@@ -1258,7 +1267,7 @@ impl RedStrat for Unroll {
               pred, args
             ) ? {
               ExtractRes::Success((q, ts)) => insert(
-                pred, Quant::forall(q) , ts
+                pred, Quant::forall(q), ts
               ),
               ExtractRes::SuccessTrue => {
                 let mut set = TTermSet::new() ;
@@ -1267,16 +1276,17 @@ impl RedStrat for Unroll {
                   pred, None, set
                 )
               },
+              ExtractRes::Failed => continue 'all_clauses,
               ExtractRes::Trivial => bail!(
                 "found a trivial clause during unrolling"
               ),
-              ExtractRes::Failed => continue 'all_clauses,
               ExtractRes::SuccessFalse => bail!(
                 "found a predicate equivalent to false during unrolling"
               ),
             }
           }
         }
+
       }
     }
 
@@ -1288,6 +1298,101 @@ impl RedStrat for Unroll {
         terms.len()
       }
       info += instance.unroll(pred, terms) ?
+    }
+    Ok(info)
+  }
+}
+
+
+
+/// Reverse-unrolls negative constraints once.
+pub struct RUnroll {}
+
+impl RedStrat for RUnroll {
+  fn name(& self) -> & 'static str { "runroll" }
+
+  fn new(_: & Instance) -> Self {
+    RUnroll {}
+  }
+
+  fn apply<'a, 'skid, S>(
+    & mut self, instance: & mut PreInstance<'a, S>
+  ) -> Res<RedInfo>
+  where S: Solver<'skid, ()> {
+
+    let mut prd_map: PrdHMap<
+      Vec<(Option<Quant>, HConSet<Term>)>
+    > = PrdHMap::with_capacity(17) ;
+
+    scoped! {
+      let mut insert = |
+        pred: PrdIdx, q: Option<Quant>, ts: HConSet<Term>
+      | prd_map.entry(pred).or_insert_with(
+        || Vec::new()
+      ).push((q, ts)) ;
+
+      'all_clauses: for clause in instance.clause_indices() {
+        conf.check_timeout() ? ;
+        let clause = & instance[clause] ;
+
+        if clause.rhs().is_none() {
+          let mut apps = clause.lhs_preds().iter() ;
+
+          if let Some((pred, argss)) = apps.next() {
+            let pred = * pred ;
+            let mut argss = argss.iter() ;
+            let args = if let Some(args) = argss.next() {
+              args
+            } else {
+              bail!("illegal clause, predicate application leads to nothing")
+            } ;
+
+            if argss.next().is_some() || apps.next().is_some() {
+              continue 'all_clauses
+            }
+
+            // Negative constraint with only one pred app, reverse-unrolling.
+            match utils::terms_of_lhs_app(
+              true, instance, & clause.vars,
+              clause.lhs_terms(), & PredApps::with_capacity(0),
+              None, pred, args
+            ) ? {
+
+              ExtractRes::Success((q, apps, ts)) => {
+                debug_assert! { apps.is_none() }
+                let (terms, pred_apps) = ts.destroy() ;
+                debug_assert! { pred_apps.is_empty() }
+                insert( pred, Quant::exists(q), terms )
+              },
+              ExtractRes::SuccessFalse => {
+                let mut set = HConSet::<Term>::new() ;
+                insert( pred, None, set )
+              },
+              ExtractRes::Failed => continue 'all_clauses,
+              ExtractRes::Trivial => bail!(
+                "found a trivial clause during unrolling"
+              ),
+              ExtractRes::SuccessTrue => bail!(
+                "found a predicate equivalent to true during reverse-unrolling"
+              ),
+
+            }
+
+          }
+
+        }
+
+      }
+    }
+
+    let mut info = RedInfo::new() ;
+    for (pred, terms) in prd_map {
+      log_info! {
+        "reverse unrolling {}, {} term(s)",
+        conf.emph(& instance[pred].name),
+        terms.len()
+      }
+      info += instance.reverse_unroll(pred, terms) ?
     }
     Ok(info)
   }

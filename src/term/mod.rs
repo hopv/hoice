@@ -943,6 +943,12 @@ impl TTermSet {
     }
   }
 
+  /// Destroys the set.
+  #[inline]
+  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<HTArgss>) {
+    (self.terms, self.preds)
+  }
+
   /// Reserves some space.
   #[inline]
   pub fn reserve(& mut self, terms: usize, preds: usize) {
