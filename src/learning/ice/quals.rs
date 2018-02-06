@@ -230,13 +230,12 @@ impl SigTransforms {
     // The stack is explained below.
     let mut stack = Vec::with_capacity(17) ;
 
-    let partial = conf.ice.complete && qual_sig.len() > 1 ;
+    let partial = ! conf.ice.complete ; // && qual_sig.len() > 1 ;
 
     'all_preds: for info in preds {
       // Skip if already known.
       if map.contains_key(& info.sig) { continue }
 
-      // Anticipate blowup.
       macro_rules! partial_and_continue {
         () => ({
           let prev = map.insert(
@@ -583,82 +582,82 @@ impl Qualifiers {
       alpha_map: VarHMap::with_capacity(7),
     } ;
 
-    'all_preds: for pred_info in instance.preds() {
-      let (mut int, mut real) = (false, false) ;
-      for (var, typ) in pred_info.sig.index_iter() {
-        if int && real { break 'all_preds }
+    // 'all_preds: for pred_info in instance.preds() {
+    //   let (mut int, mut real) = (false, false) ;
+    //   for (var, typ) in pred_info.sig.index_iter() {
+    //     if int && real { break 'all_preds }
 
-        match * typ {
-          Typ::Int => if ! int {
-            int = true ;
-            quals.insert(
-              & term::ge( term::var(var), term::int(0) ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::ge( term::var(var), term::int(1) ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::le( term::var(var), term::int(0) ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::le( term::var(var), term::int(1) ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::eq( term::var(var), term::int(0) ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::eq( term::var(var), term::int(1) ),
-              pred_info.idx
-            ) ? ;
-          },
-          Typ::Real => if ! real {
-            real = true ;
-            quals.insert(
-              & term::ge(
-                term::var(var), term::real(Rat::from_integer(0.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::ge(
-                term::var(var), term::real(Rat::from_integer(1.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::le(
-                term::var(var), term::real(Rat::from_integer(0.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::le(
-                term::var(var), term::real(Rat::from_integer(1.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::eq(
-                term::var(var), term::real(Rat::from_integer(0.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-            quals.insert(
-              & term::eq(
-                term::var(var), term::real(Rat::from_integer(1.into()))
-              ),
-              pred_info.idx
-            ) ? ;
-          },
-          Typ::Bool => (),
-        }
-      }
-    }
+    //     match * typ {
+    //       Typ::Int => if ! int {
+    //         int = true ;
+    //         quals.insert(
+    //           & term::ge( term::var(var), term::int(0) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::ge( term::var(var), term::int(1) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::le( term::var(var), term::int(0) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::le( term::var(var), term::int(1) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::eq( term::var(var), term::int(0) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::eq( term::var(var), term::int(1) ),
+    //           pred_info.idx
+    //         ) ? ;
+    //       },
+    //       Typ::Real => if ! real {
+    //         real = true ;
+    //         quals.insert(
+    //           & term::ge(
+    //             term::var(var), term::real(Rat::from_integer(0.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::ge(
+    //             term::var(var), term::real(Rat::from_integer(1.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::le(
+    //             term::var(var), term::real(Rat::from_integer(0.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::le(
+    //             term::var(var), term::real(Rat::from_integer(1.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::eq(
+    //             term::var(var), term::real(Rat::from_integer(0.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //         quals.insert(
+    //           & term::eq(
+    //             term::var(var), term::real(Rat::from_integer(1.into()))
+    //           ),
+    //           pred_info.idx
+    //         ) ? ;
+    //       },
+    //       Typ::Bool => (),
+    //     }
+    //   }
+    // }
 
     if mine {
       instance.qualifiers(& mut quals).chain_err(
