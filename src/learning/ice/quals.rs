@@ -583,10 +583,14 @@ impl Qualifiers {
       alpha_map: VarHMap::with_capacity(7),
     } ;
 
-    for pred_info in instance.preds() {
+    'all_preds: for pred_info in instance.preds() {
+      let (mut int, mut real) = (false, false) ;
       for (var, typ) in pred_info.sig.index_iter() {
+        if int && real { break 'all_preds }
+
         match * typ {
-          Typ::Int => {
+          Typ::Int => if ! int {
+            int = true ;
             quals.insert(
               & term::ge( term::var(var), term::int(0) ),
               pred_info.idx
@@ -612,7 +616,8 @@ impl Qualifiers {
               pred_info.idx
             ) ? ;
           },
-          Typ::Real => {
+          Typ::Real => if ! real {
+            real = true ;
             quals.insert(
               & term::ge(
                 term::var(var), term::real(Rat::from_integer(0.into()))

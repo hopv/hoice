@@ -65,7 +65,8 @@ impl Instance {
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       is_unsat: false,
     } ;
-    // Create basic constants, adding to consts to have mining take them into account.
+    // Create basic constants, adding to consts to have mining take them into
+    // account.
     let (wan,too) = (term::one(), term::zero()) ;
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
