@@ -93,6 +93,11 @@ error_chain!{
       description("unsat")
       display("unsat")
     }
+    #[doc = "Not really an error, exit early return."]
+    Exit {
+      description("exit")
+      display("exit")
+    }
     #[doc = "Timeout reached."]
     Timeout {
       description("timeout")
@@ -112,6 +117,7 @@ impl Error {
       _ => false,
     }
   }
+
   /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
   ///
   /// [timeout]: enum.ErrorKind.html#variant.Timeout
@@ -119,6 +125,17 @@ impl Error {
   pub fn is_timeout(& self) -> bool {
     match * self.kind() {
       ErrorKind::Timeout => true,
+      _ => false,
+    }
+  }
+
+  /// True if the kind of the error is [`ErrorKind::Exit`][exit].
+  ///
+  /// [exit]: enum.ErrorKind.html#variant.Exit
+  /// (ErrorKind's Exit variant)
+  pub fn is_exit(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Exit => true,
       _ => false,
     }
   }
@@ -136,59 +153,4 @@ pub fn print_err(errs: Error) {
     }
   }
   println!("\")")
-}
-
-
-/// Error-related stuff specific to learners.
-pub mod learners {
-  /// Learner error.
-  ///
-  /// Basically wraps a normal [`Error`][error] and provides an `Exit` variant.
-  ///
-  /// [error]: ../struct.Error.html
-  /// (Error struct)
-  pub enum LError {
-    /// Exit order from teacher.
-    Exit,
-    /// Normal error.
-    Error(::errors::Error)
-  }
-  impl LError {
-    pub fn chain_err<F, EK>(self, error: F) -> LError
-    where F: FnOnce() -> EK, EK: Into<::errors::ErrorKind> {
-      match self {
-        LError::Exit => self,
-        LError::Error(e) => LError::Error( e.chain_err(error) )
-      }
-    }
-  }
-  impl<T: Into<::errors::Error>> From<T> for LError {
-    fn from(e: T) -> Self {
-      LError::Error( e.into() )
-    }
-  }
-
-  /// Result type.
-  pub type LRes<T> = Result<T, LError> ;
-
-  /// Extension for `LRes`.
-  pub trait LResExt<T> {
-    /// Chains an error if the [`LError`][lerror] is not `Exit`.
-    ///
-    /// [lerror]: enum.LError.html (LError enum)
-    fn chain_err<F, EK>(self, callback: F) -> Result<T, LError>
-    where F: FnOnce() -> EK, EK: Into<::errors::ErrorKind> ;
-  }
-  impl<T> LResExt<T> for LRes<T> {
-    fn chain_err<F, EK>(self, callback: F) -> Result<T, LError>
-    where F: FnOnce() -> EK, EK: Into<::errors::ErrorKind> {
-      match self {
-        Ok(t) => Ok(t),
-        Err( LError::Exit ) => Err( LError::Exit ),
-        Err( LError::Error(e) ) => Err(
-          LError::Error( e.chain_err(callback) )
-        ),
-      }
-    }
-  }
 }

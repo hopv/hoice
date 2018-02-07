@@ -516,6 +516,19 @@ impl Clause {
     }
   }
 
+  /// Declares all active clause variables.
+  pub fn declare<'kid, S, Parser>(
+    & self, solver: & mut S
+  ) -> ::rsmt2::SmtRes<()>
+  where S: ::rsmt2::Solver<'kid, Parser>, Parser: Copy {
+    for var in self.vars() {
+      if var.active {
+        solver.declare_const(& var.idx, & var.typ) ?
+      }
+    }
+    Ok(())
+  }
+
   /// Writes a clause given a special function to write predicates.  
   pub fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
@@ -588,22 +601,34 @@ impl ::std::ops::Index<VarIdx> for Clause {
   }
 }
 impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
-  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
+  & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
 > for Clause {
+  /// Writes the clause in SMT-LIB format.
+  ///
+  /// The boolean flag in the info specifies whether the clause should be
+  /// asserted positively (when `true`) or negatively (when `false`).
   fn expr_to_smt2<Writer: Write>(
     & self, writer: & mut Writer, info: & 'b (
-      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
+      bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
     )
   ) -> SmtRes<()> {
-    let (ref true_preds, ref false_preds, ref prd_info) = * info ;
-    write!(writer, "(not ") ? ;
+    let (
+      pos, ref true_preds, ref false_preds, ref prd_info
+    ) = * info ;
+
+    if ! pos {
+      write!(writer, "(not ") ?
+    }
+
     if ! self.lhs_is_empty() {
       write!(writer, "(=> (and") ?
     }
+
     for term in & self.lhs_terms {
       writer.write_all( " ".as_bytes() ) ? ;
       term.write( writer, |w, var| var.default_write(w) ) ?
     }
+
     for (pred, argss) in & self.lhs_preds {
       if true_preds.contains(pred) {
         writer.write_all( " true".as_bytes() ) ?
@@ -621,9 +646,11 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
         }
       }
     }
+
     if ! self.lhs_is_empty() {
       write!(writer, ") ") ?
     }
+
     if let Some((prd, ref args)) = self.rhs {
       if true_preds.contains(& prd) {
         write!(writer, "true") ?
@@ -640,10 +667,15 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
     } else {
       write!(writer, "false") ?
     }
+
     if ! self.lhs_is_empty() {
       write!(writer, ")") ?
     }
-    write!(writer, ")") ? ;
+
+    if ! pos {
+      write!(writer, ")") ?
+    }
+
     Ok(())
   }
 }

@@ -757,6 +757,8 @@ impl IceConf {
 pub struct TeacherConf {
   /// Stop before sending data to learner(s).
   pub step: bool,
+  /// Run the assistant to break implication constraints.
+  pub assistant: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
@@ -782,14 +784,29 @@ impl TeacherConf {
         "no"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("assistant").long("--assistant").help(
+        "(de)activate breaking implication constraints"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
     )
   }
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
     let step = bool_of_matches(matches, "step") ;
+    let assistant = bool_of_matches(matches, "assistant") ;
 
-    TeacherConf { step }
+    TeacherConf {
+      step, assistant,
+    }
   }
 }
 

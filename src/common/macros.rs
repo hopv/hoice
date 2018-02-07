@@ -229,7 +229,7 @@ macro_rules! msg {
   ) ;
   ( $core:expr => $e:expr ) => (
     if conf.verbose() {
-      $core.msg($e) ;
+      $core.msg($e) ? ;
     }
   ) ;
   ( $slf:expr => $($tt:tt)* ) => (

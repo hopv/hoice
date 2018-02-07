@@ -7,8 +7,6 @@
 use common::* ;
 use common::data::HSample ;
 
-use errors::learners::{ LRes } ;
-
 #[macro_use]
 pub mod helpers ;
 pub mod int ;
@@ -36,8 +34,8 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & HSample, & mut TermVals) -> LRes<bool>
-  where F: FnMut(Term) -> LRes<bool> ;
+  fn synth<F>(& mut self, F, & HSample, & mut TermVals) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
   /// Adds them to the input term to value map.
@@ -95,8 +93,8 @@ impl SynthSys {
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(
     & mut self, sample: & HSample, mut f: F, _profiler: & Profiler
-  ) -> LRes<bool>
-  where F: FnMut(Term) -> LRes<bool> {
+  ) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
 
     if let Some(int_synth) = self.int.as_mut() {
       if ! int_synth.is_done() {

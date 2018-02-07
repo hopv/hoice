@@ -60,7 +60,6 @@ use hashconsing::* ;
 
 
 use common::* ;
-use errors::learners::LRes ;
 
 
 /// Hashconsed version of `RQArgs`.
@@ -705,8 +704,8 @@ impl Qualifiers {
   /// fashion, if any. Early-returns if the criterion is `1.0` at some point.
   pub fn maximize<Crit>(
     & mut self, pred: PrdIdx, mut crit: Crit, new_only: bool
-  ) -> LRes< Option<(Term, f64)> >
-  where Crit: FnMut( & mut Qual ) -> LRes< Option<f64> > {
+  ) -> Res< Option<(Term, f64)> >
+  where Crit: FnMut( & mut Qual ) -> Res< Option<f64> > {
     let sig = & self.instance.preds()[pred].sig ;
     let mut prev = None ;
     for class in self.classes.values_mut() {

@@ -8,22 +8,20 @@
 //! [teach]: fn.teach.html
 //! (Teacher's teach function)
 
-use rsmt2::Kid ;
-
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
 
 use self::smt::Parser ;
 
-// pub mod assistant ;
+pub mod assistant ;
 
 
 /// Starts the teaching process.
 pub fn start_class(
   instance: & Arc<Instance>, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
-  use rsmt2::solver ;
+  use rsmt2::{ solver, Kid } ;
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
   let mut kid = Kid::new( conf.solver.conf() ).chain_err(
@@ -36,12 +34,14 @@ pub fn start_class(
     if let Some(log) = conf.solver.log_file("teacher") ? {
       let mut teacher = Teacher::new(
         solver.tee(log), instance, profiler
-      ) ;
+      ) ? ;
       let res = teach( & mut teacher ) ;
       teacher.finalize() ? ;
       res
     } else {
-      let mut teacher = Teacher::new(solver, instance, profiler) ;
+      let mut teacher = Teacher::new(
+        solver, instance, profiler
+      ) ? ;
       let res = teach( & mut teacher ) ;
       teacher.finalize() ? ;
       res
@@ -120,15 +120,10 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
     match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
-      Some( (_idx, None) ) => {
-        log_info!(
-          "\ngot unsat result from {} learner", teacher.learners[_idx].1
-        ) ;
-        return Ok(None)
-      },
+      None => return Ok(None),
 
       // Got a candidate.
-      Some( ( idx, Some(candidates) ) ) => {
+      Some( ( idx, candidates) ) => {
         learner = Some(idx) ;
         if_verb!{
           log_info!(
@@ -193,9 +188,6 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
         profile!{ teacher mark "data", "propagation" }
         profile!{ teacher mark "data" }
       },
-
-      // Channel is dead.
-      None => bail!("all learners are dead"),
     }
   }
 }
@@ -208,47 +200,73 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
 pub struct Teacher<'a, S> {
   /// The solver.
   pub solver: S,
+
   /// The (shared) instance.
   pub instance: Arc<Instance>,
   /// Learning data.
   pub data: Data,
+
   /// Receiver.
-  pub from_learners: Receiver<(LrnIdx, FromLearners)>,
+  pub from_learners: Receiver<Msg>,
   /// Sender used by learners. Becomes `None` when the learning process starts.
-  pub to_teacher: Option< Sender<(LrnIdx, FromLearners)> >,
+  pub to_teacher: Option< Sender<Msg> >,
+
   /// Learners sender and description.
   ///
   /// Stores the channel to the learner, its name (for log), and a flag
   /// indicating whether the data has changed since this learner's last
   /// candidates.
   pub learners: LrnMap<( Option< Sender<FromTeacher> >, String, bool )>,
+  /// Assistant for implication constraint breaking.
+  pub assistant: Option< ( Sender<FromTeacher>, Data ) >,
+
   /// Profiler.
   pub _profiler: & 'a Profiler,
   /// Number of guesses.
   count: usize,
 }
+
 impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Constructor.
   pub fn new(
     solver: S, instance: Arc<Instance>, profiler: & 'a Profiler
-  ) -> Self {
+  ) -> Res<Self> {
     let learners = LrnMap::with_capacity( 2 ) ;
-    let (to_teacher, from_learners) = from_learners() ;
+    let (to_teacher, from_learners) = Msg::channel() ;
     let data = Data::new( instance.clone() ) ;
-    Teacher {
-      solver, instance, data, from_learners,
-      to_teacher: Some(to_teacher), learners,
-      _profiler: profiler, count: 0,
-    }
+
+    let assistant = if conf.teacher.assistant {
+      let (to_assistant_send, to_assistant_recv) = FromTeacher::channel() ;
+      let instance = instance.clone() ;
+      let to_teacher = to_teacher.clone() ;
+
+      ::std::thread::Builder::new().name( "assistant".into() ).spawn(
+        move || assistant::launch(
+          instance, MsgCore::new_assistant(
+            to_teacher, to_assistant_recv
+          )
+        )
+      ).chain_err(
+        || format!("while spawning assistant")
+      ) ? ;
+
+      Some(( to_assistant_send, data.clone() ))
+    } else {
+      None
+    } ;
+
+    Ok(
+      Teacher {
+        solver, instance, data, from_learners,
+        to_teacher: Some(to_teacher), learners, assistant,
+        _profiler: profiler, count: 0,
+      }
+    )
   }
 
   /// Finalizes the run.
   #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
-    if conf.stats {
-      println!("; Done in {} guess(es)", self.count) ;
-      println!("") ;
-    }
     for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       if let Some(sender) = sender.as_ref() {
         let _ = sender.send( FromTeacher::Exit ) ;
@@ -256,20 +274,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       }
       * sender = None
     }
-    while self.get_candidates(true)?.is_some() {}
-    Ok(())
-  }
-  /// Finalizes the run, does nothing in bench mode.
-  #[cfg(feature = "bench")]
-  #[inline(always)]
-  pub fn finalize(mut self) -> Res<()> {
-    for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
-      if let Some(sender) = sender.as_ref() {
-        let _ = sender.send( FromTeacher::Exit ) ;
-        ()
-      }
-      * sender = None
+    if let Some(& (ref sender, _)) = self.assistant.as_ref() {
+      let _ = sender.send( FromTeacher::Exit ) ;
+      ()
     }
+    self.assistant = None ;
+    log_debug! { "draining messages" }
+    while let Ok(_) = self.get_candidates(true) {}
     Ok(())
   }
 
@@ -280,11 +291,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       let index = self.learners.next_index() ;
       let name = learner.description(mine) ;
       let instance = self.instance.clone() ;
-      let data = self.data.clone_core() ;
-      let (to_learner, learner_recv) = new_to_learner() ;
+      let data = self.data.clone() ;
+      let (to_learner, learner_recv) = FromTeacher::channel() ;
       ::std::thread::Builder::new().name( name.clone() ).spawn(
         move || learner.run(
-          LearnerCore::new(index, to_teacher.clone(), learner_recv),
+          MsgCore::new_learner(
+            index, to_teacher.clone(), learner_recv
+          ),
           instance, data, mine
         )
       ).chain_err(
@@ -308,7 +321,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     for & (ref sender, ref name, _) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
         if let Err(_) = sender.send(
-          FromTeacher::Data( self.data.clone_core() )
+          FromTeacher::Data( self.data.clone() )
         ) {
           warn!( "learner `{}` is dead...", name )
         } else {
@@ -327,7 +340,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     let (ref sender, ref name, _) = self.learners[learner] ;
     let alive = if let Some(sender) = sender.as_ref() {
       if let Err(_) = sender.send(
-        FromTeacher::Data( self.data.clone_core() )
+        FromTeacher::Data( self.data.clone() )
       ) {
         false
       } else {
@@ -352,19 +365,23 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
     & self, drain: bool
-  ) -> Res< Option<(LrnIdx, Option<Candidates>)> > {
+  ) -> Res< Option<(LrnIdx, Candidates)> > {
+    macro_rules! all_dead {
+      () => ( bail!("all learners are dead") ) ;
+    }
+
     profile!{ self tick "waiting" }
 
     'recv: loop {
 
-      let msg = if let Some(timeout) = conf.until_timeout() {
+      let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
         if ! drain {
           match self.from_learners.recv_timeout(timeout) {
             Ok(msg) => msg,
             Err(_) => {
               profile!{ self mark "waiting" }
               conf.check_timeout() ? ;
-              return Ok(None)
+              all_dead!()
             },
           }
         } else {
@@ -372,7 +389,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             Ok(msg) => msg,
             Err(_) => {
               profile!{ self mark "waiting" }
-              return Ok(None)
+              all_dead!()
             },
           }
         }
@@ -381,47 +398,62 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           Ok(msg) => msg,
           Err(_) => {
             profile!{ self mark "waiting" }
-            return Ok(None)
+            all_dead!()
           },
         }
       } ;
 
       match msg {
 
-        (_idx, FromLearners::Msg(_s)) => if_verb!{
-          println!(";") ;
-          for _line in _s.lines() {
-            println!(
-              "; {} | {}", conf.emph( & self.learners[_idx].1 ), _line
-            )
+        MsgKind::Cands(cands) => {
+          profile!{ self mark "waiting" }
+          profile!{ self "candidates" => add 1 }
+          if let Id::Learner(idx) = id {
+            return Ok( Some( (idx, cands) ) )
+          } else {
+            bail!("received candidates from {}", id)
           }
         },
 
-        (idx, FromLearners::Err(e)) => {
+        MsgKind::Samples(_samples) => unimplemented!(),
+
+        MsgKind::Msg(_s) => if_verb!{
+          let id = match id {
+            Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
+            Id::Assistant => conf.emph( "assistant" ),
+          } ;
+          println!(";") ;
+          for _line in _s.lines() {
+            println!("; {} | {}", id, _line)
+          }
+        },
+
+        MsgKind::Err(e) => {
+          let id = match id {
+            Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
+            Id::Assistant => conf.emph( "assistant" ),
+          } ;
           let err: Res<()> = Err(e) ;
           let err: Res<()> = err.chain_err(
             || format!(
-              "from {} learner", conf.emph( & self.learners[idx].1 )
+              "from {} learner", id
             )
           ) ;
           print_err( err.unwrap_err() )
         },
 
-        (idx, FromLearners::Stats(tree, stats)) => if conf.stats {
+        MsgKind::Stats(tree, stats) => if conf.stats {
+          let id = match id {
+            Id::Learner(idx) => self.learners[idx].1.clone(),
+            Id::Assistant => "assistant".into(),
+          } ;
+          log_debug! { "received stats from {}", conf.emph(& id) }
           self._profiler.add_sub(
-            self.learners[idx].1.clone(), tree, stats
+            id, tree, stats
           )
         },
 
-        (idx, FromLearners::Cands(cands)) => {
-          profile!{ self mark "waiting" }
-          profile!{ self "candidates" => add 1 }
-          return Ok( Some( (idx, Some(cands)) ) )
-        },
-
-        (idx, FromLearners::Unsat) => return Ok(
-          Some( (idx, None) )
-        ),
+        MsgKind::Unsat => return Ok(None),
 
       }
 
@@ -555,19 +587,18 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         }
       }
     }
+
     profile!{ self tick "cexs", "prep" }
-    for var in clause.vars() {
-      if var.active {
-        self.solver.declare_const(& var.idx, & var.typ) ?
-      }
-    }
+    clause.declare(& mut self.solver) ? ;
     self.solver.assert_with(
-      clause, & (true_preds, false_preds, self.instance.preds())
+      clause, & (false, true_preds, false_preds, self.instance.preds())
     ) ? ;
     profile!{ self mark "cexs", "prep" }
+
     profile!{ self tick "cexs", "check-sat" }
     let sat = self.solver.check_sat() ? ;
     profile!{ self mark "cexs", "check-sat" }
+
     let res = if sat {
       profile!{ self tick "cexs", "model" }
       log_debug!{ "    sat, getting model..." }

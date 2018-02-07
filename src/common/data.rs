@@ -900,6 +900,7 @@ impl<'a> PebcakFmt<'a> for DataCore {
 /// [`DataCore`][core] and a factory for samples.
 ///
 /// [core]: struct.DataCore.html (DataCore struct)
+#[derive(Clone)]
 pub struct Data {
   /// Data core.
   core: DataCore,

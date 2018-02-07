@@ -3,8 +3,6 @@
 use common::* ;
 use common::data::HSample ;
 
-use errors::learners::LRes ;
-
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -41,8 +39,8 @@ impl TheoSynth for IntSynth {
 
   fn synth<F>(
     & mut self, mut f: F, sample: & HSample, others: & mut TermVals
-  ) -> LRes<bool>
-  where F: FnMut(Term) -> LRes<bool> {
+  ) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
       0 => simple_int_synth(sample, others, f),
       1 => {
@@ -88,8 +86,8 @@ impl TheoSynth for IntSynth {
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_int_synth<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
-) -> LRes<bool>
-where F: FnMut(Term) -> LRes<bool> {
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
     sample.len()
   ) ;
@@ -124,8 +122,8 @@ where F: FnMut(Term) -> LRes<bool> {
 /// Level 1 for int synthesis.
 pub fn int_synth_1<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
-) -> LRes<bool>
-where F: FnMut(Term) -> LRes<bool> {
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
     sample.len()
   ) ;
@@ -164,8 +162,8 @@ where F: FnMut(Term) -> LRes<bool> {
 /// Level 2 for int synthesis.
 pub fn int_synth_2<F>(
   sample: & HSample, others: & mut TermVals, mut f: F
-) -> LRes<bool>
-where F: FnMut(Term) -> LRes<bool> {
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
     sample.len()
   ) ;

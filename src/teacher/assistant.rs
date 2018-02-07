@@ -1,50 +1,373 @@
 //! Handles example propagation.
 
+use rsmt2::to_smt::Expr2Smt ;
+
 use common::* ;
-use common::data::{ Data, Sample } ;
+use common::data::{
+  Data, Sample, HSample
+} ;
+use common::msg::MsgCore ;
+
+/// Launches the assistant.
+pub fn launch(
+  instance: Arc<Instance>,
+  core: MsgCore,
+) {
+  use rsmt2::{ solver, Kid } ;
+  let mut kid = match Kid::new( conf.solver.conf() ).chain_err(
+    || ErrorKind::Z3SpawnError
+  ) {
+    Ok(kid) => kid,
+    Err(e) => {
+      core.err(e) ;
+      return ()
+    },
+  } ;
+
+  let solver = match solver(& mut kid, ()).chain_err(
+    || "while constructing the teacher's solver"
+  ) {
+    Ok(kid) => kid,
+    Err(e) => {
+      core.err(e) ;
+      return ()
+    },
+  } ;
+
+  if let Some(log) = match conf.solver.log_file("teacher") {
+    Ok(log) => log,
+    Err(e) => {
+      core.err(e.into()) ;
+      return ()
+    },
+  } {
+    let mut teacher = Assistant::new(
+      solver.tee(log), instance, core
+    ) ;
+    teacher.run()
+  } else {
+    let mut teacher = Assistant::new(
+      solver, instance, core
+    ) ;
+    teacher.run()
+  }
+}
 
 /// Propagates examples, tries to break implication constraints.
-pub struct Assistant {}
+pub struct Assistant<S> {
+  core: MsgCore,
+  /// Solver.
+  solver: S,
+  /// Instance.
+  instance: Arc<Instance>,
+  /// Positive constraints.
+  pos: PrdHMap< ClsSet >,
+  /// Negative constraints.
+  neg: PrdHMap< ClsSet >,
+  /// Empty set, just used for clause assertion.
+  empty_set: PrdSet,
+}
 
-impl Assistant {
+impl<'kid, S> Assistant<S>
+where S: Solver<'kid, ()> {
 
   /// Constructor.
-  pub fn new() -> Self {
-    Assistant {}
+  pub fn new(
+    solver: S, instance: Arc<Instance>, core: MsgCore
+  ) -> Self {
+    let mut pos = PrdHMap::with_capacity( instance.preds().len() ) ;
+    let mut neg = PrdHMap::with_capacity( instance.preds().len() ) ;
+
+    let mut pos_clauses = ClsSet::new() ;
+    let mut neg_clauses = ClsSet::new() ;
+
+    macro_rules! add_clauses {
+      ($pred:expr) => ({
+        if ! pos_clauses.is_empty() {
+          let mut clause_set = ClsSet::new() ;
+          ::std::mem::swap( & mut pos_clauses, & mut clause_set ) ;
+          let prev = pos.insert($pred, clause_set) ;
+          debug_assert! { prev.is_none() }
+        }
+        if ! neg_clauses.is_empty() {
+          let mut clause_set = ClsSet::new() ;
+          ::std::mem::swap( & mut neg_clauses, & mut clause_set ) ;
+          let prev = neg.insert($pred, clause_set) ;
+          debug_assert! { prev.is_none() }
+        }
+      }) ;
+    }
+
+    for pred in instance.pred_indices() {
+      debug_assert! { pos_clauses.is_empty() }
+      debug_assert! { neg_clauses.is_empty() }
+
+      for clause in instance.clauses_of(pred).1 {
+        let clause = * clause ;
+        if instance[clause].lhs_preds().is_empty() {
+          let is_new = pos_clauses.insert(clause) ;
+          debug_assert! { is_new }
+        }
+      }
+
+      for clause in instance.clauses_of(pred).0 {
+        let clause = * clause ;
+        if instance[clause].rhs().is_none()
+        && instance[clause].lhs_pred_apps_len() == 1 {
+          let is_new = neg_clauses.insert(clause) ;
+          debug_assert! { is_new }
+        }
+      }
+
+      add_clauses!(pred)
+    }
+
+    Assistant {
+      core, solver, instance, pos, neg,
+      empty_set: PrdSet::with_capacity(0),
+    }
+  }
+
+  /// Runs the assistant.
+  pub fn run(mut self) {
+    loop {
+      if let Err(e) = self.core.recv().and_then(
+        |mut data| self.break_implications(& mut data).map(
+          |()| self.core.send_samples(data)
+        )
+      ) {
+        self.core.err(e) ;
+        break
+      }
+    }
   }
 
   /// Breaks implications.
   pub fn break_implications(
-    & self, data: & Data,
+    & mut self, data: & mut Data,
   ) -> Res<()> {
+    let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
 
-    for cstr in CstrRange::zero_to( data.constraints.len() ) {
+    'all_constraints: for cstr in CstrRange::zero_to(
+      data.constraints.len()
+    ) {
+      // Can happen because of simplifications when propagating.
+      if cstr > data.constraints.len() {
+        break
+      }
       if ! data.constraints[cstr].is_tautology() {
         continue
       }
 
-      // Any of the lhs positive?
-      for sample in & data.constraints[cstr].lhs {
-        if let Some(sample) = self.make_positive(data, sample) ? {
-          unimplemented!()
+      let mut done = false ;
+      macro_rules! move_on {
+        (if done) => ( if done { move_on!() } ) ;
+        () => ({
+          for Sample { pred, args } in pos.drain(0..) {
+            data.stage_pos(pred, args)
+          }
+          for Sample { pred, args } in neg.drain(0..) {
+            data.stage_neg(pred, args)
+          }
+          data.propagate() ? ;
+          // Discard the constraint, regardless of what happened.
+          data.tautologize(cstr) ;
+          continue 'all_constraints
+        }) ;
+      }
+
+      if let Some(sample) = data.constraints[cstr].rhs.as_ref() {
+        match self.try_force(data, & sample) ? {
+          None => (),
+          Some( Either::Left(pos_sample) ) => {
+            pos.push(pos_sample) ;
+            // Constraint is trivial, move on.
+            done = true
+          },
+          Some( Either::Right(neg_sample) ) => neg.push(neg_sample),
         }
       }
+
+      move_on!(if done) ;
+
+      for sample in & data.constraints[cstr].lhs {        
+        match self.try_force(data, & sample) ? {
+          None => (),
+          Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
+          Some( Either::Right(neg_sample) ) => {
+            neg.push(neg_sample) ;
+            // Constraint is trivial, move on.
+            break
+          },
+        }
+      }
+
+      move_on!()
 
     }
 
     Ok(())
   }
 
-  /// Checks if a sample can be forced positive.
+  /// Checks if a sample can be forced to anything.
   ///
-  /// If it can, returns a sample which, when forced positive, will force the
-  /// input sample to be classified positive.
-  pub fn make_positive(
-    & self, data: & Data, & Sample { pred, ref args }: & Sample
-  ) -> Res< Option<Sample> > {
+  /// If it can't, return None. If it can, returns `Either`
+  ///
+  /// - `Left` of a sample which, when forced positive, will force the input
+  ///   sample to be classified positive.
+  /// - `Right` of a sample which, when forced negative, will force the input
+  ///   sample to be classified negative.
+  pub fn try_force(
+    & mut self, _data: & Data, & Sample { pred, args: ref vals }: & Sample
+  ) -> Res< Option< Either<Sample, Sample> > > {
+
+    if let Some(clauses) = self.pos.get(& pred) {
+
+      for clause in clauses {
+        let clause = & self.instance[* clause] ;
+        if let Some((p, args)) = clause.rhs() {
+          debug_assert_eq! { pred, p }
+
+          self.solver.push(1) ? ;
+          clause.declare(& mut self.solver) ? ;
+          self.solver.assert_with(
+            clause, & (
+              true, & self.empty_set, & self.empty_set, self.instance.preds()
+            )
+          ) ? ;
+          self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
+          let sat = self.solver.check_sat() ? ;
+          self.solver.pop(1) ? ;
+
+          if sat {
+            return Ok(
+              Some(
+                Either::Left(
+                  Sample { pred, args: vals.clone() }
+                )
+              )
+            )
+          }
+        } else {
+          bail!("inconsistent instance state")
+        }
+      }
+
+    }
+
+    if let Some(clauses) = self.neg.get(& pred) {
+
+      for clause in clauses {
+        let clause = & self.instance[* clause] ;
+        if let Some(argss) = clause.lhs_preds().get(& pred) {
+          let args = {
+            let mut argss = argss.iter() ;
+            if let Some(args) = argss.next() {
+              debug_assert! { argss.next().is_none() }
+              args
+            } else {
+              bail!("inconsistent instance state")
+            }
+          } ;
+
+          self.solver.push(1) ? ;
+          clause.declare(& mut self.solver) ? ;
+          self.solver.assert_with(
+            clause, & (
+              true, & self.empty_set, & self.empty_set, self.instance.preds()
+            )
+          ) ? ;
+          self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
+          let sat = self.solver.check_sat() ? ;
+          self.solver.pop(1) ? ;
+
+          if sat {
+            return Ok(
+              Some(
+                Either::Right(
+                  Sample { pred, args: vals.clone() }
+                )
+              )
+            )
+          }
+        } else {
+          bail!("inconsistent instance state")
+        }
+      }
+
+    }
+
+    Ok(None)
+  }
+
+}
 
 
-    bail!("unimplemented")
+/// Wrapper around some arguments and some values.
+///
+/// Used to assert `(= arg[i] val[i])`.
+pub struct ArgValEq<'a> {
+  /// Arguments.
+  args: & 'a HTArgs,
+  /// Values.
+  vals: & 'a HSample,
+}
+impl<'a> ArgValEq<'a> {
+  /// Constructor.
+  pub fn new(args: & 'a HTArgs, vals: & 'a HSample) -> Self {
+    debug_assert_eq! { args.len(), vals.len() }
+    ArgValEq { args, vals }
+  }
+}
+impl<'a> Expr2Smt<()> for ArgValEq<'a> {
+  fn expr_to_smt2<Writer>(
+    & self, w: & mut Writer, _: ()
+  ) -> ::rsmt2::SmtRes<()>
+  where Writer: Write {
+    write!(w, "(and") ? ;
+    let mut unknown = 0 ;
+
+    for (arg, val) in self.args.iter().zip( self.vals.iter() ) {
+      match * val {
+        Val::B(b) => {
+          write!(w, " ") ? ;
+          if ! b {
+            write!(w, "(not ") ?
+          }
+          arg.write(
+            w, |w, v| w.write_all( v.default_str().as_bytes() )
+          ) ? ;
+          if ! b {
+            write!(w, ")") ?
+          }
+        },
+        Val::I(ref i) => {
+          write!(w, " (= ") ? ;
+          arg.write(
+            w, |w, v| w.write_all( v.default_str().as_bytes() )
+          ) ? ;
+          write!(w, " ") ? ;
+          int_to_smt!(w, i) ? ;
+          write!(w, ")") ?
+        },
+        Val::R(ref r) => {
+          write!(w, " (= ") ? ;
+          arg.write(
+            w, |w, v| w.write_all( v.default_str().as_bytes() )
+          ) ? ;
+          write!(w, " ") ? ;
+          rat_to_smt!(w, r) ? ;
+          write!(w, ")") ?
+        },
+        Val::N => unknown += 1,
+      }
+    }
+
+    if unknown == self.args.len() {
+      write!(w, " true") ?
+    }
+    write!(w, ")") ? ;
+    Ok(())
   }
 
 }

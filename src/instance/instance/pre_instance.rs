@@ -1518,7 +1518,7 @@ where Slver: Solver<'skid, ()> {
         }
       }
       self.solver.assert_with(
-        clause, & (& set, & set, & self.instance.preds)
+        clause, & (false, & set, & set, & self.instance.preds)
       ) ? ;
 
       let sat = self.solver.check_sat() ? ;
