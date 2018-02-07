@@ -265,7 +265,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   }
 
   /// Finalizes the run.
-  #[cfg( not(feature = "bench") )]
   pub fn finalize(mut self) -> Res<()> {
     for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       if let Some(sender) = sender.as_ref() {

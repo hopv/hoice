@@ -709,8 +709,8 @@ where Slver: Solver<'kid, Parser> {
       return Ok(None)
     }
 
-    if let Some((qual, gain)) = best_qual {
-      msg! { self => "using synth qualifier {}, gain: {}", qual, gain }
+    if let Some((qual, _gain)) = best_qual {
+      msg! { self => "using synth qualifier {}, gain: {}", qual, _gain }
       profile!{ self tick "learning", "qual", "data split" }
       let (q_data, nq_data) = data.split(& qual) ;
       profile!{ self mark "learning", "qual", "data split" }
