@@ -479,7 +479,7 @@ where Slver: Solver<'kid, Parser> {
         profile!(
           |self.core._profiler| wrap {
             for unc in data.unc {
-              self.data.stage_pos(pred, unc)
+              self.data.stage_pos(pred, unc) ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -516,9 +516,7 @@ where Slver: Solver<'kid, Parser> {
         profile!(
           |self.core._profiler| wrap {
             for unc in data.unc {
-              // let prev = self.classifier.insert(unc, false) ;
-              // debug_assert!( prev.is_none() )
-              self.data.stage_neg(pred, unc)
+              self.data.stage_neg(pred, unc) ;
             }
             self.data.propagate()
 

@@ -64,8 +64,6 @@ pub struct Assistant<S> {
   pos: PrdHMap< ClsSet >,
   /// Negative constraints.
   neg: PrdHMap< ClsSet >,
-  /// Empty set, just used for clause assertion.
-  empty_set: PrdSet,
 }
 
 impl<'kid, S> Assistant<S>
@@ -124,14 +122,17 @@ where S: Solver<'kid, ()> {
 
     Assistant {
       core, solver, instance, pos, neg,
-      empty_set: PrdSet::with_capacity(0),
     }
   }
 
   /// Runs the assistant.
   pub fn run(mut self) {
     loop {
-      if let Err(e) = self.core.recv().and_then(
+      if let Err(e) = profile!(
+        |self.core._profiler| wrap {
+          self.core.recv()
+        } "waiting"
+      ).and_then(
         |mut data| self.break_implications(& mut data).map(
           |()| self.core.send_samples(data)
         )
@@ -147,31 +148,39 @@ where S: Solver<'kid, ()> {
     & mut self, data: & mut Data,
   ) -> Res<()> {
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
+    msg! { self => "breaking {} implications...", data.constraints.len() }
 
     'all_constraints: for cstr in CstrRange::zero_to(
       data.constraints.len()
     ) {
+
       // Can happen because of simplifications when propagating.
       if cstr > data.constraints.len() {
         break
       }
-      if ! data.constraints[cstr].is_tautology() {
+      if data.constraints[cstr].is_tautology() {
         continue
+      }
+
+      msg! {
+        self => "  {}", data.constraints[cstr].string_do(
+          self.instance.preds(), |s| s.to_string()
+        ).unwrap()
       }
 
       let mut done = false ;
       macro_rules! move_on {
         (if done) => ( if done { move_on!() } ) ;
         () => ({
+          // Discard the constraint, regardless of what will happen.
+          data.tautologize(cstr) ;
           for Sample { pred, args } in pos.drain(0..) {
-            data.stage_pos(pred, args)
+            data.stage_pos(pred, args) ;
           }
           for Sample { pred, args } in neg.drain(0..) {
-            data.stage_neg(pred, args)
+            data.stage_neg(pred, args) ;
           }
           data.propagate() ? ;
-          // Discard the constraint, regardless of what happened.
-          data.tautologize(cstr) ;
           continue 'all_constraints
         }) ;
       }
@@ -220,6 +229,7 @@ where S: Solver<'kid, ()> {
   pub fn try_force(
     & mut self, _data: & Data, & Sample { pred, args: ref vals }: & Sample
   ) -> Res< Option< Either<Sample, Sample> > > {
+    msg! { debug self => "working on ({} {})", self.instance[pred], vals } ;
 
     if let Some(clauses) = self.pos.get(& pred) {
 
@@ -227,19 +237,19 @@ where S: Solver<'kid, ()> {
         let clause = & self.instance[* clause] ;
         if let Some((p, args)) = clause.rhs() {
           debug_assert_eq! { pred, p }
+          debug_assert! { clause.lhs_preds().is_empty() }
 
           self.solver.push(1) ? ;
           clause.declare(& mut self.solver) ? ;
-          self.solver.assert_with(
-            clause, & (
-              true, & self.empty_set, & self.empty_set, self.instance.preds()
-            )
+          self.solver.assert(
+            & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
           let sat = self.solver.check_sat() ? ;
           self.solver.pop(1) ? ;
 
           if sat {
+            msg! { debug self => "  forcing positive" }
             return Ok(
               Some(
                 Either::Left(
@@ -272,16 +282,15 @@ where S: Solver<'kid, ()> {
 
           self.solver.push(1) ? ;
           clause.declare(& mut self.solver) ? ;
-          self.solver.assert_with(
-            clause, & (
-              true, & self.empty_set, & self.empty_set, self.instance.preds()
-            )
+          self.solver.assert(
+            & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
           let sat = self.solver.check_sat() ? ;
           self.solver.pop(1) ? ;
 
           if sat {
+            msg! { debug self => "  forcing negative" }
             return Ok(
               Some(
                 Either::Right(
@@ -297,9 +306,45 @@ where S: Solver<'kid, ()> {
 
     }
 
+    msg! { debug self => "  giving up" }
+
     Ok(None)
   }
 
+}
+
+impl<Slver> ::std::ops::Deref for Assistant<Slver> {
+  type Target = MsgCore ;
+  fn deref(& self) -> & MsgCore { & self.core }
+}
+
+/// Wrapper around a conjunction for smt printing.
+struct ConjWrap<'a> {
+  /// Conjunction.
+  terms: & 'a HConSet<Term>,
+}
+impl<'a> ConjWrap<'a> {
+  /// Constructor.
+  pub fn new(terms: & 'a HConSet<Term>) -> Self {
+    ConjWrap { terms }
+  }
+}
+impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ConjWrap<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    if self.terms.is_empty() {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and") ? ;
+      for term in self.terms {
+        write!(w, " ") ? ;
+        term.write(w, |w, var| var.default_write(w)) ? ;
+      }
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
 }
 
 

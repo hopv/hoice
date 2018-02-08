@@ -247,6 +247,18 @@ impl DataCore {
     }
   }
 
+  /// Number of positive/negative samples.
+  pub fn pos_neg_count(& self) -> (usize, usize) {
+    let (mut pos, mut neg) = (0, 0) ;
+    for samples in & self.pos {
+      pos += samples.len()
+    }
+    for samples in & self.neg {
+      neg += samples.len()
+    }
+    (pos, neg)
+  }
+
   /// Shrinks the list of constraints.
   ///
   /// - pops all trailing empty constraints from [`self.constraints`][cstrs].
@@ -406,17 +418,17 @@ impl DataCore {
   }
 
   /// Remember a positive example to add.
-  pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) {
-    let _ = self.pos_to_add.entry(pred).or_insert_with(
+  pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) -> bool {
+    self.pos_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
-    ).insert(args) ;
+    ).insert(args)
   }
 
   /// Remember a negative example to add.
-  pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) {
-    let _ = self.neg_to_add.entry(pred).or_insert_with(
+  pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) -> bool {
+    self.neg_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
-    ).insert(args) ;
+    ).insert(args)
   }
 
   /// Diff between two data structures. Returns the new positive, negative,
@@ -473,6 +485,7 @@ impl DataCore {
   /// Tautologizes a constraint and removes the links with its samples in
   /// the map.
   pub fn tautologize(& mut self, constraint: CstrIdx) -> Vec<Sample> {
+    debug_assert! { constraint < self.constraints.len() }
     let samples = self.constraints[constraint].tautologize() ;
     for & Sample { pred, ref args } in & samples {
       let _ = self.map[pred].get_mut(& args).map(
@@ -627,7 +640,7 @@ impl DataCore {
             // `lhs`.
             debug_assert!( maybe_rhs.is_empty() ) ;
             // Remember the sample has to be true.
-            self.stage_pos(pred, args)
+            self.stage_pos(pred, args) ;
           } else {
             // No `rhs`, we have `true => false`, contradiction.
             bail!(ErrorKind::Unsat)
@@ -642,7 +655,7 @@ impl DataCore {
           if let Some( Sample { pred, args } ) = lhs.pop() {
             debug_assert!( lhs.is_empty() ) ;
             // Remember the sample has to be false.
-            self.stage_neg(pred, args)
+            self.stage_neg(pred, args) ;
           } else {
             bail!(
               "[unreachable] just checked lhs's length is 1 but it's empty now"
@@ -805,6 +818,7 @@ impl DataCore {
 
     Ok(())
   }
+
 }
 
 impl<'a> PebcakFmt<'a> for DataCore {
@@ -935,6 +949,43 @@ impl Data {
     self.core.clone()
   }
 
+  /// Clones the constraints to create a new `Data`.
+  pub fn clone_constraints(& self) -> Option<Data> {
+    let mut data = Data {
+      core: DataCore::new( self.core.instance.clone() ),
+      samples: self.samples.clone()
+    } ;
+    for constraint in & self.core.constraints {
+      if ! constraint.is_tautology() {
+        data.internal_add_cstr( constraint.clone() )
+      }
+    }
+    Some(data)
+  }
+
+  /// Merges the positive and negative samples in `other` to `self`.
+  ///
+  /// Returns the number of new positive/negative examples.
+  pub fn merge_samples(& mut self, other: Data) -> Res<(usize, usize)> {
+    let (mut pos, mut neg) = (0, 0) ;
+    for (pred, samples) in other.core.pos.into_index_iter() {
+      for sample in samples {
+        if self.stage_pos(pred, sample) {
+          pos += 1
+        }
+      }
+    }
+    for (pred, samples) in other.core.neg.into_index_iter() {
+      for sample in samples {
+        if self.stage_neg(pred, sample) {
+          neg += 1
+        }
+      }
+    }
+    self.propagate() ? ;
+    Ok((pos, neg))
+  }
+
   /// Creates a new sample. Returns true if it's new.
   pub fn mk_sample(
     & mut self, args: Args
@@ -1004,26 +1055,28 @@ impl Data {
       return Ok(true)
     }
 
+    self.internal_add_cstr( Constraint { lhs: nu_lhs, rhs: nu_rhs } ) ;
+    Ok(true)
+  }
+
+  /// Adds a constraint.
+  fn internal_add_cstr(& mut self, constraint: Constraint) {
     let cstr_index = self.constraints.next_index() ;
 
     // Update the map from samples to constraints. Better to do that now than
     // above, since there might be further simplifications possible.
-    for & Sample { pred, ref args } in & nu_lhs {
+    for & Sample { pred, ref args } in & constraint.lhs {
       let _ = self.map[pred].entry( args.clone() ).or_insert_with(
         || CstrSet::with_capacity(17)
       ).insert(cstr_index) ;
     }
-    if let Some( & Sample { pred, ref args } ) = nu_rhs.as_ref() {
+    if let Some( & Sample { pred, ref args } ) = constraint.rhs.as_ref() {
       let _ = self.map[pred].entry( args.clone() ).or_insert_with(
         || CstrSet::with_capacity(17)
       ).insert(cstr_index) ;
     }
 
-    let cstr = Constraint { lhs: nu_lhs, rhs: nu_rhs } ;
-
-    self.constraints.push(cstr) ;
-
-    Ok(true)
+    self.constraints.push(constraint)
   }
 
   /// Adds positive data after hash consing. True if new.

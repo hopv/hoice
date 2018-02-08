@@ -96,6 +96,32 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
       ) ?
     }
 
+    // Send stuff to the assistant if it's not running.
+    scoped! {
+      let res = if let Some(
+        & mut (ref sender, ref mut running)
+      ) = teacher.assistant.as_mut() {
+        println!("assistant running: {}", running) ;
+        if ! * running {
+          if let Some(data) = teacher.data.clone_constraints() {
+            println!("sending stuff") ;
+            * running = true ;
+            sender.send( FromTeacher::Data(data) )
+          } else {
+            println!("data is none") ;
+            Ok(())
+          }
+        } else {
+          Ok(())
+        }
+      } else { Ok(()) } ;
+
+      if res.is_err() {
+        teacher.assistant = None ;
+        warn! { "teacher assistant is dead" }
+      }
+    }
+
     if let Some(idx) = learner {
       if conf.teacher.step {
         read_line(
@@ -218,7 +244,9 @@ pub struct Teacher<'a, S> {
   /// candidates.
   pub learners: LrnMap<( Option< Sender<FromTeacher> >, String, bool )>,
   /// Assistant for implication constraint breaking.
-  pub assistant: Option< ( Sender<FromTeacher>, Data ) >,
+  ///
+  /// The boolean flag indicates whether the assistant was sent some stuff.
+  pub assistant: Option< (Sender<FromTeacher>, bool) >,
 
   /// Profiler.
   pub _profiler: & 'a Profiler,
@@ -250,7 +278,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         || format!("while spawning assistant")
       ) ? ;
 
-      Some(( to_assistant_send, data.clone() ))
+      Some( (to_assistant_send, false) )
     } else {
       None
     } ;
@@ -273,7 +301,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       }
       * sender = None
     }
-    if let Some(& (ref sender, _)) = self.assistant.as_ref() {
+    if let Some( & (ref sender, _) ) = self.assistant.as_ref() {
       let _ = sender.send( FromTeacher::Exit ) ;
       ()
     }
@@ -363,7 +391,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   ///
   /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
-    & self, drain: bool
+    & mut self, drain: bool
   ) -> Res< Option<(LrnIdx, Candidates)> > {
     macro_rules! all_dead {
       () => ( bail!("all learners are dead") ) ;
@@ -414,7 +442,31 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         },
 
-        MsgKind::Samples(_samples) => unimplemented!(),
+        MsgKind::Samples(samples) => {
+          let (pos, neg) = samples.pos_neg_count() ;
+          profile! { self "assistant pos       " => add pos }
+          profile! { self "assistant neg       " => add neg }
+          let (pos, neg) = self.data.merge_samples(samples) ? ;
+          profile! { self "assistant pos useful" => add pos }
+          profile! { self "assistant neg useful" => add neg }
+
+          let res = if let Some(
+            & mut (ref sender, ref mut running)
+          ) = self.assistant.as_mut() {
+            debug_assert! { * running }
+            if let Some(data) = self.data.clone_constraints() {
+              sender.send( FromTeacher::Data(data) )
+            } else {
+              * running = false ;
+              Ok(())
+            }
+          } else { Ok(()) } ;
+
+          if res.is_err() {
+            self.assistant = None ;
+            warn! { "teacher assistant is dead" }
+          }
+        },
 
         MsgKind::Msg(_s) => if_verb!{
           let id = match id {
