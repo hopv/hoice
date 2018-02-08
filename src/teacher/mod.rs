@@ -598,7 +598,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
     & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
-  ) -> SmtRes< Option<Cex> > {
+  ) -> Res< Option<Cex> > {
     // log_debug!{
     //   "getting cex for {}",
     //   self.instance[clause_idx].to_string_info(

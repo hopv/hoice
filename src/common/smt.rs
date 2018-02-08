@@ -32,6 +32,106 @@ impl<'a> Expr2Smt<()> for SmtTerm<'a> {
 }
 
 
+/// SMT-prints a collection of terms as a conjunction with default var writer.
+pub struct SmtConj<Trms> {
+  /// Conjunction.
+  terms: Trms,
+}
+impl<'a, Trms> SmtConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  /// Constructor.
+  pub fn new<IntoIter>(terms: IntoIter) -> Self
+  where IntoIter: IntoIterator<IntoIter = Trms, Item = & 'a Term> {
+    SmtConj { terms: terms.into_iter() }
+  }
+
+  /// Checks if this conjunction is unsatisfiable.
+  pub fn is_unsat<'kid, Parser: Copy, S>(
+    & self, solver: & mut S, vars: & VarMap< ::instance::info::VarInfo >
+  ) -> Res<bool>
+  where S: Solver<'kid, Parser> {
+    if self.terms.len() == 0 { return Ok(false) }
+    solver.push(1) ? ;
+    for var in vars {
+      if var.active {
+        solver.declare_const(& var.idx, & var.typ) ?
+      }
+    }
+    solver.assert( self ) ? ;
+    let sat = solver.check_sat() ? ;
+    solver.pop(1) ? ;
+    Ok(! sat)
+  }
+}
+impl<'a, Trms> Expr2Smt<()> for SmtConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    if self.terms.len() == 0 {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and") ? ;
+      for term in self.terms.clone().into_iter() {
+        write!(w, " ") ? ;
+        term.write(
+          w, |w, var| var.default_write(w)
+        ) ? ;
+      }
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
+}
+
+
+
+/// SMT-prints an implication `/\ (set \ term) => term`.
+pub struct SmtImpl<'a> {
+  /// Set of terms.
+  pub set: & 'a HConSet<Term>,
+  /// Term to remove from `set`.
+  pub trm: & 'a Term,
+}
+impl<'a> SmtImpl<'a> {
+  /// Constructor.
+  ///
+  /// Returns `None` if `set.is_empty()`.
+  pub fn new(set: & 'a HConSet<Term>, trm: & 'a Term) -> Option<Self> {
+    if ! set.is_empty() {
+      Some( SmtImpl { set, trm } )
+    } else {
+      None
+    }
+  }
+}
+impl<'a> Expr2Smt<()> for SmtImpl<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    debug_assert! { ! self.set.is_empty() }
+    write!(w, "(and (not ") ? ;
+    self.trm.write(w, |w, var| var.default_write(w)) ? ;
+    write!(w, ") ") ? ;
+    if self.set.len() <= 1 {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and ") ? ;
+      for term in self.set {
+        if term != self.trm {
+          write!(w, " ") ? ;
+          term.write(w, |w, var| var.default_write(w)) ?
+        }
+      }
+      write!(w, ")") ?
+    }
+    write!(w, ")") ? ;
+    Ok(())
+  }
+}
+
+
+
 /// Wrapper around a predicate/sample pair that SMT-prints it as an identifier.
 ///
 /// In practice, will be printed as `format!("|p_{} {}|", pred, smpl.uid())`.

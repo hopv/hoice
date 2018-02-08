@@ -519,8 +519,8 @@ impl Clause {
   /// Declares all active clause variables.
   pub fn declare<'kid, S, Parser>(
     & self, solver: & mut S
-  ) -> ::rsmt2::SmtRes<()>
-  where S: ::rsmt2::Solver<'kid, Parser>, Parser: Copy {
+  ) -> Res<()>
+  where S: Solver<'kid, Parser>, Parser: Copy {
     for var in self.vars() {
       if var.active {
         solver.declare_const(& var.idx, & var.typ) ?

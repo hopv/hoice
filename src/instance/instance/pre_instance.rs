@@ -2,136 +2,18 @@
 //! pre-processing.
 
 use common::* ;
+use common::smt::{ SmtConj, SmtImpl } ;
+
 use instance::info::* ;
 use instance::Clause ;
 
-
-
-
-/// Wrapper around a conjunction for smt printing.
-struct ConjWrap<'a> {
-  /// Conjunction.
-  terms: & 'a Vec<& 'a Term>,
-}
-impl<'a> ConjWrap<'a> {
-  /// Constructor.
-  pub fn new(terms: & 'a Vec<& 'a Term>) -> Self {
-    ConjWrap { terms }
-  }
-}
-impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ConjWrap<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: ()
-  ) -> SmtRes<()> {
-    if self.terms.is_empty() {
-      write!(w, "true") ?
-    } else {
-      write!(w, "(and") ? ;
-      for term in self.terms {
-        write!(w, " ") ? ;
-        term.write(w, |w, var| var.default_write(w)) ? ;
-      }
-      write!(w, ")") ?
-    }
-    Ok(())
-  }
-}
-
-
-/// Wrapper around a set of terms and a single term.
-///
-/// Encodes `/\ (set \ term) => term`.
-struct ImplWrap<'a> {
-  set: & 'a HConSet<Term>,
-  term: & 'a Term,
-}
-impl<'a> ImplWrap<'a> {
-  /// Constructor.
-  ///
-  /// Returns `None` if `set.is_empty()`.
-  pub fn new(set: & 'a HConSet<Term>, term: & 'a Term) -> Option<Self> {
-    if ! set.is_empty() {
-      Some( ImplWrap { set, term } )
-    } else {
-      None
-    }
-  }
-}
-impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ImplWrap<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: ()
-  ) -> SmtRes<()> {
-    debug_assert! { ! self.set.is_empty() }
-    write!(w, "(and (not ") ? ;
-    self.term.write(w, |w, var| var.default_write(w)) ? ;
-    write!(w, ") ") ? ;
-    if self.set.len() <= 1 {
-      write!(w, "true") ?
-    } else {
-      write!(w, "(and ") ? ;
-      for term in self.set {
-        if term != self.term {
-          write!(w, " ") ? ;
-          term.write(w, |w, var| var.default_write(w)) ?
-        }
-      }
-      write!(w, ")") ?
-    }
-    write!(w, ")") ? ;
-    Ok(())
-  }
-}
-
-
-
-/// Wraps a solver to provide helper functions.
-pub struct SolverWrapper<S> {
-  /// The solver.
-  solver: S,
-}
-impl<S> ::std::ops::Deref for SolverWrapper<S> {
-  type Target = S ;
-  fn deref(& self) -> & S {
-    & self.solver
-  }
-}
-impl<S> ::std::ops::DerefMut for SolverWrapper<S> {
-  fn deref_mut(& mut self) -> & mut S {
-    & mut self.solver
-  }
-}
-impl<'kid, S: Solver<'kid, ()>> SolverWrapper<S> {
-  /// Constructor.
-  pub fn new(solver: S) -> Self {
-    SolverWrapper {
-      solver // , new_vars: VarSet::with_capacity(17),
-    }
-  }
-
-  /// True if an implication of terms is a tautology.
-  pub fn trivial_impl<'a>(
-    & mut self, vars: & VarMap<VarInfo>, lhs: & 'a Vec<& 'a Term>
-  ) -> Res<bool> {
-    self.solver.push(1) ? ;
-    if lhs.is_empty() { return Ok(false) }
-    for var in vars {
-      if var.active {
-        self.solver.declare_const(& var.idx, & var.typ) ?
-      }
-    }
-    self.solver.assert( & ConjWrap::new(lhs) ) ? ;
-    let sat = self.solver.check_sat() ? ;
-    self.solver.pop(1) ? ;
-    Ok(! sat)
-  }
-}
 
 /// Wraps an instance for pre-processing.
 pub struct PreInstance<'a, Slver> {
   /// The instance wrapped.
   instance: & 'a mut Instance,
   /// Solver used for triviality-checking.
-  solver: SolverWrapper<Slver>,
+  solver: Slver,
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
 
@@ -149,7 +31,6 @@ where Slver: Solver<'skid, ()> {
     instance: & 'a mut Instance,
     solver: Slver,
   ) -> Self {
-    let solver = SolverWrapper::new(solver) ;
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_check = ClsSet::with_capacity(7) ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
@@ -363,18 +244,14 @@ where Slver: Solver<'skid, ()> {
 
     self.solver.comment("Pruning atoms...") ? ;
 
-    for info in clause.vars() {
-      if info.active {
-        self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
-      }
-    }
+    clause.declare(& mut self.solver) ? ;
 
     for atom in atoms {
-      let keep = if let Some(wrap) = ImplWrap::new(
+      let keep = if let Some(implication) = SmtImpl::new(
         clause.lhs_terms(), & atom
       ) {
         let actlit = self.solver.get_actlit() ? ;
-        self.solver.assert_act(& actlit, & wrap) ? ;
+        self.solver.assert_act(& actlit, & implication) ? ;
         let res = self.solver.check_sat_act( Some(& actlit) ) ? ;
         self.solver.de_actlit(actlit) ? ;
         res
@@ -402,7 +279,7 @@ where Slver: Solver<'skid, ()> {
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
   fn is_clause_trivial(& mut self, clause: ClsIdx) -> Res<bool> {
-    let mut lhs: Vec<& Term> = Vec::with_capacity(17) ;
+    let mut lhs: Vec<Term> = Vec::with_capacity(17) ;
     let clause = & self.instance[clause] ;
 
     for term in clause.lhs_terms() {
@@ -412,20 +289,22 @@ where Slver: Solver<'skid, ()> {
         _ => {
           let neg = term::not( term.clone() ) ;
           for term in & lhs {
-            if neg == ** term {
+            if neg == * term {
               return Ok(true)
             }
           }
-          lhs.push( term )
+          lhs.push( term.clone() )
         },
       }
     }
 
+    let conj = SmtConj::new( lhs.iter() ) ;
+
     if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
 
       // Either it is trivial, or falsifiable regardless of the predicates.
-      if self.solver.trivial_impl(
-        clause.vars(), & lhs
+      if conj.is_unsat(
+        & mut self.solver, clause.vars()
       ) ? {
         return Ok(true)
       } else {
@@ -448,12 +327,10 @@ where Slver: Solver<'skid, ()> {
 
       if lhs.is_empty() {
         Ok(false)
-      } else if self.solver.trivial_impl(
-        clause.vars(), & lhs
-      ) ? {
-        Ok(true)
       } else {
-        Ok(false)
+        conj.is_unsat(
+          & mut self.solver, clause.vars()
+        )
       }
 
     }
