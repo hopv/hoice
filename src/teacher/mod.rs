@@ -101,14 +101,11 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
       let res = if let Some(
         & mut (ref sender, ref mut running)
       ) = teacher.assistant.as_mut() {
-        println!("assistant running: {}", running) ;
         if ! * running {
           if let Some(data) = teacher.data.clone_constraints() {
-            println!("sending stuff") ;
             * running = true ;
             sender.send( FromTeacher::Data(data) )
           } else {
-            println!("data is none") ;
             Ok(())
           }
         } else {
@@ -449,6 +446,12 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           let (pos, neg) = self.data.merge_samples(samples) ? ;
           profile! { self "assistant pos useful" => add pos }
           profile! { self "assistant neg useful" => add neg }
+
+          if pos + neg != 0 {
+            for & mut (_, _, ref mut changed) in & mut self.learners {
+              * changed = true
+            }
+          }
 
           let res = if let Some(
             & mut (ref sender, ref mut running)
