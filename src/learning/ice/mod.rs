@@ -3,8 +3,9 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
-
-use self::smt::* ;
+use common::smt::{
+  SmtSample, SmtConstraint, SmtActSamples
+} ;
 
 pub mod quals ;
 pub mod synth ;
@@ -28,7 +29,7 @@ impl Launcher {
     let mut kid = Kid::new( conf.solver.conf() ).chain_err(
       || "while spawning the teacher's solver"
     ) ? ;
-    let conflict_solver = solver(& mut kid, Parser).chain_err(
+    let conflict_solver = solver(& mut kid, ()).chain_err(
       || "while constructing the teacher's solver"
     ) ? ;
 
@@ -109,7 +110,8 @@ pub struct IceLearner<'core, Slver> {
   luby: Option<LubyCount>,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
-where Slver: Solver<'kid, Parser> {
+where Slver: Solver<'kid, ()> {
+
   /// Ice learner constructor.
   pub fn new(
     core: & 'core MsgCore, instance: Arc<Instance>, data: Data,
@@ -422,7 +424,6 @@ where Slver: Solver<'kid, Parser> {
 
     Ok( Some(candidates) )
   }
-
 
   /// Backtracks to the last element of `unfinished`.
   ///
@@ -790,19 +791,23 @@ where Slver: Solver<'kid, Parser> {
     profile!{ self tick "learning", "smt", "legal" }
 
     // Wrap actlit and increment counter.
-    let actlit = self.solver.get_actlit() ? ;
-    let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert( & actlit ) ? ;
-    let actlit = actlit.destroy() ;
+    let samples = SmtActSamples::new(
+      & mut self.solver, pred, unc, pos
+    ) ? ;
+    self.solver.assert( & samples ) ? ;
 
-    let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
+    let legal = if self.solver.check_sat_act(
+      Some(& samples.actlit)
+    ) ? {
       profile!{ self mark "learning", "smt", "legal" }
       true
     } else {
       profile!{ self mark "learning", "smt", "legal" }
       false
     } ;
-    self.solver.set_actlit(actlit, legal) ? ;
+
+    samples.force(& mut self.solver, legal) ? ;
+
     Ok(legal)
   }
 
@@ -824,19 +829,23 @@ where Slver: Solver<'kid, Parser> {
     }
 
     // Wrap actlit and increment counter.
-    let actlit = self.solver.get_actlit() ? ;
-    let actlit = ActWrap { actlit, pred, unc, pos } ;
-    self.solver.assert( & actlit ) ? ;
-    let actlit = actlit.destroy() ;
+    let samples = SmtActSamples::new(
+      & mut self.solver, pred, unc, pos
+    ) ? ;
+    self.solver.assert(& samples) ? ;
 
-    let legal = if self.solver.check_sat_act( Some(& actlit) ) ? {
+    let legal = if self.solver.check_sat_act(
+      Some(& samples.actlit)
+    ) ? {
       profile!{ self mark "learning", "smt", "all legal" }
       true
     } else {
       profile!{ self mark "learning", "smt", "all legal" }
       false
     } ;
-    self.solver.set_actlit(actlit, legal) ? ;
+
+    samples.force(& mut self.solver, legal) ? ;
+
     Ok(legal)
   }
 
@@ -852,7 +861,7 @@ where Slver: Solver<'kid, Parser> {
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<bool> {
     // Dummy arguments used in the `define_fun` for pos (neg) data.
-    let args: [ (SWrap, Typ) ; 0 ] = [] ;
+    let args: [ (SmtSample, Typ) ; 0 ] = [] ;
 
     // Positive data.
     self.solver.comment("Positive data:") ? ;
@@ -861,7 +870,8 @@ where Slver: Solver<'kid, Parser> {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
         self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "true"
+          & SmtSample::new(pred, sample),
+          & args, & Typ::Bool, & "true"
         ) ?
       }
     }
@@ -875,7 +885,8 @@ where Slver: Solver<'kid, Parser> {
           return Ok(true)
         }
         self.solver.define_fun(
-          & SWrap(pred, sample), & args, & Typ::Bool, & "false"
+          & SmtSample::new(pred, sample),
+          & args, & Typ::Bool, & "false"
         ) ?
       }
     }
@@ -895,7 +906,7 @@ where Slver: Solver<'kid, Parser> {
       //       if ! self.dec_mem[pred].contains(& uid) {
       //         let _ = self.dec_mem[pred].insert(uid) ;
       //         self.solver.define_fun(
-      //           & SWrap(pred, sample), & args, & Typ::Bool, & "true", & ()
+      //           & SmtSample(pred, sample), & args, & Typ::Bool, & "true", & ()
       //         ) ?
       //       }
       //     }
@@ -911,7 +922,7 @@ where Slver: Solver<'kid, Parser> {
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
             self.solver.declare_const(
-              & SWrap(pred, sample), & Typ::Bool
+              & SmtSample::new(pred, sample), & Typ::Bool
             ) ?
           }
         }
@@ -922,7 +933,9 @@ where Slver: Solver<'kid, Parser> {
     // Assert all constraints.
     for constraint in self.data.constraints.iter() {
       if ! constraint.is_tautology() {
-        self.solver.assert( & CWrap(constraint) ) ?
+        self.solver.assert(
+          & SmtConstraint::new(constraint)
+        ) ?
       }
     }
 
@@ -935,218 +948,3 @@ impl<'core, 'kid, Slver> ::std::ops::Deref for IceLearner<'core, Slver> {
   fn deref(& self) -> & MsgCore { & self.core }
 }
 
-
-
-
-/// Smt-related things.
-pub mod smt {
-  use std::str::FromStr ;
-  use std::io::BufRead ;
-
-  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
-  use rsmt2::to_smt::* ;
-  use rsmt2::actlit::Actlit ;
-
-  use common::* ;
-  use common::data::* ;
-
-
-
-  /// Can parse values (int) and idents (`VarIdx`).
-  ///
-  /// In the ice learner, parsing is only used for synthesizing, not for
-  /// conflict detection.
-  #[derive(Clone, Copy)]
-  pub struct Parser ;
-
-  impl<'a> IdentParser<Option<VarIdx>, (), & 'a str> for Parser {
-    fn parse_ident(self, input: & 'a str) -> SmtRes< Option<VarIdx> > {
-      if input ==  "v" { return Ok(None) }
-
-      debug_assert_eq!( & input[0..2], "v_" ) ;
-      match usize::from_str(& input[2..]) {
-        Ok(idx) => Ok( Some(idx.into()) ),
-        Err(e) => bail!(
-          "could not retrieve var index from `{}`: {}", input, e
-        ),
-      }
-    }
-    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
-      Ok(())
-    }
-  }
-
-  impl<'a, Br> ValueParser<Int, & 'a mut SmtParser<Br>> for Parser
-  where Br: BufRead {
-    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Int> {
-      if let Some(val) = input.try_int::<
-        _, _, ::num::bigint::ParseBigIntError
-      >(
-        |int, pos| {
-          let int = Int::from_str(int) ? ;
-          Ok( if ! pos { - int } else { int } )
-        }
-      ) ? {
-        Ok(val)
-      } else {
-        input.fail_with("unexpected value")
-      }
-    }
-  }
-
-  /// Wrapper around predicate / sample that forces smt printing.
-  pub struct SWrap<'a>(pub PrdIdx, pub & 'a HSample) ;
-  impl<'a> Expr2Smt<()> for SWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> {
-      write!( w, "|p_{} {}|", self.0, self.1.uid() ) ? ;
-      Ok(())
-    }
-  }
-  impl<'a> Sym2Smt<()> for SWrap<'a> {
-    fn sym_to_smt2<Writer>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> where Writer: Write {
-      self.expr_to_smt2(w, ())
-    }
-  }
-
-
-  /// Wrapper around constraints that forces smt printing consistent with
-  /// [`SWrap`](struct.SWrap.html).
-  pub struct CWrap<'a>(pub & 'a Constraint) ;
-  impl<'a> Expr2Smt<()> for CWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> {
-      write!(w, "(=> (and") ? ;
-      for lhs in & self.0.lhs {
-        write!(w, " ", ) ? ;
-        SWrap(lhs.pred, & lhs.args).expr_to_smt2(w, ()) ?
-      }
-      write!(w, ") ") ? ;
-      if let Some(rhs) = self.0.rhs.as_ref() {
-        SWrap(rhs.pred, & rhs.args).expr_to_smt2(w, ()) ?
-      } else {
-        write!(w, "false") ? ;
-      }
-      write!(w, ")") ? ;
-      Ok(())
-    }
-  }
-
-  /// Wrapper for activation literals activating samples for some predicate.
-  ///
-  /// `Sym2Smt` implementation just yields the actlit, used to declare said
-  /// actlit. `Expr2Smt` is the actual activation expression
-  ///
-  /// ```bash
-  /// (=> <actlit> (and <samples>))
-  /// ```
-  pub struct ActWrap<Samples> {
-    /// Activation literal.
-    pub actlit: Actlit,
-    /// Predicate.
-    pub pred: PrdIdx,
-    /// Samples.
-    pub unc: Samples,
-    /// Indicates whether we're assuming the samples positive or negative.
-    pub pos: bool,
-  }
-  impl<Samples> ActWrap<Samples> {
-    /// Retrieve the actlit by destroying the wrapper.
-    pub fn destroy(self) -> Actlit { self.actlit }
-  }
-  impl<'a> Expr2Smt<()> for ActWrap<& 'a HSamples> {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> {
-      write!(w, "(=> ") ? ;
-      self.actlit.write(w) ? ;
-      write!(
-        w, " ({}", if self.pos { "and" } else { "not (or" }
-      ) ? ;
-      for unc in self.unc {
-        write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
-      }
-      write!(w, "))") ? ;
-      if ! self.pos {
-        write!(w, ")") ?
-      }
-      Ok(())
-    }
-  }
-  impl<'a, T> Expr2Smt<()> for ActWrap<
-    & 'a HConMap<HSample, T>
-  > {
-    fn expr_to_smt2<Writer: Write>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> {
-      write!(w, "(=> ") ? ;
-      self.actlit.write(w) ? ;
-      write!(
-        w, " ({}", if self.pos { "and" } else { "not (or" }
-      ) ? ;
-      for (unc, _) in self.unc {
-        write!(w, " ", ) ? ;
-        SWrap(self.pred, unc).expr_to_smt2(w, ()) ?
-      }
-      write!(w, "))") ? ;
-      if ! self.pos {
-        write!(w, ")") ?
-      }
-      Ok(())
-    }
-  }
-
-
-  /// Wrapper around some values and some coefficients, used by
-  /// [synthesize](../struct.IceLearner.html#method.synthesize) to assert the
-  /// constraints on its points.
-  ///
-  /// The expression it encodes is
-  ///
-  /// ```bash
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst >= 0 # if `self.pos`
-  /// v_1 * c_1 + ... + v_n * c_n + self.cst  < 0 # otherwise
-  /// ```
-  ///
-  /// where `[ v_1, ..., v_n ] = self.vals` and
-  /// `[ c_1, ..., c_n ] = self.coefs`.
-  pub struct ValCoefWrap<'a> {
-    /// Values.
-    pub vals: & 'a Vec<Int>,
-    /// Coefficients.
-    pub coefs: & 'a Vec<VarIdx>,
-    /// Constant.
-    pub cst: & 'static str,
-    /// Positivity of the values.
-    pub pos: bool,
-  }
-  impl<'a> ValCoefWrap<'a> {
-    /// Constructor.
-    pub fn new(
-      vals: & 'a Vec<Int>, coefs: & 'a Vec<VarIdx>,
-      cst: & 'static str, pos: bool
-    ) -> Self {
-      debug_assert!( vals.len() == coefs.len() ) ;
-      ValCoefWrap { vals, coefs, cst, pos }
-    }
-  }
-  impl<'a> Expr2Smt<()> for ValCoefWrap<'a> {
-    fn expr_to_smt2<Writer>(
-      & self, w: & mut Writer, _: ()
-    ) -> SmtRes<()> where Writer: Write {
-      if self.pos { write!(w, "(>= (+") } else { write!(w, "(< (+") } ? ;
-      for (val, coef) in self.vals.iter().zip( self.coefs ) {
-        write!(w, " (* {} ", val) ? ;
-        coef.sym_to_smt2(w, ()) ? ;
-        write!(w, ")") ?
-      }
-      write!(w, " {}) 0)", self.cst) ? ;
-      Ok(())
-    }
-  }
-}

@@ -39,6 +39,7 @@ pub mod data ;
 pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
+pub mod smt ;
 
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;

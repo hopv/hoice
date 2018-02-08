@@ -11,6 +11,7 @@
 use common::* ;
 use common::data::* ;
 use common::msg::* ;
+use common::smt::SmtTerm ;
 
 use self::smt::Parser ;
 
@@ -568,7 +569,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
               |(var, typ)| (var, * typ)
             ).collect() ;
             self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & TermWrap(term)
+              & pred.name, & sig, & Typ::Bool, & SmtTerm::new(term)
             ) ?
           },
         }
@@ -672,19 +673,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     } ;
     self.solver.pop(1) ? ;
     res
-  }
-}
-
-
-
-/// Wraps a term to write as the body of a `define-fun`.
-pub struct TermWrap<'a>( & 'a Term ) ;
-impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for TermWrap<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, _: ()
-  ) -> SmtRes<()> {
-    self.0.write( w, |w, var| var.default_write(w) ) ? ;
-    Ok(())
   }
 }
 
