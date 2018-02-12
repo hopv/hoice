@@ -224,10 +224,15 @@ pub fn u_minus(kid: Term) -> Term {
 pub fn mul(kids: Vec<Term>) -> Term {
   app(Op::Mul, kids)
 }
+/// Creates an integer division.
+#[inline(always)]
+pub fn idiv(kids: Vec<Term>) -> Term {
+  app(Op::IDiv, kids)
+}
 /// Creates a division.
 #[inline(always)]
 pub fn div(kids: Vec<Term>) -> Term {
-  app(Op::IDiv, kids)
+  app(Op::Div, kids)
 }
 /// Creates a modulo application.
 #[inline(always)]
@@ -366,83 +371,125 @@ pub fn normalize(
   // It is important that the second, `to_do`, element of the frames is in
   // **reverse order**. This is because its elements will be `pop`ped and
   // `push`ed on the third element.
-  //
-  // (It actually doesn't matter that much right now as `normalize_app` only
-  // works on symmetric operators, but still.)
   let mut stack = vec![ (op, vec![], args) ] ;
 
-  while let Some((op, mut to_do, args)) = stack.pop() {
+  'go_down: while let Some((op, mut to_do, mut args)) = stack.pop() {
 
-    if let Some( (nu_op, nu_args) ) = to_do.pop() {
+    'do_stuff: loop {
 
-      stack.push( (op, to_do, args) ) ;
-      stack.push( (nu_op, vec![], nu_args) )
-
-    } else {
-
-      match normalize_app(op, args) {
-        // Going down...
-        Either::Right((op, mut to_do)) => {
-          let args = Vec::with_capacity( to_do.len() ) ;
-          to_do.reverse() ;
-          stack.push( (op, to_do, args) )
+      match to_do.pop() {
+        Some( NormRes::Term(term) ) => {
+          args.push(term) ;
+          continue 'do_stuff
         },
-        // Going up...
-        Either::Left(term) => if let Some(
-          & mut ( _, _, ref mut args )
-        ) = stack.last_mut() {
-          args.push( term )
-        } else {
-          return term
+
+        Some( NormRes::App(nu_op, nu_to_do) ) => {
+          stack.push( (op, to_do, args) ) ;
+          let nu_args = Vec::with_capacity( nu_to_do.len() ) ;
+          stack.push( (nu_op, nu_to_do, nu_args) ) ;
+          continue 'go_down
+        },
+
+        None => match normalize_app(op, args) {
+          // Going down...
+          NormRes::App(op, mut to_do) => {
+            let args = Vec::with_capacity( to_do.len() ) ;
+            to_do.reverse() ;
+            stack.push( (op, to_do, args) ) ;
+            continue 'go_down
+          },
+          // Going up...
+          NormRes::Term(term) => if let Some(
+            & mut ( _, _, ref mut args )
+          ) = stack.last_mut() {
+            args.push( term ) ;
+            continue 'go_down
+          } else {
+            return term
+          },
         },
       }
 
     }
+
   }
 
   unreachable!()
 }
 
 
+
+/// Normalization result.
+enum NormRes {
+  /// Just a term.
+  Term(Term),
+  /// More stuff to do.
+  App(Op, Vec<NormRes>),
+}
+
+
+
 /// Normalizes an operation application.
-fn normalize_app(
-  op: Op, mut args: Vec<Term>
-) -> Either<Term, (Op, Vec<(Op, Vec<Term>)>)> {
+fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
   use num::Zero ;
 
   let (op, args) = match op {
 
     Op::Ite => if args.len() == 3 {
       if let Some(b) = args[0].bool() {
-        return Either::Left(
+        return NormRes::Term(
           if b { args[1].clone() } else { args[2].clone() }
         )
       }
       if args[1] == args[2] {
-        return Either::Left( args[1].clone() )
+        return NormRes::Term( args[1].clone() )
       }
       (op, args)
     } else {
-      panic!("trying to apply ite operator to {} (!= 3) arguments", args.len())
+      panic!(
+        "trying to apply `Ite` operator to {} (!= 3) arguments", args.len()
+      )
+    },
+
+    Op::Impl => match (args.pop(), args.pop()) {
+      (Some(rgt), Some(lft)) => {
+        debug_assert! { args.pop().is_none() }
+        return NormRes::App(
+          Op::Or, vec![
+            NormRes::App(Op::Not, vec![ NormRes::Term(lft) ]),
+            NormRes::Term(rgt)
+          ]
+        )
+      },
+      _ => panic!("illegal application of `Impl` to less than 2 arguments")
     },
 
     Op::And => {
+      let mut set = HConSet::<Term>::new() ;
       let mut cnt = 0 ;
+      
       while cnt < args.len() {
-        if let Some(b) = args[cnt].bool() {
+        let is_new = set.insert( args[cnt].clone() ) ;
+
+        if ! is_new {
+          args.swap_remove(cnt) ;
+          ()
+        } else if let Some(b) = args[cnt].bool() {
           if b {
             args.swap_remove(cnt) ;
+            ()
           } else {
-            return Either::Left( fls() )
+            return NormRes::Term( fls() )
           }
         } else {
           cnt += 1
         }
       }
+
       if args.is_empty() {
-        return Either::Left( term::tru() )
+        return NormRes::Term( term::tru() )
       } else if args.len() == 1 {
-        return Either::Left( args.pop().unwrap() )
+        return NormRes::Term( args.pop().unwrap() )
       } else {
         args.sort_unstable() ;
         (op, args)
@@ -450,22 +497,31 @@ fn normalize_app(
     },
 
     Op::Or => {
+      let mut set = HConSet::<Term>::new() ;
       let mut cnt = 0 ;
+      
       while cnt < args.len() {
-        if let Some(b) = args[cnt].bool() {
+        let is_new = set.insert( args[cnt].clone() ) ;
+
+        if ! is_new {
+          args.swap_remove(cnt) ;
+          ()
+        } else if let Some(b) = args[cnt].bool() {
           if ! b {
             args.swap_remove(cnt) ;
+            ()
           } else {
-            return Either::Left( tru() )
+            return NormRes::Term( tru() )
           }
         } else {
           cnt += 1
         }
       }
+
       if args.is_empty() {
-        return Either::Left( term::fls() )
+        return NormRes::Term( term::fls() )
       } else if args.len() == 1 {
-        return Either::Left( args.pop().unwrap() )
+        return NormRes::Term( args.pop().unwrap() )
       } else {
         args.sort_unstable() ;
         (op, args)
@@ -475,72 +531,101 @@ fn normalize_app(
     Op::Not => {
       assert!( args.len() == 1 ) ;
       if let Some(b) = args[0].bool() {
-        return Either::Left( bool(! b) )
+        return NormRes::Term( bool(! b) )
       }
+
       match * args[0] {
         RTerm::App { op: Op::Not, ref args } => {
-          return Either::Left( args[0].clone() )
+          return NormRes::Term( args[0].clone() )
         },
+
         RTerm::App { op: Op::And, ref args } => {
-          return Either::Right((
+          return NormRes::App(
             Op::Or, args.iter().map(
-              |arg| (Op::Not, vec![arg.clone()])
+              |arg| NormRes::App(
+                Op::Not, vec![ NormRes::Term( arg.clone() ) ]
+              )
             ).collect()
-          ))
+          )
         },
         RTerm::App { op: Op::Or, ref args } => {
-          return Either::Right((
+          return NormRes::App(
             Op::And, args.iter().map(
-              |arg| (Op::Not, vec![arg.clone()])
+              |arg| NormRes::App(
+                Op::Not, vec![ NormRes::Term( arg.clone() ) ]
+              )
             ).collect()
+          )
+        },
+
+        RTerm::App { op: Op::Gt, ref args } => {
+          let mut args = args.clone() ;
+          args.reverse() ;
+          return NormRes::Term((
+            factory.mk(
+              RTerm::App { op: Op::Ge, args }
+            )
+          ))
+        },
+        RTerm::App { op: Op::Ge, ref args } => {
+          let mut args = args.clone() ;
+          args.reverse() ;
+          return NormRes::Term((
+            factory.mk(
+              RTerm::App { op: Op::Gt, args }
+            )
           ))
         },
         _ => (),
       }
+
       (op, args)
     },
 
     Op::Eql => {
       if args.len() == 2 {
         if args[0] == args[1] {
-          return Either::Left( tru() )
-        } else if let Some(b) = args[0].bool() {
-          return Either::Left(
+          return NormRes::Term( tru() )
+        } else
+
+        if let Some(b) = args[0].bool() {
+          return NormRes::Term(
             if b {
               args[1].clone()
             } else {
               not( args[1].clone() )
             }
           )
-        } else if let Some(b) = args[1].bool() {
-          return Either::Left(
+        } else
+
+        if let Some(b) = args[1].bool() {
+          return NormRes::Term(
             if b {
               args[0].clone()
             } else {
               not( args[0].clone() )
             }
           )
-        // } else if args[0].is_relation() {
-        //   return Either::Right((
-        //     Op::Or, vec![
-        //       ( Op::And, args.clone() ),
-        //       (
-        //         Op::And, args.iter().map(
-        //           |arg| ( not(arg.clone()) )
-        //           //      ^^^^^^^^^^^^^^^^
-        //           // This is essentially a recursive call... it sucks :(
-        //         ).collect()
-        //       )
-        //     ]
-        //   ))
-        } else if let (Some(i_1), Some(i_2)) = (
+        } else
+
+        if let (Some(i_1), Some(i_2)) = (
           args[0].int(), args[1].int()
         ) {
-          return Either::Left( term::bool( i_1 == i_2 ) )
-        } else if let (Some(r_1), Some(r_2)) = (
+          return NormRes::Term( term::bool( i_1 == i_2 ) )
+        } else
+
+        if let (Some(r_1), Some(r_2)) = (
           args[0].real(), args[1].real()
         ) {
-          return Either::Left( term::bool( r_1 == r_2 ) )
+          return NormRes::Term( term::bool( r_1 == r_2 ) )
+        } else
+
+        if let Some((var, term)) = args[0].invert( args[1].clone() ) {
+          args = vec![ term::var(var), term ]
+        } else
+
+        if let Some((var, term)) = args[1].invert( args[0].clone() ) {
+          args = vec![ term::var(var), term ]
         }
       }
       args.sort_unstable() ;
@@ -548,101 +633,339 @@ fn normalize_app(
     },
 
     Op::Sub => {
-      if args.len() == 1 {
-        if let Some(i) = args[0].int_val() {
-          return Either::Left( int(- i) )
-        } else if let Some(r) = args[0].real_val() {
-          return Either::Left( real( -r ) )
+      let mut args = args.into_iter() ;
+      if let Some(first) = args.next() {
+
+        if args.len() == 0 {
+          if let Some(i) = first.int_val() {
+            return NormRes::Term( int(- i) )
+          } else if let Some(r) = first.real_val() {
+            return NormRes::Term( real( -r ) )
+          }
+
+          return NormRes::App(
+            Op::Mul, vec![
+              NormRes::Term( term::int(- 1) ),
+              NormRes::Term(first),
+            ]
+          )
+        } else {
+          let mut to_do = Vec::with_capacity( args.len() + 1 ) ;
+          to_do.push( NormRes::Term(first) ) ;
+          for arg in args {
+            to_do.push(
+              NormRes::App(
+                Op::Mul, vec![
+                  NormRes::Term( term::int(- 1) ),
+                  NormRes::Term(arg),
+                ]
+              )
+            )
+          }
+
+          return NormRes::App(Op::Add, to_do)
         }
+
+      } else {
+        panic!("illegal nullary application of `Sub`")
       }
-      (op, args)
     },
 
-    Op::Add => {
+    Op::Add => if args.is_empty() {
+      panic!("trying to construct an empty sum")
+    } else {
+
       let mut cnt = 0 ;
-      if args.is_empty() {
-        panic!("trying to construct an empty sum")
+      let (mut int_sum, mut rat_sum): (Option<Int>, Option<Rat>) = (
+        None, None
+      ) ;
+
+      macro_rules! sum {
+        (add int $e:expr) => (
+          int_sum = Some(
+            int_sum.unwrap_or( Int::zero() ) + $e
+          )
+        ) ;
+        (add real $e:expr) => (
+          rat_sum = Some(
+            rat_sum.unwrap_or( Rat::zero() ) + $e
+          )
+        ) ;
+        (get) => (
+          match (int_sum, rat_sum) {
+            ( Some(i), None ) => if i.is_zero() {
+              None
+            } else {
+              Some( term::int(i) )
+            },
+            ( None, Some(r) ) => if r.is_zero() {
+              None
+            } else {
+              Some( term::real(r) )
+            },
+            ( Some(i), Some(r) ) => {
+              let r = r + Rat::new(i, 1.into()) ;
+              if r.is_zero() {
+                None
+              } else {
+                Some( term::real(r) )
+              }
+            },
+            (None, None) => None,
+          }
+        ) ;
       }
-      let mut sum: Int = 0.into() ;
+
       while cnt < args.len() {
-        if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
+        if let Some(kids) = args[cnt].add_inspect().map(|kids| kids.clone()) {
           args.swap_remove(cnt) ;
-          sum = sum + i
+          args.extend(kids)
+        } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
+          args.swap_remove(cnt) ;
+          sum! { add int i }
+        } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
+          args.swap_remove(cnt) ;
+          sum! { add real r }
         } else {
           cnt += 1
         }
       }
+
       if args.len() == 0 {
-        return Either::Left( int(sum) )
-      } else if args.len() == 1 && sum.is_zero() {
-        return Either::Left( args.pop().unwrap() )
+        if let Some(sum) = sum!(get) {
+          return NormRes::Term(sum)
+        } else {
+          return NormRes::Term( int(0) )
+        }
+      } else if args.len() == 1 {
+        if let Some(sum) = sum!(get) {
+          args.push(sum) ;
+          args.sort_unstable() ;
+          (op, args)
+        } else {
+          return NormRes::Term( args.pop().unwrap() )
+        }
       } else {
-        if ! sum.is_zero() {
-          args.push( int(sum) )
+        if let Some(sum) = sum!(get) {
+          args.push(sum)
         }
         args.sort_unstable() ;
         (op, args)
       }
+
     },
 
-    Op::Mul => {
+    Op::Mul => if args.is_empty() {
+      panic!("trying to construct an empty multiplication")
+    } else {
+
       let mut cnt = 0 ;
-      if args.is_empty() {
-        panic!("trying to construct an empty mul")
-      }
-      let mut mul: Int = 1.into() ;
-      while cnt < args.len() {
-        if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
-          if i.is_zero() {
-            return Either::Left( int( i.clone() ) )
+      let (mut int_coef, mut rat_coef): (Option<Int>, Option<Rat>) = (
+        None, None
+      ) ;
+
+      macro_rules! coef {
+        (mul int $e:expr) => (
+          int_coef = Some(
+            int_coef.unwrap_or( Int::one() ) * $e
+          )
+        ) ;
+        (mul real $e:expr) => (
+          rat_coef = Some(
+            rat_coef.unwrap_or( Rat::one() ) * $e
+          )
+        ) ;
+        (get) => (
+          match (int_coef, rat_coef) {
+            ( Some(i), None ) => if i == Int::one() {
+              None
+            } else {
+              Some( term::int(i) )
+            },
+            ( None, Some(r) ) => if r == Rat::one() {
+              None
+            } else {
+              Some( term::real(r) )
+            },
+            ( Some(i), Some(r) ) => {
+              let r = r * Rat::new(i, 1.into()) ;
+              if r == Rat::one() {
+                None
+              } else {
+                Some( term::real(r) )
+              }
+            },
+            (None, None) => None,
           }
+        ) ;
+      }
+
+      while cnt < args.len() {
+        if let Some(kids) = args[cnt].mul_inspect().map(|kids| kids.clone()) {
           args.swap_remove(cnt) ;
-          mul = mul * i
+          args.extend(kids)
+        } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
+          args.swap_remove(cnt) ;
+          coef! { mul int i }
+        } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
+          args.swap_remove(cnt) ;
+          coef! { mul real r }
         } else {
           cnt += 1
         }
       }
-      if args.len() == 0 || mul.is_zero() {
-        return Either::Left( int(mul) )
-      } else if args.len() == 1 && mul == 1.into() {
-        return Either::Left( args.pop().unwrap() )
+
+      if args.len() == 0 {
+        if let Some(coef) = coef!(get) {
+          return NormRes::Term(coef)
+        } else {
+          return NormRes::Term( int(1) )
+        }
+      } else if args.len() == 1 {
+        if let Some(coef) = coef!(get) {
+          if let Some(args) = args[0].add_inspect() {
+            return NormRes::App(
+              Op::Add, args.iter().map(
+                |arg| NormRes::App(
+                  Op::Mul, vec![
+                    NormRes::Term(coef.clone()),
+                    NormRes::Term(arg.clone()),
+                  ]
+                )
+              ).collect()
+            )
+          }
+          args.push(coef) ;
+          args.sort_unstable() ;
+          (op, args)
+        } else {
+          return NormRes::Term( args.pop().unwrap() )
+        }
       } else {
-        if mul != 1.into() {
-          args.push( int(mul) )
+        if let Some(coef) = coef!(get) {
+          args.push(coef)
         }
         args.sort_unstable() ;
         (op, args)
       }
+
     },
 
-    Op::IDiv => {
-      if args.len() == 2 {
-        if let Some(i) = args[0].int() {
-          if i.is_zero() {
-            return Either::Left( int(i) )
+    Op::IDiv => if args.len() == 2 {
+      macro_rules! num_den {
+        () => (
+          if let ( Some(den), Some(num) ) = (
+            args.pop(), args.pop()
+          ) {
+            (num, den)
+          } else {
+            panic!("logic error, pop failed after length check")
           }
-        }
-        if let Some(i) = args[1].int() {
-          use num::FromPrimitive ;
-          if Some(i) == Int::from_usize(1) {
-            return Either::Left( args[0].clone() )
+        )
+      }
+
+      match ( args[0].int(), args[1].int() ) {
+        ( Some(num), Some(den) ) => match Op::IDiv.eval(
+          vec![ Val::I( num.clone() ), Val::I( den.clone() ) ]
+        ) {
+          Ok( Val::I(i) ) => return NormRes::Term( int(i) ),
+          Ok(_) => panic!(
+            "unexpected result while evaluating `({} {} {})`", op, num, den
+          ),
+          Err(e) => panic!(
+            "error while evaluating `({} {} {})`: {}",
+            op, num, den, e.description()
+          ),
+        },
+
+        ( Some(num), _ ) => if num.is_zero() {
+          return NormRes::Term( int(0) )
+        },
+
+        ( _, Some(den) ) => if den.abs() == Int::one() {
+          let (num, _) = num_den!() ;
+          if den.is_negative() {
+            return NormRes::App( Op::Sub, vec![ NormRes::Term(num) ] )
+          } else {
+            return NormRes::Term(num)
           }
+        },
+
+        ( None, None ) => (),
+      }
+
+      (op, args)
+    } else {
+      panic!(
+        "illegal application of `{}` to {} (!= 2) arguments", op, args.len()
+      )
+    },
+
+    Op::Div => if args.len() != 2 {
+      panic!(
+        "illegal application of `{}` to {} (!= 2) arguments",
+        op, args.len()
+      )
+    } else if let Some(den) = args[1].int() {
+      if den.is_zero() {
+        panic!("illegal division by zero")
+      }
+
+      let one = Int::one() ;
+
+      if & den == & one {
+        if let ( _, Some(num) ) = ( args.pop(), args.pop() ) {
+          debug_assert! { args.pop().is_none() }
+          return NormRes::Term(num)
+        } else {
+          panic!("logic error, pop failed after length check")
         }
       }
+
+      if den == - & one {
+        if let ( _, Some(num) ) = ( args.pop(), args.pop() ) {
+          debug_assert! { args.pop().is_none() }
+          return NormRes::App(
+            Op::Mul, vec![
+              NormRes::Term( term::int(-1) ),
+              NormRes::Term(num),
+            ]
+          )
+        } else {
+          panic!("logic error, pop failed after length check")
+        }
+      }
+
+      if let (
+        Some(num), Some(den)
+      ) = (args[0].int(), args[1].int()) {
+        if den.is_zero() {
+          panic!("illegal division by zero")
+        }
+
+        if ( & num % & den ).is_zero() {
+          return NormRes::Term(
+            term::int( num / den )
+          )
+        }
+      }
+
+      (op, args)
+    } else {
       (op, args)
     },
 
     Op::Ge => if args.len() == 2 {
       if args[0] == args[1] {
-        return Either::Left( tru() )
+        return NormRes::Term( tru() )
       } else if let (Some(lhs), Some(rhs)) = (
         args[0].int(), args[1].int()
       ) {
-        return Either::Left( bool(lhs >= rhs) )
+        return NormRes::Term( bool(lhs >= rhs) )
       } else if let (Some(lhs), Some(rhs)) = (
         args[0].real(), args[1].real()
       ) {
-        return Either::Left( bool(lhs >= rhs) )
+        return NormRes::Term( bool(lhs >= rhs) )
       } else {
         (op, args)
       }
@@ -652,15 +975,15 @@ fn normalize_app(
 
     Op::Gt => if args.len() == 2 {
       if args[0] == args[1] {
-        return Either::Left( fls() )
+        return NormRes::Term( fls() )
       } else if let (Some(lhs), Some(rhs)) = (
         args[0].int(), args[1].int()
       ) {
-        return Either::Left( bool(lhs > rhs) )
+        return NormRes::Term( bool(lhs > rhs) )
       } else if let (Some(lhs), Some(rhs)) = (
         args[0].real(), args[1].real()
       ) {
-        return Either::Left( bool(lhs > rhs) )
+        return NormRes::Term( bool(lhs > rhs) )
       } else {
         (op, args)
       }
@@ -668,46 +991,46 @@ fn normalize_app(
       (op, args)
     },
 
-    Op::Le => if args.len() == 2 {
-      if args[0] == args[1] {
-        return Either::Left( tru() )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].int(), args[1].int()
-      ) {
-        return Either::Left( bool(lhs <= rhs) )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].real(), args[1].real()
-      ) {
-        return Either::Left( bool(lhs <= rhs) )
-      } else {
-        (op, args)
+    Op::Le => {
+      if args.len() == 2 {
+        if args[0] == args[1] {
+          return NormRes::Term( tru() )
+        } else if let (Some(lhs), Some(rhs)) = (
+          args[0].int(), args[1].int()
+        ) {
+          return NormRes::Term( bool(lhs <= rhs) )
+        } else if let (Some(lhs), Some(rhs)) = (
+          args[0].real(), args[1].real()
+        ) {
+          return NormRes::Term( bool(lhs <= rhs) )
+        }
       }
-    } else {
-      (op, args)
+      args.reverse() ;
+      (Op::Ge, args)
     },
 
-    Op::Lt => if args.len() == 2 {
-      if args[0] == args[1] {
-        return Either::Left( fls() )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].int(), args[1].int()
-      ) {
-        return Either::Left( bool(lhs < rhs) )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].real(), args[1].real()
-      ) {
-        return Either::Left( bool(lhs < rhs) )
-      } else {
-        (op, args)
+    Op::Lt => {
+      if args.len() == 2 {
+        if args[0] == args[1] {
+          return NormRes::Term( fls() )
+        } else if let (Some(lhs), Some(rhs)) = (
+          args[0].int(), args[1].int()
+        ) {
+          return NormRes::Term( bool(lhs < rhs) )
+        } else if let (Some(lhs), Some(rhs)) = (
+          args[0].real(), args[1].real()
+        ) {
+          return NormRes::Term( bool(lhs < rhs) )
+        }
       }
-    } else {
-      (op, args)
+      args.reverse() ;
+      (Op::Gt, args)
     },
 
     Op::Mod => if args.len() == 2 {
       if let Some(i) = args[1].int() {
         if i == 1.into() {
-          return Either::Left( term::int(0) )
+          return NormRes::Term( term::int(0) )
         } else {
           (op, args)
         }
@@ -718,13 +1041,32 @@ fn normalize_app(
       (op, args)
     },
 
-    Op::Div |
-    Op::Rem |
-    Op::ToInt |
-    Op::ToReal |
-    Op::Impl => (op, args),
+    Op::ToInt => {
+      if args.len() == 1 {
+        if let Some(r) = args[0].real() {
+          let mut i = r.to_integer() ;
+          if i.is_negative() {
+            i = - i
+          }
+          return NormRes::Term( term::int(i) )
+        }
+      }
+      (op, args)
+    },
+    Op::ToReal => {
+      if args.len() == 1 {
+        if let Some(i) = args[0].int() {
+          return NormRes::Term(
+            term::real( Rat::new(i, 1.into()) )
+          )
+        }
+      }
+      (op, args)
+    },
+
+    Op::Rem => (op, args),
 
   } ;
 
-  Either::Left( factory.mk( RTerm::App { op, args } ) )
+  NormRes::Term( factory.mk( RTerm::App { op, args } ) )
 }

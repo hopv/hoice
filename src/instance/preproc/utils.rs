@@ -302,7 +302,7 @@ pub fn terms_of_app(
       terms.insert(
         term::eq(term::var(var), term)
       ) ;
-    } else if let Some((v, inverted)) = arg.invert(var) {
+    } else if let Some((v, inverted)) = arg.invert_var(var) {
       let _prev = map.insert(v, inverted) ;
       debug_assert_eq!( _prev, None ) ;
       let is_new = app_vars.insert(v) ;

@@ -151,9 +151,21 @@ impl Val {
   /// True if the two values have the same type, or if one of them is unknown.
   pub fn same_type(& self, other: & Self) -> bool {
     match (self, other) {
-      (& Val::N, _) | (_, & Val::N) |
-      (& Val::B(_), & Val::B(_)) | (& Val::I(_), & Val::I(_)) => true,
+      (& Val::B(_), & Val::B(_)) |
+      (& Val::I(_), & Val::I(_)) |
+      (& Val::R(_), & Val::R(_)) => true,
       _ => false,
+    }
+  }
+
+  /// Checks if the value is zero (integer or rational).
+  pub fn is_zero(& self) -> bool {
+    use num::Zero ;
+    match * self {
+      Val::I(ref i) => i.is_zero(),
+      Val::R(ref r) => r.is_zero(),
+      Val::B(_) |
+      Val::N => false,
     }
   }
 

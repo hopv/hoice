@@ -694,7 +694,7 @@ impl Instance {
               let _prev = eq_quals.insert( pred_var, term.clone() ) ;
               debug_assert!( _prev.is_none() ) ;
               // Try to revert the term.
-              if let Some((var, term)) = term.invert(pred_var) {
+              if let Some((var, term)) = term.invert_var(pred_var) {
                 if ! map.contains_key(& var) {
                   map.insert(var, term) ;
                 } else if let Some(other_pred_var) = map.get(& var) {

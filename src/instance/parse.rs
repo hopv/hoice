@@ -1061,12 +1061,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       Some("+") => Some(Op::Add),
       Some("-") => Some(Op::Sub),
       Some("*") => Some(Op::Mul),
-      Some("/") => {
-        bail!(
-          self.error(start_pos, "division operator is not supported yet")
-        )
-        // Some(Op::Div)
-      },
+      Some("/") => Some(Op::Div),
       Some(_) => None,
       None => None,
     } ;

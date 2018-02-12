@@ -43,15 +43,13 @@
 //!     Op::Mul, vec![ term::var(5), term::int(2) ]
 //!   )
 //! ) ;
+//! # println!("{}", some_term) ;
+//! 
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
 //!   RTerm::App { op: Op::Eql, ref args } => {
 //!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( term::int(11), args[0] ) ;
-//!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
-//!       assert_eq!( term::var(5), args[0] ) ;
-//!       assert_eq!( term::int(2), args[1] )
-//!     } else { panic!("not a multiplication") }
+//!     assert_eq!( format!("{}", some_term), "(= v_5 (/ 11 2))" )
 //!   },
 //!   _ => panic!("not an equality"),
 //! }
@@ -179,6 +177,29 @@ impl RTerm {
     match * self {
       RTerm::App { op: Op::Eql, ref args } => Some(args),
       _ => None,
+    }
+  }
+  /// Returns the kids of additions.
+  pub fn add_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Add, ref args } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of multiplications.
+  pub fn mul_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Mul, ref args } => Some(args),
+      _ => None,
+    }
+  }
+
+  /// True if the term is zero (integer or real).
+  pub fn is_zero(& self) -> bool {
+    match ( self.int(), self.real() ) {
+      (Some(i), _) => i.is_zero(),
+      (_, Some(r)) => r.is_zero(),
+      _ => false,
     }
   }
 
@@ -350,6 +371,17 @@ impl RTerm {
     match self.real_eval( & () ) {
       Ok(Some(r)) => Some(r),
       _ => None
+    }
+  }
+
+  /// Returns a constant arithmetic version of the term if any.
+  pub fn arith(& self) -> Option<Term> {
+    if let Some(i) = self.int() {
+      Some( term::int(i) )
+    } else if let Some(r) = self.real() {
+      Some( term::real(r) )
+    } else {
+      None
     }
   }
 
@@ -613,6 +645,10 @@ impl RTerm {
 
 
 
+  /// Attempts to invert a term from a variable.
+  pub fn invert_var(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
+    self.invert( term::var(var) )
+  }
   /// Attempts to invert a term.
   ///
   /// More precisely, if the term only mentions one variable `v`, attempts to
@@ -630,23 +666,26 @@ impl RTerm {
   /// use hoice::term ;
   ///
   /// let term = term::u_minus( term::var(0) ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
+  ///   term.invert( term::var(1) ),
   ///   Some( (0.into(), term::u_minus( term::var(1) ) ) )
   /// }
   /// let term = term::sub( vec![ term::var(0), term::int(7) ] ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
+  ///   term.invert( term::var(1) ),
   ///   Some( (0.into(), term::add( vec![ term::var(1), term::int(7) ] ) ) )
   /// }
   /// let term = term::add( vec![ term::int(7), term::var(0) ] ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
+  ///   term.invert( term::var(1) ),
   ///   Some( (0.into(), term::sub( vec![ term::var(1), term::int(7) ] ) ) )
   /// }
   /// ```
-  pub fn invert(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
-    let mut solution = term::var(var) ;
+  pub fn invert(& self, term: Term) -> Option<(VarIdx, Term)> {
+    let mut solution = term ;
     let mut term = self ;
 
     loop {
@@ -659,22 +698,31 @@ impl RTerm {
               term = & args[0] ;
               continue
             },
-            Op::Sub => (Op::Add, false),
-            Op::IDiv => (Op::Mul, false),
-            Op::Mul => (Op::IDiv, true),
+            Op::IDiv | Op::Div => (Op::Mul, false),
+            Op::Mul => (Op::Div, true),
+            Op::ToReal => {
+              solution = term::to_int(solution) ;
+              term = & args[0] ;
+              continue
+            },
+            Op::ToInt => {
+              solution = term::to_real(solution) ;
+              term = & args[0] ;
+              continue
+            },
             _ => return None,
           } ;
           if args.len() != 2 { return None }
 
-          if let Some(i) = args[0].int() {
+          if let Some(arith) = args[0].arith() {
             if symmetric {
-              solution = term::app( po, vec![ solution, term::int(i) ] )
+              solution = term::app( po, vec![ solution, arith ] )
             } else {
-              solution = term::app( op, vec![ term::int(i), solution ] )
+              solution = term::app( op, vec![ arith, solution ] )
             }
             term = & args[1]
-          } else if let Some(i) = args[1].int() {
-            solution = term::app( po, vec![ solution, term::int(i) ] ) ;
+          } else if let Some(arith) = args[1].arith() {
+            solution = term::app( po, vec![ solution, arith ] ) ;
             term = & args[0]
           } else {
             return None
@@ -1942,6 +1990,7 @@ pub enum Op {
   Rem,
   /// Modulo.
   Mod,
+
   /// Greater than.
   Gt,
   /// Greater than or equal to.
@@ -1950,6 +1999,7 @@ pub enum Op {
   Le,
   /// Less than.
   Lt,
+
   /// Implication.
   Impl,
   /// Equal to.
@@ -2224,7 +2274,64 @@ impl Op {
         if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
       },
 
-      Div => bail!("evaluation of divisions is not implemented"),
+      Div => {
+        let (den, num) = (
+          if let Some(den) = args.pop() { den } else {
+            bail!(
+              "illegal application of division to less than two arguments"
+            )
+          },
+          if let Some(num) = args.pop() { num } else {
+            bail!(
+              "illegal application of division to less than two arguments"
+            )
+          }
+        ) ;
+        if args.pop().is_some() {
+          bail!("unexpected division over {} numbers", args.len())
+        }
+
+        match (num, den) {
+          (num, Val::N) => if num.is_zero() {
+            Ok(num)
+          } else {
+            Ok(Val::N)
+          },
+
+          (Val::I(num), Val::I(den)) => if num.is_zero() {
+            Ok( Val::I(num) )
+          } else if & num % & den == Int::zero() {
+            Ok( Val::I( num / den ) )
+          } else {
+            Ok( Val::R( Rat::new(num, den) ) )
+          },
+
+          (Val::I(num), Val::R(den)) => if num.is_zero() {
+            Ok( Val::I(num) )
+          } else {
+            Ok( Val::R( Rat::new(num, 1.into()) / den ) )
+          },
+
+          (Val::R(num), Val::I(den)) => if num.is_zero() {
+            Ok( Val::R(num) )
+          } else {
+            Ok( Val::R( num / Rat::new(den, 1.into()) ) )
+          },
+
+          (Val::R(num), Val::R(den)) => if num.is_zero() {
+            Ok( Val::R(num) )
+          } else {
+            Ok( Val::R( num / den ) )
+          },
+
+          (Val::B(_), _) | (_, Val::B(_)) => bail!(
+            "illegal application of division to booleans"
+          ),
+
+          (Val::N, _) => Ok(Val::N),
+        }
+
+      },
 
       IDiv => {
         if args.len() != 2 {
