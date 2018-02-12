@@ -779,11 +779,17 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           match (int_coef, rat_coef) {
             ( Some(i), None ) => if i == Int::one() {
               None
+            } else if i.is_zero() {
+              return NormRes::Term( int(0) )
             } else {
               Some( term::int(i) )
             },
             ( None, Some(r) ) => if r == Rat::one() {
               None
+            } else if r.is_zero() {
+              return NormRes::Term(
+                real( Rat::new(0.into(), 1.into() ) )
+              )
             } else {
               Some( term::real(r) )
             },
@@ -791,6 +797,8 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
               let r = r * Rat::new(i, 1.into()) ;
               if r == Rat::one() {
                 None
+              } else if r.is_zero() {
+                return NormRes::Term( int(0) )
               } else {
                 Some( term::real(r) )
               }
