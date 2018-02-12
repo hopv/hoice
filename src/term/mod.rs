@@ -698,7 +698,8 @@ impl RTerm {
               term = & args[0] ;
               continue
             },
-            Op::IDiv | Op::Div => (Op::Mul, false),
+            Op::IDiv => return None,
+            Op::Div => (Op::Mul, false),
             Op::Mul => (Op::Div, true),
             Op::ToReal => {
               solution = term::to_int(solution) ;

@@ -1123,7 +1123,7 @@ where Slver: Solver<'skid, ()> {
   /// For each clause `lhs => (pred args)`, adds `(not terms) /\ lhs => false`
   /// for terms in `pred_terms[p]`.
   ///
-  /// Only unrolls clauses which have at least on lhs predicate application.
+  /// Only unrolls clauses which have at least one lhs predicate application.
   pub fn reverse_unroll(
     & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, HConSet<Term>)>
   ) -> Res<RedInfo> {

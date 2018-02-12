@@ -1361,6 +1361,30 @@ impl RedStrat for RUnroll {
               ExtractRes::Success((q, apps, ts)) => {
                 debug_assert! { apps.is_none() }
                 let (terms, pred_apps) = ts.destroy() ;
+                if_verb! {
+                  log_debug!{
+                    "from {}",
+                    clause.to_string_info(
+                      instance.preds()
+                    ) ?
+                  }
+                  log_debug! { "terms {{" }
+                  for term in & terms {
+                    log_debug! { "  {}", term }
+                  }
+                  log_debug! { "}}" }
+                  log_debug! { "pred apps {{" }
+                  for (pred, argss) in & pred_apps {
+                    for args in argss {
+                      let mut s = format!("({}", instance[* pred]) ;
+                      for arg in args.iter() {
+                        s = format!("{} {}", s, arg)
+                      }
+                      log_debug! { "  {})", s }
+                    }
+                  }
+                  log_debug! { "}}" }
+                }
                 debug_assert! { pred_apps.is_empty() }
                 insert( pred, Quant::exists(q), terms )
               },
@@ -1388,7 +1412,7 @@ impl RedStrat for RUnroll {
     let mut info = RedInfo::new() ;
     for (pred, terms) in prd_map {
       log_info! {
-        "reverse unrolling {}, {} term(s)",
+        "reverse unrolling {}, {} unrolling(s)",
         conf.emph(& instance[pred].name),
         terms.len()
       }
