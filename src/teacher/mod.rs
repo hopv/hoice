@@ -452,9 +452,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         },
 
         MsgKind::Samples(samples) => {
-          let (pos, neg) = samples.pos_neg_count() ;
-          profile! { self "assistant pos       " => add pos }
-          profile! { self "assistant neg       " => add neg }
+          let (_pos, _neg) = samples.pos_neg_count() ;
+          profile! { self "assistant pos       " => add _pos }
+          profile! { self "assistant neg       " => add _neg }
           let (pos, neg) = self.data.merge_samples(samples) ? ;
           profile! { self "assistant pos useful" => add pos }
           profile! { self "assistant neg useful" => add neg }
