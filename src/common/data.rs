@@ -186,6 +186,8 @@ impl PartialOrd for Constraint {
           if ! samples_1.is_subset(samples_2) {
             return None
           }
+        } else {
+          return None
         }
       }
 
