@@ -53,19 +53,6 @@ impl Into< ::common::HTArgs > for VarMap<::term::Term> {
   }
 }
 
-impl VarMap<::term::Val> {
-  /// Evaluates some arguments and yields the resulting `VarMap`.
-  pub fn apply_to(
-    & self, args: & VarMap<::term::Term>
-  ) -> ::errors::Res<Self> {
-    let mut res = Self::with_capacity( args.len() ) ;
-    for arg in args {
-      res.push( arg.eval(self) ? )
-    }
-    Ok(res)
-  }
-}
-
 impl VarMap< ::term::Term > {
   /// Removes the arguments of indices **not** in the set. Preserves the order.
   ///

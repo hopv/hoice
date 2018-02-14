@@ -748,3 +748,161 @@ fn invert() {
      0 ;
   }
 }
+
+
+macro_rules! parser {
+  (
+    vars {
+      $($ident:expr => $typ:expr),* $(,)*
+    }
+    $(
+      if let parse($term:ident) = $str:tt $b:tt
+    )*
+  ) => ({
+    let instance = ::instance::Instance::new() ;
+    let mut parser = ::instance::parse::ParserCxt::new() ;
+    let (mut map, mut var_map) = (
+      HashMap::new(), VarMap::new()
+    ) ;
+    $(
+      let idx = var_map.next_index() ;
+      let ident = $ident ;
+      var_map.push(
+        ::instance::info::VarInfo::new(
+          ident.into(), $typ, idx
+        )
+      ) ;
+      map.insert(ident, idx) ;
+    )*
+    $({
+      let text = $str ;
+      let mut parser = parser.parser(text, 0) ;
+      let ($term, _) = parser.term_opt(
+        & var_map, & map, & instance
+      ).expect(
+        "while parsing term"
+      ).expect(
+        "failed to parse term"
+      ) ;
+      parser! { @ $b }
+    })*
+  }) ;
+
+  (@ { $term:ident by $model:ident == $val:expr } ) => ({
+    let val = $term.eval(& $model).expect("evaluation failed") ;
+    println!("{} =? {}", val, $val) ;
+    debug_assert_eq! { val, $val.into() }
+  }) ;
+
+  // ($($tt:tt)*) => ($($tt)*) ;
+}
+
+
+#[test]
+fn bug_find() {
+  use term::Typ ;
+  let mut model = VarMap::new() ;
+  model.push( Val::I( 2.into() ) ) ;
+  model.push( Val::I( 2.into() ) ) ;
+  model.push( Val::I( 0.into() ) ) ;
+  model.push( Val::I( 2.into() ) ) ;
+  model.push( Val::I( 2.into() ) ) ;
+
+  parser! {
+    vars {
+      "v_0" => Typ::Int,
+      "v_1" => Typ::Int,
+      "v_2" => Typ::Int,
+      "v_3" => Typ::Int,
+      "v_4" => Typ::Int,
+    }
+
+    if let parse(term) = "(and
+      (> (/ (+ v_1 (- 1)) 2) (div v_0 2))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+    )" {
+      term by model == false
+    }
+
+    if let parse(term) = "(and
+      (>= (div v_0 2) (/ (+ v_1 (- 1)) 2))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+      (= v_3 (+ 1 (* 2 (/ (+ v_3 (- 1)) 2))))
+      (or
+        (> 0 v_0) (> (/ v_1 2) (div v_0 2)) (> 0 (/ v_1 2)) (> (/ v_1 2) v_0)
+      )
+    )" {
+      term by model == false
+    }
+
+    if let parse(term) = "(and
+      (>= v_1 0)
+      (>= v_0 0)
+      (>= v_0 v_1)
+      (>= (div v_0 2) (/ (+ v_1 (- 1)) 2))
+      (>= v_0 (/ (+ v_1 (- 1)) 2))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+      (> v_3 v_0)
+      (= v_2 (+ 1 (* 2 (/ (+ v_2 (- 1)) 2))))
+      (not (= v_3 (+ 1 (* 2 (/ (+ v_3 (- 1)) 2)))))
+    )" {
+      term by model == false
+    }
+
+    if let parse(term) = "(and
+      (>= v_0 0)
+      (= v_1 (+ 1 (* 2 (/ (+ v_1 (- 1)) 2))))
+      (>= (div v_0 2) (/ (+ v_1 (- 1)) 2))
+      (>= (div v_0 2) (/ v_1 2))
+      (>= v_0 (/ (+ v_1 (- 1)) 2))
+      (>= (/ v_1 2) 0)
+      (>= v_0 (/ v_1 2))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+      (= v_2 (+ 1 (* 2 (/ (+ v_2 (- 1)) 2))))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_3))
+      (not (= v_3 (+ 1 (* 2 (/ (+ v_3 (- 1)) 2)))))
+    )" {
+      term by model == false
+    }
+
+    if let parse(term) = "(and
+      (= v_1 (+ 1 (* 2 (/ (+ v_1 (- 1)) 2))))
+      (>= (div v_0 2) (/ (+ v_1 (- 1)) 2))
+      (>= v_0 (/ (+ v_1 (- 1)) 2))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+      (or
+        (> 0 v_3) (> (/ v_4 2) (div v_3 2)) (> 0 (/ v_4 2)) (> (/ v_4 2) v_3)
+      )
+      (= v_2 (+ 1 (* 2 (/ (+ v_2 (- 1)) 2))))
+      (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_3))
+      (not (= v_3 (+ 1 (* 2 (/ (+ v_3 (- 1)) 2)))))
+      (or
+        (> 0 v_0) (> (/ v_1 2) (div v_0 2)) (> 0 (/ v_1 2)) (> (/ v_1 2) v_0)
+      )
+    )" {
+      term by model == false
+    }
+
+    if let parse(term) = "(+ 1 (* 2 (/ (+ v_1 (- 1)) 2)))" {
+      term by model == 2
+    }
+
+    if let parse(term) = "(or
+      (and
+        (= 0 v_0)
+        (or (> 0 v_1) (> 0 v_0) (> v_1 v_0) (>= v_0 v_2))
+        (not (= 0 v_1))
+        (>= (+ v_3 (* v_0 (- 1))) 0)
+        (>= v_0 v_3)
+        (> 2 v_1)
+      )
+    )" {
+      term by model == false
+    }
+  }
+}
+
+
+
+
+

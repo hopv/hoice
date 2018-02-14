@@ -226,7 +226,6 @@ impl MsgCore {
   }
 
   /// Sends statistics.
-  #[cfg( not(feature = "bench") )]
   pub fn stats(self) -> Res<()> {
     if self.sender.send(
       Msg::new(self.id, self._profiler)
@@ -236,9 +235,6 @@ impl MsgCore {
       deco!()
     }
   }
-  #[cfg(feature = "bench")]
-  #[inline]
-  pub fn stats(self) -> Res<()> { Ok(()) }
 
   /// Sends a string message.
   #[cfg( not(feature = "bench") )]

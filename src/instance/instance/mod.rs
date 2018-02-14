@@ -825,7 +825,7 @@ impl Instance {
           debug! { "        -> is none, {} args", argss.len() }
           for args in argss {
             debug! { "        {}", args }
-            let mut values = VarMap::with_capacity( args.len() ) ;
+            let mut values = Args::with_capacity( args.len() ) ;
             for arg in args.iter() {
               values.push(
                 arg.eval(& cex).chain_err(
@@ -847,7 +847,7 @@ impl Instance {
       debug! { "    working on rhs..." }
       let consequent = if let Some((pred, args)) = clause.rhs() {
         debug! { "        ({} {})", self[pred], args }
-        let mut values = VarMap::with_capacity( args.len() ) ;
+        let mut values = Args::with_capacity( args.len() ) ;
         'pred_args: for arg in args.iter() {
           values.push(
             arg.eval(& cex).chain_err(

@@ -522,6 +522,11 @@ impl<'a> Qual<'a> {
     }
   }
 }
+impl<'a> ::std::fmt::Display for Qual<'a> {
+  fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+    self.qual.fmt(fmt)
+  }
+}
 impl<'a> CanBEvaled for Qual<'a> {
   fn evaluate<E>(& self, args: & E) -> Res< Option<bool> >
   where E: Evaluator {

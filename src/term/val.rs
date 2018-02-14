@@ -11,7 +11,7 @@ use common::{ Int, Rat, Signed } ;
 
 
 /// Values.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Hash)]
 pub enum Val {
   /// Boolean value.
   B(bool),
@@ -22,6 +22,32 @@ pub enum Val {
   /// No value (context was incomplete).
   N,
 }
+impl ::std::cmp::PartialEq for Val {
+  fn eq(& self, other: & Self) -> bool {
+    use Val::* ;
+    match (self, other) {
+      (& B(lft), & B(rgt)) => lft == rgt,
+      (& I(ref lft), & I(ref rgt)) => lft == rgt,
+      (& R(ref lft), & R(ref rgt)) => lft == rgt,
+      (& N, _) | (_, & N) => false,
+      (& I(ref i), & R(ref r)) |
+      (& R(ref r), & I(ref i)) => {
+        use num::One ;
+        r.denom().abs() == Int::one() && if r.denom().is_negative() {
+          i == & - r.numer()
+        } else {
+          i == r.numer()
+        }
+      },
+
+      (& B(_), & I(_)) |
+      (& B(_), & R(_)) |
+      (& I(_), & B(_)) |
+      (& R(_), & B(_)) => false
+    }
+  }
+}
+impl ::std::cmp::Eq for Val {}
 /// Applies a binary operation on two compatible values.
 ///
 /// The first token specifies the mode:
@@ -35,24 +61,31 @@ pub enum Val {
 ///     - both are `Val::N`, or
 ///     - one is arithmetic and another one is `Val::N`.
 macro_rules! bin_op {
-  (arith $lft:tt $op:tt $rgt:expr) => (
+  (arith $lft:tt $op:tt $rgt:expr) => ({
+    use num::One ;
     match $lft {
-      Val::N => match * $rgt {
+      Val::N => match $rgt {
         Val::N | Val::I(_) | Val::R(_) => Ok(Val::N),
         ref rgt => bail!(
           "expected compatible arith values, found {} and {}", "?", rgt
         ),
       },
-      Val::I(lft) => match * $rgt {
+      Val::I(lft) => match $rgt {
         Val::N => Ok(Val::N),
         Val::I(ref rgt) => Ok( Val::I(lft $op rgt) ),
+        Val::R(ref rgt) => Ok(
+          Val::R(Rat::new(lft, Int::one()) $op rgt)
+        ),
         ref rgt => bail!(
           "expected compatible arith values, found {} and {}", lft, rgt
         ),
       }
-      Val::R(lft) => match * $rgt {
+      Val::R(lft) => match $rgt {
         Val::N => Ok(Val::N),
         Val::R(ref rgt) => Ok( Val::R(lft $op rgt) ),
+        Val::I(rgt) => Ok(
+          Val::R(lft $op Rat::new(rgt, Int::one()))
+        ),
         ref rgt => bail!(
           "expected compatible arith values, found {} and {}", lft, rgt
         ),
@@ -61,7 +94,7 @@ macro_rules! bin_op {
         "expected compatible arith values, found {} and {}", lft, $rgt
       ),
     }
-  ) ;
+  }) ;
   (bool $lft:tt $op:tt $rgt:expr) => (
     match ($lft, $rgt) {
       (Val::N, & Val::B(_)) |
@@ -84,24 +117,31 @@ macro_rules! bin_op {
 /// `Val`, or both are `Val::N`, or one is arithmetic and another one is
 /// `Val::N`.
 macro_rules! arith_bin_rel {
-  ($lft:tt $op:tt $rgt:expr) => (
+  ($lft:tt $op:tt $rgt:expr) => ({
+    use num::One ;
     match $lft {
-      Val::N => match * $rgt {
+      Val::N => match $rgt {
         Val::N | Val::I(_) | Val::R(_) => Ok(Val::N),
         ref rgt => bail!(
           "expected arith values, found {} and {}", "?", rgt
         ),
       },
-      Val::I(lft) => match * $rgt {
+      Val::I(lft) => match $rgt {
         Val::N => Ok(Val::N),
         Val::I(ref rgt) => Ok( Val::B(lft.$op(rgt)) ),
+        Val::R(ref rgt) => Ok(
+          Val::B( Rat::new(lft, Int::one()).$op(rgt) )
+        ),
         ref rgt => bail!(
           "expected arith values, found {} and {}", lft, rgt
         ),
       }
-      Val::R(lft) => match * $rgt {
+      Val::R(lft) => match $rgt {
         Val::N => Ok(Val::N),
         Val::R(ref rgt) => Ok( Val::B(lft.$op(rgt)) ),
+        Val::I(rgt) => Ok(
+          Val::B( lft.$op( & Rat::new(rgt, Int::one()) ) )
+        ),
         ref rgt => bail!(
           "expected arith values, found {} and {}", lft, rgt
         ),
@@ -110,7 +150,7 @@ macro_rules! arith_bin_rel {
         "expected arith values, found {} and {}", lft, $rgt
       ),
     }
-  ) ;
+  }) ;
 }
 impl Val {
   /// Returns true iff the value is not `Val::N`.
@@ -121,6 +161,29 @@ impl Val {
       _ => true,
     }
   }
+
+  /// Normalizes `Rat`.
+  pub fn normalize(& mut self) {
+    use num::{ One, Zero } ;
+    let val: Val = match * self {
+      Val::R(ref r) => if r.denom().is_zero() {
+        panic!("division by zero during normalization")
+      } else if r.numer().is_zero() {
+        0.into()
+      } else if r.denom().abs() == Int::one() {
+        if r.denom().is_negative() {
+          Val::I( - r.numer() )
+        } else {
+          Val::I( r.numer().clone() )
+        }
+      } else {
+        return ()
+      },
+      _ => return (),
+    } ;
+    * self = val
+  }
+
   /// Extracts a boolean value.
   pub fn to_bool(self) -> Res<Option<bool>> {
     match self {
@@ -132,19 +195,33 @@ impl Val {
   }
   /// Extracts an integer value.
   pub fn to_int(self) -> Res<Option<Int>> {
+    use num::One ;
     match self {
       Val::I(i) => Ok( Some(i) ),
+      Val::R(r) => if r.denom().abs() == Int::one() {
+        Ok(
+          Some(
+            if r.denom().is_negative() {
+              - r.numer()
+            } else {
+              r.numer().clone()
+            }
+          )
+        )
+      } else {
+        bail!("expected integer value, found rational {}", r)
+      },
       Val::B(_) => bail!("expected integer value, found boolean"),
-      Val::R(_) => bail!("expected integer value, found rational"),
       Val::N => Ok(None),
     }
   }
   /// Extracts a real value.
   pub fn to_real(self) -> Res<Option<Rat>> {
+    use num::One ;
     match self {
       Val::R(r) => Ok( Some(r) ),
+      Val::I(i) => Ok( Some( Rat::new(i.clone(), Int::one()) ) ),
       Val::B(_) => bail!("expected rational value, found boolean"),
-      Val::I(_) => bail!("expected rational value, found integer"),
       Val::N => Ok(None),
     }
   }
@@ -153,7 +230,9 @@ impl Val {
     match (self, other) {
       (& Val::B(_), & Val::B(_)) |
       (& Val::I(_), & Val::I(_)) |
-      (& Val::R(_), & Val::R(_)) => true,
+      (& Val::R(_), & Val::R(_)) |
+      (& Val::R(_), & Val::I(_)) |
+      (& Val::I(_), & Val::R(_)) => true,
       _ => false,
     }
   }
@@ -177,31 +256,31 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (true.into(), false.into()) ;
   /// # println!("{} && {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().and(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().and( rgt.clone() ).unwrap(), false.into() }
   /// lft = ().into() ;
   /// # println!("{} && {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().and(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().and( rgt.clone() ).unwrap(), false.into() }
   /// rgt = true.into() ;
   /// # println!("{} && {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().and(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().and( rgt.clone() ).unwrap().is_known() }
   /// lft = true.into() ;
   /// # println!("{} && {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().and(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().and( rgt.clone() ).unwrap(), true.into() }
   /// rgt = Val::I( 7.into() ) ;
   /// # println!("{} && {}", lft, rgt) ;
-  /// assert!{ lft.clone().and(& rgt).is_err() }
+  /// assert!{ lft.clone().and( rgt.clone() ).is_err() }
   /// ```
-  pub fn and(self, other: & Self) -> Res<Self> {
+  pub fn and(self, other: Self) -> Res<Self> {
     match (self, other) {
       (Val::B(false), _) |
-      (_, & Val::B(false)) => Ok(Val::B(false)),
-      (Val::B(b_1), & Val::B(b_2)) => Ok(
-        Val::B(b_1 && b_2)
+      (_, Val::B(false)) => Ok(Val::B(false)),
+      (Val::B(b_1), Val::B(b_2)) => Ok(
+        Val::B(b_1 &b_2)
       ),
 
-      (Val::N, & Val::B(_)) |
-      (Val::B(_), & Val::N) |
-      (Val::N, & Val::N) => Ok(Val::N),
+      (Val::N, Val::B(_)) |
+      (Val::B(_), Val::N) |
+      (Val::N, Val::N) => Ok(Val::N),
 
       (lft, rgt) => bail!(
         "expected boolean values, found {} and {}", lft, rgt
@@ -216,31 +295,31 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (false.into(), true.into()) ;
   /// # println!("{} || {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().or(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().or( rgt.clone() ).unwrap(), true.into() }
   /// lft = ().into() ;
   /// # println!("{} || {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().or(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().or( rgt.clone() ).unwrap(), true.into() }
   /// rgt = false.into() ;
   /// # println!("{} || {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().or(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().or( rgt.clone() ).unwrap().is_known() }
   /// lft = false.into() ;
   /// # println!("{} || {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().or(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().or( rgt.clone() ).unwrap(), false.into() }
   /// rgt = Val::I( 7.into() ) ;
   /// # println!("{} || {}", lft, rgt) ;
-  /// assert!{ lft.or(& rgt).is_err() }
+  /// assert!{ lft.or( rgt.clone() ).is_err() }
   /// ```
-  pub fn or(self, other: & Self) -> Res<Self> {
+  pub fn or(self, other: Self) -> Res<Self> {
     match (self, other) {
       (Val::B(true), _) |
-      (_, & Val::B(true)) => Ok(Val::B(true)),
-      (Val::B(b_1), & Val::B(b_2)) => Ok(
+      (_, Val::B(true)) => Ok(Val::B(true)),
+      (Val::B(b_1), Val::B(b_2)) => Ok(
         Val::B(b_1 || b_2)
       ),
 
-      (Val::N, & Val::B(_)) |
-      (Val::B(_), & Val::N) |
-      (Val::N, & Val::N) => Ok(Val::N),
+      (Val::N, Val::B(_)) |
+      (Val::B(_), Val::N) |
+      (Val::N, Val::N) => Ok(Val::N),
 
       (lft, rgt) => bail!(
         "expected boolean values, found {} and {}", lft, rgt
@@ -261,7 +340,7 @@ impl Val {
   /// assert_eq!{ buru.clone().not().unwrap(), true.into() }
   /// buru = ().into() ;
   /// # println!("not {}", buru) ;
-  /// assert_eq!{ buru.clone().not().unwrap(), ().into() }
+  /// assert!{ ! buru.clone().not().unwrap().is_known() }
   /// buru = 7.into() ;
   /// # println!("not {}", buru) ;
   /// assert!{ buru.not().is_err() }
@@ -282,16 +361,18 @@ impl Val {
   /// ```
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (35.into(), 7.into()) ;
-  /// # println!("{} + {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().add(& rgt).unwrap(), 42.into() }
+  /// let res = lft.clone().add( rgt.clone() ).unwrap() ;
+  /// # println!("{} + {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, 42.into() }
   /// lft = ().into() ;
-  /// # println!("{} + {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().add(& rgt).unwrap(), ().into() }
+  /// let res = lft.clone().add( rgt.clone() ).unwrap() ;
+  /// # println!("{} + {} = {}", lft, rgt, res) ;
+  /// assert!{ ! res.is_known() }
   /// rgt = false.into() ;
   /// # println!("{} + {}", lft, rgt) ;
-  /// assert!{ lft.add(& rgt).is_err() }
+  /// assert!{ lft.add( rgt.clone() ).is_err() }
   /// ```
-  pub fn add(self, other: & Self) -> Res<Self> {
+  pub fn add(self, other: Self) -> Res<Self> {
     bin_op! { arith self + other }
   }
   /// Subtracts two values.
@@ -302,15 +383,15 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (49.into(), 7.into()) ;
   /// # println!("{} - {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().sub(& rgt).unwrap(), 42.into() }
+  /// assert_eq!{ lft.clone().sub( rgt.clone() ).unwrap(), 42.into() }
   /// lft = ().into() ;
   /// # println!("{} - {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().sub(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().sub( rgt.clone() ).unwrap().is_known() }
   /// rgt = false.into() ;
   /// # println!("{} - {}", lft, rgt) ;
-  /// assert!{ lft.sub(& rgt).is_err() }
+  /// assert!{ lft.sub( rgt.clone() ).is_err() }
   /// ```
-  pub fn sub(self, other: & Self) -> Res<Self> {
+  pub fn sub(self, other: Self) -> Res<Self> {
     bin_op! { arith self - other }
   }
   /// Multiplies two values.
@@ -321,27 +402,27 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (6.into(), 7.into()) ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().mul(& rgt).unwrap(), 42.into() }
+  /// assert_eq!{ lft.clone().mul( rgt.clone() ).unwrap(), 42.into() }
   /// lft = ().into() ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().mul(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().mul( rgt.clone() ).unwrap().is_known() }
   /// rgt = 0.into() ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().mul(& rgt).unwrap(), 0.into() }
+  /// assert_eq!{ lft.clone().mul( rgt.clone() ).unwrap(), 0.into() }
   /// rgt = (0, 1).into() ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().mul(& rgt).unwrap(), (0, 1).into() }
+  /// assert_eq!{ lft.clone().mul( rgt.clone() ).unwrap(), (0, 1).into() }
   /// lft = 7.into() ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert!{ lft.clone().mul(& rgt).is_err() }
+  /// assert_eq!{ lft.clone().mul( rgt.clone() ).unwrap(), (0, 1).into() }
   /// lft = false.into() ;
   /// # println!("{} * {}", lft, rgt) ;
-  /// assert!{ lft.mul(& rgt).is_err() }
+  /// assert!{ lft.mul( rgt.clone() ).is_err() }
   /// ```
-  pub fn mul(self, other: & Self) -> Res<Self> {
+  pub fn mul(self, other: Self) -> Res<Self> {
     use num::Zero ;
     match self {
-      Val::N => match * other {
+      Val::N => match other {
         Val::I(ref i) if i.is_zero() => Ok( 0.into() ),
         Val::R(ref r) if r.is_zero() => Ok( (0, 1).into() ),
         Val::I(_) | Val::R(_) | Val::N => Ok(Val::N),
@@ -349,27 +430,27 @@ impl Val {
           "expected arith values, found {} and {}", "?", rgt
         ),
       },
-      Val::I(lft) => match * other {
+      Val::I(lft) => match other {
         Val::N => if lft.is_zero() {
           Ok( 0.into() )
         } else {
           Ok(Val::N)
         },
         Val::I(ref rgt) => Ok( Val::I(lft * rgt) ),
+        Val::R(ref rgt) => Ok(
+          Val::R( Rat::new(lft * rgt.numer(), rgt.denom().clone()) )
+        ),
         ref rgt => bail!(
           "expected arith values, found {} and {}", lft, rgt
         ),
       }
-      Val::R(lft) => match * other {
-        Val::N => if lft.is_zero() {
+      Val::R(lft) => match other.to_real() ? {
+        None => if lft.is_zero() {
           Ok( (0, 1).into() )
         } else {
           Ok(Val::N)
         },
-        Val::R(ref rgt) => Ok( Val::R(lft * rgt) ),
-        ref rgt => bail!(
-          "expected arith values, found {} and {}", lft, rgt
-        ),
+        Some(rgt) => Ok( Val::R(lft * rgt) ),
       }
       lft => bail!(
         "expected arith values, found {} and {}", lft, other
@@ -394,24 +475,24 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (3.into(), 42.into()) ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().gt(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().gt( rgt.clone() ).unwrap(), false.into() }
   /// lft = ().into() ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().gt(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().gt( rgt.clone() ).unwrap().is_known() }
   /// lft = 103.into() ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().gt(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().gt( rgt.clone() ).unwrap(), true.into() }
   /// lft = (103,1).into() ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert!{ lft.clone().gt(& rgt).is_err() }
+  /// assert_eq!{ lft.clone().gt( rgt.clone() ).unwrap(), true.into() }
   /// rgt = (42,1).into() ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().gt(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().gt( rgt.clone() ).unwrap(), true.into() }
   /// rgt = false.into() ;
   /// # println!("{} > {}", lft, rgt) ;
-  /// assert!{ lft.gt(& rgt).is_err() }
+  /// assert!{ lft.gt( rgt.clone() ).is_err() }
   /// ```
-  pub fn gt(self, other: & Self) -> Res<Self> {
+  pub fn gt(self, other: Self) -> Res<Self> {
     arith_bin_rel! { self gt other }
   }
   /// Greater than or equal to.
@@ -422,24 +503,24 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (3.into(), 42.into()) ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().ge(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().ge( rgt.clone() ).unwrap(), false.into() }
   /// lft = ().into() ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().ge(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().ge( rgt.clone() ).unwrap().is_known() }
   /// lft = 42.into() ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().ge(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().ge( rgt.clone() ).unwrap(), true.into() }
   /// lft = (42,1).into() ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert!{ lft.clone().ge(& rgt).is_err() }
+  /// assert_eq!{ lft.clone().ge( rgt.clone() ).unwrap(), true.into() }
   /// rgt = (42,1).into() ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().ge(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().ge( rgt.clone() ).unwrap(), true.into() }
   /// rgt = false.into() ;
   /// # println!("{} >= {}", lft, rgt) ;
-  /// assert!{ lft.ge(& rgt).is_err() }
+  /// assert!{ lft.ge( rgt.clone() ).is_err() }
   /// ```
-  pub fn ge(self, other: & Self) -> Res<Self> {
+  pub fn ge(self, other: Self) -> Res<Self> {
     arith_bin_rel! { self ge other }
   }
   /// Greater than or equal to.
@@ -450,25 +531,25 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (42.into(), 3.into()) ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), false.into() }
   /// lft = ().into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().le( rgt.clone() ).unwrap().is_known() }
   /// lft = 3.into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// lft = (3,1).into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert!{ lft.clone().le(& rgt).is_err() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// rgt = (3,1).into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// rgt = false.into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert!{ lft.le(& rgt).is_err() }
+  /// assert!{ lft.le( rgt.clone() ).is_err() }
   /// ```
   /// Less than or equal to.
-  pub fn le(self, other: & Self) -> Res<Self> {
+  pub fn le(self, other: Self) -> Res<Self> {
     arith_bin_rel! { self le other }
   }
   /// Less than.
@@ -479,24 +560,24 @@ impl Val {
   /// use hoice::term::Val ;
   /// let (mut lft, mut rgt): (Val, Val) = (42.into(), 3.into()) ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), false.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), false.into() }
   /// lft = ().into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), ().into() }
+  /// assert!{ ! lft.clone().le( rgt.clone() ).unwrap().is_known() }
   /// lft = 2.into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// lft = (2,1).into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert!{ lft.clone().le(& rgt).is_err() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// rgt = (42,1).into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert_eq!{ lft.clone().le(& rgt).unwrap(), true.into() }
+  /// assert_eq!{ lft.clone().le( rgt.clone() ).unwrap(), true.into() }
   /// rgt = false.into() ;
   /// # println!("{} <= {}", lft, rgt) ;
-  /// assert!{ lft.le(& rgt).is_err() }
+  /// assert!{ lft.le( rgt.clone() ).is_err() }
   /// ```
-  pub fn lt(self, other: & Self) -> Res<Self> {
+  pub fn lt(self, other: Self) -> Res<Self> {
     arith_bin_rel! { self lt other }
   }
 }

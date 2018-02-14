@@ -1099,7 +1099,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       let (mut term, mut typ) = if let Some(int) = self.int() {
         ( term::int(int), Typ::Int )
       } else if let Some(real) = self.real() ? {
-        ( term::real(real), Typ::Real )
+        use num::One ;
+        let term = if real.denom().abs() == Int::one() {
+          let int = term::int( real.numer().clone() ) ;
+          if real.denom().is_negative() {
+            term::u_minus(int)
+          } else {
+            int
+          }
+        } else {
+          term::real(real)
+        } ;
+        ( term, Typ::Real )
       } else if let Some(b) = self.bool() {
         ( term::bool(b), Typ::Bool )
       } else if let Some((pos, id)) = self.ident_opt()? {

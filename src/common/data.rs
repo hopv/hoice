@@ -19,7 +19,7 @@ use learning::ice::data::CData ;
 
 
 /// Hash consed samples.
-pub type HSample = HConsed< Args > ;
+pub type HSample = HConsed<Args> ;
 /// Helper functions for `HSample`.
 pub trait HSampleExt {
   /// Compares two samples w.r.t. subsumption.
@@ -114,7 +114,7 @@ impl<'a> PebcakFmt<'a> for Sample {
     & self, w: & mut W, map: & 'a PrdMap<PrdInfo>
   ) -> IoRes<()> {
     write!(w, "({}", map[self.pred].name) ? ;
-    for arg in & * self.args {
+    for arg in self.args.iter() {
       write!(w, " {}", arg) ?
     }
     write!(w, ")")
@@ -134,24 +134,126 @@ impl_fmt!{
 /// # Invariants
 ///
 /// - `lhs.is_empty() => rhs.is_none()`
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Debug)]
 pub struct Constraint {
-  pub lhs: Vec< Sample >,
+  /// Left-hand side.
+  pub lhs: PrdHMap< HConSet<HSample> >,
+  /// Right-hand side.
   pub rhs: Option< Sample >,
 }
+macro_rules! constraint_map {
+  ($cstr:expr => |$pred:ident, $sample:ident| $body:expr) => (
+    for (pred, samples) in & $cstr.lhs {
+      let $pred = * pred ;
+      for $sample in samples { $body }
+    }
+    if let Some(
+      Sample { pred: $pred, args: ref $sample }
+    ) = $cstr.rhs {
+      $body
+    }
+  ) ;
+}
+impl PartialOrd for Constraint {
+  /// Constraint comparison.
+  ///
+  /// Constraint `c_1` is less than `c_2` if
+  ///
+  /// - `c_1.rhs == c_2.rhs`
+  /// - `c_1.lhs => c_2.lhs`
+  fn partial_cmp(& self, other: & Constraint) -> Option<
+    ::std::cmp::Ordering
+  > {
+    use std::cmp::Ordering ;
+
+    if self.rhs != other.rhs {
+      None
+    } else {
+      let (reversed, c_1, c_2) = match self.lhs_len().cmp(
+        & other.lhs_len()
+      ) {
+        Ordering::Less => (false, self, other),
+        Ordering::Equal => if self == other {
+          return Some( Ordering::Equal )
+        } else {
+          return None
+        },
+        Ordering::Greater => (true, other, self),
+      } ;
+
+      for (pred, samples_1) in & c_1.lhs {
+        if let Some(samples_2) = c_2.lhs.get(pred) {
+          if ! samples_1.is_subset(samples_2) {
+            return None
+          }
+        }
+      }
+
+      if reversed {
+        Some(Ordering::Greater)
+      } else {
+        Some(Ordering::Less)
+      }
+    }
+  }
+}
+impl Eq for Constraint {}
+impl PartialEq for Constraint {
+  fn eq(& self, other: & Constraint) -> bool {
+    if self.lhs.len() == other.lhs.len()
+    && self.rhs == other.rhs {
+      for (
+        (lhs_pred, lhs_samples), (rhs_pred, rhs_samples)
+      ) in self.lhs.iter().zip( other.lhs.iter() ) {
+        if lhs_pred == rhs_pred
+        && lhs_samples.len() == rhs_samples.len() {
+          for (lhs_sample, rhs_sample) in lhs_samples.iter().zip(
+            rhs_samples.iter()
+          ) {
+            if lhs_sample != rhs_sample {
+              return false
+            }
+          }
+        } else {
+          return false
+        }
+      }
+      true
+    } else {
+      false
+    }
+  }
+}
 impl Constraint {
+  /// Constructor.
+  pub fn new(
+    lhs: PrdHMap< HConSet<HSample> >, rhs: Option<Sample>
+  ) -> Constraint {
+    Constraint { lhs, rhs }
+  }
+
+  /// Number of samples in the lhs.
+  pub fn lhs_len(& self) -> usize {
+    let mut count = 0 ;
+    for samples in self.lhs.values() {
+      count += samples.len()
+    }
+    count
+  }
   /// Transforms a constraint in a tautology. Returns all the samples from the
   /// constraint.
-  pub fn tautologize(& mut self) -> Vec<Sample> {
-    let mut res = Vec::with_capacity(0) ;
-    ::std::mem::swap(& mut res, & mut self.lhs) ;
+  pub fn tautologize(& mut self) -> (Vec<Sample>, Option<Sample>) {
+    let mut lhs = Vec::with_capacity(0) ;
+    for (pred, samples) in self.lhs.drain() {
+      for sample in samples {
+        lhs.push( Sample::new(pred, sample) )
+      }
+    }
     let mut rhs = None ;
     ::std::mem::swap(& mut rhs, & mut self.rhs) ;
-    if let Some(sample) = rhs {
-      res.push(sample)
-    }
-    res
+    (lhs, rhs)
   }
+
   /// Checks whether the lhs of the constraint is empty.
   pub fn is_tautology(& self) -> bool {
     if self.lhs.is_empty() {
@@ -170,9 +272,10 @@ impl<'a> PebcakFmt<'a> for Constraint {
   fn pebcak_io_fmt<W: Write>(
     & self, w: & mut W, map: & 'a PrdMap<PrdInfo>
   ) -> IoRes<()> {
-    for lhs in & self.lhs {
-      lhs.pebcak_io_fmt(w, map) ? ;
-      write!(w, " ") ?
+    for (pred, samples) in & self.lhs {
+      for sample in samples {
+        write!(w, "({} {}) ", map[* pred], sample) ?
+      }
     }
     write!(w, "=> ") ? ;
     if let Some(ref rhs) = self.rhs {
@@ -184,8 +287,10 @@ impl<'a> PebcakFmt<'a> for Constraint {
 }
 impl_fmt!{
   Constraint(self, fmt) {
-    for lhs in & self.lhs {
-      write!(fmt, "{} ", lhs) ?
+    for (pred, samples) in & self.lhs {
+      for sample in samples {
+        write!(fmt, "(p_{} {}) ", pred, sample) ?
+      }
     }
     write!(fmt, "=> ") ? ;
     if let Some(ref rhs) = self.rhs {
@@ -329,18 +434,18 @@ impl DataCore {
 
     // Constraints are consistent with map.
     for (idx, constraint) in self.constraints.index_iter() {
-      for & Sample { pred, ref args } in constraint.lhs.iter().chain(
-        constraint.rhs.iter()
-      ) {
-        if ! self.map[pred].get(args).map(
-          |set| set.contains(& idx)
-        ).unwrap_or(false) {
-          bail!(
-            "{}\n({} {}) appears in constraint #{} \
-            but is not registered in map",
-            self.string_do(& (), |s| s.to_string()).unwrap(),
-            self.instance[pred], args, idx
-          )
+      constraint_map!{
+        constraint => |prd, sample| {
+          if ! self.map[prd].get(sample).map(
+            |set| set.contains(& idx)
+          ).unwrap_or(false) {
+            bail!(
+              "{}\n({} {}) appears in constraint #{} \
+              but is not registered in map",
+              self.string_do(& (), |s| s.to_string()).unwrap(),
+              self.instance[prd], sample, idx
+            )
+          }
         }
       }
     }
@@ -350,9 +455,13 @@ impl DataCore {
       for (sample, set) in map {
         for idx in set {
           let c = & self.constraints[* idx] ;
-          if ! c.lhs.iter().chain( c.rhs.iter() ).any(
-            |& Sample { pred: p, ref args }| p == pred && args == sample
-          ) {
+          let mut okay = false ;
+          constraint_map! {
+            c => |p, s| if p == pred && s == sample {
+              okay = true
+            }
+          }
+          if ! okay {
             bail!(
               "{}\n({} {}) registered in map for constraint #{} \
               but does not appear in this constraint",
@@ -484,15 +593,18 @@ impl DataCore {
 
   /// Tautologizes a constraint and removes the links with its samples in
   /// the map.
-  pub fn tautologize(& mut self, constraint: CstrIdx) -> Vec<Sample> {
+  pub fn tautologize(
+    & mut self, constraint: CstrIdx
+  ) -> (Vec<Sample>, Option<Sample>) {
     debug_assert! { constraint < self.constraints.len() }
-    let samples = self.constraints[constraint].tautologize() ;
-    for & Sample { pred, ref args } in & samples {
-      let _ = self.map[pred].get_mut(& args).map(
-        |set| set.remove(& constraint)
-      ) ;
+    constraint_map! {
+      self.constraints[constraint] => |prd, sample| {
+        let _ = self.map[prd].get_mut(sample).map(
+          |set| set.remove(& constraint)
+        ) ;
+      }
     }
-    samples
+    self.constraints[constraint].tautologize()
   }
 
   /// Propagates everything it can.
@@ -613,44 +725,42 @@ impl DataCore {
         }
 
         // `lhs` simplification.
-        let mut count = 0 ;
-        while count < self.constraints[c_idx].lhs.len() {
-          if self.constraints[c_idx].lhs[count].is_in(
-            curr_pred, & curr_samples
-          ) {
-            let _ = self.constraints[c_idx].lhs.swap_remove(count) ;
-            // No need to break links here as we've already removed all links
-            // from `curr_samples` (to get the constraints).
-            // DO NOT increment `count` here as we just `swap_remove`d. `count`
-            // is already the index of an unvisited element.
-            ()
-          } else {
-            // Unknown, moving on to next sample.
-            count += 1
-          }
+        let mut remove = false ;
+        if let Some(set) = self.constraints[c_idx].lhs.get_mut(& curr_pred) {
+          set.retain(
+            |sample| ! curr_samples.contains(sample)
+          ) ;
+          remove = set.is_empty()
         }
+        if remove {
+          let empty = self.constraints[c_idx].lhs.remove(& curr_pred) ;
+          debug_assert! { empty.map(|set| set.is_empty()).unwrap_or(false) }
+        }
+
         // Is `lhs` empty?
         if self.constraints[c_idx].lhs.is_empty() {
           log_debug!("    -> lhs is empty, remembering for later") ;
           // Then `rhs` has to be true.
-          let mut maybe_rhs = self.tautologize(c_idx) ;
+          let (lhs, maybe_rhs) = self.tautologize(c_idx) ;
+          debug_assert! { lhs.is_empty() }
           let _ = self.modded_constraints.remove(& c_idx) ;
-          if let Some( Sample { pred, args } ) = maybe_rhs.pop() {
-            // `maybe_rhs` can only be empty now, we've removed the whole
-            // `lhs`.
-            debug_assert!( maybe_rhs.is_empty() ) ;
+          if let Some( Sample { pred, args } ) = maybe_rhs {
             // Remember the sample has to be true.
             self.stage_pos(pred, args) ;
           } else {
             // No `rhs`, we have `true => false`, contradiction.
             bail!(ErrorKind::Unsat)
           }
-        } else
+        }
+
+        else
+
         // Is the constraint negative and the `lhs` has only one element?
         if self.constraints[c_idx].rhs.is_none()
         && self.constraints[c_idx].lhs.len() == 1 {
           // Then tautologize and add as negative example to add.
-          let mut lhs = self.tautologize(c_idx) ;
+          let (mut lhs, rhs) = self.tautologize(c_idx) ;
+          debug_assert! { rhs.is_none() }
           let _ = self.modded_constraints.remove(& c_idx) ;
           if let Some( Sample { pred, args } ) = lhs.pop() {
             debug_assert!( lhs.is_empty() ) ;
@@ -661,7 +771,9 @@ impl DataCore {
               "[unreachable] just checked lhs's length is 1 but it's empty now"
             )
           }
-        } else {
+        }
+
+        else {
           // `lhs` has changed, remember that for unit clause propagation.
           let _ = self.modded_constraints.insert(c_idx) ;
         }
@@ -776,26 +888,36 @@ impl DataCore {
 
         // `lhs` inspection.
         let mut trivial = false ;
-        for sample in & self.constraints[c_idx].lhs {
-          if sample.is_in(curr_pred, & curr_samples) {
-            // This sample is false, the constraint is trivially true.
-            trivial = true ;
-            break
+        for (pred, samples) in & self.constraints[c_idx].lhs {
+          if pred == & curr_pred {
+            for sample in samples {
+              if curr_samples.contains(sample) {
+                // This sample is false, the constraint is trivially true.
+                trivial = true ;
+                break
+              }
+            }
           }
         }
+
         // Is constraint trivial?
         if trivial {
           log_debug!("    -> lhs is always false, constraint is trivial") ;
           let _ = self.tautologize(c_idx) ;
-        } else if self.constraints[c_idx].lhs.len() == 1
+        }
+
+        else
+
+        if self.constraints[c_idx].lhs_len() == 1
         && self.constraints[c_idx].rhs.is_none() {
           log_debug!(
             "    -> one sample in lhs of negative constraint, remembering"
           ) ;
           // Constraint is negative and only one sample in lhs, it has to be
           // false.
-          let mut just_one = self.tautologize(c_idx) ;
-          if let Some( Sample {pred, args } ) = just_one.pop() {
+          let (mut just_one, rhs) = self.tautologize(c_idx) ;
+          debug_assert! { rhs.is_none() }
+          if let Some( Sample { pred, args } ) = just_one.pop() {
             debug_assert!( just_one.is_empty() ) ;
             self.modded_constraints.remove(& c_idx) ;
             let _ = self.stage_neg(pred, args) ;
@@ -856,12 +978,10 @@ impl<'a> PebcakFmt<'a> for DataCore {
       if cstr.is_tautology() {
         write!(w, "_") ?
       } else {
-        for & Sample { pred, ref args } in cstr.lhs.iter() {
-          write!(w, "({}", map[pred]) ? ;
-          for arg in args.iter() {
-            write!(w, " {}", arg) ?
+        for (pred, samples) in & cstr.lhs {
+          for sample in samples {
+            write!(w, "({} {}) ", map[* pred], sample) ?
           }
-          write!(w, ") ") ?
         }
         write!(w, "=> ") ? ;
         if let Some(& Sample { pred, ref args }) = cstr.rhs.as_ref() {
@@ -951,16 +1071,18 @@ impl Data {
 
   /// Clones the constraints to create a new `Data`.
   pub fn clone_constraints(& self) -> Option<Data> {
-    let mut data = Data {
-      core: DataCore::new( self.core.instance.clone() ),
-      samples: self.samples.clone()
-    } ;
+    let mut data = None ;
     for constraint in & self.core.constraints {
       if ! constraint.is_tautology() {
-        data.internal_add_cstr( constraint.clone() )
+        data.get_or_insert_with(
+          || Data {
+            core: DataCore::new( self.core.instance.clone() ),
+            samples: self.samples.clone()
+          }
+        ).internal_add_cstr( constraint.clone() ) ;
       }
     }
-    Some(data)
+    data
   }
 
   /// Merges the positive and negative samples in `other` to `self`.
@@ -990,7 +1112,7 @@ impl Data {
   pub fn mk_sample(
     & mut self, args: Args
   ) -> (HSample, bool) {
-    let (args, is_new) = self.samples.mk_is_new(args) ;
+    let (args, is_new) = self.samples.mk_is_new( args.into() ) ;
     (args, is_new)
   }
 
@@ -999,7 +1121,10 @@ impl Data {
     & mut self, lhs: Vec<(PrdIdx, Args)>, rhs: Option< (PrdIdx, Args) >
   ) -> Res<bool> {
     self.propagate() ? ;
-    let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
+
+    let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
+    let mut nu_lhs_len = 0 ;
+
     'smpl_iter: for (pred, args) in lhs {
       let (args, is_new) = self.mk_sample(args) ;
       if ! is_new {
@@ -1011,9 +1136,15 @@ impl Data {
           return Ok(false)
         }
       }
+
       // Neither pos or neg, memorizing.
-      nu_lhs.push( Sample { pred, args } )
+      let is_new = nu_lhs.entry(pred).or_insert_with(
+        || HConSet::new()
+      ).insert(args) ;
+
+      if is_new { nu_lhs_len += 1 }
     }
+
     let nu_rhs = if let Some( (pred, args) ) = rhs {
       let (args, is_new) = self.mk_sample(args) ;
       if ! is_new {
@@ -1043,32 +1174,81 @@ impl Data {
       } else {
         bail!(ErrorKind::Unsat)
       }
-    } else if nu_lhs.len() == 1 && nu_rhs.is_none() {
-      // unit, the single lhs has to be false.
-      let Sample { pred, args } = nu_lhs.pop().expect(
-        "[bug] empty vector after checking that its length is 1..."
-      ) ;
-      self.stage_neg(pred, args) ;
-      self.add_propagate_neg() ? ;
-      // Necessarily new, otherwise we would know that the constraint is a
-      // tautology.
-      return Ok(true)
+    } else if nu_lhs_len == 1 && nu_rhs.is_none() {
+      let mut lhs = nu_lhs.into_iter() ;
+      if let Some((pred, samples)) = lhs.next() {
+        let mut samples = samples.into_iter() ;
+        if let Some(sample) = samples.next() {
+          self.stage_neg(pred, sample) ;
+          self.add_propagate_neg() ? ;
+          // Necessarily new, otherwise we would know that the constraint is a
+          // tautology.
+          return Ok(true)
+        }
+      }
+      unreachable!()
     }
 
-    self.internal_add_cstr( Constraint { lhs: nu_lhs, rhs: nu_rhs } ) ;
+    let constraint = Constraint::new(nu_lhs, nu_rhs) ;
+
+    log_debug! {
+      "adding constraint {}",
+      constraint.to_string_info( self.instance.preds() ).unwrap()
+    }
+
+    for idx in CstrRange::zero_to( self.constraints.len() ) {
+      use std::cmp::Ordering ;
+      if self.constraints[idx].is_tautology() {
+        continue
+      }
+      match constraint.partial_cmp(
+        & self.constraints[idx]
+      ) {
+        Some(Ordering::Less) => {
+          log_debug! {
+            "  subsumes {}",
+            self.constraints[idx].to_string_info(
+              self.instance.preds()
+            ).unwrap()
+          }
+          let _ = self.tautologize(idx) ;
+          ()
+        },
+        Some(Ordering::Equal) | 
+        Some(Ordering::Greater) => {
+          log_debug! {
+            "  subsumed by {}",
+            self.constraints[idx].to_string_info(
+              self.instance.preds()
+            ).unwrap()
+          }
+          return Ok(false)
+        },
+        None => (),
+      }
+    }
+    log_debug! { "  actually adding it" }
+    self.shrink_constraints() ;
+
+    self.internal_add_cstr(constraint) ;
+
     Ok(true)
   }
 
   /// Adds a constraint.
+  ///
+  /// Does not check anything, just creates the links and adds the constraint.
   fn internal_add_cstr(& mut self, constraint: Constraint) {
     let cstr_index = self.constraints.next_index() ;
 
     // Update the map from samples to constraints. Better to do that now than
     // above, since there might be further simplifications possible.
-    for & Sample { pred, ref args } in & constraint.lhs {
-      let _ = self.map[pred].entry( args.clone() ).or_insert_with(
-        || CstrSet::with_capacity(17)
-      ).insert(cstr_index) ;
+    for (pred, samples) in & constraint.lhs {
+      for sample in samples {
+        let _ = self.map[* pred].entry( sample.clone() ).or_insert_with(
+          || CstrSet::with_capacity(17)
+        ).insert(cstr_index) ;
+      }
     }
     if let Some( & Sample { pred, ref args } ) = constraint.rhs.as_ref() {
       let _ = self.map[pred].entry( args.clone() ).or_insert_with(

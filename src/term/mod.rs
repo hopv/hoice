@@ -104,10 +104,7 @@ impl Typ {
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
-      Typ::Int => Val::I( Int::zero() ),
-      Typ::Real => Val::R(
-        Rat::new( Int::zero(), Int::one() )
-      ),
+      Typ::Real | Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
     }
   }
@@ -2226,9 +2223,9 @@ impl Op {
         if let (
           Some(fst), Some(mut pre)
         ) = (args.next(), args.next()) {
-          let mut res = fst.$op(& pre) ? ;
+          let mut res = fst.$op( pre.clone() ) ? ;
           for arg in args {
-            res = res.and( & pre.$op(& arg) ? ) ? ;
+            res = res.and( pre.$op( arg.clone() ) ? ) ? ;
             pre = arg
           }
           Ok(res)
@@ -2240,7 +2237,7 @@ impl Op {
         let mut args = $args.into_iter() ;
         if let Some(mut acc) = args.next() {
           for arg in args {
-            acc = acc.$op(& arg) ?
+            acc = acc.$op(arg) ?
           }
           Ok(acc)
         } else {
@@ -2259,20 +2256,11 @@ impl Op {
       },
 
       Mul => {
-        let mut unknown = false ;
-        let mut res: Int = 1.into() ;
+        let mut res: Val = 1.into() ;
         for arg in args.into_iter() {
-          if let Some(i) = arg.to_int() ? {
-            if i.is_zero() {
-              return Ok( 0.into() )
-            } else {
-              res = res * i
-            }
-          } else {
-            unknown = true
-          }
+          res = res.mul(arg) ?
         }
-        if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
+        Ok(res)
       },
 
       Div => {
@@ -2292,7 +2280,7 @@ impl Op {
           bail!("unexpected division over {} numbers", args.len())
         }
 
-        match (num, den) {
+        let res = match (num.clone(), den.clone()) {
           (num, Val::N) => if num.is_zero() {
             Ok(num)
           } else {
@@ -2330,14 +2318,17 @@ impl Op {
           ),
 
           (Val::N, _) => Ok(Val::N),
-        }
+        } ;
+
+        // println!("(/ {} {}) = {}", num, den, res.as_ref().unwrap()) ;
+
+        res
 
       },
 
-      IDiv => {
-        if args.len() != 2 {
-          bail!("unexpected division over {} numbers", args.len())
-        }
+      IDiv => if args.len() != 2 {
+        bail!("unexpected division over {} numbers", args.len())
+      } else {
         let den = try_val!( int args.pop().unwrap() ) ;
         let num = try_val!( int args.pop().unwrap() ) ;
         if den.is_zero() {
@@ -2345,11 +2336,12 @@ impl Op {
         }
         let mut res = & num / & den ;
         use num::Signed ;
-        if num.is_positive() ^ den.is_positive() {
-          if den * & res != num {
+        if num.is_negative() ^ den.is_negative() {
+          if den.clone() * & res != num {
             res = res - 1
           }
         }
+        // println!("(div {} {}) = {}", num, den, res) ;
         Ok( Val::I(res) )
       },
 
@@ -2414,11 +2406,13 @@ impl Op {
           args.into_iter() => {
             |fst| mem = fst,
             then |nxt| {
+              // println!("{} != {} : {}", mem, nxt, mem != nxt) ;
               if ! mem.same_type( & nxt ) {
                 return Ok(Val::N)
               }
               if mem != nxt {
-                res = false
+                res = false ;
+                break
               }
             },
           } else unreachable!()

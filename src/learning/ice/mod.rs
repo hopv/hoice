@@ -471,10 +471,15 @@ where Slver: Solver<'kid, ()> {
       if data.neg.is_empty() && self.is_legal(
         pred, & data.unc, true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
-        msg! {
-          debug self =>
-          "  no more negative data, is_legal check ok\n  \
-          forcing {} unclassifieds positive...", data.unc.len()
+        if_verb! {
+          let mut s = format!(
+            "  no more negative data, is_legal check ok\n  \
+            forcing {} unclassifieds positive...", data.unc.len()
+          ) ;
+          for unc in & data.unc {
+            s = format!("{}\n  {}", s, unc)
+          }
+          msg! { debug self => s }
         }
 
         profile!(
@@ -572,17 +577,18 @@ where Slver: Solver<'kid, ()> {
     for branch in self.finished.drain(0..) {
       let mut and_args = Vec::with_capacity( branch.len() ) ;
       for (term, pos) in branch {
-        if pos {
-          and_args.push(term)
+        let term = if pos {
+          term
         } else {
-          and_args.push( term::app(Op::Not, vec![term]) )
-        }
+          term::not(term)
+        } ;
+        and_args.push(term)
       }
-      or_args.push( term::app(Op::And, and_args) )
+      or_args.push( term::and(and_args) )
     }
     profile!{ self mark "learning", "pred finalize" }
     Ok(
-      Some( term::app(Op::Or, or_args) )
+      Some( term::or(or_args) )
     )
   }
 
@@ -715,7 +721,24 @@ where Slver: Solver<'kid, ()> {
       profile!{ self mark "learning", "qual", "data split" }
       Ok( Some((qual, q_data, nq_data)) )
     } else {
-      bail!("unable to split data after synthesis...")
+      let mut msg = format!(
+        "\ncould not split remaining data for {} after synthesis:\n",
+        self.instance[pred]
+      ) ;
+      msg.push_str("pos (") ;
+      for pos in & data.pos {
+        msg.push_str( & format!("\n    {}", pos) )
+      }
+      msg.push_str("\n) neg (") ;
+      for neg in & data.neg {
+        msg.push_str( & format!("\n    {}", neg) )
+      }
+      msg.push_str("\n) unc (") ;
+      for unc in & data.unc {
+        msg.push_str( & format!("\n    {}", unc) )
+      }
+      msg.push_str("\n)") ;
+      bail!(msg)
     }
   }
 

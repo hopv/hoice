@@ -185,8 +185,10 @@ where S: Solver<'kid, ()> {
         }) ;
       }
 
-      if let Some(sample) = data.constraints[cstr].rhs.as_ref() {
-        match self.try_force(data, & sample) ? {
+      if let Some(
+        & Sample { pred, ref args }
+      ) = data.constraints[cstr].rhs.as_ref() {
+        match self.try_force(data, pred, args) ? {
           None => (),
           Some( Either::Left(pos_sample) ) => {
             pos.push(pos_sample) ;
@@ -199,15 +201,17 @@ where S: Solver<'kid, ()> {
 
       move_on!(if done) ;
 
-      for sample in & data.constraints[cstr].lhs {        
-        match self.try_force(data, & sample) ? {
-          None => (),
-          Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
-          Some( Either::Right(neg_sample) ) => {
-            neg.push(neg_sample) ;
-            // Constraint is trivial, move on.
-            break
-          },
+      for (pred, samples) in & data.constraints[cstr].lhs {
+        for sample in samples {
+          match self.try_force(data, * pred, sample) ? {
+            None => (),
+            Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
+            Some( Either::Right(neg_sample) ) => {
+              neg.push(neg_sample) ;
+              // Constraint is trivial, move on.
+              break
+            },
+          }
         }
       }
 
@@ -227,9 +231,9 @@ where S: Solver<'kid, ()> {
   /// - `Right` of a sample which, when forced negative, will force the input
   ///   sample to be classified negative.
   pub fn try_force(
-    & mut self, _data: & Data, & Sample { pred, args: ref vals }: & Sample
+    & mut self, _data: & Data, pred: PrdIdx, vals: & HSample
   ) -> Res< Option< Either<Sample, Sample> > > {
-    msg! { debug self => "working on ({} {})", self.instance[pred], vals } ;
+    // msg! { debug self => "working on ({} {})", self.instance[pred], vals } ;
 
     if let Some(clauses) = self.pos.get(& pred) {
 
@@ -249,7 +253,7 @@ where S: Solver<'kid, ()> {
           self.solver.pop(1) ? ;
 
           if sat {
-            msg! { debug self => "  forcing positive" }
+            // msg! { debug self => "  forcing positive" }
             return Ok(
               Some(
                 Either::Left(
@@ -290,7 +294,7 @@ where S: Solver<'kid, ()> {
           self.solver.pop(1) ? ;
 
           if sat {
-            msg! { debug self => "  forcing negative" }
+            // msg! { debug self => "  forcing negative" }
             return Ok(
               Some(
                 Either::Right(
@@ -306,7 +310,7 @@ where S: Solver<'kid, ()> {
 
     }
 
-    msg! { debug self => "  giving up" }
+    // msg! { debug self => "  giving up" }
 
     Ok(None)
   }

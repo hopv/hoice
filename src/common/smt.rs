@@ -183,11 +183,13 @@ impl<'a> Expr2Smt<()> for SmtConstraint<'a> {
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
     write!(w, "(=> (and") ? ;
-    for lhs in & self.constr.lhs {
-      write!(w, " ", ) ? ;
-      SmtSample::new(
-        lhs.pred, & lhs.args
-      ).expr_to_smt2(w, ()) ?
+    for (pred, samples) in & self.constr.lhs {
+      for sample in samples {
+        write!(w, " ", ) ? ;
+        SmtSample::new(
+          * pred, sample
+        ).expr_to_smt2(w, ()) ?
+      }
     }
     write!(w, ") ") ? ;
     if let Some(rhs) = self.constr.rhs.as_ref() {

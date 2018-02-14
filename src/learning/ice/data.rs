@@ -41,21 +41,27 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0., 0., 0., 0., 0., 0.) ;
     for pos in & self.pos {
-      match qual.bool_eval( pos.get() ) ? {
+      match qual.bool_eval( pos.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual.qual, pos)
+      ) ? {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,
         None => return Ok(None),
       }
     }
     for neg in & self.neg {
-      match qual.bool_eval( neg.get() ) ? {
+      match qual.bool_eval( neg.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual.qual, neg)
+      ) ? {
         Some(true) => q_neg += 1.,
         Some(false) => nq_neg += 1.,
         None => return Ok(None),
       }
     }
     for unc in & self.unc {
-      match qual.bool_eval( unc.get() ) ? {
+      match qual.bool_eval( unc.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual.qual, unc)
+      ) ? {
         Some(true) => q_unc += 1.,
         Some(false) => nq_unc += 1.,
         None => return Ok(None),
@@ -113,7 +119,9 @@ impl CData {
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0, 0, 0., 0, 0, 0.) ;
     for pos in & self.pos {
-      match qual.evaluate( pos.get() ) ? {
+      match qual.evaluate( pos.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, pos)
+      ) ? {
         Some(true) => q_pos += 1,
         Some(false) => nq_pos += 1,
         None => return Ok(None),
@@ -123,7 +131,9 @@ impl CData {
     nq_ent.set_pos_count(nq_pos) ;
 
     for neg in & self.neg {
-      match qual.evaluate( neg.get() ) ? {
+      match qual.evaluate( neg.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, neg)
+      ) ? {
         Some(true) => q_neg += 1,
         Some(false) => nq_neg += 1,
         None => return Ok(None),
@@ -133,7 +143,9 @@ impl CData {
     nq_ent.set_neg_count(nq_neg) ;
 
     for unc in & self.unc {
-      match qual.evaluate( unc.get() ) ? {
+      match qual.evaluate( unc.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, unc)
+      ) ? {
         Some(true) => {
           q_unc += 1. ;
           q_ent.add_unc(data, pred, unc) ?
@@ -362,13 +374,16 @@ impl EntropyBuilder {
             1. + (constraint.lhs.len() as f64)
           ),
           _ => {
-            debug_assert!(
+            debug_assert! {
               constraint.lhs.iter().fold(
                 false,
-                |b, & Sample { pred, ref args }|
-                  b || ( pred == prd && args == sample )
+                |b, (pred, samples)| b || samples.iter().fold(
+                  b, |b, s| b || (
+                    * pred == prd && s == sample
+                  )
+                )
               )
-            ) ;
+            }
             sum_imp_lhs = sum_imp_lhs + 1. / (
               1. + (constraint.lhs.len() as f64)
             )

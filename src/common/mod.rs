@@ -115,12 +115,61 @@ pub type Quantfed = VarHMap<Typ> ;
 pub type Model = Vec< (PrdIdx, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = VarMap<Val> ;
+pub type Cex = Args ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap<Cex> ;
 
 /// Mapping from variables to values, used for learning data.
-pub type Args = VarMap<Val> ;
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct Args {
+  /// Internal map.
+  map: VarMap<Val>,
+}
+impl From< VarMap<Val> > for Args {
+  fn from(map: VarMap<Val>) -> Self {
+    Args::new(map)
+  }
+}
+impl_fmt! {
+  Args(self, fmt) {
+    write!(fmt, "{}", self.map)
+  }
+}
+impl Args {
+  /// Constructor.
+  pub fn new(mut map: VarMap<Val>) -> Self {
+    for val in map.iter_mut() {
+      val.normalize()
+    }
+    Args { map }
+  }
+  /// Pushes a value.
+  pub fn push(& mut self, val: Val) {
+    self.map.push(val)
+  }
+  /// Constructor with some capacity.
+  pub fn with_capacity(capa: usize) -> Self {
+    Self::new( VarMap::with_capacity(capa) )
+  }
+
+  /// Evaluates some arguments and yields the resulting `VarMap`.
+  pub fn apply_to(
+    & self, args: & VarMap<::term::Term>
+  ) -> ::errors::Res<Self> {
+    let mut res = Self::with_capacity( args.len() ) ;
+    for arg in args {
+      res.push( arg.eval(self) ? )
+    }
+    Ok(res)
+  }
+}
+impl ::std::ops::Deref for Args {
+  type Target = VarMap<Val> ;
+  fn deref(& self) -> & VarMap<Val> { & self.map }
+}
+impl ::std::ops::DerefMut for Args {
+  fn deref_mut(& mut self) -> & mut VarMap<Val> { & mut self.map }
+}
 
 /// Signature trait, for polymorphic term insertion.
 pub trait Signature {
@@ -152,13 +201,21 @@ pub trait Evaluator {
   /// Number of variables the evaluator supports.
   fn len(& self) -> usize ;
 }
-impl Evaluator for Args {
+impl Evaluator for VarMap<Val> {
   #[inline]
   fn get(& self, var: VarIdx) -> & Val {
     & self[var]
   }
   #[inline]
   fn len(& self) -> usize { VarMap::len(self) }
+}
+impl Evaluator for Args {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    & self.map[var]
+  }
+  #[inline]
+  fn len(& self) -> usize { VarMap::len(& self.map) }
 }
 impl Evaluator for () {
   #[inline]
@@ -182,7 +239,7 @@ where E: Evaluator {
 
 
 /// Something that can be evaluated to a boolean.
-pub trait CanBEvaled {
+pub trait CanBEvaled: ::std::fmt::Display {
   /// Evaluates self.
   fn evaluate<E>(& self, & E) -> Res< Option<bool> >
   where E: Evaluator ;

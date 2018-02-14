@@ -1708,7 +1708,7 @@ impl ClauseSimplifier {
             let prev = self.rep_to_term.insert(rep, term.clone()) ;
             if let Some(prev) = prev {
               let eq = term::eq(prev, term) ;
-              match eq.eval( & VarMap::with_capacity(0) ) {
+              match eq.eval( & () ) {
                 Ok(Val::B(true)) => (),
                 Ok(Val::B(false)) => return Ok(true),
                 Ok(Val::I(_)) => bail!("equality evaluation yielded integer"),

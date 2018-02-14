@@ -106,13 +106,28 @@ pub fn int<I: Into<Int>>(i: I) -> Term {
 /// Creates a real constant.
 #[inline(always)]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
+  use num::One ;
   let r = r.into() ;
-  let r = if r.numer().is_negative() == r.denom().is_negative() {
-    r
+  if r.denom().is_zero() {
+    panic!("division by zero while constructing real term")
+  }
+  if r.denom().abs() == Int::one() {
+    let i = if r.denom().is_negative() {
+      - r.numer()
+    } else {
+      r.numer().clone()
+    } ;
+    factory.mk( RTerm::Int(i) )
+  } else if r.numer().is_zero() {
+    int(0)
   } else {
-    - r.abs()
-  } ;
-  factory.mk( RTerm::Real(r) )
+    let r = if r.numer().is_negative() == r.denom().is_negative() {
+      r
+    } else {
+      - r.abs()
+    } ;
+    factory.mk( RTerm::Real(r) )
+  }
 }
 /// Creates the constant `0`.
 #[inline(always)]
@@ -481,6 +496,13 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           } else {
             return NormRes::Term( fls() )
           }
+        } else if let Some(conj) = args[cnt].conj_inspect().map(
+          |conj| conj.clone()
+        ) {
+          for term in conj {
+            args.push(term)
+          }
+          args.swap_remove(cnt) ;
         } else {
           cnt += 1
         }
@@ -513,6 +535,13 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           } else {
             return NormRes::Term( tru() )
           }
+        } else if let Some(disj) = args[cnt].disj_inspect().map(
+          |disj| disj.clone()
+        ) {
+          for term in disj {
+            args.push(term)
+          }
+          args.swap_remove(cnt) ;
         } else {
           cnt += 1
         }
@@ -944,13 +973,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
         }
       }
 
-      if let (
-        Some(num), Some(den)
-      ) = (args[0].int(), args[1].int()) {
-        if den.is_zero() {
-          panic!("illegal division by zero")
-        }
-
+      if let Some(num) = args[0].int() {
         if ( & num % & den ).is_zero() {
           return NormRes::Term(
             term::int( num / den )
@@ -1053,9 +1076,6 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
       if args.len() == 1 {
         if let Some(r) = args[0].real() {
           let mut i = r.to_integer() ;
-          if i.is_negative() {
-            i = - i
-          }
           return NormRes::Term( term::int(i) )
         }
       }

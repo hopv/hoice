@@ -381,6 +381,15 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     Ok(alive)
   }
 
+  /// Checks whether all learners are dead.
+  pub fn check_all_dead(& self) -> Res<()> {
+    if self.learners.iter().all(
+      |& (ref snd, _, _)| snd.is_none()
+    ) {
+      bail!("all learners are dead")
+    } else { Ok(()) }
+  }
+
   /// Waits for some candidates.
   ///
   /// Returns `None` when there are no more kids. Otherwise, the second
@@ -394,6 +403,8 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     macro_rules! all_dead {
       () => ( bail!("all learners are dead") ) ;
     }
+
+    self.check_all_dead() ? ;
 
     profile!{ self tick "waiting" }
 
@@ -497,15 +508,21 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           print_err( err.unwrap_err() )
         },
 
-        MsgKind::Stats(tree, stats) => if conf.stats {
+        MsgKind::Stats(tree, stats) => {
           let id = match id {
-            Id::Learner(idx) => self.learners[idx].1.clone(),
+            Id::Learner(idx) => {
+              self.learners[idx].0 = None ;
+              self.learners[idx].1.clone()
+            },
             Id::Assistant => "assistant".into(),
           } ;
           log_debug! { "received stats from {}", conf.emph(& id) }
-          self._profiler.add_sub(
-            id, tree, stats
-          )
+          if conf.stats {
+            self._profiler.add_sub(
+              id, tree, stats
+            )
+          }
+          self.check_all_dead() ? ;
         },
 
         MsgKind::Unsat => return Ok(None),
@@ -578,7 +595,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
     let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
-    self.solver.comment("looking for counterexamples...") ? ;
+    self.solver.comment("\nlooking for counterexamples...\n") ? ;
     for clause in clauses {
       if ! clauses_to_ignore.contains(& clause) {
         // log_debug!{ "  looking for a cex for clause {}", clause }
@@ -605,11 +622,13 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     //     self.instance.preds()
     //   ).unwrap()
     // }
+    log_debug! { "getting cex for clause #{}", clause_idx }
+
     self.solver.push(1) ? ;
     let clause = & self.instance[clause_idx] ;
     if_not_bench!{
       if conf.solver.log {
-        self.solver.comment(& format!("clause variables:\n")) ? ;
+        self.solver.comment(& format!("\nclause variables:\n")) ? ;
         for info in clause.vars() {
           self.solver.comment(
             & format!("  v_{} ({})\n", info.idx, info.active)
@@ -634,12 +653,16 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         }
         self.solver.comment(& format!("rhs:\n")) ? ;
         if let Some((pred, args)) = clause.rhs() {
-          self.solver.comment(
-            & format!("  {}", TTerm::P { pred, args: args.clone() })
-          ) ?
+          let mut s = format!("  ({}", & self.instance[pred]) ;
+          for arg in args.iter() {
+            s = format!("{} {}", s, arg)
+          }
+          s.push(')') ;
+          self.solver.comment(& s) ?
         } else {
           self.solver.comment("  false") ?
         }
+        self.solver.comment("\n") ?
       }
     }
 
@@ -658,9 +681,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       profile!{ self tick "cexs", "model" }
       log_debug!{ "    sat, getting model..." }
       let model = self.solver.get_model_const() ? ;
-      let mut map: VarMap<_> = clause.vars().iter().map(
-        |info| info.typ.default_val() // Val::N
-      ).collect() ;
+      let mut map = Args::new(
+        clause.vars().iter().map(
+          |info| info.typ.default_val() // Val::N
+        ).collect()
+      ) ;
       for (var, _, val) in model {
         log_debug!{ "    - {} = {}", var.default_str(), val }
         map[var] = val
@@ -735,7 +760,9 @@ mod smt {
           Ok( if ! pos { - rat } else { rat } )
         }
       ) ? {
-        Ok( Val::R(val) )
+        let mut val = Val::R(val) ;
+        val.normalize() ;
+        Ok(val)
       } else {
         input.fail_with("unexpected value")
       }
