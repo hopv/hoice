@@ -757,7 +757,7 @@ impl DataCore {
 
         // Is the constraint negative and the `lhs` has only one element?
         if self.constraints[c_idx].rhs.is_none()
-        && self.constraints[c_idx].lhs.len() == 1 {
+        && self.constraints[c_idx].lhs_len() == 1 {
           // Then tautologize and add as negative example to add.
           let (mut lhs, rhs) = self.tautologize(c_idx) ;
           debug_assert! { rhs.is_none() }
