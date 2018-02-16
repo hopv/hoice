@@ -375,6 +375,11 @@ impl DataCore {
   /// [cstrs]: #structfield.constraints (constraints field)
   /// [prop]: #method.propagate (propagate function)
   pub fn shrink_constraints(& mut self) {
+    for map in self.map.iter_mut() {
+      map.retain(
+        |_, set| ! set.is_empty()
+      )
+    }
     loop {
       scoped! {
         if let Some(last) = self.constraints.last() {

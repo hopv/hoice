@@ -34,7 +34,7 @@ pub fn launch(
     },
   } ;
 
-  if let Some(log) = match conf.solver.log_file("teacher") {
+  if let Some(log) = match conf.solver.log_file("assistant") {
     Ok(log) => log,
     Err(e) => {
       core.err(e.into()) ;
@@ -148,7 +148,7 @@ where S: Solver<'kid, ()> {
     & mut self, data: & mut Data,
   ) -> Res<()> {
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
-    msg! { self => "breaking {} implications...", data.constraints.len() }
+    msg! { self => "breaking implications..." }
 
     'all_constraints: for cstr in CstrRange::zero_to(
       data.constraints.len()
@@ -163,15 +163,22 @@ where S: Solver<'kid, ()> {
       }
 
       msg! {
-        self => "  {}", data.constraints[cstr].string_do(
+        debug self => "  {}", data.constraints[cstr].string_do(
           self.instance.preds(), |s| s.to_string()
         ).unwrap()
       }
 
-      let mut done = false ;
+      let mut trivial = false ;
+      let mut rhs_false = false ;
+      let mut lhs_unknown = 0 ;
       macro_rules! move_on {
-        (if done) => ( if done { move_on!() } ) ;
+        (if trivial) => ( if trivial { move_on!() } ) ;
         () => ({
+          if trivial
+          || lhs_unknown == 0
+          || rhs_false && lhs_unknown == 1 {
+            profile! { self "constraints   broken" => add 1 }
+          }
           // Discard the constraint, regardless of what will happen.
           data.tautologize(cstr) ;
           for Sample { pred, args } in pos.drain(0..) {
@@ -193,30 +200,69 @@ where S: Solver<'kid, ()> {
           Some( Either::Left(pos_sample) ) => {
             pos.push(pos_sample) ;
             // Constraint is trivial, move on.
-            done = true
+            trivial = true
           },
-          Some( Either::Right(neg_sample) ) => neg.push(neg_sample),
+          Some( Either::Right(neg_sample) ) => {
+            rhs_false = true ;
+            neg.push(neg_sample)
+          },
         }
       }
 
-      move_on!(if done) ;
+      // move_on!(if trivial) ;
 
-      for (pred, samples) in & data.constraints[cstr].lhs {
+      'lhs: for (pred, samples) in & data.constraints[cstr].lhs {
+        let mut lhs_trivial = true ;
         for sample in samples {
           match self.try_force(data, * pred, sample) ? {
-            None => (),
+            None => {
+              lhs_unknown += 1 ;
+              lhs_trivial = false
+            },
             Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
             Some( Either::Right(neg_sample) ) => {
               neg.push(neg_sample) ;
+              trivial = true ;
               // Constraint is trivial, move on.
-              break
+              // break 'lhs
             },
           }
         }
+        trivial = trivial || lhs_trivial
       }
 
       move_on!()
 
+    }
+
+    let (pos_count, neg_count) = data.pos_neg_count() ;
+    let mut s = format!(
+      "generated {} ({}) positive (negative) examples", pos_count, neg_count
+    ) ;
+    if conf.debug() {
+      if pos_count != 0 {
+        s = format!("{}\npositive:", s) ;
+        for (pred, pos) in data.pos.index_iter() {
+          for pos in pos {
+            s = format!("{}\n  ({} {})", s, self.instance[pred], pos)
+          }
+        }
+      }
+      if neg_count != 0 {
+        s = format!("{}\nnegative:", s) ;
+        for (pred, neg) in data.neg.index_iter() {
+          for neg in neg {
+            s = format!("{}\n  ({} {})", s, self.instance[pred], neg)
+          }
+        }
+      }
+    }
+    msg! { self => s }
+    if ! data.pos.is_empty() {
+      profile! { self "positive examples generated" => add pos_count }
+    }
+    if ! data.neg.is_empty() {
+      profile! { self "negative examples generated" => add neg_count }
     }
 
     Ok(())
@@ -233,9 +279,13 @@ where S: Solver<'kid, ()> {
   pub fn try_force(
     & mut self, _data: & Data, pred: PrdIdx, vals: & HSample
   ) -> Res< Option< Either<Sample, Sample> > > {
-    // msg! { debug self => "working on ({} {})", self.instance[pred], vals } ;
+    self.solver.comment(
+      & format!("working on sample ({} {})", self.instance[pred], vals)
+    ) ? ;
 
     if let Some(clauses) = self.pos.get(& pred) {
+
+      self.solver.comment("working on positive clauses") ? ;
 
       for clause in clauses {
         let clause = & self.instance[* clause] ;
@@ -249,7 +299,11 @@ where S: Solver<'kid, ()> {
             & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
-          let sat = self.solver.check_sat() ? ;
+          let sat = profile! {
+            self wrap {
+              self.solver.check_sat() ?
+            } "smt"
+          } ;
           self.solver.pop(1) ? ;
 
           if sat {
@@ -270,6 +324,8 @@ where S: Solver<'kid, ()> {
     }
 
     if let Some(clauses) = self.neg.get(& pred) {
+
+      self.solver.comment("working on negative clauses") ? ;
 
       for clause in clauses {
         let clause = & self.instance[* clause] ;

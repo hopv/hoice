@@ -189,18 +189,15 @@ macro_rules! profile {
       vec![ $($scope),+ ]
     )
   ) ;
-  ( $slf:ident wrap $b:block $( $scope:expr ),+ $(,)* ) => ({
-    let prof = & $slf._profiler ;
-    profile! { |prof| wrap $b $($scope),+ }
-  }) ;
-  ( $slf:ident $stat:expr => add $e:expr ) => ({
-    let prof = & $slf._profiler ;
-    profile!{ |prof| $stat => add $e }
-  }) ;
-  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => ({
-    let prof = & $slf._profiler ;
-    profile!{ |prof| $meth $($scope),+ }
-  }) ;
+  ( $slf:ident wrap $b:block $( $scope:expr ),+ $(,)* ) => (
+    profile! { |$slf._profiler| wrap $b $($scope),+ }
+  ) ;
+  ( $slf:ident $stat:expr => add $e:expr ) => (
+    profile!{ |$slf._profiler| $stat => add $e }
+  ) ;
+  ( $slf:ident $meth:ident $( $scope:expr ),+ $(,)* ) => (
+    profile!{ |$slf._profiler| $meth $($scope),+ }
+  ) ;
 }
 #[cfg(feature = "bench")]
 macro_rules! profile {

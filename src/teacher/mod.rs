@@ -381,15 +381,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     Ok(alive)
   }
 
-  /// Checks whether all learners are dead.
-  pub fn check_all_dead(& self) -> Res<()> {
-    if self.learners.iter().all(
-      |& (ref snd, _, _)| snd.is_none()
-    ) {
-      bail!("all learners are dead")
-    } else { Ok(()) }
-  }
-
   /// Waits for some candidates.
   ///
   /// Returns `None` when there are no more kids. Otherwise, the second
@@ -404,15 +395,16 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       () => ( bail!("all learners are dead") ) ;
     }
 
-    self.check_all_dead() ? ;
-
-    profile!{ self tick "waiting" }
-
     'recv: loop {
 
+      profile!{ self tick "waiting" }
       let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
         if ! drain {
-          match self.from_learners.recv_timeout(timeout) {
+          match profile! {
+            self wrap {
+              self.from_learners.recv_timeout(timeout)
+            } "waiting"
+          } {
             Ok(msg) => msg,
             Err(_) => {
               profile!{ self mark "waiting" }
@@ -421,7 +413,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             },
           }
         } else {
-          match self.from_learners.recv() {
+          match profile! {
+            self wrap {
+              self.from_learners.recv()
+            } "waiting"
+          } {
             Ok(msg) => msg,
             Err(_) => {
               profile!{ self mark "waiting" }
@@ -430,7 +426,11 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         }
       } else {
-        match self.from_learners.recv() {
+        match profile! {
+          self wrap {
+            self.from_learners.recv()
+          } "waiting"
+        } {
           Ok(msg) => msg,
           Err(_) => {
             profile!{ self mark "waiting" }
@@ -442,7 +442,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       match msg {
 
         MsgKind::Cands(cands) => {
-          profile!{ self mark "waiting" }
           profile!{ self "candidates" => add 1 }
           if let Id::Learner(idx) = id {
             return Ok( Some( (idx, cands) ) )
@@ -522,7 +521,6 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
               id, tree, stats
             )
           }
-          self.check_all_dead() ? ;
         },
 
         MsgKind::Unsat => return Ok(None),

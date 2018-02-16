@@ -335,22 +335,26 @@ impl Profiler {
   ///   to the sum of their branches (without triggering a warning)
   #[cfg( not(feature = "bench") )]
   pub fn print(self, set_sum: & [ & 'static str ]) {
-    {
+    scoped! {
       let mut subs = self.subs.borrow_mut() ;
       for (name, tree, stats) in subs.drain(0..) {
-        println!("; {} {{", name) ;
+        println!("; {} {{", conf.emph(name)) ;
         tree.print("  ", set_sum) ;
-        println!("; ") ;
-        println!(";   stats:") ;
-        stats.print("  ") ;
+        if ! stats.is_empty() {
+          println!("; ") ;
+          println!(";   stats:") ;
+          stats.print("  ")
+        }
         println!("; }}") ;
         println!("; ")
       }
     }
     let (tree, stats) = self.extract_tree() ;
     tree.print("", set_sum) ;
-    println!("; ") ;
-    println!("; stats:") ;
-    stats.print("") ;
+    if ! stats.is_empty() {
+      println!("; ") ;
+      println!("; stats:") ;
+      stats.print("")
+    }
   }
 }
