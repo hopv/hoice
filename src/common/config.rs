@@ -678,7 +678,7 @@ impl IceConf {
         bool_format
       ).default_value("off").takes_value(
         true
-      ).number_of_values(1).display_order( order() )
+      ).number_of_values(1).hidden(true).display_order( order() )
 
     ).arg(
 
@@ -688,7 +688,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(
+      ).default_value("on").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -759,6 +759,8 @@ pub struct TeacherConf {
   pub step: bool,
   /// Run the assistant to break implication constraints.
   pub assistant: bool,
+  /// Try to find implication constraints related to existing samples first.
+  pub bias_cexs: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
@@ -796,6 +798,18 @@ impl TeacherConf {
         "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("bias_cexs").long("--bias_cexs").help(
+        "(de)activate biased implication constraints"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
     )
   }
 
@@ -803,9 +817,10 @@ impl TeacherConf {
   pub fn new(matches: & Matches) -> Self {
     let step = bool_of_matches(matches, "step") ;
     let assistant = bool_of_matches(matches, "assistant") ;
+    let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
 
     TeacherConf {
-      step, assistant,
+      step, assistant, bias_cexs
     }
   }
 }

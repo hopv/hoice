@@ -11,6 +11,7 @@ pub use hashconsing::HashConsign ;
 pub use hashconsing::coll::* ;
 
 pub use rsmt2::SmtRes ;
+pub use rsmt2::actlit::Actlit ;
 
 pub use num::{ Zero, One, Signed } ;
 
@@ -117,7 +118,7 @@ pub type Model = Vec< (PrdIdx, TTerms) > ;
 /// Alias type for a counterexample for a clause.
 pub type Cex = Args ;
 /// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap<Cex> ;
+pub type Cexs = ClsHMap< Vec<Cex> > ;
 
 /// Mapping from variables to values, used for learning data.
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
@@ -150,6 +151,22 @@ impl Args {
   /// Constructor with some capacity.
   pub fn with_capacity(capa: usize) -> Self {
     Self::new( VarMap::with_capacity(capa) )
+  }
+
+  /// Constructor from a model.
+  pub fn of_model<T>(
+    info: & VarMap<::instance::info::VarInfo>,
+    model: Vec<(VarIdx, T, Val)>
+  ) -> Self {
+    let mut slf = Args::new(
+      info.iter().map(
+        |info| info.typ.default_val()
+      ).collect()
+    ) ;
+    for (var, _, val) in model {
+      slf[var] = val
+    }
+    slf
   }
 
   /// Evaluates some arguments and yields the resulting `VarMap`.

@@ -55,6 +55,7 @@ pub fn launch(
 
 /// Propagates examples, tries to break implication constraints.
 pub struct Assistant<S> {
+  /// Core, to communicate with the teacher.
   core: MsgCore,
   /// Solver.
   solver: S,

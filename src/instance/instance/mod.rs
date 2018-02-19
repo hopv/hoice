@@ -806,78 +806,83 @@ impl Instance {
   ) -> Res<bool> {
     let mut nu_stuff = false ;
     debug! { "start" }
-    for (clause, cex) in cexs.into_iter() {
-      if_debug! {
-        debug! { "    working on clause {}...", clause }
-        debug! { "    cex:" }
-        for (index, val) in cex.index_iter() {
-          debug! { "    - v_{}: {}", index, val }
-        }
-      }
-      let clause = & self[clause] ;
-      let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
+    for (clause, cexs) in cexs.into_iter() {
 
-      debug! { "    working on lhs..." }
-      for (pred, argss) in clause.lhs_preds() {
-        let pred = * pred ;
-        debug! { "        {}", self[pred] }
-        if self.pred_terms[pred].is_none() {
-          debug! { "        -> is none, {} args", argss.len() }
-          for args in argss {
-            debug! { "        {}", args }
-            let mut values = Args::with_capacity( args.len() ) ;
-            for arg in args.iter() {
-              values.push(
-                arg.eval(& cex).chain_err(
-                  || "during argument evaluation to generate learning data"
-                ) ?
+      for cex in cexs {
+
+        if_debug! {
+          debug! { "    working on clause {}...", clause }
+          debug! { "    cex:" }
+          for (index, val) in cex.index_iter() {
+            debug! { "    - v_{}: {}", index, val }
+          }
+        }
+
+        let clause = & self[clause] ;
+        let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
+
+        debug! { "    working on lhs..." }
+        for (pred, argss) in clause.lhs_preds() {
+          let pred = * pred ;
+          debug! { "        {}", self[pred] }
+          if self.pred_terms[pred].is_none() {
+            debug! { "        -> is none, {} args", argss.len() }
+            for args in argss {
+              debug! { "        {}", args }
+              let mut values = Args::with_capacity( args.len() ) ;
+              for arg in args.iter() {
+                values.push(
+                  arg.eval(& cex).chain_err(
+                    || "during argument evaluation to generate learning data"
+                  ) ?
+                )
+              }
+              debug! { "          {}", values }
+              antecedents.push(
+                (pred, values)
               )
             }
-            debug! { "          {}", values }
-            antecedents.push(
-              (pred, values)
+          } else {
+            debug! { "      -> is some" }
+          }
+        }
+        antecedents.shrink_to_fit() ;
+
+        debug! { "    working on rhs..." }
+        let consequent = if let Some((pred, args)) = clause.rhs() {
+          debug! { "        ({} {})", self[pred], args }
+          let mut values = Args::with_capacity( args.len() ) ;
+          'pred_args: for arg in args.iter() {
+            values.push(
+              arg.eval(& cex).chain_err(
+                || "during argument evaluation to generate learning data"
+              ) ?
             )
           }
+          debug! { "          {}", values }
+          Some( (pred, values) )
         } else {
-          debug! { "      -> is some" }
-        }
-      }
-      antecedents.shrink_to_fit() ;
+          None
+        } ;
 
-      debug! { "    working on rhs..." }
-      let consequent = if let Some((pred, args)) = clause.rhs() {
-        debug! { "        ({} {})", self[pred], args }
-        let mut values = Args::with_capacity( args.len() ) ;
-        'pred_args: for arg in args.iter() {
-          values.push(
-            arg.eval(& cex).chain_err(
-              || "during argument evaluation to generate learning data"
-            ) ?
-          )
+        match ( antecedents.len(), consequent ) {
+          (0, None) => bail!(
+            ErrorKind::Unsat
+          ),
+          (1, None) => {
+            let (pred, args) = antecedents.pop().unwrap() ;
+            let new = data.stage_raw_neg(pred, args) ? ;
+            nu_stuff = nu_stuff || new
+          },
+          (0, Some( (pred, args) )) => {
+            let new = data.stage_raw_pos(pred, args) ? ;
+            nu_stuff = nu_stuff || new
+          },
+          (_, consequent) => {
+            let new = data.add_cstr(antecedents, consequent) ? ;
+            nu_stuff = nu_stuff || new
+          },
         }
-        debug! { "          {}", values }
-        Some( (pred, values) )
-      } else {
-        None
-      } ;
-
-      match ( antecedents.len(), consequent ) {
-        (0, None) => bail!(
-          ErrorKind::Unsat
-        ),
-        (1, None) => {
-          let (pred, args) = antecedents.pop().unwrap() ;
-          let new = data.stage_raw_neg(pred, args) ? ;
-          nu_stuff = nu_stuff || new
-        },
-        (0, Some( (pred, args) )) => {
-          let new = data.stage_raw_pos(pred, args) ? ;
-          nu_stuff = nu_stuff || new
-        },
-        (_, consequent) => {
-          let new = data.add_cstr(antecedents, consequent) ? ;
-          nu_stuff = nu_stuff || new
-        },
       }
     }
 

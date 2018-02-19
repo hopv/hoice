@@ -597,12 +597,14 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     for clause in clauses {
       if ! clauses_to_ignore.contains(& clause) {
         // log_debug!{ "  looking for a cex for clause {}", clause }
-        if let Some(cex) = self.get_cex(
+        let cexs = self.get_cex(
           clause, & true_preds, & false_preds
         ).chain_err(
           || format!("while getting counterexample for clause {}", clause)
-        ) ? {
-          let prev = map.insert(clause, cex) ;
+        ) ? ;
+
+        if ! cexs.is_empty() {
+          let prev = map.insert(clause, cexs) ;
           debug_assert_eq!(prev, None)
         }
       }
@@ -613,33 +615,30 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
     & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
-  ) -> Res< Option<Cex> > {
-    // log_debug!{
-    //   "getting cex for {}",
-    //   self.instance[clause_idx].to_string_info(
-    //     self.instance.preds()
-    //   ).unwrap()
-    // }
+  ) -> Res< Vec<Cex> > {
     log_debug! { "getting cex for clause #{}", clause_idx }
 
     self.solver.push(1) ? ;
-    let clause = & self.instance[clause_idx] ;
+    // Macro to avoid borrowing `self.instance`.
+    macro_rules! clause {
+      () => (& self.instance[clause_idx])
+    }
     if_not_bench!{
       if conf.solver.log {
         self.solver.comment(& format!("\nclause variables:\n")) ? ;
-        for info in clause.vars() {
+        for info in clause!().vars() {
           self.solver.comment(
             & format!("  v_{} ({})\n", info.idx, info.active)
           ) ?
         }
         self.solver.comment(& format!("lhs terms:\n")) ? ;
-        for lhs in clause.lhs_terms() {
+        for lhs in clause!().lhs_terms() {
           self.solver.comment(
             & format!("  {}\n", lhs)
           ) ?
         }
         self.solver.comment(& format!("lhs pred applications:\n")) ? ;
-        for (pred, argss) in clause.lhs_preds() {
+        for (pred, argss) in clause!().lhs_preds() {
           for args in argss {
             let mut s = format!("  ({}", & self.instance[* pred]) ;
             for arg in args.iter() {
@@ -650,7 +649,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         }
         self.solver.comment(& format!("rhs:\n")) ? ;
-        if let Some((pred, args)) = clause.rhs() {
+        if let Some((pred, args)) = clause!().rhs() {
           let mut s = format!("  ({}", & self.instance[pred]) ;
           for arg in args.iter() {
             s = format!("{} {}", s, arg)
@@ -665,37 +664,160 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
     }
 
     profile!{ self tick "cexs", "prep" }
-    clause.declare(& mut self.solver) ? ;
+    clause!().declare(& mut self.solver) ? ;
     self.solver.assert_with(
-      clause, & (false, true_preds, false_preds, self.instance.preds())
+      clause!(), & (false, true_preds, false_preds, self.instance.preds())
     ) ? ;
     profile!{ self mark "cexs", "prep" }
 
-    profile!{ self tick "cexs", "check-sat" }
-    let sat = self.solver.check_sat() ? ;
-    profile!{ self mark "cexs", "check-sat" }
+    let mut cexs = vec![] ;
 
-    let res = if sat {
-      profile!{ self tick "cexs", "model" }
-      log_debug!{ "    sat, getting model..." }
-      let model = self.solver.get_model_const() ? ;
-      let mut map = Args::new(
-        clause.vars().iter().map(
-          |info| info.typ.default_val() // Val::N
-        ).collect()
-      ) ;
-      for (var, _, val) in model {
-        log_debug!{ "    - {} = {}", var.default_str(), val }
-        map[var] = val
-      }
-      log_debug!{ "    done constructing model" }
-      profile!{ self mark "cexs", "model" }
-      Ok( Some( map ) )
-    } else {
-      Ok(None)
-    } ;
+    macro_rules! get_cex {
+
+      (@$sat:ident $($stuff:tt)*) => ({ // Works on the check-sat result.
+        if $sat {
+          profile!{ self tick "cexs", "model" }
+          let model = self.solver.get_model_const() ? ;
+          let cex = Args::of_model(
+            clause!().vars(), model
+          ) ;
+          profile!{ self mark "cexs", "model" }
+          cexs.push(cex) ;
+          $($stuff)*
+        }
+      }) ;
+
+      () => ({ // Normal check, no actlit.
+        profile!{ self tick "cexs", "check-sat" }
+        let sat = self.solver.check_sat() ? ;
+        profile!{ self mark "cexs", "check-sat" }
+
+        get_cex!(@sat) ;
+      }) ;
+
+      ($actlit:expr ; $blah:expr) => ( // Check modulo actlit, if any.
+        if let Some(actlit) = $actlit {
+          log_debug! { "  checksat for {}", $blah }
+          profile!{ self tick "cexs", "biased check-sat" }
+          let sat = self.solver.check_sat_act(
+            Some(& actlit)
+          ) ? ;
+          profile!{ self mark "cexs", "biased check-sat" }
+          get_cex!(
+            @sat
+            profile!{ self $blah => add 1 }
+          ) ;
+          self.solver.de_actlit(actlit) ?
+        }
+      )
+    }
+
+    let (
+      bias_lhs_actlit, bias_rhs_actlit
+    ) = self.bias_applications(clause_idx) ? ;
+
+    get_cex! { bias_lhs_actlit ; "lhs biased examples" }
+    get_cex! { bias_rhs_actlit ; "rhs biased examples" }
+
+    // Only get unbiased cex if we don't have anything at this point.
+    if cexs.is_empty() {
+      get_cex!()
+    }
+
     self.solver.pop(1) ? ;
-    res
+
+    Ok(cexs)
+  }
+
+  /// Biases the arguments of the predicates of a clause.
+  ///
+  /// **Assumes all active variables are already defined.**
+  ///
+  /// Guaranteed to return `(None, None)` if this feature is deactivated by
+  /// [`bias_cexs`][conf], or if the clause is positive / negative (either LHS
+  /// or RHS have no predicate applications).
+  ///
+  /// The first element of the pair it returns is an activation literal that
+  /// forces predicate applications in the LHS to be positive. That is, it
+  /// forces their arguments to correspond to one of the known positive
+  /// examples.
+  ///
+  /// - When no predicate appearing in the LHS have positive examples, returns
+  ///   no actlit.
+  /// - When only some of them do, returns an actlit: some LHS applications
+  ///   will not be constrained.
+  ///
+  /// The second element of the pair it returns is an activation literal that
+  /// forces the predicate application in the RHS to be negative. That is, it
+  /// forces its arguments to correspond to one of the known negative examples.
+  ///
+  /// - When the predicate appearing in the RHS has no negative examples,
+  ///   returns no actlit.
+  ///
+  /// [conf]: ../common/config/struct.TeacherConf.html#structfield.bias_cexs
+  /// (bias_cexs configuration)
+  pub fn bias_applications(
+    & mut self, clause_idx: ClsIdx
+  ) -> Res<(Option<Actlit>, Option<Actlit>)> {
+    use common::smt::DisjArgs ;
+
+    let clause = & self.instance[clause_idx] ;
+
+    // Active and not a positive constraint?
+    if ! conf.teacher.bias_cexs
+    || clause.lhs_preds().is_empty() {
+      return Ok( (None, None) )
+    }
+
+    // Not a negative constraint?
+    let (rhs_pred, rhs_args) = if let Some((pred, args)) = clause.rhs() {
+      (pred, args)
+    } else {
+      return Ok( (None, None) )
+    } ;
+
+    // Work on lhs pred apps that have some positive data.
+    let mut lhs_actlit = None ;
+    for (pred, argss) in clause.lhs_preds() {
+      let pred = * pred ;
+      if self.data.pos[pred].is_empty() { continue }
+      let actlit = if let Some(actlit) = lhs_actlit {
+        actlit
+      } else {
+        self.solver.comment(
+          & format!("\nactlit for lhs bias")
+        ) ? ;
+        self.solver.get_actlit() ?
+      } ;
+
+      self.solver.comment(
+        & format!("\nbias for {}", self.instance[pred])
+      ) ? ;
+
+      for args in argss {
+        let disjunction = DisjArgs::new(args, & self.data.pos[pred]) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ?
+      }
+
+      lhs_actlit = Some(actlit)
+    }
+
+    // Work on rhs.
+    let rhs_actlit = if ! self.data.neg[rhs_pred].is_empty() {
+      self.solver.comment(
+        & format!("actlit for rhs bias ({})", self.instance[rhs_pred])
+      ) ? ;
+      let actlit = self.solver.get_actlit() ? ;
+
+      let disjunction = DisjArgs::new(rhs_args, & self.data.neg[rhs_pred]) ? ;
+      self.solver.assert_act(& actlit, & disjunction) ? ;
+
+      Some(actlit)
+    } else {
+      None
+    } ;
+
+    Ok( (lhs_actlit, rhs_actlit) )
   }
 }
 

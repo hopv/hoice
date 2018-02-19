@@ -1,12 +1,12 @@
 //! SMT-related zero-cost wrappers.
 
-use rsmt2::actlit::Actlit ;
 use rsmt2::to_smt::* ;
 
 use common::* ;
 use common::data::{
   HSample, HSamples, Constraint
 } ;
+use instance::info::VarInfo ;
 
 
 /// SMT-prints a term using the default var writer.
@@ -47,7 +47,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
 
   /// Checks if this conjunction is unsatisfiable.
   pub fn is_unsat<'kid, Parser: Copy, S>(
-    & self, solver: & mut S, vars: & VarMap< ::instance::info::VarInfo >
+    & self, solver: & mut S, vars: & VarMap<VarInfo>
   ) -> Res<bool>
   where S: Solver<'kid, Parser> {
     if self.terms.len() == 0 { return Ok(false) }
@@ -283,6 +283,55 @@ impl<'a, T> Expr2Smt<()> for SmtActSamples<
     if ! self.pos {
       write!(w, ")") ?
     }
+    Ok(())
+  }
+}
+
+/// Wrapper for some arguments and a disjunction of terms.
+///
+/// Corresponds to the disjunction of `(= args v)` for `v` in `vals`.
+pub struct DisjArgs<'a> {
+  /// Arguments.
+  pub args: & 'a HTArgs,
+  /// Values to force the arguments to.
+  pub vals: & 'a HConSet<HSample>,
+}
+impl<'a> DisjArgs<'a> {
+  /// Constructor.
+  ///
+  /// Error if `args` or `vals` is empty.
+  #[inline]
+  pub fn new(
+    args: & 'a HTArgs, vals: & 'a HConSet<HSample>
+  ) -> Res<Self> {
+    if args.is_empty() {
+      bail!("can't create a `DisjArgs` with empty `args`")
+    }
+    if vals.is_empty() {
+      bail!("can't create an empty `DisjArgs`")
+    }
+    Ok( DisjArgs { args, vals } )
+  }
+}
+impl<'a> Expr2Smt<()> for DisjArgs<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    write!(w, "(or") ? ;
+    for vals in self.vals {
+      write!(w, " (and") ? ;
+      debug_assert_eq! { self.args.len(), vals.len() }
+      for (arg, val) in self.args.iter().zip( vals.iter() ) {
+        write!(w, " (= ") ? ;
+        arg.write(w, |w, var| write!(w, "{}", var.default_str())) ? ;
+        write!(w, " ") ? ;
+        val.expr_to_smt2(w, ()) ? ;
+        write!(w, ")") ?
+      }
+      write!(w, ")") ?
+    }
+    write!(w, ")") ? ;
+
     Ok(())
   }
 }

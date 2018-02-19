@@ -642,3 +642,11 @@ impl From<()> for Val {
     Val::N
   }
 }
+impl ::rsmt2::to_smt::Expr2Smt<()> for Val {
+  fn expr_to_smt2<Writer: ::std::io::Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> ::rsmt2::SmtRes<()> {
+    write!(w, "{}", self) ? ;
+    Ok(())
+  }
+}

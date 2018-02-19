@@ -56,7 +56,7 @@ macro_rules! warn {
       print!("; {} ", conf.sad("|")) ;
       println!( $str $(, $args)* ) ;
     )*
-    println!("{}", conf.sad("; |===|"))
+    println!("; {}", conf.sad("|===|"))
   }) ;
 }
 

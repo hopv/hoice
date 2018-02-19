@@ -653,10 +653,10 @@ impl DataCore {
     ) = to_propagate.pop() {
       if curr_samples.is_empty() { continue 'propagate }
 
-      log_debug!(
-        "propagating {} samples for predicate {}",
-        curr_samples.len(), self.instance[curr_pred]
-      ) ;
+      // log_debug!(
+      //   "propagating {} samples for predicate {}",
+      //   curr_samples.len(), self.instance[curr_pred]
+      // ) ;
 
       let mut new_stuff = false ;
       for sample in & curr_samples {
@@ -676,15 +676,16 @@ impl DataCore {
         'find_first: while let Some(sample) = iter.next() {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
-              log_debug!(
-                "  - sample {} appears in {} constraints",
-                sample, cstr_set.len()
-              ) ;
+              // log_debug!(
+              //   "  - sample {} appears in {} constraints",
+              //   sample, cstr_set.len()
+              // ) ;
               tmp = Some(cstr_set) ;
               break 'find_first
             }
           }
-          log_debug!("  - sample {} does not appear in any constraint", sample)
+          // log_debug!("  - sample {} does not appear in any constraint",
+          // sample)
         }
         if let Some(set) = tmp {
           constraints = set
@@ -697,33 +698,34 @@ impl DataCore {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
-              log_debug!(
-                "  - sample {} appears in {} constraints",
-                sample, cstr_set.len()
-              ) ;
+              // log_debug!(
+              //   "  - sample {} appears in {} constraints",
+              //   sample, cstr_set.len()
+              // ) ;
               constraints.extend( cstr_set ) ;
               continue 'other_samples
             }
           }
-          log_debug!("  - sample {} does not appear in any constraint", sample)
+          // log_debug!("  - sample {} does not appear in any constraint",
+          // sample)
         }
       }
 
-      log_debug!("  working on {} constraints", constraints.len()) ;
+      // log_debug!("  working on {} constraints", constraints.len()) ;
 
       'update_constraints: for c_idx in constraints {
 
-        log_debug!(
-          "    looking at {}", self.constraints[c_idx].to_string_info(
-            self.instance.preds()
-          ) ?
-        ) ;
+        // log_debug!(
+        //   "    looking at {}", self.constraints[c_idx].to_string_info(
+        //     self.instance.preds()
+        //   ) ?
+        // ) ;
         
         // Is `rhs` true?
         if self.constraints[c_idx].rhs.as_ref().map(
           | sample | sample.is_in(curr_pred, & curr_samples)
         ).unwrap_or(false) {
-          log_debug!("    -> rhs is true, tautologizing") ;
+          // log_debug!("    -> rhs is true, tautologizing") ;
           // Tautologize and break links.
           let _ = self.tautologize(c_idx) ;
           let _ = self.modded_constraints.remove(& c_idx) ;
@@ -746,7 +748,7 @@ impl DataCore {
 
         // Is `lhs` empty?
         if self.constraints[c_idx].lhs.is_empty() {
-          log_debug!("    -> lhs is empty, remembering for later") ;
+          // log_debug!("    -> lhs is empty, remembering for later") ;
           // Then `rhs` has to be true.
           let (lhs, maybe_rhs) = self.tautologize(c_idx) ;
           debug_assert! { lhs.is_empty() }
@@ -827,10 +829,10 @@ impl DataCore {
       }
       if ! new_stuff { continue 'propagate }
 
-      log_debug!(
-        "propagating {} samples for predicate {}",
-        curr_samples.len(), self.instance[curr_pred]
-      ) ;
+      // log_debug!(
+      //   "propagating {} samples for predicate {}",
+      //   curr_samples.len(), self.instance[curr_pred]
+      // ) ;
 
       // Get the constraints mentioning the negative samples.
       let mut constraints ;
@@ -841,15 +843,16 @@ impl DataCore {
         'find_first: while let Some(sample) = iter.next() {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
-              log_debug!(
-                "  - sample {} appears in {} constraints",
-                sample, cstr_set.len()
-              ) ;
+              // log_debug!(
+              //   "  - sample {} appears in {} constraints",
+              //   sample, cstr_set.len()
+              // ) ;
               tmp = Some(cstr_set) ;
               break 'find_first
             }
           }
-          log_debug!("  - sample {} does not appear in any constraint", sample)
+          // log_debug!("  - sample {} does not appear in any constraint",
+          // sample)
         }
         if let Some(set) = tmp {
           constraints = set
@@ -862,33 +865,34 @@ impl DataCore {
           if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
-              log_debug!(
-                "  - sample {} appears in {} constraints",
-                sample, cstr_set.len()
-              ) ;
+              // log_debug!(
+              //   "  - sample {} appears in {} constraints",
+              //   sample, cstr_set.len()
+              // ) ;
               constraints.extend( cstr_set ) ;
               continue 'other_samples
             }
           }
-          log_debug!("  - sample {} does not appear in any constraint", sample)
+          // log_debug!("  - sample {} does not appear in any constraint",
+          // sample)
         }
       }
 
-      log_debug!("  working on {} constraints", constraints.len()) ;
+      // log_debug!("  working on {} constraints", constraints.len()) ;
 
       'update_constraints: for c_idx in constraints {
 
-        log_debug!(
-          "    looking at {}", self.constraints[c_idx].to_string_info(
-            self.instance.preds()
-          ) ?
-        ) ;
+        // log_debug!(
+        //   "    looking at {}", self.constraints[c_idx].to_string_info(
+        //     self.instance.preds()
+        //   ) ?
+        // ) ;
         
         // Is `rhs` false?
         if self.constraints[c_idx].rhs.as_ref().map(
           | sample | sample.is_in(curr_pred, & curr_samples)
         ).unwrap_or(false) {
-          log_debug!("    -> rhs is false, constraint is negative") ;
+          // log_debug!("    -> rhs is false, constraint is negative") ;
           // Forget rhs.
           self.constraints[c_idx].rhs = None
         }
@@ -909,7 +913,7 @@ impl DataCore {
 
         // Is constraint trivial?
         if trivial {
-          log_debug!("    -> lhs is always false, constraint is trivial") ;
+          // log_debug!("    -> lhs is always false, constraint is trivial") ;
           let _ = self.tautologize(c_idx) ;
         }
 
@@ -917,9 +921,9 @@ impl DataCore {
 
         if self.constraints[c_idx].lhs_len() == 1
         && self.constraints[c_idx].rhs.is_none() {
-          log_debug!(
-            "    -> one sample in lhs of negative constraint, remembering"
-          ) ;
+          // log_debug!(
+          //   "    -> one sample in lhs of negative constraint, remembering"
+          // ) ;
           // Constraint is negative and only one sample in lhs, it has to be
           // false.
           let (mut just_one, rhs) = self.tautologize(c_idx) ;
@@ -1198,10 +1202,10 @@ impl Data {
 
     let constraint = Constraint::new(nu_lhs, nu_rhs) ;
 
-    log_debug! {
-      "adding constraint {}",
-      constraint.to_string_info( self.instance.preds() ).unwrap()
-    }
+    // log_debug! {
+    //   "adding constraint {}",
+    //   constraint.to_string_info( self.instance.preds() ).unwrap()
+    // }
 
     for idx in CstrRange::zero_to( self.constraints.len() ) {
       use std::cmp::Ordering ;
@@ -1212,29 +1216,29 @@ impl Data {
         & self.constraints[idx]
       ) {
         Some(Ordering::Less) => {
-          log_debug! {
-            "  subsumes {}",
-            self.constraints[idx].to_string_info(
-              self.instance.preds()
-            ).unwrap()
-          }
+          // log_debug! {
+          //   "  subsumes {}",
+          //   self.constraints[idx].to_string_info(
+          //     self.instance.preds()
+          //   ).unwrap()
+          // }
           let _ = self.tautologize(idx) ;
           ()
         },
         Some(Ordering::Equal) | 
         Some(Ordering::Greater) => {
-          log_debug! {
-            "  subsumed by {}",
-            self.constraints[idx].to_string_info(
-              self.instance.preds()
-            ).unwrap()
-          }
+          // log_debug! {
+          //   "  subsumed by {}",
+          //   self.constraints[idx].to_string_info(
+          //     self.instance.preds()
+          //   ).unwrap()
+          // }
           return Ok(false)
         },
         None => (),
       }
     }
-    log_debug! { "  actually adding it" }
+    // log_debug! { "  actually adding it" }
     self.shrink_constraints() ;
 
     self.internal_add_cstr(constraint) ;
@@ -1306,72 +1310,3 @@ impl Data {
     }
   }
 }
-
-
-
-
-
-
-
-/// New learning data sent by the teacher to the learners.
-#[derive(Clone)]
-pub struct LearningData {
-  /// Positive learning data.
-  pub pos: Vec<Sample>,
-  /// Negative learning data.
-  pub neg: Vec<Sample>,
-  /// Constraints.
-  pub cstr: Vec<Constraint>,
-}
-impl LearningData {
-  /// Constructor.
-  pub fn new(
-    pos: Vec<Sample>, neg: Vec<Sample>, cstr: Vec<Constraint>
-  ) -> Self {
-    LearningData { pos, neg, cstr }
-  }
-  /// Returns `true` if everything's empty.
-  pub fn is_empty(& self) -> bool {
-    self.pos.is_empty() && self.neg.is_empty() && self.cstr.is_empty()
-  }
-}
-impl<'a> PebcakFmt<'a> for LearningData {
-  type Info = & 'a PrdMap<PrdInfo> ;
-  fn pebcak_err(& self) -> ErrorKind {
-    "during constraint pebcak formatting".into()
-  }
-  fn pebcak_io_fmt<W: Write>(
-    & self, w: & mut W, map: & 'a PrdMap<PrdInfo>
-  ) -> IoRes<()> {
-    write!(w, "pos (") ? ;
-    if ! self.pos.is_empty() {
-      write!(w, "\n ") ? ;
-      for pos in & self.pos {
-        write!(w, "  ") ? ;
-        pos.pebcak_io_fmt(w, map) ? ;
-        write!(w, "\n") ?
-      }
-    }
-    write!(w, ") neg (") ? ;
-    if ! self.neg.is_empty() {
-      write!(w, "\n ") ? ;
-      for neg in & self.neg {
-        write!(w, "  ") ? ;
-        neg.pebcak_io_fmt(w, map) ? ;
-        write!(w, "\n") ?
-      }
-    }
-    write!(w, ") constraints (") ? ;
-    if ! self.cstr.is_empty() {
-      write!(w, "\n ") ? ;
-      for cstr in & self.cstr {
-        write!(w, "  ") ? ;
-        cstr.pebcak_io_fmt(w, map) ? ;
-        writeln!(w, "") ?
-      }
-    }
-    writeln!(w, ")")
-  }
-}
-
-
