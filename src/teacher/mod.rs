@@ -712,16 +712,21 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
       )
     }
 
-    let (
-      bias_lhs_actlit, bias_rhs_actlit
-    ) = self.bias_applications(clause_idx) ? ;
+    get_cex!() ;
 
-    get_cex! { bias_lhs_actlit ; "lhs biased examples" }
-    get_cex! { bias_rhs_actlit ; "rhs biased examples" }
+    // Only try biased cexs if current instance is sat.
+    if let Some(unbiased_cex) = cexs.pop() {
+      let (
+        bias_lhs_actlit, bias_rhs_actlit
+      ) = self.bias_applications(clause_idx) ? ;
 
-    // Only get unbiased cex if we don't have anything at this point.
-    if cexs.is_empty() {
-      get_cex!()
+      get_cex! { bias_lhs_actlit ; "biased examples (lhs)" }
+      get_cex! { bias_rhs_actlit ; "biased examples (rhs)" }
+
+      // Add the unbiased cex back if bias checks yielded nothing.
+      if cexs.is_empty() {
+        cexs.push(unbiased_cex)
+      }
     }
 
     self.solver.pop(1) ? ;

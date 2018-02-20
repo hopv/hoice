@@ -458,7 +458,7 @@ where Slver: Solver<'kid, ()> {
     msg! {
       self =>
       "  working on predicate {} (pos: {}, neg: {}, unc: {})",
-      self.instance[pred], data.pos.len(), data.neg.len(), data.unc.len()
+      self.instance[pred], data.pos().len(), data.neg().len(), data.unc().len()
     }
 
     let mut branch = Vec::with_capacity(17) ;
@@ -468,23 +468,25 @@ where Slver: Solver<'kid, ()> {
 
       // Checking whether we can close this branch.
 
-      if data.neg.is_empty() && self.is_legal(
-        pred, & data.unc, true
+      if data.neg().is_empty() && self.is_legal(
+        pred, data.unc(), true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
         if_verb! {
           let mut s = format!(
             "  no more negative data, is_legal check ok\n  \
-            forcing {} unclassifieds positive...", data.unc.len()
+            forcing {} unclassifieds positive...", data.unc().len()
           ) ;
-          for unc in & data.unc {
+          for unc in data.unc() {
             s = format!("{}\n  {}", s, unc)
           }
           msg! { debug self => s }
         }
 
+        let (_, _, unc) = data.destroy() ;
+
         profile!(
           |self.core._profiler| wrap {
-            for unc in data.unc {
+            for unc in unc {
               self.data.stage_pos(pred, unc) ;
             }
             self.data.propagate()
@@ -510,18 +512,20 @@ where Slver: Solver<'kid, ()> {
         }
       }
 
-      if data.pos.is_empty() && self.is_legal(
-        pred, & data.unc, false
+      if data.pos().is_empty() && self.is_legal(
+        pred, & data.unc(), false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
         msg! {
           debug self =>
           "  no more positive data, is_legal check ok\n  \
-          forcing {} unclassifieds negative...", data.unc.len()
+          forcing {} unclassifieds negative...", data.unc().len()
         }
+
+        let (_, _, unc) = data.destroy() ;
 
         profile!(
           |self.core._profiler| wrap {
-            for unc in data.unc {
+            for unc in unc {
               self.data.stage_neg(pred, unc) ;
             }
             self.data.propagate()
@@ -625,11 +629,15 @@ where Slver: Solver<'kid, ()> {
 
           if res.is_none() {
             let qualifiers = & mut self.qualifiers ;
+            let self_core = & self.core ;
             let all_data = & self.data ;
+
             profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
             let res = qualifiers.maximize(
               pred, |qual| {
-                let res = data.gain(pred, all_data, qual) ? ;
+                let res = data.gain(
+                  pred, all_data, qual, & self_core._profiler
+                ) ? ;
                 core.check_exit() ? ;
                 Ok(res)
               }, false
@@ -643,11 +651,14 @@ where Slver: Solver<'kid, ()> {
         } else {
 
           let qualifiers = & mut self.qualifiers ;
+          let self_core = & self.core ;
           let all_data = & self.data ;
           profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
           let res = qualifiers.maximize(
             pred, |qual| {
-              let res = data.gain(pred, all_data, qual) ? ;
+              let res = data.gain(
+                pred, all_data, qual, & self_core._profiler
+              ) ? ;
               core.check_exit() ? ;
               Ok(res)
             }, $new
@@ -679,27 +690,27 @@ where Slver: Solver<'kid, ()> {
       }
     }
 
-    // if_verb!{
-    //   let mut msg = format!(
-    //     "\ncould not split remaining data for {}:\n", self.instance[pred]
-    //   ) ;
-    //   msg.push_str("pos (") ;
-    //   for pos in & data.pos {
-    //     msg.push_str( & format!("\n    {}", pos) )
-    //   }
-    //   msg.push_str("\n) neg (") ;
-    //   for neg in & data.neg {
-    //     msg.push_str( & format!("\n    {}", neg) )
-    //   }
-    //   msg.push_str("\n) unc (") ;
-    //   for unc in & data.unc {
-    //     msg.push_str( & format!("\n    {}", unc) )
-    //   }
-    //   msg.push_str("\n)") ;
-    //   msg!{ self => msg } ;
-    // }
+    if_verb!{
+      let mut msg = format!(
+        "\ncould not split remaining data for {}:\n", self.instance[pred]
+      ) ;
+      msg.push_str("pos (") ;
+      for pos in data.pos() {
+        msg.push_str( & format!("\n    {}", pos) )
+      }
+      msg.push_str("\n) neg (") ;
+      for neg in data.neg() {
+        msg.push_str( & format!("\n    {}", neg) )
+      }
+      msg.push_str("\n) unc (") ;
+      for unc in data.unc() {
+        msg.push_str( & format!("\n    {}", unc) )
+      }
+      msg.push_str("\n)") ;
+      msg!{ self => msg } ;
+    }
 
-    if data.pos.is_empty() && data.neg.is_empty() && data.unc.is_empty() {
+    if data.is_empty() {
       bail!("[bug] cannot synthesize qualifier based on no data")
     }
 
@@ -726,15 +737,15 @@ where Slver: Solver<'kid, ()> {
         self.instance[pred]
       ) ;
       msg.push_str("pos (") ;
-      for pos in & data.pos {
+      for pos in data.pos() {
         msg.push_str( & format!("\n    {}", pos) )
       }
       msg.push_str("\n) neg (") ;
-      for neg in & data.neg {
+      for neg in data.neg() {
         msg.push_str( & format!("\n    {}", neg) )
       }
       msg.push_str("\n) unc (") ;
-      for unc in & data.unc {
+      for unc in data.unc() {
         msg.push_str( & format!("\n    {}", unc) )
       }
       msg.push_str("\n)") ;
@@ -757,7 +768,9 @@ where Slver: Solver<'kid, ()> {
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        if let Some(gain) = data.gain(pred, self_data, & term) ? {
+        if let Some(gain) = data.gain(
+          pred, self_data, & term, & self_core._profiler
+        ) ? {
           if gain >= conf.ice.gain_cut_synth {
             quals.insert(& term, pred) ? ;
             ()

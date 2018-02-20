@@ -490,25 +490,22 @@ impl DataCore {
   /// Applies the classification represented by the data to some projected
   /// data.
   pub fn classify(& self, pred: PrdIdx, data: & mut CData) {
-    let mut index = 0 ;
-    while index < data.unc.len() {
-      if self.pos[pred].contains(& data.unc[index]) {
-        let to_pos = data.unc.swap_remove(index) ;
-        data.pos.push(to_pos)
-      } else if self.neg[pred].contains(& data.unc[index]) {
-        let to_neg = data.unc.swap_remove(index) ;
-        data.neg.push(to_neg)
+    data.classify(
+      |sample| if self.pos[pred].contains(sample) {
+        Some(true)
+      } else if self.neg[pred].contains(sample) {
+        Some(false)
       } else {
-        index += 1
+        None
       }
-    }
+    )
   }
 
 
   /// Sets all the unknown data of a given predicate to be false, and
   /// propagates.
   pub fn pred_all_false(& mut self, pred: PrdIdx) -> Res<()> {
-    {
+    scoped! {
       let set = self.neg_to_add.entry(pred).or_insert_with(
         || HConSet::new()
       ) ;
@@ -522,7 +519,7 @@ impl DataCore {
   /// Sets all the unknown data of a given predicate to be true, and
   /// propagates.
   pub fn pred_all_true(& mut self, pred: PrdIdx) -> Res<()> {
-    {
+    scoped! {
       let set = self.pos_to_add.entry(pred).or_insert_with(
         || HConSet::new()
       ) ;
@@ -595,7 +592,7 @@ impl DataCore {
         unc.push( sample.clone() )
       }
     }
-    CData { pos, neg, unc }
+    CData::new(pos, neg, unc)
   }
 
   /// Tautologizes a constraint and removes the links with its samples in
