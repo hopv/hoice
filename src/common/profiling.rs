@@ -47,31 +47,51 @@ impl ProfileTree {
   /// Debug printing (multi-line).
   #[cfg(feature = "bench")]
   #[allow(dead_code)]
-  fn print(& self, _: & 'static str, _: & [ & 'static str ]) {}
+  fn print<S>(
+    & self, _: S, _: & [ & 'static str ]
+  ) {}
   #[cfg(not (feature = "bench") )]
-  fn print(& self, pref: & 'static str, set_sum: & [ & 'static str ]) {
-    self.iter(
-      |scope, time, sub_time| if let Some(last) = scope.last() {
+  fn print<S>(
+    & self, pref: S, set_sum: & [ & 'static str ]
+  ) where S: Into<String> {
+    let pref = pref.into() ;
+    self.fold(
+      None,
+      |prev, scope, time, sub_time| if let Some(last) = scope.last() {
+        debug_assert! { scope.len() > 0 }
+        let art = match prev {
+          Some(n) if n < scope.len() => "\\",
+          Some(_) | None => "|",
+        } ;
         println!(
-          "; {5}{0: >1$}|- {2}s {3}{4}",
-          "", 2 * scope.len(), time.to_str(), last,
+          "; {5}{0: >1$}{6}- {2}s {3}{4}",
+          "",
+          // Can't be negative because `scope` contains `last`.
+          scope.len() - 1,
+          time.to_str(),
+          last,
           if sub_time != Duration::from_secs(0) {
             format!(" ({}s)", sub_time.to_str())
           } else {
             "".into()
-          }, pref
-        )
+          },
+          pref,
+          art
+        ) ;
+        Some(scope.len())
       } else {
         println!(
-          "; {}total {}s{}", pref, time.to_str(),
+          "; {}{} {}s{}", pref, conf.happy("total"), time.to_str(),
           if sub_time != Duration::from_secs(0) {
             format!(" ({}s)", sub_time.to_str())
           } else {
             "".into()
           }
-        )
-      }, set_sum
-    )
+        ) ;
+        None
+      },
+      set_sum
+    ) ;
   }
 
   /// Inserts something in the tree.
@@ -99,8 +119,9 @@ impl ProfileTree {
   /// Iterator on the tree.
   ///
   /// Scopes are guaranteed to follow the topological order.
-  pub fn iter<F>(& self, f: F, set_sum: & [& 'static str])
-  where F: Fn(& [& 'static str], & Duration, Duration) {
+  pub fn fold<F, T>(& self, init: T, f: F, set_sum: & [& 'static str])
+  where F: Fn(T, & [& 'static str], & Duration, Duration) -> T {
+    let mut prev = init ;
     if let Some(duration) = self.duration.as_ref() {
       let sub_duration = self.branches.iter().fold(
         Duration::from_secs(0),
@@ -108,7 +129,7 @@ impl ProfileTree {
           || Duration::from_secs(0)
         )
       ) ;
-      f(&[], duration, sub_duration)
+      prev = f(prev, &[], duration, sub_duration)
     } else {
       panic!("ProfileTree: no top duration set but already iterating")
     }
@@ -128,7 +149,7 @@ impl ProfileTree {
           )
         ) ;
         if let Some(duration) = profile.duration.as_ref() {
-          f(& this_scope, duration, sub_duration)
+          prev = f(prev, & this_scope, duration, sub_duration)
         } else {
           if set_sum.iter().any(
             |scope| s == * scope
@@ -142,7 +163,7 @@ impl ProfileTree {
               conf.emph(& scope_str)
             }
           }
-          f(& this_scope, & sub_duration, sub_duration.clone())
+          prev = f(prev, & this_scope, & sub_duration, sub_duration.clone())
         }
         stack.push(
           (
@@ -160,12 +181,18 @@ impl ProfileTree {
 pub type Stats = HashMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
+  /// True if at least one value is not `0`.
+  fn has_non_zero(& self) -> bool ;
   /// Debug print (multi-line).
-  fn print(& self, & 'static str) ;
+  fn print<S>(& self, S) where S: Into<String> ;
 }
-static STAT_LEN: usize = 40 ;
+static STAT_LEN: usize = 29 ;
 impl CanPrint for Stats {
-  fn print(& self, pref: & 'static str) {
+  fn has_non_zero(& self) -> bool {
+    self.values().any(|n| * n > 0)
+  }
+  fn print<S>(& self, pref: S) where S: Into<String> {
+    let pref = pref.into() ;
     let mut stats: Vec<_> = self.iter().collect() ;
     stats.sort_unstable() ;
     for (stat, count) in stats {
@@ -202,6 +229,7 @@ use std::cell::RefCell ;
 /// Internally, the structures are wrapped in `RefCell`s so that mutation
 /// does not require `& mut self`.
 #[cfg( not(feature = "bench") )]
+#[derive(Clone)]
 pub struct Profiler {
   /// String-indexed durations.
   map: RefCell<InstantMap>,
@@ -210,7 +238,7 @@ pub struct Profiler {
   /// Other statistics.
   stats: RefCell<Stats>,
   /// Sub-profilers.
-  subs: RefCell< Vec<(String, ProfileTree, Stats)> >,
+  subs: RefCell< Vec<(String, Profiler)> >,
 }
 #[cfg(feature = "bench")]
 pub struct Profiler ;
@@ -276,29 +304,9 @@ impl Profiler {
     }
   }
 
-  /// Extracts the inner hash map.
+  /// Extracts the profile tree and the stats.
   #[cfg( not(feature = "bench") )]
-  pub fn extract(& self) -> HashMap< Vec<& 'static str>, Duration > {
-    let mut map = HashMap::new() ;
-    for (scope, & (ref tick, ref time)) in self.map.borrow().iter() {
-      if tick.is_none() {
-        let _ = map.insert(scope.clone(), * time) ;
-      } else {
-        panic!(
-          "profiling: scope `{:?}` is still live but asked to extract", scope
-        )
-      }
-    }
-    let prev = map.insert(
-      vec!["total"], Instant::now().duration_since(self.start)
-    ) ;
-    debug_assert!( prev.is_none() ) ;
-    map
-  }
-
-  /// Extracts a profile tree.
-  #[cfg( not(feature = "bench") )]
-  pub fn extract_tree(self) -> (ProfileTree, Stats) {
+  fn extract(self) -> (ProfileTree, Stats, Vec<(String, Profiler)>) {
     let mut tree = ProfileTree::top(
       Instant::now().duration_since(self.start)
     ) ;
@@ -313,19 +321,19 @@ impl Profiler {
       }
       tree.insert( scope.clone(), * time )
     }
-    ( tree, self.stats.into_inner() )
+    ( tree, self.stats.into_inner(), self.subs.into_inner() )
   }
 
   /// Adds a sub-profiler.
   #[cfg( not(feature = "bench") )]
   pub fn add_sub< S: Into<String> >(
-    & self, name: S, tree: ProfileTree, stats: Stats
+    & self, name: S, sub: Self
   ) {
-    self.subs.borrow_mut().push( (name.into(), tree, stats) )
+    self.subs.borrow_mut().push( (name.into(), sub) )
   }
   #[cfg(feature = "bench")]
   pub fn add_sub< S: Into<String> >(
-    & self, _: S, _: ProfileTree, _: Stats
+    & self, _: S, _: Self
   ) {}
 
 
@@ -334,27 +342,30 @@ impl Profiler {
   /// - `set_sum` is a slice of scopes which have no duration and will be set
   ///   to the sum of their branches (without triggering a warning)
   #[cfg( not(feature = "bench") )]
-  pub fn print(self, set_sum: & [ & 'static str ]) {
+  pub fn print<S1, S2>(
+    self, name: S1, pref: S2, set_sum: & [ & 'static str ]
+  ) where S1: Into<String>, S2: Into<String> {
+    let name = name.into() ;
+    let pref = pref.into() ;
+
+    println!("; {}{} {}", pref, conf.emph(& name), conf.emph("{")) ;
+    let sub_pref = format!("{}  ", pref) ;
+
+    let (tree, stats, subs) = self.extract() ;
+    tree.print(sub_pref.clone(), set_sum) ;
+    if stats.has_non_zero() {
+      println!("; {}{}:", sub_pref, conf.happy("metrics")) ;
+      stats.print( format!("{}{} ", sub_pref, conf.happy("|")) )
+    }
+
     scoped! {
-      let mut subs = self.subs.borrow_mut() ;
-      for (name, tree, stats) in subs.drain(0..) {
-        println!("; {} {{", conf.emph(name)) ;
-        tree.print("  ", set_sum) ;
-        if ! stats.is_empty() {
-          println!("; ") ;
-          println!(";   stats:") ;
-          stats.print("  ")
-        }
-        println!("; }}") ;
-        println!("; ")
+      for (sub_name, sub) in subs {
+        println!("; ") ;
+        sub.print(
+          format!("{}/{}", name, sub_name), sub_pref.clone(), set_sum
+        ) ;
       }
     }
-    let (tree, stats) = self.extract_tree() ;
-    tree.print("", set_sum) ;
-    if ! stats.is_empty() {
-      println!("; ") ;
-      println!("; stats:") ;
-      stats.print("")
-    }
+    println!("; {}{}", pref, conf.emph("}"))
   }
 }

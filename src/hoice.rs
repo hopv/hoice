@@ -181,9 +181,15 @@ pub fn read_and_work<R: ::std::io::Read>(
         } else {
           let arc_instance = Arc::new(instance) ;
 
-          match teacher::start_class(
-            & arc_instance, & profiler
-          ) {
+          let teacher_profiler = Profiler::new() ;
+          profile! { |profiler| tick "solving" }
+          let solve_res = teacher::start_class(
+            & arc_instance, & teacher_profiler
+          ) ;
+          profile! { |profiler| mark "solving" }
+          profiler.add_sub("solving", teacher_profiler) ;
+
+          match solve_res {
             Ok(partial_model) => {
               while Arc::strong_count(& arc_instance) != 1 {}
               instance = if let Ok(
@@ -288,7 +294,7 @@ fn print_stats(_: Profiler) {}
 fn print_stats(profiler: Profiler) {
   if conf.stats {
     println!("") ;
-    profiler.print( & [ "data" ] ) ;
+    profiler.print( "all stats", "", & [ "data" ] ) ;
     println!("") ;
   }
 }

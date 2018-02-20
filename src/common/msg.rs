@@ -5,7 +5,7 @@ use std::sync::mpsc::channel ;
 use common::* ;
 use common::data::* ;
 
-use common::profiling::{ ProfileTree, Stats } ;
+use common::profiling::Profiler ;
 
 
 /// Sender / receiver pair alias type.
@@ -62,7 +62,7 @@ pub enum MsgKind {
   /// Unsat result.
   Unsat,
   /// Statistics.
-  Stats(ProfileTree, Stats),
+  Stats(Profiler),
 }
 
 impl MsgKind {
@@ -106,8 +106,7 @@ impl From<Error> for MsgKind {
 #[cfg( not(feature = "bench") )]
 impl From<Profiler> for MsgKind {
   fn from(profiler: Profiler) -> MsgKind {
-    let (tree, stats) = profiler.extract_tree() ;
-    MsgKind::Stats(tree, stats)
+    MsgKind::Stats(profiler)
   }
 }
 
@@ -342,7 +341,7 @@ pub enum FromAssistant {
   /// Error.
   Err(Error),
   /// Statistics.
-  Stats(ProfileTree, Stats),
+  Stats(Profiler),
   /// Unsat.
   Unsat,
 }
@@ -393,10 +392,13 @@ impl AssistantCore {
   /// Sends statistics.
   #[cfg( not(feature = "bench") )]
   pub fn stats(self) -> bool {
-    let (tree, stats) = self._profiler.extract_tree() ;
-    self.sender.send(
-      FromAssistant::Stats( tree, stats )
-    ).is_ok()
+    if conf.stats {
+      self.sender.send(
+        FromAssistant::Stats(self._profiler)
+      ).is_ok()
+    } else {
+      true
+    }
   }
   #[cfg(feature = "bench")]
   pub fn stats(self) -> bool {

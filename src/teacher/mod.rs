@@ -507,7 +507,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           print_err( err.unwrap_err() )
         },
 
-        MsgKind::Stats(tree, stats) => {
+        MsgKind::Stats(profiler) => if conf.stats {
           let id = match id {
             Id::Learner(idx) => {
               self.learners[idx].0 = None ;
@@ -515,12 +515,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
             },
             Id::Assistant => "assistant".into(),
           } ;
-          log_debug! { "received stats from {}", conf.emph(& id) }
-          if conf.stats {
-            self._profiler.add_sub(
-              id, tree, stats
-            )
-          }
+          self._profiler.add_sub(id, profiler)
         },
 
         MsgKind::Unsat => return Ok(None),

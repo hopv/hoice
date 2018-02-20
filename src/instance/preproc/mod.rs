@@ -161,22 +161,22 @@ where S: Solver<'skid, ()> {
             ) ? ;
             profile!{
               |_profiler| format!(
-                "{:>25}   pred red", preproc.name()
+                "{:>10}   pred red", preproc.name()
               ) => add red_info.preds
             }
             profile!{
               |_profiler| format!(
-                "{:>25} clause red", preproc.name()
+                "{:>10} clause red", preproc.name()
               ) => add red_info.clauses_rmed
             }
             profile!{
               |_profiler| format!(
-                "{:>25} clause add", preproc.name()
+                "{:>10} clause add", preproc.name()
               ) => add red_info.clauses_added
             }
             profile!{
               |_profiler| format!(
-                "{:>25}    arg red", preproc.name()
+                "{:>10}    arg red", preproc.name()
               ) => add red_info.args_rmed
             }
             log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
