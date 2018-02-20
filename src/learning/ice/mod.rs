@@ -791,7 +791,11 @@ where Slver: Solver<'kid, ()> {
           } else {
             * best = Some((term, gain))
           }
-          Ok( gain >= conf.ice.gain_pivot_synth )
+          if let Some(pivot) = conf.ice.gain_pivot_synth {
+            Ok( gain >= pivot )
+          } else {
+            Ok(false)
+          }
         } else {
           Ok(false)
         }

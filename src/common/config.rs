@@ -550,7 +550,7 @@ pub struct IceConf {
   /// Gain above which a qualifier is considered acceptable for splitting data.
   pub gain_pivot: f64,
   /// Same as `gain_pivot` but for qualifier synthesis.
-  pub gain_pivot_synth: f64,
+  pub gain_pivot_synth: Option<f64>,
   /// Gain above which a synthesized qualifier is added as a bonafide
   /// qualifier.
   pub gain_cut_synth: f64,
@@ -634,8 +634,8 @@ impl IceConf {
     ).arg(
 
       Arg::with_name("gain_pivot").long("--gain_pivot").help(
-        "qualifiers with a gain lower than this value will be ignored\n\
-        value in percent, between 0 and 100"
+        "first qualifier with a gain higher than this value will be used\n\
+        (between 0 and 100)"
       ).validator(
         int_validator
       ).value_name(
@@ -647,12 +647,13 @@ impl IceConf {
     ).arg(
 
       Arg::with_name("gain_pivot_synth").long("--gain_pivot_synth").help(
-        "same as `--gain_pivot` but for qualifier synthesis"
+        "same as `--gain_pivot` but for qualifier synthesis \
+        (inactive if > 100)"
       ).validator(
         int_validator
       ).value_name(
         "int"
-      ).default_value("100").takes_value(
+      ).default_value("101").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -706,8 +707,8 @@ impl IceConf {
       let mut value = int_of_matches(matches, "gain_pivot") as f64 / 100.0 ;
       if value < 0.0 {
         0.0
-      } else if 100.0 < value {
-        100.0
+      } else if 1.0 < value {
+        1.0
       } else {
         value
       }
@@ -717,11 +718,11 @@ impl IceConf {
         matches, "gain_pivot_synth"
       ) as f64 / 100.0 ;
       if value < 0.0 {
-        0.0
-      } else if 100.0 < value {
-        100.0
+        Some(0.0)
+      } else if 1.0 < value {
+        None
       } else {
-        value
+        Some(value)
       }
     } ;
     let gain_cut_synth = {
@@ -730,14 +731,18 @@ impl IceConf {
       ) as f64 / 100.0 ;
       if value < 0.0 {
         0.0
-      } else if 100.0 < value {
-        100.0
+      } else if 1.0 < value {
+        1.0
       } else {
         value
       }
     } ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
+
+    println!("      gain_pivot: {}", gain_pivot) ;
+    println!("gain_pivot_synth: {:?}", gain_pivot_synth) ;
+    println!("  gain_cut_synth: {}", gain_cut_synth) ;
 
     IceConf {
       simple_gain, sort_preds, complete,
