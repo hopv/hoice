@@ -142,7 +142,14 @@ where S: Solver<'skid, ()> {
     //
     // Returns `true` if the pre-processor did something.
     macro_rules! run {
-      ($preproc:ident) => (
+      (@ info $info_opt:expr) => (
+        $info_opt.unwrap_or( RedInfo::new() )
+      ) ;
+      (@ bool $info_opt:expr) => (
+        $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
+      ) ;
+      ($preproc:ident) => ( run!($preproc bool) ) ;
+      ($preproc:ident $($tail:tt)*) => (
         if let Some(preproc) = self.$preproc.as_mut() {
           profile! {
             |_profiler| tick "preproc", preproc.name()
@@ -181,13 +188,13 @@ where S: Solver<'skid, ()> {
             }
             log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
             conf.check_timeout() ? ;
-            true
+            run! { @ $($tail)* Some(red_info) }
           } else {
             log_info! { "{}: did nothing", conf.emph( preproc.name() ) }
-            false
+            run! { @ $($tail)* Some(red_info) }
           }
         } else {
-          false
+          run! { @ $($tail)* None }
         }
       ) ;
     }
@@ -278,8 +285,17 @@ where S: Solver<'skid, ()> {
 
     conf.check_timeout() ? ;
 
-    run ! { unroll } ;
-    run ! { runroll } ;
+    let max_clause_add = self.instance.clauses().len() / 3 ;
+    let mut clauses_added = 0 ;
+    loop {
+
+      let mut added = run!(unroll info).clauses_added ;
+      added += run!(runroll info).clauses_added ;
+      clauses_added += added ;
+
+      if added == 0
+      || clauses_added > max_clause_add { break }
+    }
 
     preproc_dump!(
       self.instance =>

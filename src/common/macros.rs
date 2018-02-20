@@ -221,8 +221,14 @@ macro_rules! msg {
 macro_rules! msg {
   ( debug $slf:expr => $($tt:tt)* ) => (
     if conf.debug() {
-      msg!( $slf => $($tt)* )
+      msg!( force $slf => $($tt)* )
     }
+  ) ;
+  ( force $slf:expr => $e:tt ) => (
+    $slf.msg($e) ? ;
+  ) ;
+  ( force $slf:expr => $($tt:tt)* ) => (
+    $slf.msg( format!( $($tt)* ) ) ? ;
   ) ;
   ( $core:expr => $e:expr ) => (
     if conf.verbose() {
@@ -230,9 +236,7 @@ macro_rules! msg {
     }
   ) ;
   ( $slf:expr => $($tt:tt)* ) => (
-    if conf.verbose() {
-      msg!{ $slf => format!( $($tt)* ) }
-    }
+    msg!{ $slf => format!( $($tt)* ) }
   ) ;
 }
 

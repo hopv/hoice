@@ -482,7 +482,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
           }
         },
 
-        MsgKind::Msg(_s) => if_verb!{
+        MsgKind::Msg(_s) => {
           let id = match id {
             Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
             Id::Assistant => conf.emph( "assistant" ),
@@ -715,8 +715,8 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
         bias_lhs_actlit, bias_rhs_actlit
       ) = self.bias_applications(clause_idx) ? ;
 
-      get_cex! { bias_lhs_actlit ; "biased examples (lhs)" }
-      get_cex! { bias_rhs_actlit ; "biased examples (rhs)" }
+      get_cex! { bias_lhs_actlit ; "biased examples (pos)" }
+      get_cex! { bias_rhs_actlit ; "biased examples (neg)" }
 
       // Add the unbiased cex back if bias checks yielded nothing.
       if cexs.is_empty() {

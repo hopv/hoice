@@ -181,6 +181,7 @@ where S: Solver<'kid, ()> {
             profile! { self "constraints   broken" => add 1 }
           }
           // Discard the constraint, regardless of what will happen.
+          profile! { self tick "data" }
           data.tautologize(cstr) ;
           for Sample { pred, args } in pos.drain(0..) {
             data.stage_pos(pred, args) ;
@@ -189,6 +190,7 @@ where S: Solver<'kid, ()> {
             data.stage_neg(pred, args) ;
           }
           data.propagate() ? ;
+          profile! { self mark "data" }
           continue 'all_constraints
         }) ;
       }
@@ -347,7 +349,11 @@ where S: Solver<'kid, ()> {
             & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
-          let sat = self.solver.check_sat() ? ;
+          let sat = profile! {
+            self wrap {
+              self.solver.check_sat() ?
+            } "smt"
+          } ;
           self.solver.pop(1) ? ;
 
           if sat {

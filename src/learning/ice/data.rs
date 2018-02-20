@@ -162,14 +162,32 @@ impl CData {
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
 
-      Ok(
-        Some((
-          my_entropy - (
-            ( (q_pos + q_neg) *  q_entropy / card ) +
-            ( (nq_pos + nq_neg) * nq_entropy / card )
+      let gain = (
+        my_entropy - (
+          ( (q_pos + q_neg) *  q_entropy / card ) +
+          ( (nq_pos + nq_neg) * nq_entropy / card )
+        )
+      ) / my_entropy ;
+      if gain.is_nan() {
+        bail!(
+          format!(
+            "gain is NaN :(
+    my_entropy: {}
+    my_card: {}
+    q  numerator: {} * {} = {}
+    nq numerator: {} * {} = {}",
+            my_entropy, self.len,
+            (q_pos + q_neg),
+            q_entropy,
+            (q_pos + q_neg) * q_entropy,
+            (nq_pos + nq_neg),
+            nq_entropy,
+            (nq_pos + nq_neg) * nq_entropy,
           )
-        ))
-      )
+        )
+      }
+
+      Ok( Some(gain) )
     }
   }
 
@@ -193,7 +211,8 @@ impl CData {
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain<Trm: CanBEvaled>(
-    & self, pred: PrdIdx, data: & DataCore, qual: & Trm, _profiler: & Profiler
+    & self, pred: PrdIdx, data: & DataCore, qual: & Trm, _profiler: & Profiler,
+    verb: bool
   ) -> Res< Option<f64> > {
     let my_entropy = self.entropy(pred, data) ? ;
 
@@ -257,6 +276,15 @@ impl CData {
       q_pos as f64, q_neg as f64, nq_pos as f64, nq_neg as f64
     ) ;
 
+    if verb {
+      println!("   q_pos: {}",  q_pos) ;
+      println!("   q_neg: {}",  q_neg) ;
+      println!("   q_unc: {}",  q_unc) ;
+      println!("  nq_pos: {}", nq_pos) ;
+      println!("  nq_neg: {}", nq_neg) ;
+      println!("  nq_unc: {}", nq_unc) ;
+    }
+
     let  q_sum =  q_pos +  q_neg +  q_unc ;
     let nq_sum = nq_pos + nq_neg + nq_unc ;
 
@@ -269,30 +297,36 @@ impl CData {
     let (q_entropy, nq_entropy) = (
       q_ent.entropy() ?, nq_ent.entropy() ?
     ) ;
+    if verb {
+      println!("   q_entropy: {}", q_entropy) ;
+      println!("  nq_entropy: {}", nq_entropy) ;
+    }
 
-    let gain = my_entropy - (
-       q_sum *  q_entropy / self.len +
-      nq_sum * nq_entropy / self.len
-    ) ;
+    let gain = (
+      my_entropy - (
+         q_sum *  q_entropy / self.len +
+        nq_sum * nq_entropy / self.len
+      )
+    ) / my_entropy ;
 
-    debug_assert! { ! gain.is_nan() }
-  //   if gain.is_nan() {
-  //     bail!(
-  //       format!(
-  //         "gain is NaN :(
-  // my_entropy: {}
-  // my_card: {}
-  // q  numerator: {} * {} = {}
-  // nq numerator: {} * {} = {}", my_entropy, self.len,
-  //         q_sum,
-  //         q_entropy,
-  //         q_sum * q_entropy,
-  //         nq_sum,
-  //         nq_entropy,
-  //         nq_sum * nq_entropy,
-  //       )
-  //     )
-  //   }
+    if gain.is_nan() {
+      bail!(
+        format!(
+          "gain is NaN :(
+  my_entropy: {}
+  my_card: {}
+  q  numerator: {} * {} = {}
+  nq numerator: {} * {} = {}",
+          my_entropy, self.len,
+          q_sum,
+          q_entropy,
+          q_sum * q_entropy,
+          nq_sum,
+          nq_entropy,
+          nq_sum * nq_entropy,
+        )
+      )
+    }
     profile! { |_profiler| mark "learning", "qual", "gain", "rest" }
 
     Ok( Some(gain) )

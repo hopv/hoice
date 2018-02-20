@@ -108,6 +108,8 @@ pub struct IceLearner<'core, Slver> {
   rng: ::rand::StdRng,
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
+  /// Known qualifiers, factored for no reallocation. Used by synthesis.
+  known_quals: HConSet<Term>,
 }
 impl<'core, 'kid, Slver> IceLearner<'core, Slver>
 where Slver: Solver<'kid, ()> {
@@ -152,6 +154,7 @@ where Slver: Solver<'kid, ()> {
         luby: if mine { None } else {
           Some( LubyCount::new() )
         },
+        known_quals: HConSet::new(),
       }
     )
   }
@@ -636,7 +639,7 @@ where Slver: Solver<'kid, ()> {
             let res = qualifiers.maximize(
               pred, |qual| {
                 let res = data.gain(
-                  pred, all_data, qual, & self_core._profiler
+                  pred, all_data, qual, & self_core._profiler, false
                 ) ? ;
                 core.check_exit() ? ;
                 Ok(res)
@@ -657,7 +660,7 @@ where Slver: Solver<'kid, ()> {
           let res = qualifiers.maximize(
             pred, |qual| {
               let res = data.gain(
-                pred, all_data, qual, & self_core._profiler
+                pred, all_data, qual, & self_core._profiler, false
               ) ? ;
               core.check_exit() ? ;
               Ok(res)
@@ -765,11 +768,16 @@ where Slver: Solver<'kid, ()> {
       let quals = & mut self.qualifiers ;
       let instance = & self.instance ;
       let self_core = & self.core ;
+      let known_quals = & mut self.known_quals ;
+      known_quals.clear() ;
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        if let Some(gain) = data.gain(
-          pred, self_data, & term, & self_core._profiler
+        if ! known_quals.insert( term.clone() ) {
+          // Term already known, skip.
+          Ok(false)
+        } else if let Some(gain) = data.gain(
+          pred, self_data, & term, & self_core._profiler, false
         ) ? {
           if gain >= conf.ice.gain_cut_synth {
             quals.insert(& term, pred) ? ;
