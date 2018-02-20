@@ -96,7 +96,7 @@ pub fn read_and_work<R: ::std::io::Read>(
 ) -> Res< (Option<Model>, Instance) > {
   use instance::parse::ItemRead ;
 
-  let profiler = Profiler::new() ;
+  let mut profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
   // String buffer.
@@ -180,6 +180,11 @@ pub fn read_and_work<R: ::std::io::Read>(
           maybe_model
         } else {
           let arc_instance = Arc::new(instance) ;
+
+          let mut sub_profiler = Profiler::new() ;
+          ::std::mem::swap( & mut sub_profiler, & mut profiler ) ;
+          let (tree, stats) = sub_profiler.extract_tree() ;
+          profiler.add_sub("preprocessing", tree, stats) ;
 
           match teacher::start_class(
             & arc_instance, & profiler
