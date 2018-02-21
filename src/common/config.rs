@@ -640,7 +640,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("100").takes_value(
+      ).default_value("70").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -665,7 +665,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("80").takes_value(
+      ).default_value("100").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -704,7 +704,9 @@ impl IceConf {
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
     let qual_print = bool_of_matches(matches, "qual_print") ;
     let gain_pivot = {
-      let mut value = int_of_matches(matches, "gain_pivot") as f64 / 100.0 ;
+      let mut value = int_of_matches(
+        matches, "gain_pivot"
+      ) as f64 / 100.0 ;
       if value < 0.0 {
         0.0
       } else if 1.0 < value {
@@ -739,10 +741,6 @@ impl IceConf {
     } ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
-
-    println!("      gain_pivot: {}", gain_pivot) ;
-    println!("gain_pivot_synth: {:?}", gain_pivot_synth) ;
-    println!("  gain_cut_synth: {}", gain_cut_synth) ;
 
     IceConf {
       simple_gain, sort_preds, complete,

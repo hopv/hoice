@@ -706,7 +706,8 @@ impl Qualifiers {
 
 
   /// Returns the qualifier that maximized the input criterion in a non-zero
-  /// fashion, if any. Early-returns if the criterion is `1.0` at some point.
+  /// fashion, if any. Early-returns if the criterion is `>=` to the gain pivot
+  /// defined in the configuration at some point.
   pub fn maximize<Crit>(
     & mut self, pred: PrdIdx, mut crit: Crit, new_only: bool
   ) -> Res< Option<(Term, f64)> >
@@ -742,7 +743,7 @@ impl Qualifiers {
 
             if res == 0.0 {
               continue 'all_maps
-            } else if res == 1.0 {
+            } else if res >= conf.ice.gain_pivot {
               return Ok(
                 Some(
                   (qual.to_term(), res)

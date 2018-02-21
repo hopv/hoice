@@ -613,71 +613,53 @@ where Slver: Solver<'kid, ()> {
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
 
-    macro_rules! best_qual {
-      (only new: $new:expr) => ({
-        let core = & self.core ;
-
-        if simple {
-
-          profile!{ self tick "learning", "qual", "simple gain" }
-          let res = self.qualifiers.maximize(
-            pred, |qual| {
-              let res = data.simple_gain(qual) ? ;
-              core.check_exit() ? ;
-              Ok(res)
-            }, $new
-          ) ;
-          profile!{ self mark "learning", "qual", "simple gain" }
-          let res = res ? ;
-
-          if res.is_none() {
-            let qualifiers = & mut self.qualifiers ;
-            let self_core = & self.core ;
-            let all_data = & self.data ;
-
-            profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
-            let res = qualifiers.maximize(
-              pred, |qual| {
-                let res = data.gain(
-                  pred, all_data, qual, & self_core._profiler, false
-                ) ? ;
-                core.check_exit() ? ;
-                Ok(res)
-              }, false
-            ) ;
-            profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
-            res
-          } else {
-            Ok(res)
-          }
-
-        } else {
-
-          let qualifiers = & mut self.qualifiers ;
-          let self_core = & self.core ;
-          let all_data = & self.data ;
-          profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
-          let res = qualifiers.maximize(
-            pred, |qual| {
-              let res = data.gain(
-                pred, all_data, qual, & self_core._profiler, false
-              ) ? ;
-              core.check_exit() ? ;
-              Ok(res)
-            }, $new
-          ) ;
-          profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
-          res
-
-        }
-      }) ;
-    }
-
     if conf.ice.qual_print {
       self.qualifiers.log()
     }
 
-    let mut best_qual = best_qual! ( only new: false ) ? ;
+    let mut best_qual = {
+      let core = & self.core ;
+
+      // Run simple if in simple mode.
+      let simple_res = if ! simple {
+        None
+      } else {
+
+        profile!{ self tick "learning", "qual", "simple gain" }
+        let res = self.qualifiers.maximize(
+          pred, |qual| {
+            let res = data.simple_gain(qual) ? ;
+            core.check_exit() ? ;
+            Ok(res)
+          }, false
+        ) ;
+        profile!{ self mark "learning", "qual", "simple gain" }
+        res ?
+      } ;
+
+      if let Some(res) = simple_res {
+        Ok( Some(res) )
+      } else {
+
+        let qualifiers = & mut self.qualifiers ;
+        let self_core = & self.core ;
+        let all_data = & self.data ;
+
+        profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
+        let res = qualifiers.maximize(
+          pred, |qual| {
+            let res = data.gain(
+              pred, all_data, qual, & self_core._profiler, false
+            ) ? ;
+            core.check_exit() ? ;
+            Ok(res)
+          }, false
+        ) ;
+        profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
+        res
+
+      }
+    } ? ;
 
     if let Some((qual, gain)) = best_qual {
       best_qual = if gain >= conf.ice.gain_pivot && gain > 0.0 {
