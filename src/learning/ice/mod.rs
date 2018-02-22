@@ -336,33 +336,37 @@ where Slver: Solver<'kid, ()> {
     self.check_exit() ? ;
 
     use rand::Rng ;
-    // Use simple entropy 30% of the time.
-    let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.30 ;
+    // Use simple entropy 20% of the time.
+    let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.20 ;
+
+    // Sort the predicates 80% of the time.    
+    let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
     msg! {
-      debug self => "looking for qualifier (simple: {})...", simple
+      debug self =>
+      "looking for qualifier (simple: {}, sorted: {})...", simple, sorted
     }
 
-    // Sort the predicates 70% of the time.
-    if conf.ice.sort_preds && self.rng.next_f64() <= 0.70 {
+    if sorted {
 
       profile!{ self tick "learning", "predicate sorting" }
+
+      // The iteration starts from the end of `predicates`. The first
+      // predicates we want to synthesize should be last.
       self.predicates.sort_unstable_by(
         |
           & (
-            unclassed_1, classed_1, _
+            unc_1, cla_1, _p_1
           ), & (
-            unclassed_2, classed_2, _
+            unc_2, cla_2, _p_2
           )
         | {
           use std::cmp::Ordering::* ;
-          match (unclassed_1, unclassed_2) {
-            (0, 0) => classed_1.cmp(& classed_2).reverse(),
-            (0, _) => Less,
-            (_, 0) => Greater,
-            (_, _) => match classed_1.cmp(& classed_2).reverse() {
-              Equal => unclassed_1.cmp(& unclassed_2),
-              res => res,
-            },
+          match cla_1.cmp(& cla_2) {
+            // Same amount of classified data, we want the one with fewer
+            // unclassifieds last.
+            Equal => unc_1.cmp(& unc_2).reverse(),
+            // Otherwise we want the one with the most classified data last.
+            cmp => cmp,
           }
         }
       ) ;
@@ -460,7 +464,7 @@ where Slver: Solver<'kid, ()> {
 
     msg! {
       self =>
-      "  working on predicate {} (pos: {}, neg: {}, unc: {})",
+      "working on predicate {} (pos: {}, neg: {}, unc: {})",
       self.instance[pred], data.pos().len(), data.neg().len(), data.unc().len()
     }
 
@@ -617,6 +621,24 @@ where Slver: Solver<'kid, ()> {
       self.qualifiers.log()
     }
 
+    if_debug! {
+      let mut s = format!("data:") ;
+      s = format!("{}\n  pos {{", s) ;
+      for sample in data.pos() {
+        s = format!("{}\n    {}", s, sample)
+      }
+      s = format!("{}\n  }} neg {{", s) ;
+      for sample in data.neg() {
+        s = format!("{}\n    {}", s, sample)
+      }
+      s = format!("{}\n  }} unc {{", s) ;
+      for sample in data.unc() {
+        s = format!("{}\n    {}", s, sample)
+      }
+      s = format!("{}\n  }}", s) ;
+      msg! { self => s }
+    }
+
     let mut best_qual = {
       let core = & self.core ;
 
@@ -663,13 +685,22 @@ where Slver: Solver<'kid, ()> {
 
     if let Some((qual, gain)) = best_qual {
       best_qual = if gain >= conf.ice.gain_pivot && gain > 0.0 {
-        msg! { self => "using qualifier {}, gain: {}", qual, gain }
+        msg! {
+          self =>
+          "  using qualifier {}, gain: {} >= {}",
+          qual, gain, conf.ice.gain_pivot
+        }
         // This qualifier is satisfactory.
         profile!{ self tick "learning", "qual", "data split" }
         let (q_data, nq_data) = data.split(& qual) ;
         profile!{ self mark "learning", "qual", "data split" }
         return Ok( Some((qual, q_data, nq_data)) )
       } else {
+        msg! {
+          self =>
+          "  qualifier {} is not good enough, gain: {} < {}",
+          qual, gain, conf.ice.gain_pivot
+        }
         // Not good enough, maybe synthesis can do better.
         Some( (qual, gain) )
       }
@@ -677,21 +708,21 @@ where Slver: Solver<'kid, ()> {
 
     if_verb!{
       let mut msg = format!(
-        "\ncould not split remaining data for {}:\n", self.instance[pred]
+        "  could not split remaining data for {}:\n", self.instance[pred]
       ) ;
-      msg.push_str("pos (") ;
+      msg.push_str("  pos (") ;
       for pos in data.pos() {
         msg.push_str( & format!("\n    {}", pos) )
       }
-      msg.push_str("\n) neg (") ;
+      msg.push_str("\n  ) neg (") ;
       for neg in data.neg() {
         msg.push_str( & format!("\n    {}", neg) )
       }
-      msg.push_str("\n) unc (") ;
+      msg.push_str("\n  ) unc (") ;
       for unc in data.unc() {
         msg.push_str( & format!("\n    {}", unc) )
       }
-      msg.push_str("\n)") ;
+      msg.push_str("\n  )") ;
       msg!{ self => msg } ;
     }
 
@@ -761,7 +792,13 @@ where Slver: Solver<'kid, ()> {
         } else if let Some(gain) = data.gain(
           pred, self_data, & term, & self_core._profiler, false
         ) ? {
-          if gain >= conf.ice.gain_cut_synth {
+          if gain >= conf.ice.gain_cut_synth
+          && gain > 0.0 {
+            msg! {
+              self_core =>
+              "  adding synth qual {}, gain {} >= {}",
+              term, gain, conf.ice.gain_cut_synth
+            }
             quals.insert(& term, pred) ? ;
             ()
           }
@@ -774,6 +811,13 @@ where Slver: Solver<'kid, ()> {
             * best = Some((term, gain))
           }
           if let Some(pivot) = conf.ice.gain_pivot_synth {
+            if gain >= pivot {
+              msg! {
+                self_core =>
+                "  stopping on synth qual {}, gain {} >= {}",
+                best.as_ref().unwrap().0, gain, pivot
+              }
+            }
             Ok( gain >= pivot )
           } else {
             Ok(false)

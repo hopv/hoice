@@ -162,12 +162,18 @@ impl CData {
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
 
-      let gain = (
-        my_entropy - (
-          ( (q_pos + q_neg) *  q_entropy / card ) +
-          ( (nq_pos + nq_neg) * nq_entropy / card )
-        )
-      ) / my_entropy ;
+      // Entropy can be 0 because we're in simple gain, which ignores
+      // unclassified data.
+      let gain = if my_entropy == 0. {
+        0.
+      } else {
+        (
+          my_entropy - (
+            ( (q_pos + q_neg) *  q_entropy / card ) +
+            ( (nq_pos + nq_neg) * nq_entropy / card )
+          )
+        ) / my_entropy
+      } ;
       if gain.is_nan() {
         bail!(
           format!(

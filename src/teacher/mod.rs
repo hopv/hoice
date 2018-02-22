@@ -670,7 +670,7 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
       (@$sat:ident $($stuff:tt)*) => ({ // Works on the check-sat result.
         if $sat {
-          log_debug! { "getting cex for clause #{}", clause_idx }
+          log_debug! { "  getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
           let cex = Args::of_model(
