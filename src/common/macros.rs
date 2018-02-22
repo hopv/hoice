@@ -34,6 +34,7 @@ macro_rules! info {
   ) ;
 }
 /// In debug mode, same as `println` but with a "; " prefix.
+#[allow(unused_macros)]
 macro_rules! debug {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
     if ::common::conf.verb.debug() {
