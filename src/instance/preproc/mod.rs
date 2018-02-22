@@ -138,6 +138,15 @@ where S: Solver<'skid, ()> {
     // Starts at `1`, `0` is reserved for the fixed point.
     let mut count = 1 ;
 
+    // Checks if the instance is already solved.
+    macro_rules! check_solved {
+      () => (
+        if self.instance.is_solved() {
+          return Ok(())
+        }
+      ) ;
+    }
+
     // Runs and profiles a pre-processor.
     //
     // Returns `true` if the pre-processor did something.
@@ -188,6 +197,7 @@ where S: Solver<'skid, ()> {
             }
             log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
             conf.check_timeout() ? ;
+            check_solved!() ;
             run! { @ $($tail)* Some(red_info) }
           } else {
             log_info! { "{}: did nothing", conf.emph( preproc.name() ) }
@@ -285,7 +295,11 @@ where S: Solver<'skid, ()> {
 
     conf.check_timeout() ? ;
 
-    let max_clause_add = self.instance.clauses().len() / 3 ;
+    let max_clause_add = if conf.preproc.mult_unroll {
+      self.instance.clauses().len() / 3
+    } else {
+      0
+    } ;
     let mut clauses_added = 0 ;
     loop {
 

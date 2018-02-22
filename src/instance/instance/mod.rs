@@ -805,30 +805,29 @@ impl Instance {
     & self, data: & mut ::common::data::Data, cexs: Cexs
   ) -> Res<bool> {
     let mut nu_stuff = false ;
-    debug! { "start" }
     for (clause, cexs) in cexs.into_iter() {
 
       for cex in cexs {
 
-        if_debug! {
-          debug! { "    working on clause {}...", clause }
-          debug! { "    cex:" }
-          for (index, val) in cex.index_iter() {
-            debug! { "    - v_{}: {}", index, val }
-          }
-        }
+        // if_debug! {
+        //   debug! { "    working on clause {}...", clause }
+        //   debug! { "    cex:" }
+        //   for (index, val) in cex.index_iter() {
+        //     debug! { "    - v_{}: {}", index, val }
+        //   }
+        // }
 
         let clause = & self[clause] ;
         let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
 
-        debug! { "    working on lhs..." }
+        // debug! { "    working on lhs..." }
         for (pred, argss) in clause.lhs_preds() {
           let pred = * pred ;
-          debug! { "        {}", self[pred] }
+          // debug! { "        {}", self[pred] }
           if self.pred_terms[pred].is_none() {
-            debug! { "        -> is none, {} args", argss.len() }
+            // debug! { "        -> is none, {} args", argss.len() }
             for args in argss {
-              debug! { "        {}", args }
+              // debug! { "        {}", args }
               let mut values = Args::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 values.push(
@@ -837,20 +836,20 @@ impl Instance {
                   ) ?
                 )
               }
-              debug! { "          {}", values }
+              // debug! { "          {}", values }
               antecedents.push(
                 (pred, values)
               )
             }
           } else {
-            debug! { "      -> is some" }
+            // debug! { "      -> is some" }
           }
         }
         antecedents.shrink_to_fit() ;
 
-        debug! { "    working on rhs..." }
+        // debug! { "    working on rhs..." }
         let consequent = if let Some((pred, args)) = clause.rhs() {
-          debug! { "        ({} {})", self[pred], args }
+          // debug! { "        ({} {})", self[pred], args }
           let mut values = Args::with_capacity( args.len() ) ;
           'pred_args: for arg in args.iter() {
             values.push(
@@ -859,7 +858,7 @@ impl Instance {
               ) ?
             )
           }
-          debug! { "          {}", values }
+          // debug! { "          {}", values }
           Some( (pred, values) )
         } else {
           None
