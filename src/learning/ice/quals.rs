@@ -743,7 +743,7 @@ impl Qualifiers {
 
             if res == 0.0 {
               continue 'all_maps
-            } else if res >= conf.ice.gain_pivot {
+            } else if res == 1.0 {
               return Ok(
                 Some(
                   (qual.to_term(), res)

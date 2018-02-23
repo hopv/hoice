@@ -734,39 +734,74 @@ where Slver: Solver<'kid, ()> {
 
 
     // Synthesize qualifier separating the data.
+    let mut best_synth_qual = None ;
     profile!{ self tick "learning", "qual", "synthesis" } ;
-    let res = self.synthesize(pred, & data, & mut best_qual) ;
+    let res = self.synthesize(pred, & data, & mut best_synth_qual) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;
     if let None = res ? {
       return Ok(None)
     }
 
-    if let Some((qual, _gain)) = best_qual {
-      msg! { self => "using synth qualifier {}, gain: {}", qual, _gain }
-      profile!{ self tick "learning", "qual", "data split" }
-      let (q_data, nq_data) = data.split(& qual) ;
-      profile!{ self mark "learning", "qual", "data split" }
-      Ok( Some((qual, q_data, nq_data)) )
-    } else {
-      let mut msg = format!(
-        "\ncould not split remaining data for {} after synthesis:\n",
-        self.instance[pred]
-      ) ;
-      msg.push_str("pos (") ;
-      for pos in data.pos() {
-        msg.push_str( & format!("\n    {}", pos) )
-      }
-      msg.push_str("\n) neg (") ;
-      for neg in data.neg() {
-        msg.push_str( & format!("\n    {}", neg) )
-      }
-      msg.push_str("\n) unc (") ;
-      for unc in data.unc() {
-        msg.push_str( & format!("\n    {}", unc) )
-      }
-      msg.push_str("\n)") ;
-      bail!(msg)
-    }
+    let qual = match ( best_qual, best_synth_qual ) {
+      ( Some((qual, _gain)), Some((synth_qual, synth_gain)) ) => {
+        if synth_gain >= conf.ice.gain_pivot_synth.unwrap_or(1.0) {
+          msg! {
+            self =>
+            "using synth qualifier {}, gain {} >= {}",
+            synth_qual, synth_gain, conf.ice.gain_pivot_synth.unwrap_or(1.0)
+          }
+          synth_qual
+        } else {
+          msg! {
+            self =>
+            "synth qualifier {} is not good enough, gain: {} < {}\n\
+            using qualifier {} instead, gain: {}",
+            synth_qual, synth_gain, conf.ice.gain_pivot_synth.unwrap_or(1.0),
+            qual, _gain
+          }
+          qual
+        }
+      },
+      ( None, Some((synth_qual, _synth_gain)) ) => {
+        msg! {
+          self =>
+          "using synth qualifier {}, gain {}", synth_qual, _synth_gain
+        }
+        synth_qual
+      },
+      // I think this should be unreachable.
+      ( Some((qual, _gain)), None ) => {
+        msg! {
+          self =>
+          "using qualifier {}, gain {}", qual, _gain
+        }
+        qual
+      },
+      (None, None) => {
+        let mut msg = format!(
+          "\ncould not split remaining data for {} after synthesis:\n",
+          self.instance[pred]
+        ) ;
+        msg.push_str("pos (") ;
+        for pos in data.pos() {
+          msg.push_str( & format!("\n    {}", pos) )
+        }
+        msg.push_str("\n) neg (") ;
+        for neg in data.neg() {
+          msg.push_str( & format!("\n    {}", neg) )
+        }
+        msg.push_str("\n) unc (") ;
+        for unc in data.unc() {
+          msg.push_str( & format!("\n    {}", unc) )
+        }
+        msg.push_str("\n)") ;
+        bail!(msg)
+      },
+    } ;
+    profile!{ self tick "learning", "qual", "data split" }
+    let (q_data, nq_data) = data.split(& qual) ;
+    profile!{ self mark "learning", "qual", "data split" }
+    Ok( Some((qual, q_data, nq_data)) )
   }
 
   /// Qualifier synthesis.
