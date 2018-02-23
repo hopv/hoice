@@ -567,9 +567,6 @@ pub struct IceConf {
   pub gain_pivot: f64,
   /// Same as `gain_pivot` but for qualifier synthesis.
   pub gain_pivot_synth: Option<f64>,
-  /// Gain above which a synthesized qualifier is added as a bonafide
-  /// qualifier.
-  pub gain_cut_synth: f64,
   /// Run a learner that does not mine the instance.
   pub pure_synth: bool,
   /// Mine conjunction of terms.
@@ -669,19 +666,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("0").takes_value(
-        true
-      ).number_of_values(1).hidden(true).display_order( order() )
-
-    ).arg(
-
-      Arg::with_name("gain_cut_synth").long("--gain_cut_synth").help(
-        "gain above which a synth qual becomes a real qualifier"
-      ).validator(
-        int_validator
-      ).value_name(
-        "int"
-      ).default_value("0").takes_value(
+      ).default_value("5").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -743,25 +728,13 @@ impl IceConf {
         Some(value)
       }
     } ;
-    let gain_cut_synth = {
-      let mut value = int_of_matches(
-        matches, "gain_cut_synth"
-      ) as f64 / 100.0 ;
-      if value < 0.0 {
-        0.0
-      } else if 1.0 < value {
-        1.0
-      } else {
-        value
-      }
-    } ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
 
     IceConf {
       simple_gain, sort_preds, complete,
       qual_bias, qual_print,
-      gain_pivot, gain_pivot_synth, gain_cut_synth,
+      gain_pivot, gain_pivot_synth,
       pure_synth, mine_conjs
     }
   }

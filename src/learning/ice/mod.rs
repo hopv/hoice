@@ -743,21 +743,21 @@ where Slver: Solver<'kid, ()> {
     }
 
     let qual = match ( best_qual, best_synth_qual ) {
-      ( Some((qual, _gain)), Some((synth_qual, synth_gain)) ) => {
-        if synth_gain >= conf.ice.gain_pivot_synth.unwrap_or(1.0) {
+      ( Some((qual, gain)), Some((synth_qual, synth_gain)) ) => {
+        if synth_gain > gain {
+          self.qualifiers.insert(& synth_qual, pred) ? ;
           msg! {
             self =>
-            "using synth qualifier {}, gain {} >= {}",
-            synth_qual, synth_gain, conf.ice.gain_pivot_synth.unwrap_or(1.0)
+            "using synth qualifier {}, gain {} >= {} (for {})",
+            synth_qual, synth_gain, gain, qual
           }
           synth_qual
         } else {
           msg! {
             self =>
-            "synth qualifier {} is not good enough, gain: {} < {}\n\
+            "synth qualifier {} is not good enough, gain: {}\n\
             using qualifier {} instead, gain: {}",
-            synth_qual, synth_gain, conf.ice.gain_pivot_synth.unwrap_or(1.0),
-            qual, _gain
+            synth_qual, synth_gain, qual, gain
           }
           qual
         }
@@ -827,13 +827,8 @@ where Slver: Solver<'kid, ()> {
         } else if let Some(gain) = data.gain(
           pred, self_data, & term, & self_core._profiler, false
         ) ? {
-          if gain >= conf.ice.gain_cut_synth
-          && gain > 0.0 {
-            msg! {
-              self_core =>
-              "  adding synth qual {}, gain {} >= {}",
-              term, gain, conf.ice.gain_cut_synth
-            }
+          if gain == 1.0 {
+            msg! { self_core => "  adding synth qual {}", term }
             quals.insert(& term, pred) ? ;
             ()
           }
