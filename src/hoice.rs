@@ -112,6 +112,8 @@ pub fn read_and_work<R: ::std::io::Read>(
   // Any error encountered?
   // let mut error = false ;
 
+  println!("; hoice {}", * version) ;
+
   'parse_work: loop {
     use instance::parse::Parsed ;
 

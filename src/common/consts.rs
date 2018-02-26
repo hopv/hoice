@@ -1,6 +1,5 @@
 //! Constants of the crate.
 
-
 lazy_static! {
   /// The constant `10` as an [`Int`][int].
   ///

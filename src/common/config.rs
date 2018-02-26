@@ -989,7 +989,9 @@ impl Config {
       order
     } ;
 
-    app.author( crate_authors!() ).about(
+    app.author( crate_authors!() ).version(
+      * ::common::version
+    ).about(
       "ICE engine for systems described as Horn Clauses."
     ).arg(
 

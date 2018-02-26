@@ -41,6 +41,7 @@ pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
+mod revision ;
 
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
@@ -50,6 +51,16 @@ pub use self::wrappers::* ;
 lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
+  static ref version_string: String = format!(
+    "{}#{}", crate_version!(),
+    if let Some(rev) = ::common::revision::REVISION {
+      rev
+    } else {
+      "unknown"
+    }
+  ) ;
+  /// Version with revision info.
+  pub static ref version: & 'static str = & version_string ;
 }
 
 
