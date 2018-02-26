@@ -244,12 +244,7 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Print model if available.
       Parsed::GetModel => if let Some(model) = model.as_mut() {
         // Simplify model before writing it.
-        let mut old_model = Vec::with_capacity( model.len() ) ;
-        ::std::mem::swap( & mut old_model, model ) ;
-        for (pred, def) in old_model {
-          let simplified = def.simplify_pred_apps(& model) ;
-          model.push( (pred, simplified) )
-        }
+        instance.simplify_pred_defs(model) ? ;
         let stdout = & mut ::std::io::stdout() ;
         instance.write_model(& model, stdout) ?
       } else {

@@ -1110,6 +1110,38 @@ impl Instance {
     Ok(())
   }
 
+
+  /// Simplifies some predicate definitions.
+  ///
+  /// Simplifies its internal predicate definitions and the ones in the model.
+  pub fn simplify_pred_defs(& mut self, model: & mut Model) -> Res<()> {
+    let mut old_model = Vec::with_capacity( model.len() ) ;
+    ::std::mem::swap( & mut old_model, model ) ;
+    for (pred, def) in old_model {
+      let simplified = def.simplify_pred_apps(& model, & self.pred_terms) ;
+      model.push( (pred, simplified) )
+    }
+
+    if self.sorted_pred_terms.is_empty() {
+      self.finalize()
+    }
+
+    let mut old_tterms: PrdMap<Option<TTerms>> = vec![
+      None ; self.pred_terms.len()
+    ].into() ;
+    ::std::mem::swap( & mut old_tterms, & mut self.pred_terms ) ;
+    for pred in & self.sorted_pred_terms {
+      let mut curr_def = None ;
+      ::std::mem::swap(& mut curr_def, & mut old_tterms[* pred]) ;
+      if let Some(def) = curr_def {
+        let simplified = def.simplify_pred_apps(& model, & self.pred_terms) ;
+        self.pred_terms[* pred] = Some(simplified)
+      }
+    }
+    Ok(())
+  }
+
+
   /// Writes a model.
   pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
     writeln!(w, "(model") ? ;

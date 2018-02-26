@@ -1728,11 +1728,17 @@ impl TTerms {
 
 
   /// Simplifies some top terms given some definitions for the predicates.
-  pub fn simplify_pred_apps(self, model: & Model) -> Self {
+  pub fn simplify_pred_apps(
+    self, model: & Model, pred_terms: & PrdMap< Option<TTerms> >
+  ) -> Self {
     macro_rules! if_defined {
       ($pred:ident then |$def:ident| $stuff:expr) => (
-        for & (ref idx, ref $def) in model {
-          if idx == $pred { $stuff }
+        if let Some($def) = pred_terms[* $pred].as_ref() {
+          $stuff
+        } else {
+          for & (ref idx, ref $def) in model {
+            if idx == $pred { $stuff }
+          }
         }
       )
     }
@@ -1804,7 +1810,7 @@ impl TTerms {
         for (quant, tterms) in disj {
           match (
             TTerms::Conj { quant, tterms }
-          ).simplify_pred_apps(model) {
+          ).simplify_pred_apps(model, pred_terms) {
             TTerms::True => return TTerms::tru(),
             TTerms::False => (),
 
