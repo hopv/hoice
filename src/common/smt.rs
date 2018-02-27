@@ -46,10 +46,9 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   }
 
   /// Checks if this conjunction is unsatisfiable.
-  pub fn is_unsat<'kid, Parser: Copy, S>(
-    & self, solver: & mut S, vars: & VarMap<VarInfo>
-  ) -> Res<bool>
-  where S: Solver<'kid, Parser> {
+  pub fn is_unsat<Parser: Copy>(
+    & self, solver: & mut Solver<Parser>, vars: & VarMap<VarInfo>
+  ) -> Res<bool> {
     if self.terms.len() == 0 { return Ok(false) }
     solver.push(1) ? ;
     for var in vars {
@@ -227,19 +226,17 @@ pub struct SmtActSamples<Samples> {
 }
 impl<Samples> SmtActSamples<Samples> {
   /// Constructor.
-  pub fn new<'kid, Parser, S>(
-    solver: & mut S, pred: PrdIdx, unc: Samples, pos: bool
-  ) -> Res<Self>
-  where S: Solver<'kid, Parser>, Parser: Copy {
+  pub fn new<Parser>(
+    solver: & mut Solver<Parser>, pred: PrdIdx, unc: Samples, pos: bool
+  ) -> Res<Self> {
     let actlit = solver.get_actlit() ? ;
     Ok( SmtActSamples { actlit, pred, unc, pos } )
   }
 
   /// Sets the actlit to `pos` and destroys itself.
-  pub fn force<'kid, Parser, S>(
-    self, solver: & mut S, pos: bool
-  ) -> Res<()>
-  where S: Solver<'kid, Parser>, Parser: Copy {
+  pub fn force<Parser>(
+    self, solver: & mut Solver<Parser>, pos: bool
+  ) -> Res<()> {
     solver.set_actlit(self.actlit, pos) ? ;
     Ok(())
   }

@@ -13,52 +13,44 @@ pub fn launch(
   instance: Arc<Instance>,
   core: MsgCore,
 ) {
-  use rsmt2::{ solver, Kid } ;
-  let mut kid = match Kid::new( conf.solver.conf() ).chain_err(
-    || ErrorKind::Z3SpawnError
-  ) {
-    Ok(kid) => kid,
-    Err(e) => {
-      core.err(e) ;
-      return ()
+  let mut error = None ;
+
+  match Assistant::new(instance, & core) {
+    Ok(mut assistant) => {
+      while error.is_none() {
+        if let Err(e) = profile!(
+          |assistant.core._profiler| wrap {
+            assistant.core.recv()
+          } "waiting"
+        ).and_then(
+          |mut data| assistant.break_implications(& mut data).map(
+            |()| assistant.core.send_samples(data)
+          )
+        ) {
+          error = Some(e) ;
+          break
+        }
+      }
+      if let Err(e) = assistant.finalize() {
+        if error.is_none() {
+          error = Some(e) ;
+        }
+      }
     },
+    Err(e) => error = Some(e),
   } ;
 
-  let solver = match solver(& mut kid, ()).chain_err(
-    || "while constructing the teacher's solver"
-  ) {
-    Ok(kid) => kid,
-    Err(e) => {
-      core.err(e) ;
-      return ()
-    },
-  } ;
-
-  if let Some(log) = match conf.solver.log_file("assistant") {
-    Ok(log) => log,
-    Err(e) => {
-      core.err(e.into()) ;
-      return ()
-    },
-  } {
-    let mut teacher = Assistant::new(
-      solver.tee(log), instance, core
-    ) ;
-    teacher.run()
-  } else {
-    let mut teacher = Assistant::new(
-      solver, instance, core
-    ) ;
-    teacher.run()
+  if let Some(error) = error {
+    core.err(error)
   }
 }
 
 /// Propagates examples, tries to break implication constraints.
-pub struct Assistant<S> {
+pub struct Assistant<'a> {
   /// Core, to communicate with the teacher.
-  core: MsgCore,
+  core: & 'a MsgCore,
   /// Solver.
-  solver: S,
+  solver: Solver<()>,
   /// Instance.
   instance: Arc<Instance>,
   /// Positive constraints.
@@ -67,13 +59,14 @@ pub struct Assistant<S> {
   neg: PrdHMap< ClsSet >,
 }
 
-impl<'kid, S> Assistant<S>
-where S: Solver<'kid, ()> {
+impl<'a> Assistant<'a> {
 
   /// Constructor.
   pub fn new(
-    solver: S, instance: Arc<Instance>, core: MsgCore
-  ) -> Self {
+    instance: Arc<Instance>, core: & 'a MsgCore
+  ) -> Res<Self> {
+    let solver = conf.solver.spawn("assistant", ()) ? ;
+
     let mut pos = PrdHMap::with_capacity( instance.preds().len() ) ;
     let mut neg = PrdHMap::with_capacity( instance.preds().len() ) ;
 
@@ -121,27 +114,18 @@ where S: Solver<'kid, ()> {
       add_clauses!(pred)
     }
 
-    Assistant {
-      core, solver, instance, pos, neg,
-    }
+    Ok(
+      Assistant {
+        core, solver, instance, pos, neg,
+      }
+    )
   }
 
-  /// Runs the assistant.
-  pub fn run(mut self) {
-    loop {
-      if let Err(e) = profile!(
-        |self.core._profiler| wrap {
-          self.core.recv()
-        } "waiting"
-      ).and_then(
-        |mut data| self.break_implications(& mut data).map(
-          |()| self.core.send_samples(data)
-        )
-      ) {
-        self.core.err(e) ;
-        break
-      }
-    }
+  /// Destroys the assistant.
+  pub fn finalize(mut self) -> Res<()> {
+    self.solver.kill().chain_err(
+      || "While killing solver"
+    )
   }
 
   /// Breaks implications.
@@ -380,7 +364,7 @@ where S: Solver<'kid, ()> {
 
 }
 
-impl<Slver> ::std::ops::Deref for Assistant<Slver> {
+impl<'a> ::std::ops::Deref for Assistant<'a> {
   type Target = MsgCore ;
   fn deref(& self) -> & MsgCore { & self.core }
 }

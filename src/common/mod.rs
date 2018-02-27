@@ -10,7 +10,7 @@ pub use mylib::common::hash::* ;
 pub use hashconsing::HashConsign ;
 pub use hashconsing::coll::* ;
 
-pub use rsmt2::SmtRes ;
+pub use rsmt2::{ SmtRes, Solver } ;
 pub use rsmt2::actlit::Actlit ;
 
 pub use num::{ Zero, One, Signed } ;
@@ -278,12 +278,6 @@ impl CanBEvaled for Term {
     self.bool_eval(args)
   }
 }
-
-/// Alias trait for a solver with this module's parser.
-pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
-
-impl<'kid, P, T> Solver<'kid, P> for T
-where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
 
 
 /// Information returned by

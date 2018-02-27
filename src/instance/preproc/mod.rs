@@ -18,32 +18,19 @@ use self::graph::Graph ;
 pub fn work(
   instance: & mut Instance, profiler: & Profiler
 ) -> Res<()> {
-
-  profile!{ |profiler| tick "preproc" }
   log_info!{ "starting pre-processing" }
 
-  let mut kid = ::rsmt2::Kid::new( conf.solver.conf() ).chain_err(
-    || ErrorKind::Z3SpawnError
-  ) ? ;
+  profile! { |profiler| tick "preproc" }
+
   let res = {
-    let solver = ::rsmt2::solver(& mut kid, ()).chain_err(
-      || "while constructing preprocessing's solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("preproc") ? {
-      let mut reductor = Reductor::new( instance, solver.tee(log) ) ;
-      reductor.run(profiler)
-    } else {
-      let mut reductor = Reductor::new( instance, solver ) ;
-      reductor.run(profiler)
-    }
+    let mut reductor = Reductor::new(instance) ? ;
+    reductor.run(profiler).and_then(
+      |_| reductor.destroy()
+    )
   } ;
-  profile!{ |profiler| mark "preproc" } ;
 
-  kid.kill() ? ;
+  profile! { |profiler| mark "preproc" }
 
-  // log_info!{
-  //   "\n\ndone with pre-processing:\n{}\n\n", instance.to_string_info(()) ?
-  // }
   match res {
     Err(ref e) if e.is_unsat() => {
       instance.set_unsat()
@@ -59,9 +46,9 @@ pub fn work(
 
 
 /// Stores and applies the reduction techniques.
-pub struct Reductor<'a, S> {
+pub struct Reductor<'a> {
   /// The pre-instance.
-  instance: PreInstance<'a, S>,
+  instance: PreInstance<'a>,
   /// Preinstance simplification.
   simplify: Option<Simplify>,
   /// Optional predicate argument reduction pre-processor.
@@ -81,13 +68,12 @@ pub struct Reductor<'a, S> {
   /// Optional reverse-unroller.
   runroll: Option<RUnroll>,
 }
-impl<'a, 'skid, S> Reductor<'a, S>
-where S: Solver<'skid, ()> {
+impl<'a> Reductor<'a> {
   /// Constructor.
   ///
   /// Checks the configuration to initialize the pre-processors.
-  pub fn new(instance: & 'a mut Instance, solver: S) -> Self {
-    let instance = PreInstance::new(instance, solver) ;
+  pub fn new(instance: & 'a mut Instance) -> Res<Self> {
+    let instance = PreInstance::new(instance) ? ;
 
     macro_rules! some_new {
       ($red:ident if $flag:ident $(and $flags:ident )*) => (
@@ -124,11 +110,18 @@ where S: Solver<'skid, ()> {
     let unroll = some_new! { Unroll if unroll } ;
     let runroll = some_new! { RUnroll if unroll } ;
 
-    Reductor {
-      instance, simplify, arg_red,
-      s_one_rhs, s_one_lhs, one_rhs, one_lhs,
-      cfg_red, unroll, runroll
-    }
+    Ok(
+      Reductor {
+        instance, simplify, arg_red,
+        s_one_rhs, s_one_lhs, one_rhs, one_lhs,
+        cfg_red, unroll, runroll
+      }
+    )
+  }
+
+  /// Destroys the reductor.
+  pub fn destroy(self) -> Res<()> {
+    self.instance.destroy()
   }
 
   /// Runs the full pre-processing.
@@ -382,8 +375,8 @@ pub trait RedStrat {
 
   /// Applies the reduction strategy. Returns the number of predicates reduced
   /// and the number of clauses forgotten.
-  fn apply<'a, 'skid, S: Solver<'skid, ()>>(
-    & mut self, & mut PreInstance<'a, S>
+  fn apply<'a>(
+    & mut self, & mut PreInstance<'a>
   ) -> Res<RedInfo> ;
 }
 
@@ -396,10 +389,9 @@ impl RedStrat for Simplify {
 
   fn new(_: & Instance) -> Self { Simplify }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance:& mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance:& mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     instance.simplify_all()
   }
 }
@@ -416,10 +408,9 @@ impl RedStrat for ArgRed {
 
   fn new(_: & Instance) -> Self { ArgRed }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance:& mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance:& mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     instance.arg_reduce()
   }
 }
@@ -475,10 +466,9 @@ impl RedStrat for SimpleOneRhs {
     }
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
@@ -619,10 +609,9 @@ impl RedStrat for SimpleOneLhs {
     }
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
@@ -796,10 +785,9 @@ impl RedStrat for OneRhs {
     }
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     debug_assert!( self.new_vars.is_empty() ) ;
     let mut red_info = RedInfo::new() ;
 
@@ -950,10 +938,9 @@ impl RedStrat for OneLhs {
     }
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     debug_assert!( self.true_preds.is_empty() ) ;
     debug_assert!( self.false_preds.is_empty() ) ;
     debug_assert!( self.preds.is_empty() ) ;
@@ -1117,10 +1104,9 @@ impl RedStrat for CfgRed {
     }
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
     // use std::time::Instant ;
     // use common::profiling::DurationExt ;
 
@@ -1269,10 +1255,9 @@ impl RedStrat for Unroll {
     Unroll {}
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
 
     let mut prd_map: PrdHMap<
       Vec<(Option<Quant>, TTermSet)>
@@ -1345,10 +1330,9 @@ impl RedStrat for RUnroll {
     RUnroll {}
   }
 
-  fn apply<'a, 'skid, S>(
-    & mut self, instance: & mut PreInstance<'a, S>
-  ) -> Res<RedInfo>
-  where S: Solver<'skid, ()> {
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
 
     let mut prd_map: PrdHMap<
       Vec<(Option<Quant>, HConSet<Term>)>

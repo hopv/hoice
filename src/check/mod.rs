@@ -190,9 +190,7 @@ impl Data {
   }
 
   /// Checks the output data works with the input data using an SMT solver.
-  pub fn check< 'kid, S: Solver<'kid, Parser> >(
-    & self, mut solver: S
-  ) -> Res<()> {
+  pub fn check(& self, solver: & mut Solver<Parser>) -> Res<()> {
 
     let mut okay = true ;
     let mut count = 0 ;
@@ -282,27 +280,18 @@ impl Data {
 
 /// Checks a `hoice` run from two files.
 pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
-  use rsmt2::{ solver, Kid } ;
   let data = Data::of_files(input_file, output_file) ? ;
 
-  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
-    || ErrorKind::Z3SpawnError
-  ) ? ;
-  {
-    let solver = solver(& mut kid, Parser).chain_err(
-      || "while constructing the checkers solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("check") ? {
-      data.check(solver.tee(log)) ?
-    } else {
-      data.check(solver) ?
-    }
-  }
+  let mut solver = conf.solver.spawn("check", Parser) ? ;
+
+  let res = data.check(& mut solver) ;
   println!("(safe)") ;
-  kid.kill().chain_err(
-    || "while killing solver kid"
-  ) ? ;
-  Ok(())
+
+  let end_res = solver.kill().chain_err(
+    || "While killing solver"
+  ) ;
+
+  res.and_then(|_| end_res)
 }
 
 
@@ -315,7 +304,6 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
 pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
   input_file: P, model: & str
 ) -> Res<()> {
-  use rsmt2::{ solver, Kid } ;
   println!("model:") ;
   println!("{}", model) ;
   let data = Data::new(
@@ -327,23 +315,12 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
     ) ?
   ) ? ;
 
-  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
-    || ErrorKind::Z3SpawnError
-  ) ? ;
-  {
-    let solver = solver(& mut kid, Parser).chain_err(
-      || "while constructing the checkers solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("check") ? {
-      data.check(solver.tee(log)) ?
-    } else {
-      data.check(solver) ?
-    }
-  }
-  kid.kill().chain_err(
-    || "while killing solver kid"
-  ) ? ;
-  Ok(())
+  let mut solver = conf.solver.spawn("check", Parser) ? ;
+  let res = data.check(& mut solver) ;
+  let end_res = solver.kill().chain_err(
+    || "While killing solver"
+  ) ;
+  res.and_then(|_| end_res)
 }
 
 

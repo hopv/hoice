@@ -517,10 +517,9 @@ impl Clause {
   }
 
   /// Declares all active clause variables.
-  pub fn declare<'kid, S, Parser>(
-    & self, solver: & mut S
-  ) -> Res<()>
-  where S: Solver<'kid, Parser>, Parser: Copy {
+  pub fn declare<Parser>(
+    & self, solver: & mut Solver<Parser>
+  ) -> Res<()> {
     for var in self.vars() {
       if var.active {
         solver.declare_const(& var.idx, & var.typ) ?

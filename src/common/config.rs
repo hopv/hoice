@@ -94,6 +94,23 @@ impl SmtConf {
     self.conf.clone()
   }
 
+  /// Spawns a solver.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn spawn<Parser>(
+    & self, name: & 'static str, parser: Parser
+  ) -> Res< ::rsmt2::Solver<Parser> > {
+    let mut solver = ::rsmt2::Solver::new(self.conf(), parser) ? ;
+    if let Some(log) = self.log_file(name).chain_err(
+      || format!(
+        "While opening log file for {}", ::common::conf.emph(name)
+      )
+    ) ? {
+      solver.tee(log) ?
+    }
+    Ok(solver)
+  }
+
   /// Smt log dir, if any.
   pub fn log_dir(& self) -> Option<PathBuf> {
     if self.log {

@@ -25,35 +25,15 @@ impl Launcher {
   pub fn launch(
     core: & MsgCore, instance: Arc<Instance>, data: Data, mine: bool
   ) -> Res<()> {
-    use rsmt2::{ solver, Kid } ;
-    let mut kid = Kid::new( conf.solver.conf() ).chain_err(
-      || "while spawning the teacher's solver"
-    ) ? ;
-    let conflict_solver = solver(& mut kid, ()).chain_err(
-      || "while constructing the teacher's solver"
-    ) ? ;
 
-    if let Some(log) = conf.solver.log_file("ice_learner") ? {
-      let mut learner = IceLearner::new(
-        & core, instance, data,
-        conflict_solver.tee(log), mine
-      ).chain_err(
-        || "while creating ice learner"
-      ) ? ;
-      let res = learner.run() ;
-      learner.finalize() ? ;
-      res
-    } else {
-      let mut learner = IceLearner::new(
-        & core, instance, data,
-        conflict_solver, mine
-      ).chain_err(
-        || "while creating ice learner"
-      ) ? ;
-      let res = learner.run() ;
-      learner.finalize() ? ;
-      res
-    }
+    let mut learner = IceLearner::new(
+      & core, instance, data, mine
+    ).chain_err(
+      || "while creating ice learner"
+    ) ? ;
+    let res = learner.run() ;
+    learner.finalize() ? ;
+    res
   }
 }
 impl Learner for Launcher {
@@ -80,7 +60,7 @@ pub type Branch = Vec<(Term, bool)> ;
 
 
 /// Ice learner.
-pub struct IceLearner<'core, Slver> {
+pub struct IceLearner<'core> {
   /// Arc to the instance.
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
@@ -88,7 +68,7 @@ pub struct IceLearner<'core, Slver> {
   /// Current data.
   data: Data,
   /// Solver used to check if the constraints are respected.
-  solver: Slver,
+  solver: Solver<()>,
   /// Learner core.
   core: & 'core MsgCore,
   /// Branches of the tree, used when constructing a decision tree.
@@ -111,19 +91,19 @@ pub struct IceLearner<'core, Slver> {
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
   known_quals: HConSet<Term>,
 }
-impl<'core, 'kid, Slver> IceLearner<'core, Slver>
-where Slver: Solver<'kid, ()> {
+impl<'core> IceLearner<'core> {
 
   /// Ice learner constructor.
   pub fn new(
     core: & 'core MsgCore, instance: Arc<Instance>, data: Data,
-    solver: Slver, mine: bool// synth_solver: Slver
+    mine: bool// synth_solver: Slver
   ) -> Res<Self> {
+    let solver = conf.solver.spawn("ice_learner", ()) ? ;
+
     profile!{ |core._profiler| tick "mining" }
     let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
-
     profile!{ |core._profiler| mark "mining" }
     // if_verb!{
     //   log_info!{ "qualifiers:" } ;
@@ -204,7 +184,8 @@ where Slver: Solver<'kid, ()> {
 
   /// Finalizes the learning process and exits.
   #[cfg( not(feature = "bench") )]
-  pub fn finalize(self) -> Res<()> {
+  pub fn finalize(mut self) -> Res<()> {
+    self.solver.kill() ? ;
     profile! {
       self "quals once done" => add self.qualifiers.qual_count()
     }
@@ -215,7 +196,7 @@ where Slver: Solver<'kid, ()> {
   }
   #[cfg(feature = "bench")]
   pub fn finalize(self) -> Res<()> {
-    Ok(())
+    self.solver.kill()
   }
 
   /// Sends some candidates.
@@ -1047,7 +1028,7 @@ where Slver: Solver<'kid, ()> {
   }
 }
 
-impl<'core, 'kid, Slver> ::std::ops::Deref for IceLearner<'core, Slver> {
+impl<'core> ::std::ops::Deref for IceLearner<'core> {
   type Target = MsgCore ;
   fn deref(& self) -> & MsgCore { & self.core }
 }

@@ -22,45 +22,17 @@ pub mod assistant ;
 pub fn start_class(
   instance: & Arc<Instance>, profiler: & Profiler
 ) -> Res< Option<Candidates> > {
-  use rsmt2::{ solver, Kid } ;
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut kid = Kid::new( conf.solver.conf() ).chain_err(
-    || ErrorKind::Z3SpawnError
-  ) ? ;
-  let res = {
-    let solver = solver(& mut kid, Parser).chain_err(
-      || "while constructing the teacher's solver"
-    ) ? ;
-    if let Some(log) = conf.solver.log_file("teacher") ? {
-      let mut teacher = Teacher::new(
-        solver.tee(log), instance, profiler
-      ) ? ;
-      let res = teach( & mut teacher ) ;
-      teacher.finalize() ? ;
-      res
-    } else {
-      let mut teacher = Teacher::new(
-        solver, instance, profiler
-      ) ? ;
-      let res = teach( & mut teacher ) ;
-      teacher.finalize() ? ;
-      res
-    }
-  } ;
-
-  kid.kill().chain_err(
-    || "while killing solver kid"
-  ) ? ;
+  let mut teacher = Teacher::new(instance, profiler) ? ;
+  let res = teach( & mut teacher ) ;
+  teacher.finalize() ? ;
   res
 }
 
 
 /// Teaching to the learners.
-pub fn teach< 'kid, S: Solver<'kid, Parser> >(
-  teacher: & mut Teacher<'kid, S>
-) -> Res< Option<Candidates> > {
-  log_debug!{ "  creating teacher" }
+pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
@@ -221,9 +193,9 @@ pub fn teach< 'kid, S: Solver<'kid, Parser> >(
 
 
 /// The teacher, stores a solver.
-pub struct Teacher<'a, S> {
+pub struct Teacher<'a> {
   /// The solver.
-  pub solver: S,
+  pub solver: Solver<Parser>,
 
   /// The (shared) instance.
   pub instance: Arc<Instance>,
@@ -252,11 +224,13 @@ pub struct Teacher<'a, S> {
   count: usize,
 }
 
-impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
+impl<'a> Teacher<'a> {
   /// Constructor.
   pub fn new(
-    solver: S, instance: Arc<Instance>, profiler: & 'a Profiler
+    instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Res<Self> {
+    let solver = conf.solver.spawn("teacher", Parser ) ? ;
+
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = Msg::channel() ;
     let data = Data::new( instance.clone() ) ;
@@ -292,6 +266,9 @@ impl<'a, 'kid, S: Solver<'kid, Parser>> Teacher<'a, S> {
 
   /// Finalizes the run.
   pub fn finalize(mut self) -> Res<()> {
+    self.solver.kill().chain_err(
+      || "While killing solver"
+    ) ? ;
     for & mut (ref mut sender, _, _) in self.learners.iter_mut() {
       if let Some(sender) = sender.as_ref() {
         let _ = sender.send( FromTeacher::Exit ) ;

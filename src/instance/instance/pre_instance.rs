@@ -9,11 +9,11 @@ use instance::Clause ;
 
 
 /// Wraps an instance for pre-processing.
-pub struct PreInstance<'a, Slver> {
+pub struct PreInstance<'a> {
   /// The instance wrapped.
   instance: & 'a mut Instance,
   /// Solver used for triviality-checking.
-  solver: Slver,
+  solver: Solver<()>,
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
 
@@ -24,20 +24,29 @@ pub struct PreInstance<'a, Slver> {
   /// Factored vector of clauses to simplify.
   clauses_to_simplify: Vec<ClsIdx>,
 }
-impl<'a, 'skid, Slver> PreInstance<'a, Slver>
-where Slver: Solver<'skid, ()> {
+impl<'a> PreInstance<'a> {
   /// Constructor.
-  pub fn new(
-    instance: & 'a mut Instance,
-    solver: Slver,
-  ) -> Self {
+  pub fn new(instance: & 'a mut Instance) -> Res<Self> {
+    let solver = conf.solver.spawn("preproc", ()) ? ;
+
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_check = ClsSet::with_capacity(7) ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
-    PreInstance {
-      instance, solver, simplifier,
-      clauses_to_check, clauses_to_simplify
-    }
+
+    Ok(
+      PreInstance {
+        instance, solver, simplifier,
+        clauses_to_check, clauses_to_simplify
+      }
+    )
+  }
+
+  /// Destroys the pre instance, kills the internal solver.
+  pub fn destroy(mut self) -> Res<()> {
+    self.solver.kill().chain_err(
+      || "While killing preproc solver"
+    ) ? ;
+    Ok(())
   }
 
   /// Forces to false (true) all the predicates that only appear in clauses'
@@ -1411,7 +1420,7 @@ where Slver: Solver<'skid, ()> {
 
 
 
-impl<'a, Slver> ::std::ops::Deref for PreInstance<'a, Slver> {
+impl<'a> ::std::ops::Deref for PreInstance<'a> {
   type Target = Instance ;
   fn deref(& self) -> & Instance {
     self.instance
