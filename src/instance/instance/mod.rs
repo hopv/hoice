@@ -1079,6 +1079,7 @@ impl Instance {
       write!(w, "; {}\n", line) ?
     }
     write!(w, "\n") ? ;
+    write!(w, "(set-logic HORN)\n\n") ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
