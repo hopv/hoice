@@ -1103,12 +1103,12 @@ impl<'a> PreInstance<'a> {
           }
         }
 
+        nu_clause.from_unrolling = true ;
         to_add.push( nu_clause )
       }
     }
 
     for mut clause in to_add {
-      clause.from_unrolling = true ;
       let index = self.clauses.next_index() ;
       log_debug! {
         "  adding clause {}",
@@ -1170,12 +1170,12 @@ impl<'a> PreInstance<'a> {
           }
         }
 
+        nu_clause.from_unrolling = true ;
         to_add.push( nu_clause )
       }
     }
 
     for mut clause in to_add {
-      clause.from_unrolling = true ;
       let index = self.clauses.next_index() ;
       log_debug! {
         "  adding clause {}",

@@ -648,17 +648,17 @@ impl Instance {
   pub fn qualifiers_of_clause(
     & self, clause: & Clause, quals: & mut Qualifiers
   ) -> Res<()> {
-    let build_conj = conf.ice.mine_conjs && self.clauses.len() < 150 ;
+    // if clause.from_unrolling { return Ok(()) }
+
+    let build_conj = conf.ice.mine_conjs ; // && self.clauses.len() < 200 ;
 
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;
 
-    if clause.from_unrolling { return Ok(()) }
-
     // Qualifiers generated while looking at predicate applications.
     let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;
 
-    {
+    scoped! {
       // Represents equalities between *pred vars* and terms over *clause
       // variables*. These will be added to `app_quals` if the total
       // substitution of the term by `map` succeeds.
@@ -767,7 +767,8 @@ impl Instance {
           match subterm.app_inspect() {
             Some( (Op::Or, terms) ) |
             Some( (Op::And, terms) ) |
-            Some( (Op::Not, terms) ) => for term in terms {
+            Some( (Op::Not, terms) ) |
+            Some( (Op::Impl, terms) ) => for term in terms {
               subterms.push(term) ;
               if let Some( (qual, true) ) = term.subst_total(& map) {
                 let qual = if let Some(qual) = qual.rm_neg() {

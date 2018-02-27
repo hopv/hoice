@@ -266,8 +266,8 @@ impl<'a> Assistant<'a> {
   pub fn try_force(
     & mut self, _data: & Data, pred: PrdIdx, vals: & HSample
   ) -> Res< Option< Either<Sample, Sample> > > {
-    self.solver.comment(
-      & format!("working on sample ({} {})", self.instance[pred], vals)
+    self.solver.comment_args(
+      format_args!("working on sample ({} {})", self.instance[pred], vals)
     ) ? ;
 
     if let Some(clauses) = self.pos.get(& pred) {
