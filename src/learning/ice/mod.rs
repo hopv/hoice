@@ -195,8 +195,9 @@ impl<'core> IceLearner<'core> {
     Ok(())
   }
   #[cfg(feature = "bench")]
-  pub fn finalize(self) -> Res<()> {
-    self.solver.kill()
+  pub fn finalize(mut self) -> Res<()> {
+    self.solver.kill() ? ;
+    Ok(())
   }
 
   /// Sends some candidates.

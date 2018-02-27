@@ -618,9 +618,7 @@ impl Instance {
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
     for clause in & self.clauses {
-      if ! clause.from_unrolling {
-        self.qualifiers_of_clause(clause, quals) ?
-      }
+      self.qualifiers_of_clause(clause, quals) ?
     }
     // Add boolean qualifiers for all predicate's bool vars.
     for pred in & self.preds {
@@ -652,6 +650,8 @@ impl Instance {
   ) -> Res<()> {
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;
+
+    if clause.from_unrolling { return Ok(()) }
 
     // Qualifiers generated while looking at predicate applications.
     let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;

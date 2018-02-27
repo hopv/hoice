@@ -395,7 +395,7 @@ impl Clause {
       lhs_terms: self.lhs_terms.clone(), lhs_preds,
       rhs: self.rhs.clone(),
       term_changed: true,
-      from_unrolling: true,
+      from_unrolling: self.from_unrolling,
     }
   }
 
@@ -424,7 +424,8 @@ impl Clause {
       lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
       rhs,
-      term_changed, from_unrolling: false,
+      term_changed,
+      from_unrolling: self.from_unrolling,
     }
   }
 
@@ -545,7 +546,10 @@ impl Clause {
     }
     write!(w, " )") ? ;
     if inactive > 0 {
-      write!(w, " ; {} inactive variable(s)", inactive) ?
+      write!(
+        w, " ; {} inactive variable(s), unroll: {}",
+        inactive, self.from_unrolling
+      ) ?
     }
     write!(w, "\n") ? ;
 
