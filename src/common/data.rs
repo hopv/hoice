@@ -415,6 +415,12 @@ impl DataCore {
       bail!("neg_to_add is not empty...")
     }
 
+    for constraint in & self.modded_constraints {
+      if * constraint >= self.constraints.len() {
+        bail!("modded_constraints is out of sync")
+      }
+    }
+
     // Pos/neg data cannot appear in constraints.
     for pred in self.instance.pred_indices() {
       let pos = self.pos[pred].iter().map(
@@ -608,6 +614,7 @@ impl DataCore {
         ) ;
       }
     }
+    self.modded_constraints.remove(& constraint) ;
     self.constraints[constraint].tautologize()
   }
 
@@ -725,7 +732,6 @@ impl DataCore {
           // log_debug!("    -> rhs is true, tautologizing") ;
           // Tautologize and break links.
           let _ = self.tautologize(c_idx) ;
-          let _ = self.modded_constraints.remove(& c_idx) ;
           // Move on.
           continue 'update_constraints
         }
@@ -767,7 +773,6 @@ impl DataCore {
           // Then tautologize and add as negative example to add.
           let (mut lhs, rhs) = self.tautologize(c_idx) ;
           debug_assert! { rhs.is_none() }
-          let _ = self.modded_constraints.remove(& c_idx) ;
           if let Some( Sample { pred, args } ) = lhs.pop() {
             debug_assert!( lhs.is_empty() ) ;
             // Remember the sample has to be false.
@@ -927,7 +932,6 @@ impl DataCore {
           debug_assert! { rhs.is_none() }
           if let Some( Sample { pred, args } ) = just_one.pop() {
             debug_assert!( just_one.is_empty() ) ;
-            self.modded_constraints.remove(& c_idx) ;
             let _ = self.stage_neg(pred, args) ;
           } else {
             unreachable!()

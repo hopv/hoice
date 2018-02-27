@@ -99,7 +99,7 @@ impl Assistant {
     if data.constraints.is_empty() { return Ok(()) }
 
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
-    info! { "breaking implications..." }
+    debug! { "breaking implications..." }
     profile! { self "constraints received" => add data.constraints.len() }
 
     'all_constraints: for cstr in CstrRange::zero_to(
@@ -114,11 +114,11 @@ impl Assistant {
         continue
       }
 
-      debug! {
-        "  {}", data.constraints[cstr].string_do(
-          self.instance.preds(), |s| s.to_string()
-        ).unwrap()
-      }
+      // debug! {
+      //   "  {}", data.constraints[cstr].string_do(
+      //     self.instance.preds(), |s| s.to_string()
+      //   ).unwrap()
+      // }
 
       let mut trivial = false ;
       let mut rhs_false = false ;
@@ -189,34 +189,12 @@ impl Assistant {
 
     }
 
-    let (pos_count, neg_count) = data.pos_neg_count() ;
-    let mut s = format!(
-      "generated {} ({}) positive (negative) examples", pos_count, neg_count
-    ) ;
-    if conf.debug() {
-      if pos_count != 0 {
-        s = format!("{}\npositive:", s) ;
-        for (pred, pos) in data.pos.index_iter() {
-          for pos in pos {
-            s = format!("{}\n  ({} {})", s, self.instance[pred], pos)
-          }
-        }
-      }
-      if neg_count != 0 {
-        s = format!("{}\nnegative:", s) ;
-        for (pred, neg) in data.neg.index_iter() {
-          for neg in neg {
-            s = format!("{}\n  ({} {})", s, self.instance[pred], neg)
-          }
-        }
-      }
-    }
-    info! { "{}", s }
+    let (_pos_count, _neg_count) = data.pos_neg_count() ;
     if ! data.pos.is_empty() {
-      profile! { self "positive examples generated" => add pos_count }
+      profile! { self "positive examples generated" => add _pos_count }
     }
     if ! data.neg.is_empty() {
-      profile! { self "negative examples generated" => add neg_count }
+      profile! { self "negative examples generated" => add _neg_count }
     }
 
     Ok(())

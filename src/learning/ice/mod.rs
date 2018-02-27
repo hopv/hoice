@@ -324,7 +324,7 @@ impl<'core> IceLearner<'core> {
     // Sort the predicates 80% of the time.    
     let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
     msg! {
-      debug self =>
+      self =>
       "looking for qualifier (simple: {}, sorted: {})...", simple, sorted
     }
 
@@ -465,10 +465,12 @@ impl<'core> IceLearner<'core> {
             "  no more negative data, is_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc().len()
           ) ;
-          for unc in data.unc() {
-            s = format!("{}\n  {}", s, unc)
+          if_debug! {
+            for unc in data.unc() {
+              s = format!("{}\n  {}", s, unc)
+            }
           }
-          msg! { debug self => s }
+          msg! { self => s }
         }
 
         let (_, _, unc) = data.destroy() ;
@@ -504,10 +506,17 @@ impl<'core> IceLearner<'core> {
       if data.pos().is_empty() && self.is_legal(
         pred, & data.unc(), false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
-        msg! {
-          debug self =>
-          "  no more positive data, is_legal check ok\n  \
-          forcing {} unclassifieds negative...", data.unc().len()
+        if_verb! {
+          let mut s = format!(
+            "  no more positive data, is_legal check ok\n  \
+            forcing {} unclassifieds negative...", data.unc().len()
+          ) ;
+          if_debug! {
+            for unc in data.unc() {
+              s = format!("{}\n  {}", s, unc)
+            }
+          }
+          msg! { self => s }
         }
 
         let (_, _, unc) = data.destroy() ;
@@ -598,6 +607,9 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
+    let simple = (
+      simple || data.unc().is_empty()
+    ) && ! data.pos().is_empty() && ! data.neg().is_empty() ;
 
     if conf.ice.qual_print {
       self.qualifiers.log()
@@ -625,10 +637,7 @@ impl<'core> IceLearner<'core> {
       let core = & self.core ;
 
       // Run simple if in simple mode.
-      let simple_res = if ! simple {
-        None
-      } else {
-
+      if simple {
         profile!{ self tick "learning", "qual", "simple gain" }
         let res = self.qualifiers.maximize(
           pred, |qual| {
@@ -639,10 +648,6 @@ impl<'core> IceLearner<'core> {
         ) ;
         profile!{ self mark "learning", "qual", "simple gain" }
         res ?
-      } ;
-
-      if let Some(res) = simple_res {
-        Ok( Some(res) )
       } else {
 
         let qualifiers = & mut self.qualifiers ;
@@ -660,10 +665,9 @@ impl<'core> IceLearner<'core> {
           }, false
         ) ;
         profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
-        res
-
+        res ?
       }
-    } ? ;
+    } ;
 
     if let Some((qual, gain)) = best_qual {
       best_qual = if gain >= conf.ice.gain_pivot && gain > 0.0 {
@@ -808,7 +812,7 @@ impl<'core> IceLearner<'core> {
         } else if let Some(gain) = data.gain(
           pred, self_data, & term, & self_core._profiler, false
         ) ? {
-          if gain == 1.0 {
+          if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
             quals.insert(& term, pred) ? ;
             ()

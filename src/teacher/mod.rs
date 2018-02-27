@@ -65,7 +65,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   log_debug!{ "  starting teaching loop" }
   'teach: loop {
 
-    log_debug!{
+    info!{
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
