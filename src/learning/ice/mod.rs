@@ -90,6 +90,12 @@ pub struct IceLearner<'core> {
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
   known_quals: HConSet<Term>,
+  /// Gain pivot.
+  gain_pivot: f64,
+  /// Gain pivot synth.
+  gain_pivot_synth: Option<f64>,
+  /// Counter to 10 before incrementing gain pivots.
+  count: usize,
 }
 impl<'core> IceLearner<'core> {
 
@@ -135,6 +141,9 @@ impl<'core> IceLearner<'core> {
           Some( LubyCount::new() )
         },
         known_quals: HConSet::new(),
+        gain_pivot: conf.ice.gain_pivot,
+        gain_pivot_synth: conf.ice.gain_pivot_synth,
+        count: 0,
       }
     )
   }
@@ -229,6 +238,20 @@ impl<'core> IceLearner<'core> {
   ) -> Res< Option<Candidates> > {
     self.data = data ;
 
+    self.count = (self.count + 1) % conf.ice.gain_pivot_mod ;
+    if self.count == 0 {
+      self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
+      if self.gain_pivot > 1.0 {
+        self.gain_pivot = 1.0
+      }
+      if let Some(gain_pivot_synth) = self.gain_pivot_synth.as_mut() {
+        * gain_pivot_synth = * gain_pivot_synth + conf.ice.gain_pivot_inc ;
+        if * gain_pivot_synth > 1.0 {
+          * gain_pivot_synth = 1.0
+        }
+      }
+    }
+
     let contradiction = profile!(
       |self.core._profiler| wrap {
         self.setup_solver().chain_err(
@@ -319,7 +342,7 @@ impl<'core> IceLearner<'core> {
 
     use rand::Rng ;
     // Use simple entropy 20% of the time.
-    let simple = conf.ice.simple_gain || self.rng.next_f64() <= 0.20 ;
+    let simple = self.rng.next_f64() <= conf.ice.simple_gain_ratio ;
 
     // Sort the predicates 80% of the time.    
     let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
@@ -607,9 +630,11 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
-    let simple = (
-      simple || data.unc().is_empty()
-    ) && ! data.pos().is_empty() && ! data.neg().is_empty() ;
+    let simple = simple || (
+       data.unc().is_empty() &&
+       ! data.pos().is_empty() &&
+       ! data.neg().is_empty()
+    ) ;
 
     if conf.ice.qual_print {
       self.qualifiers.log()
@@ -670,11 +695,11 @@ impl<'core> IceLearner<'core> {
     } ;
 
     if let Some((qual, gain)) = best_qual {
-      best_qual = if gain >= conf.ice.gain_pivot && gain > 0.0 {
+      best_qual = if gain >= self.gain_pivot && gain > 0.0 {
         msg! {
           self =>
-          "  using qualifier {}, gain: {} >= {}",
-          qual, gain, conf.ice.gain_pivot
+          "  using qualifier {}, gain: {} >= {} (simple: {})",
+          qual, gain, self.gain_pivot, simple
         }
         // This qualifier is satisfactory.
         profile!{ self tick "learning", "qual", "data split" }
@@ -684,8 +709,8 @@ impl<'core> IceLearner<'core> {
       } else {
         msg! {
           self =>
-          "  qualifier {} is not good enough, gain: {} < {}",
-          qual, gain, conf.ice.gain_pivot
+          "  qualifier {} is not good enough, gain: {} < {} (simple: {})",
+          qual, gain, self.gain_pivot, simple
         }
         // Not good enough, maybe synthesis can do better.
         Some( (qual, gain) )
@@ -802,6 +827,7 @@ impl<'core> IceLearner<'core> {
       let instance = & self.instance ;
       let self_core = & self.core ;
       let known_quals = & mut self.known_quals ;
+      let gain_pivot_synth = self.gain_pivot_synth ;
       known_quals.clear() ;
 
       let mut treatment = |term: Term| {
@@ -825,7 +851,7 @@ impl<'core> IceLearner<'core> {
           } else {
             * best = Some((term, gain))
           }
-          if let Some(pivot) = conf.ice.gain_pivot_synth {
+          if let Some(pivot) = gain_pivot_synth {
             if gain >= pivot {
               msg! {
                 self_core =>

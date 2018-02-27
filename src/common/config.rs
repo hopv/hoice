@@ -570,7 +570,7 @@ impl PreprocConf {
 /// Ice learner configuration.
 pub struct IceConf {
   /// Ignore unclassified data when computing entropy.
-  pub simple_gain: bool,
+  pub simple_gain_ratio: f64,
   /// Sort predicates.
   pub sort_preds: bool,
   /// Generate complete transformations for qualifiers.
@@ -582,6 +582,10 @@ pub struct IceConf {
   pub qual_print: bool,
   /// Gain above which a qualifier is considered acceptable for splitting data.
   pub gain_pivot: f64,
+  ///
+  pub gain_pivot_inc: f64,
+  ///
+  pub gain_pivot_mod: usize,
   /// Same as `gain_pivot` but for qualifier synthesis.
   pub gain_pivot_synth: Option<f64>,
   /// Run a learner that does not mine the instance.
@@ -605,14 +609,14 @@ impl IceConf {
 
     app.arg(
 
-      Arg::with_name("simple_gain").long("--simple_gain").help(
-        "always ignore unclassified data when computing entropy"
+      Arg::with_name("simple_gain_ratio").long("--simple_gain_ratio").help(
+        "percent of times simple gain will be used instead of generalized gain"
       ).validator(
-        bool_validator
+        int_validator
       ).value_name(
-        bool_format
+        "int"
       ).default_value(
-        "no"
+        "20"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
@@ -691,6 +695,30 @@ impl IceConf {
 
     ).arg(
 
+      Arg::with_name("gain_pivot_inc").long("--gain_pivot_inc").help(
+        "undocumented"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("5").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("gain_pivot_mod").long("--gain_pivot_mod").help(
+        "undocumented"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("10").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
       Arg::with_name("pure_synth").long("--pure_synth").help(
         "if true, runs another pure-synthesis learner"
       ).validator(
@@ -730,7 +758,18 @@ impl IceConf {
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let simple_gain = bool_of_matches(matches, "simple_gain") ;
+    let simple_gain_ratio = {
+      let mut value = int_of_matches(
+        matches, "simple_gain_ratio"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
     let sort_preds = bool_of_matches(matches, "sort_preds") ;
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
@@ -738,6 +777,18 @@ impl IceConf {
     let gain_pivot = {
       let mut value = int_of_matches(
         matches, "gain_pivot"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
+    let gain_pivot_inc = {
+      let mut value = int_of_matches(
+        matches, "gain_pivot_inc"
       ) as f64 / 100.0 ;
       if value < 0.0 {
         0.0
@@ -759,14 +810,15 @@ impl IceConf {
         Some(value)
       }
     } ;
+    let gain_pivot_mod = int_of_matches(matches, "gain_pivot_mod") ;
     let add_synth = bool_of_matches(matches, "add_synth") ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
 
     IceConf {
-      simple_gain, sort_preds, complete,
+      simple_gain_ratio, sort_preds, complete,
       qual_bias, qual_print,
-      gain_pivot, gain_pivot_synth,
+      gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
       pure_synth, mine_conjs, add_synth
     }
   }
