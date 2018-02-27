@@ -297,8 +297,31 @@ impl<'a> Reductor<'a> {
     loop {
 
       let mut added = run!(unroll info).clauses_added ;
-      added += run!(runroll info).clauses_added ;
+      let mut r_added = run!(runroll info).clauses_added ;
+
+      if r_added > 10
+      && added > 0
+      && added <= r_added / 2 {
+        loop {
+          let nu_added = run!(unroll info).clauses_added ;
+          added += nu_added ;
+          if nu_added == 0
+          || added > r_added / 2 { break }
+        }
+      } else
+      if added > 10
+      && r_added > 0
+      && r_added <= added / 2  {
+        loop {
+          let nu_r_added = run!(runroll info).clauses_added ;
+          r_added += nu_r_added ;
+          if nu_r_added == 0
+          || r_added > added / 2 { break }
+        }
+      }
+
       clauses_added += added ;
+      clauses_added += r_added ;
 
       if added == 0
       || clauses_added > max_clause_add { break }
