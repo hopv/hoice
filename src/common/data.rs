@@ -318,14 +318,14 @@ pub struct DataCore {
   pub neg: PrdMap< HConSet<HSample> >,
   /// Constraints.
   pub constraints: CstrMap<Constraint>,
-  ///  Map from samples to contstraints.
+  ///  Map from samples to constraints.
   pub map: PrdMap< HConMap<HSample, CstrSet> >,
 
   /// Positive examples to add (used by propagation).
   pos_to_add: PrdHMap< HConSet<HSample> >,
   /// Negative examples to add (used by propagation).
   neg_to_add: PrdHMap< HConSet<HSample> >,
-  /// Constraints that have changed since the last reset.
+  /// Constraints that have changed or are new since the last reset.
   modded_constraints: CstrSet,
 }
 impl DataCore {
@@ -1077,10 +1077,11 @@ impl Data {
     self.core.clone()
   }
 
-  /// Clones the constraints to create a new `Data`.
-  pub fn clone_constraints(& self) -> Option<Data> {
+  /// Clones the new/modded constraints to create a new `Data`.
+  pub fn clone_new_constraints(& mut self) -> Option<Data> {
     let mut data = None ;
-    for constraint in & self.core.constraints {
+    for idx in & self.modded_constraints {
+      let constraint = & self.constraints[* idx] ;
       if ! constraint.is_tautology() {
         data.get_or_insert_with(
           || Data {
@@ -1090,6 +1091,7 @@ impl Data {
         ).internal_add_cstr( constraint.clone() ) ;
       }
     }
+    self.modded_constraints.clear() ;
     data
   }
 
@@ -1263,6 +1265,8 @@ impl Data {
         || CstrSet::with_capacity(17)
       ).insert(cstr_index) ;
     }
+
+    self.modded_constraints.insert(cstr_index) ;
 
     self.constraints.push(constraint)
   }

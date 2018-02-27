@@ -16,6 +16,7 @@ use common::smt::SmtTerm ;
 use self::smt::Parser ;
 
 pub mod assistant ;
+use self::assistant::Assistant ;
 
 
 /// Starts the teaching process.
@@ -54,6 +55,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   if ! nu_stuff {
     bail! { "translation of initial cexs to data generated no new data" }
   }
+  teacher.run_assistant() ? ;
 
   // Index of the learner the teacher is currently working for.
   //
@@ -67,29 +69,6 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
-    }
-
-    // Send stuff to the assistant if it's not running.
-    scoped! {
-      let res = if let Some(
-        & mut (ref sender, ref mut running)
-      ) = teacher.assistant.as_mut() {
-        if ! * running {
-          if let Some(data) = teacher.data.clone_constraints() {
-            * running = true ;
-            sender.send( FromTeacher::Data(data) )
-          } else {
-            Ok(())
-          }
-        } else {
-          Ok(())
-        }
-      } else { Ok(()) } ;
-
-      if res.is_err() {
-        teacher.assistant = None ;
-        warn! { "teacher assistant is dead" }
-      }
     }
 
     if let Some(idx) = learner {
@@ -149,6 +128,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         ) ;
         profile!{ teacher mark "data", "registration" }
         profile!{ teacher mark "data" }
+        teacher.run_assistant() ? ;
         match res {
           Ok(true) => {
             // New data.
@@ -216,7 +196,7 @@ pub struct Teacher<'a> {
   /// Assistant for implication constraint breaking.
   ///
   /// The boolean flag indicates whether the assistant was sent some stuff.
-  pub assistant: Option< (Sender<FromTeacher>, bool) >,
+  pub assistant: Option<Assistant>,
 
   /// Profiler.
   pub _profiler: & 'a Profiler,
@@ -236,21 +216,12 @@ impl<'a> Teacher<'a> {
     let data = Data::new( instance.clone() ) ;
 
     let assistant = if conf.teacher.assistant {
-      let (to_assistant_send, to_assistant_recv) = FromTeacher::channel() ;
       let instance = instance.clone() ;
-      let to_teacher = to_teacher.clone() ;
-
-      ::std::thread::Builder::new().name( "assistant".into() ).spawn(
-        move || assistant::launch(
-          instance, MsgCore::new_assistant(
-            to_teacher, to_assistant_recv
-          )
-        )
-      ).chain_err(
-        || format!("while spawning assistant")
-      ) ? ;
-
-      Some( (to_assistant_send, false) )
+      Some(
+        Assistant::new(instance).chain_err(
+          || format!("while spawning assistant")
+        ) ?
+      )
     } else {
       None
     } ;
@@ -262,6 +233,21 @@ impl<'a> Teacher<'a> {
         _profiler: profiler, count: 0,
       }
     )
+  }
+
+  /// Runs the assistant (if any) on the current data.
+  pub fn run_assistant(& mut self) -> Res<()> {
+    if let Some(assistant) = self.assistant.as_mut() {
+      profile! { self tick "assistant" }
+      if let Some(mut data) = self.data.clone_new_constraints() {
+        assistant.break_implications(& mut data) ? ;
+        let (nu_pos, nu_neg) = self.data.merge_samples(data) ? ;
+        profile! { self "assistant pos useful" => add nu_pos }
+        profile! { self "assistant neg useful" => add nu_neg }
+      }
+      profile! { self mark "assistant" }
+    }
+    Ok(())
   }
 
   /// Finalizes the run.
@@ -276,13 +262,12 @@ impl<'a> Teacher<'a> {
       }
       * sender = None
     }
-    if let Some( & (ref sender, _) ) = self.assistant.as_ref() {
-      let _ = sender.send( FromTeacher::Exit ) ;
-      ()
-    }
-    self.assistant = None ;
     log_debug! { "draining messages" }
     while let Ok(_) = self.get_candidates(true) {}
+    if let Some(assistant) = self.assistant {
+      let profiler = assistant.finalize() ? ;
+      self._profiler.add_sub("assistant", profiler)
+    }
     Ok(())
   }
 
@@ -439,23 +424,6 @@ impl<'a> Teacher<'a> {
             for & mut (_, _, ref mut changed) in & mut self.learners {
               * changed = true
             }
-          }
-
-          let res = if let Some(
-            & mut (ref sender, ref mut running)
-          ) = self.assistant.as_mut() {
-            debug_assert! { * running }
-            if let Some(data) = self.data.clone_constraints() {
-              sender.send( FromTeacher::Data(data) )
-            } else {
-              * running = false ;
-              Ok(())
-            }
-          } else { Ok(()) } ;
-
-          if res.is_err() {
-            self.assistant = None ;
-            warn! { "teacher assistant is dead" }
           }
         },
 
