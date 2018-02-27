@@ -727,7 +727,6 @@ impl<'core> IceLearner<'core> {
     let qual = match ( best_qual, best_synth_qual ) {
       ( Some((qual, gain)), Some((synth_qual, synth_gain)) ) => {
         if synth_gain > gain {
-          self.qualifiers.insert(& synth_qual, pred) ? ;
           msg! {
             self =>
             "using synth qualifier {}, gain {} >= {} (for {})",

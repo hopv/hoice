@@ -530,7 +530,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true).hidden(
+      ).default_value("on").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -588,6 +588,8 @@ pub struct IceConf {
   pub pure_synth: bool,
   /// Mine conjunction of terms.
   pub mine_conjs: bool,
+  /// Add synthesized qualifiers.
+  pub add_synth: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -701,6 +703,18 @@ impl IceConf {
 
     ).arg(
 
+      Arg::with_name("add_synth").long("--add_synth").help(
+        "add synthesized qualifiers as normal qualifiers"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
       Arg::with_name("mine_conjs").long("--mine_conjs").help(
         "mine conjunctions of atoms from clauses"
       ).validator(
@@ -745,6 +759,7 @@ impl IceConf {
         Some(value)
       }
     } ;
+    let add_synth = bool_of_matches(matches, "add_synth") ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
 
@@ -752,7 +767,7 @@ impl IceConf {
       simple_gain, sort_preds, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_synth,
-      pure_synth, mine_conjs
+      pure_synth, mine_conjs, add_synth
     }
   }
 }
