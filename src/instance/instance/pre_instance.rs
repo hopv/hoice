@@ -1174,7 +1174,8 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    for clause in to_add {
+    for mut clause in to_add {
+      clause.from_unrolling = true ;
       let index = self.clauses.next_index() ;
       log_debug! {
         "  adding clause {}",

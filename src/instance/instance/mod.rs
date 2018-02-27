@@ -648,6 +648,8 @@ impl Instance {
   pub fn qualifiers_of_clause(
     & self, clause: & Clause, quals: & mut Qualifiers
   ) -> Res<()> {
+    let build_conj = conf.ice.mine_conjs && self.clauses.len() < 150 ;
+
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;
 
@@ -715,7 +717,7 @@ impl Instance {
           }
 
           if ! app_quals.is_empty() {
-            let build_conj = conf.ice.mine_conjs && app_quals.len() > 1 ;
+            let build_conj = build_conj && app_quals.len() > 1 ;
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
               if build_conj { conj.push(term.clone()) }
@@ -759,13 +761,13 @@ impl Instance {
           ()
         }
 
-        // Is it a disjunction? If yes, add disjuncts as qualifiers.
         debug_assert!( subterms.is_empty() ) ;
         subterms.push(term) ;
         while let Some(subterm) = subterms.pop() {
           match subterm.app_inspect() {
             Some( (Op::Or, terms) ) |
-            Some( (Op::And, terms) ) => for term in terms {
+            Some( (Op::And, terms) ) |
+            Some( (Op::Not, terms) ) => for term in terms {
               subterms.push(term) ;
               if let Some( (qual, true) ) = term.subst_total(& map) {
                 let qual = if let Some(qual) = qual.rm_neg() {
@@ -781,12 +783,12 @@ impl Instance {
         }
       }
 
-      if conf.ice.mine_conjs {
+      if build_conj {
         conjs.push((pred, conj))
       }
     }
 
-    if conf.ice.mine_conjs {
+    if build_conj {
       for (pred, conj) in conjs {
         if conj.len() > 1 {
           let term = term::and( conj.into_iter().collect() ) ;
