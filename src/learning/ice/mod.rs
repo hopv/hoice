@@ -633,7 +633,6 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
-    let simple = simple || data.unc().is_empty() ;
 
     if conf.ice.qual_print {
       self.qualifiers.log()
