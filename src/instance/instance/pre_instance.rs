@@ -107,7 +107,14 @@ impl<'a> PreInstance<'a> {
       |c_1, c_2| c_1.cmp( c_2 )
     ) ;
     log_debug! { "    simplify clauses ({})", self.clauses_to_simplify.len() }
+    let mut prev = None ;
     while let Some(clause) = self.clauses_to_simplify.pop() {
+      prev = {
+        if let Some(prev) = prev {
+          if clause == prev { continue }
+        }
+        Some(clause)
+      } ;
       info += self.simplify_clause(clause) ?
     }
     self.check("after `simplify_clauses`") ? ;

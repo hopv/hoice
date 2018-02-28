@@ -341,8 +341,11 @@ impl<'core> IceLearner<'core> {
     self.check_exit() ? ;
 
     use rand::Rng ;
-    // Use simple entropy 20% of the time.
+
     let simple = self.rng.next_f64() <= conf.ice.simple_gain_ratio ;
+    if simple {
+      profile! { self "simple" => add 1 }
+    }
 
     // Sort the predicates 80% of the time.    
     let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
@@ -630,11 +633,7 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
-    let simple = simple || (
-       data.unc().is_empty() &&
-       ! data.pos().is_empty() &&
-       ! data.neg().is_empty()
-    ) ;
+    let simple = simple || data.unc().is_empty() ;
 
     if conf.ice.qual_print {
       self.qualifiers.log()

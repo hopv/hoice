@@ -484,7 +484,7 @@ impl<'a> Teacher<'a> {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
       } else {
-        cands.push( Some(term::tru()) )
+        cands.push( Some(term::fls()) )
       }
     }
     self.get_cexs(& cands).map(|res| (res, cands))
@@ -532,74 +532,64 @@ impl<'a> Teacher<'a> {
     }
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
-    let clauses = ClsRange::zero_to( self.instance.clauses().len() ) ;
-    self.solver.comment("\nlooking for counterexamples...\n") ? ;
-    for clause in clauses {
-      if ! clauses_to_ignore.contains(& clause) {
-        // log_debug!{ "  looking for a cex for clause {}", clause }
-        let cexs = self.get_cex(
-          clause, & true_preds, & false_preds
-        ).chain_err(
-          || format!("while getting counterexample for clause {}", clause)
-        ) ? ;
 
-        if ! cexs.is_empty() {
-          let prev = map.insert(clause, cexs) ;
-          debug_assert_eq!(prev, None)
+    let instance = self.instance.clone() ;
+
+    macro_rules! run {
+      ($clause:expr, $bias:expr) => (
+        if ! clauses_to_ignore.contains($clause) {
+          // log_debug!{ "  looking for a cex for clause {}", clause }
+          let cexs = self.get_cex(
+            * $clause, & true_preds, & false_preds, $bias
+          ).chain_err(
+            || format!("while getting counterexample for clause {}", $clause)
+          ) ? ;
+
+          if ! cexs.is_empty() {
+            let prev = map.insert(* $clause, cexs) ;
+            debug_assert_eq!(prev, None)
+          }
         }
+      ) ;
+    }
+
+    info! {
+      "looking for counterexamples in positive clauses..."
+    }
+    for clause in instance.pos_clauses() {
+      run!(clause, false)
+    }
+
+    info! {
+      "looking for counterexamples in negative clauses..."
+    }
+    for clause in instance.neg_clauses() {
+      run!(clause, false)
+    }
+
+    if map.is_empty() {
+      info! {
+        "looking for counterexamples in implication clauses..."
+      }
+      for clause in instance.imp_clauses() {
+        run!(clause, true)
       }
     }
+
     Ok(map)
   }
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet
+    & mut self,
+    clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
+    bias: bool,
   ) -> Res< Vec<Cex> > {
 
     self.solver.push(1) ? ;
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
       () => (& self.instance[clause_idx])
-    }
-    if_not_bench!{
-      if conf.solver.log {
-        self.solver.comment(& format!("\nclause variables:\n")) ? ;
-        for info in clause!().vars() {
-          self.solver.comment(
-            & format!("  v_{} ({})\n", info.idx, info.active)
-          ) ?
-        }
-        self.solver.comment(& format!("lhs terms:\n")) ? ;
-        for lhs in clause!().lhs_terms() {
-          self.solver.comment(
-            & format!("  {}\n", lhs)
-          ) ?
-        }
-        self.solver.comment(& format!("lhs pred applications:\n")) ? ;
-        for (pred, argss) in clause!().lhs_preds() {
-          for args in argss {
-            let mut s = format!("  ({}", & self.instance[* pred]) ;
-            for arg in args.iter() {
-              s = format!("{} {}", s, arg)
-            }
-            s.push(')') ;
-            self.solver.comment(& s) ?
-          }
-        }
-        self.solver.comment(& format!("rhs:\n")) ? ;
-        if let Some((pred, args)) = clause!().rhs() {
-          let mut s = format!("  ({}", & self.instance[pred]) ;
-          for arg in args.iter() {
-            s = format!("{} {}", s, arg)
-          }
-          s.push(')') ;
-          self.solver.comment(& s) ?
-        } else {
-          self.solver.comment("  false") ?
-        }
-        self.solver.comment("\n") ?
-      }
     }
 
     profile!{ self tick "cexs", "prep" }
@@ -656,12 +646,15 @@ impl<'a> Teacher<'a> {
 
     // Only try biased cexs if current instance is sat.
     if let Some(unbiased_cex) = cexs.pop() {
-      let (
-        bias_lhs_actlit, bias_rhs_actlit
-      ) = self.bias_applications(clause_idx) ? ;
 
-      get_cex! { bias_lhs_actlit ; "biased examples (pos)" }
-      get_cex! { bias_rhs_actlit ; "biased examples (neg)" }
+      if bias {
+        let (
+          bias_lhs_actlit, bias_rhs_actlit
+        ) = self.bias_applications(clause_idx) ? ;
+
+        get_cex! { bias_lhs_actlit ; "biased examples (pos)" }
+        get_cex! { bias_rhs_actlit ; "biased examples (neg)" }
+      }
 
       // Add the unbiased cex back if bias checks yielded nothing.
       if cexs.is_empty() {
@@ -714,11 +707,27 @@ impl<'a> Teacher<'a> {
       return Ok( (None, None) )
     }
 
-    // Not a negative constraint?
-    let (rhs_pred, rhs_args) = if let Some((pred, args)) = clause.rhs() {
-      (pred, args)
-    } else {
+    let rhs_actlit = if let Some((rhs_pred, rhs_args)) = clause.rhs() {
+      if ! self.data.neg[rhs_pred].is_empty() {
+        self.solver.comment(
+          & format!("actlit for rhs bias ({})", self.instance[rhs_pred])
+        ) ? ;
+        let actlit = self.solver.get_actlit() ? ;
+
+        let disjunction = DisjArgs::new(
+          rhs_args, & self.data.neg[rhs_pred]
+        ) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ? ;
+
+        Some(actlit)
+      } else {
+        None
+      }
+    } else if clause.lhs_pred_apps_len() == 1 {
+      // Negative constraint, skipping.
       return Ok( (None, None) )
+    } else {
+      None
     } ;
 
     // Work on lhs pred apps that have some positive data.
@@ -746,21 +755,6 @@ impl<'a> Teacher<'a> {
 
       lhs_actlit = Some(actlit)
     }
-
-    // Work on rhs.
-    let rhs_actlit = if ! self.data.neg[rhs_pred].is_empty() {
-      self.solver.comment(
-        & format!("actlit for rhs bias ({})", self.instance[rhs_pred])
-      ) ? ;
-      let actlit = self.solver.get_actlit() ? ;
-
-      let disjunction = DisjArgs::new(rhs_args, & self.data.neg[rhs_pred]) ? ;
-      self.solver.assert_act(& actlit, & disjunction) ? ;
-
-      Some(actlit)
-    } else {
-      None
-    } ;
 
     Ok( (lhs_actlit, rhs_actlit) )
   }

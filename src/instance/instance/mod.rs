@@ -47,6 +47,18 @@ pub struct Instance {
   pred_to_clauses: PrdMap< (ClsSet, ClsSet) >,
   /// Unsat flag.
   is_unsat: bool,
+  /// Set of positive clauses.
+  ///
+  /// Only available after finalize.
+  pos_clauses: ClsSet,
+  /// Set of negative clauses.
+  ///
+  /// Only available after finalize.
+  neg_clauses: ClsSet,
+  /// Set of implication clauses.
+  ///
+  /// Only available after finalize.
+  imp_clauses: ClsSet,
 }
 impl Instance {
   /// Instance constructor.
@@ -64,6 +76,9 @@ impl Instance {
       // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       is_unsat: false,
+      pos_clauses: ClsSet::new(),
+      neg_clauses: ClsSet::new(),
+      imp_clauses: ClsSet::new(),
     } ;
     // Create basic constants, adding to consts to have mining take them into
     // account.
@@ -71,6 +86,25 @@ impl Instance {
     instance.consts.insert(wan) ;
     instance.consts.insert(too) ;
     instance
+  }
+
+  /// Set of positive clauses.
+  ///
+  /// Only available after finalize.
+  pub fn pos_clauses(& self) -> & ClsSet {
+    & self.pos_clauses
+  }
+  /// Set of negative clauses with exactly one predicate application.
+  ///
+  /// Only available after finalize.
+  pub fn neg_clauses(& self) -> & ClsSet {
+    & self.neg_clauses
+  }
+  /// Set of implication clauses ad negative clausesh.
+  ///
+  /// Only available after finalize.
+  pub fn imp_clauses(& self) -> & ClsSet {
+    & self.imp_clauses
   }
 
   /// Number of active (not forced) predicates.
@@ -207,6 +241,21 @@ impl Instance {
     let mut tmp: Vec< (PrdIdx, PrdSet) > = Vec::with_capacity(
       self.preds.len()
     ) ;
+
+
+    for (idx, clause) in self.clauses.index_iter() {
+      if clause.rhs().is_none() && clause.lhs_pred_apps_len() == 1 {
+        let is_new = self.neg_clauses.insert(idx) ;
+        debug_assert! { is_new }
+      } else if clause.lhs_preds().is_empty() {
+        debug_assert! { self.is_unsat || clause.rhs().is_some() }
+        let is_new = self.pos_clauses.insert(idx) ;
+        debug_assert! { is_new }
+      } else {
+        let is_new = self.imp_clauses.insert(idx) ;
+        debug_assert! { is_new }
+      }
+    }
 
     // Populate `tmp`.
     let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
