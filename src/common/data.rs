@@ -104,6 +104,14 @@ impl Sample {
   pub fn is_in(& self, pred: PrdIdx, samples: & HConSet<HSample>) -> bool {
     self.pred == pred && samples.contains(& self.args)
   }
+
+  /// Tests if a sample is about some predicate and its arguments is subsumed
+  /// by one of the elements of a set.
+  pub fn is_subbed(& self, pred: PrdIdx, samples: & HConSet<HSample>) -> bool {
+    self.pred == pred && samples.iter().any(
+      |other| other == & self.args || other.sub(& self.args)
+    )
+  }
 }
 impl<'a> PebcakFmt<'a> for Sample {
   type Info = & 'a PrdMap<PrdInfo> ;
@@ -408,6 +416,12 @@ impl DataCore {
   /// [cstrs]: #structfield.constraints (constraints field)
   #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
+    self.check_internal().chain_err(
+      || self.string_do(& (), |s| s.to_string()).unwrap()
+    )
+  }
+  #[cfg(debug_assertions)]
+  fn check_internal(& self) -> Res<()> {
     if ! self.pos_to_add.is_empty() {
       bail!("pos_to_add is not empty...")
     }
@@ -421,6 +435,29 @@ impl DataCore {
       }
     }
 
+    for set in & self.pos {
+      for sample in set {
+        for s in set {
+          if sample.sub(s) {
+            bail!(
+              "positive samples are redundant: {} => {}", sample, s
+            )
+          }
+        }
+      }
+    }
+    for set in & self.neg {
+      for sample in set {
+        for s in set {
+          if sample.sub(s) {
+            bail!(
+              "negative samples are redundant: {} => {}", sample, s
+            )
+          }
+        }
+      }
+    }
+
     // Pos/neg data cannot appear in constraints.
     for pred in self.instance.pred_indices() {
       let pos = self.pos[pred].iter().map(
@@ -430,17 +467,18 @@ impl DataCore {
         |n| (n, "negative")
       ) ;
       for (sample, polarity) in pos.chain(neg) {
-        if let Some(set) = self.map[pred].get(sample) {
-          let mut s: String = "{".into() ;
-          for idx in set {
-            s.push_str(& format!(" {}", idx))
+        for (s, set) in & self.map[pred] {
+          if sample.sub(s) {
+            let mut s: String = "{".into() ;
+            for idx in set {
+              s.push_str(& format!(" {}", idx))
+            }
+            s.push_str(" }") ;
+            bail!(
+              "({} {}) is {} but appears in constraint(s) {}",
+              self.instance[pred], sample, polarity, s
+            )
           }
-          s.push_str(" }") ;
-          bail!(
-            "{}\n({} {}) is {} but appears in constraint(s) {}",
-            self.string_do(& (), |s| s.to_string()).unwrap(),
-            self.instance[pred], sample, polarity, s
-          )
         }
       }
     }
@@ -538,16 +576,32 @@ impl DataCore {
 
   /// Remember a positive example to add.
   pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) -> bool {
-    self.pos_to_add.entry(pred).or_insert_with(
+    if args.is_subbed( & self.pos[pred] ) {
+      return false
+    }
+    let set = self.pos_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
-    ).insert(args)
+    ) ;
+    if args.is_subbed( set ) {
+      return false
+    }
+    set.retain( |s| ! args.sub(s) ) ;
+    set.insert(args)
   }
 
   /// Remember a negative example to add.
   pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) -> bool {
-    self.neg_to_add.entry(pred).or_insert_with(
+    if args.is_subbed( & self.neg[pred] ) {
+      return false
+    }
+    let set = self.neg_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
-    ).insert(args)
+    ) ;
+    if args.is_subbed( set ) {
+      return false
+    }
+    set.retain( |s| ! args.sub(s) ) ;
+    set.insert(args)
   }
 
   /// Diff between two data structures. Returns the new positive, negative,
@@ -633,6 +687,27 @@ impl DataCore {
     Ok(())
   }
 
+  /// Retrieves all samples `s` from `map` such that `sample.sub(s)`
+  fn remove_subs(
+    & mut self, pred: PrdIdx, sample: & HSample
+  ) -> Option<CstrSet> {
+    if ! sample.is_partial() {
+      return self.map[pred].remove(sample)
+    }
+    let mut res = None ;
+    self.map[pred].retain(
+      |s, set| if sample == s || sample.sub(s) {
+        res.get_or_insert_with(
+          || CstrSet::with_capacity(set.len())
+        ).extend( set.drain() ) ;
+        false
+      } else {
+        true
+      }
+    ) ;
+    res
+  }
+
   /// Adds some positive examples from `pos_to_add`.
   ///
   /// Simplifies constraints containing these samples.
@@ -663,13 +738,16 @@ impl DataCore {
       // ) ;
 
       let mut new_stuff = false ;
+      self.pos[curr_pred].retain(
+        |other| ! curr_samples.iter().any(
+          |sample| sample.sub(other)
+        )
+      ) ;
       for sample in & curr_samples {
         let is_new = self.pos[curr_pred].insert( sample.clone() ) ;
         new_stuff = new_stuff || is_new
       }
       if ! new_stuff { continue 'propagate }
-
-      // Look for 
 
       // Get the constraints mentioning the positive samples.
       let mut constraints ;
@@ -678,7 +756,7 @@ impl DataCore {
         let mut iter = curr_samples.iter() ;
         // Find the first sample that appears in some constraints.
         'find_first: while let Some(sample) = iter.next() {
-          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+          if let Some(cstr_set) = self.remove_subs(curr_pred, sample) {
             if ! cstr_set.is_empty() {
               // log_debug!(
               //   "  - sample {} appears in {} constraints",
@@ -699,7 +777,7 @@ impl DataCore {
         // Iterate over the remaining samples and add to the constraints to
         // check.
         'other_samples: while let Some(sample) = iter.next() {
-          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+          if let Some(cstr_set) = self.remove_subs(curr_pred, sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
               // log_debug!(
@@ -727,7 +805,7 @@ impl DataCore {
         
         // Is `rhs` true?
         if self.constraints[c_idx].rhs.as_ref().map(
-          | sample | sample.is_in(curr_pred, & curr_samples)
+          | sample | sample.is_subbed(curr_pred, & curr_samples)
         ).unwrap_or(false) {
           // log_debug!("    -> rhs is true, tautologizing") ;
           // Tautologize and break links.
@@ -740,7 +818,7 @@ impl DataCore {
         let mut remove = false ;
         if let Some(set) = self.constraints[c_idx].lhs.get_mut(& curr_pred) {
           set.retain(
-            |sample| ! curr_samples.contains(sample)
+            |sample| ! sample.is_subbed(& curr_samples)
           ) ;
           remove = set.is_empty()
         }
@@ -825,6 +903,11 @@ impl DataCore {
       if curr_samples.is_empty() { continue }
 
       let mut new_stuff = false ;
+      self.neg[curr_pred].retain(
+        |other| ! curr_samples.iter().any(
+          |sample| sample.sub(other)
+        )
+      ) ;
       for sample in & curr_samples {
         let is_new = self.neg[curr_pred].insert( sample.clone() ) ;
         new_stuff = new_stuff || is_new
@@ -843,7 +926,7 @@ impl DataCore {
         let mut iter = curr_samples.iter() ;
         // Find the first sample that appears in some constraints.
         'find_first: while let Some(sample) = iter.next() {
-          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+          if let Some(cstr_set) = self.remove_subs(curr_pred, sample) {
             if ! cstr_set.is_empty() {
               // log_debug!(
               //   "  - sample {} appears in {} constraints",
@@ -864,7 +947,7 @@ impl DataCore {
         // Iterate over the remaining samples and add to the constraints to
         // check.
         'other_samples: while let Some(sample) = iter.next() {
-          if let Some(cstr_set) = self.map[curr_pred].remove(sample) {
+          if let Some(cstr_set) = self.remove_subs(curr_pred, sample) {
             if ! cstr_set.is_empty() {
               use std::iter::Extend ;
               // log_debug!(
@@ -892,7 +975,7 @@ impl DataCore {
         
         // Is `rhs` false?
         if self.constraints[c_idx].rhs.as_ref().map(
-          | sample | sample.is_in(curr_pred, & curr_samples)
+          | sample | sample.is_subbed(curr_pred, & curr_samples)
         ).unwrap_or(false) {
           // log_debug!("    -> rhs is false, constraint is negative") ;
           // Forget rhs.
@@ -904,7 +987,7 @@ impl DataCore {
         for (pred, samples) in & self.constraints[c_idx].lhs {
           if pred == & curr_pred {
             for sample in samples {
-              if curr_samples.contains(sample) {
+              if sample.is_subbed(& curr_samples) {
                 // This sample is false, the constraint is trivially true.
                 trivial = true ;
                 break
@@ -1024,14 +1107,14 @@ impl<'a> PebcakFmt<'a> for DataCore {
     for (pred, set) in & self.pos_to_add {
       write!(w, "\n  {} |", self.instance[* pred]) ? ;
       for sample in set {
-        write!(w, " {}", sample) ?
+        write!(w, " ({})", sample) ?
       }
     }
     write!(w, "\n) negative examples staged (\n") ? ;
     for (pred, set) in & self.neg_to_add {
       write!(w, "  {} |", self.instance[* pred]) ? ;
       for sample in set {
-        write!(w, " {}", sample) ?
+        write!(w, " ({})", sample) ?
       }
       write!(w, "\n") ?
     }
@@ -1140,15 +1223,14 @@ impl Data {
     let mut nu_lhs_len = 0 ;
 
     'smpl_iter: for (pred, args) in lhs {
-      let (args, is_new) = self.mk_sample(args) ;
-      if ! is_new {
-        if self.pos[pred].contains(& args) {
-          // Sample known to be positive, ignore.
-          continue 'smpl_iter
-        } else if self.neg[pred].contains(& args) {
-          // Sample known to be negative, constraint is a tautology.
-          return Ok(false)
-        }
+      let (args, _) = self.mk_sample(args) ;
+
+      if args.is_subbed(& self.pos[pred]) {
+        // Sample known to be positive, ignore.
+        continue 'smpl_iter
+      } else if args.is_subbed(& self.neg[pred]) {
+        // Sample known to be negative, constraint is a tautology.
+        return Ok(false)
       }
 
       // Neither pos or neg, memorizing.
@@ -1160,17 +1242,13 @@ impl Data {
     }
 
     let nu_rhs = if let Some( (pred, args) ) = rhs {
-      let (args, is_new) = self.mk_sample(args) ;
-      if ! is_new {
-        if self.pos[pred].contains(& args) {
-          // Sample known to be positive, constraint's a tautology.
-          return Ok(false)
-        } else if self.neg[pred].contains(& args) {
-          // Sample known to be negative, constraint is a negative one.
-          None
-        } else {
-          Some( Sample { pred, args } )
-        }
+      let (args, _) = self.mk_sample(args) ;
+      if args.is_subbed(& self.pos[pred]) {
+        // Sample known to be positive, constraint's a tautology.
+        return Ok(false)
+      } else if args.is_subbed(& self.neg[pred]) {
+        // Sample known to be negative, constraint is a negative one.
+        None
       } else {
         Some( Sample { pred, args } )
       }
@@ -1280,38 +1358,16 @@ impl Data {
   /// Stages propagation but does not run it.
   pub fn stage_raw_pos(
     & mut self, pred: PrdIdx, args: Args
-  ) -> Res<bool> {
-    let (args, is_new) = self.mk_sample(args) ;
-    if is_new {
-      let is_new = self.pos[pred].insert(args) ;
-      debug_assert!( is_new ) ;
-      Ok(true)
-    } else {
-      if ! self.pos[pred].contains(& args) {
-        self.stage_pos(pred, args) ;
-        Ok(true)
-      } else {
-        Ok(false)
-      }
-    }
+  ) -> bool {
+    let (args, _) = self.mk_sample(args) ;
+    self.stage_pos(pred, args)
   }
 
   /// Adds negative data after hash consing. True if new.
   pub fn stage_raw_neg(
     & mut self, pred: PrdIdx, args: Args
-  ) -> Res<bool> {
-    let (args, is_new) = self.mk_sample(args) ;
-    if is_new {
-      let is_new = self.neg[pred].insert(args) ;
-      debug_assert!( is_new ) ;
-      Ok(true)
-    } else {
-      if ! self.neg[pred].contains(& args) {
-        self.stage_neg(pred, args) ;
-        Ok(true)
-      } else {
-        Ok(false)
-      }
-    }
+  ) -> bool {
+    let (args, _) = self.mk_sample(args) ;
+    self.stage_neg(pred, args)
   }
 }

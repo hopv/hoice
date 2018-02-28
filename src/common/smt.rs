@@ -318,12 +318,19 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
     for vals in self.vals {
       write!(w, " (and") ? ;
       debug_assert_eq! { self.args.len(), vals.len() }
+      let mut at_least_one = false ;
       for (arg, val) in self.args.iter().zip( vals.iter() ) {
-        write!(w, " (= ") ? ;
-        arg.write(w, |w, var| write!(w, "{}", var.default_str())) ? ;
-        write!(w, " ") ? ;
-        val.expr_to_smt2(w, ()) ? ;
-        write!(w, ")") ?
+        if val.is_known() {
+          at_least_one = true ;
+          write!(w, " (= ") ? ;
+          arg.write(w, |w, var| write!(w, "{}", var.default_str())) ? ;
+          write!(w, " ") ? ;
+          val.expr_to_smt2(w, ()) ? ;
+          write!(w, ")") ?
+        }
+      }
+      if ! at_least_one {
+        write!(w, " true") ?
       }
       write!(w, ")") ?
     }

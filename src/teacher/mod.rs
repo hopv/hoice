@@ -252,6 +252,20 @@ impl<'a> Teacher<'a> {
 
   /// Finalizes the run.
   pub fn finalize(mut self) -> Res<()> {
+    for set in self.data.pos.iter() {
+      for sample in set {
+        if sample.is_partial() {
+          profile! { self "partial pos samples" => add 1 }
+        }
+      }
+    }
+    for set in self.data.neg.iter() {
+      for sample in set {
+        if sample.is_partial() {
+          profile! { self "partial negamples" => add 1 }
+        }
+      }
+    }
     self.solver.kill().chain_err(
       || "While killing solver"
     ) ? ;
@@ -585,6 +599,10 @@ impl<'a> Teacher<'a> {
     clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
     bias: bool,
   ) -> Res< Vec<Cex> > {
+    let partial = conf.teacher.partial && (
+      self.instance.pos_clauses().contains(& clause_idx) ||
+      self.instance.neg_clauses().contains(& clause_idx)
+    ) ;
 
     self.solver.push(1) ? ;
     // Macro to avoid borrowing `self.instance`.
@@ -609,7 +627,7 @@ impl<'a> Teacher<'a> {
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
           let cex = Args::of_model(
-            clause!().vars(), model
+            clause!().vars(), model, partial
           ) ;
           profile!{ self mark "cexs", "model" }
           cexs.push(cex) ;

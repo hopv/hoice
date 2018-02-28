@@ -11,6 +11,10 @@ use common::{ Int, Rat, Signed } ;
 
 
 /// Values.
+///
+/// # TODO
+///
+/// - document partial eq and same_as
 #[derive(Debug, Clone, Hash)]
 pub enum Val {
   /// Boolean value.
@@ -67,7 +71,7 @@ macro_rules! bin_op {
       Val::N => match $rgt {
         Val::N | Val::I(_) | Val::R(_) => Ok(Val::N),
         ref rgt => bail!(
-          "expected compatible arith values, found {} and {}", "?", rgt
+          "expected compatible arith values, found {} and {}", "_", rgt
         ),
       },
       Val::I(lft) => match $rgt {
@@ -123,7 +127,7 @@ macro_rules! arith_bin_rel {
       Val::N => match $rgt {
         Val::N | Val::I(_) | Val::R(_) => Ok(Val::N),
         ref rgt => bail!(
-          "expected arith values, found {} and {}", "?", rgt
+          "expected arith values, found {} and {}", "_", rgt
         ),
       },
       Val::I(lft) => match $rgt {
@@ -159,6 +163,22 @@ impl Val {
     match * self {
       Val::N => false,
       _ => true,
+    }
+  }
+
+  /// Checks if two values are the same.
+  ///
+  /// Different from partial eq!
+  pub fn same_as(& self, other: & Self) -> bool {
+    use Val::* ;
+    match (self, other) {
+      (& N, & N) => true,
+      (& I(ref i_1), & I(ref i_2)) => i_1 == i_2,
+      (& R(ref r_1), & R(ref r_2)) => r_1 == r_2,
+      (& B(ref b_1), & B(ref b_2)) => b_1 == b_2,
+      (& I(_), _) | (_, & I(_)) |
+      (& R(_), _) | (_, & R(_)) |
+      (& B(_), _) | (_, & B(_)) => false,
     }
   }
 
@@ -427,7 +447,7 @@ impl Val {
         Val::R(ref r) if r.is_zero() => Ok( (0, 1).into() ),
         Val::I(_) | Val::R(_) | Val::N => Ok(Val::N),
         ref rgt => bail!(
-          "expected arith values, found {} and {}", "?", rgt
+          "expected arith values, found {} and {}", "_", rgt
         ),
       },
       Val::I(lft) => match other {
@@ -587,7 +607,7 @@ impl_fmt!{
       Val::I(ref i) => int_to_smt!(fmt, i),
       Val::R(ref r) => rat_to_smt!(fmt, r),
       Val::B(b) => write!(fmt, "{}", b),
-      Val::N => fmt.write_str("?"),
+      Val::N => fmt.write_str("_"),
     }
   }
 }

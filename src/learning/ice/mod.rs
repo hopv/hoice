@@ -787,24 +787,25 @@ impl<'core> IceLearner<'core> {
         qual
       },
       (None, None) => {
-        let mut msg = format!(
-          "\ncould not split remaining data for {} after synthesis:\n",
-          self.instance[pred]
-        ) ;
-        msg.push_str("pos (") ;
-        for pos in data.pos() {
-          msg.push_str( & format!("\n    {}", pos) )
-        }
-        msg.push_str("\n) neg (") ;
-        for neg in data.neg() {
-          msg.push_str( & format!("\n    {}", neg) )
-        }
-        msg.push_str("\n) unc (") ;
-        for unc in data.unc() {
-          msg.push_str( & format!("\n    {}", unc) )
-        }
-        msg.push_str("\n)") ;
-        bail!(msg)
+        // let mut msg = format!(
+        //   "\ncould not split remaining data for {} after synthesis:\n",
+        //   self.instance[pred]
+        // ) ;
+        // msg.push_str("pos (") ;
+        // for pos in data.pos() {
+        //   msg.push_str( & format!("\n    {}", pos) )
+        // }
+        // msg.push_str("\n) neg (") ;
+        // for neg in data.neg() {
+        //   msg.push_str( & format!("\n    {}", neg) )
+        // }
+        // msg.push_str("\n) unc (") ;
+        // for unc in data.unc() {
+        //   msg.push_str( & format!("\n    {}", unc) )
+        // }
+        // msg.push_str("\n)") ;
+        // bail!(msg)
+        bail!(ErrorKind::Unsat)
       },
     } ;
     profile!{ self tick "learning", "qual", "data split" }

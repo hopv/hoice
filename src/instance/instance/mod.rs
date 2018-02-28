@@ -59,6 +59,8 @@ pub struct Instance {
   ///
   /// Only available after finalize.
   imp_clauses: ClsSet,
+  /// True if finalized already ran.
+  is_finalized: bool,
 }
 impl Instance {
   /// Instance constructor.
@@ -79,6 +81,7 @@ impl Instance {
       pos_clauses: ClsSet::new(),
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
+      is_finalized: false,
     } ;
     // Create basic constants, adding to consts to have mining take them into
     // account.
@@ -231,6 +234,9 @@ impl Instance {
   ///
   /// - optimize sorting of forced preds by dependencies (low priority)
   pub fn finalize(& mut self) {
+    if self.is_finalized { return () }
+    self.is_finalized = true ;
+
     self.sorted_pred_terms.clear() ;
     self.consts.shrink_to_fit() ;
     self.preds.shrink_to_fit() ;
@@ -241,7 +247,6 @@ impl Instance {
     let mut tmp: Vec< (PrdIdx, PrdSet) > = Vec::with_capacity(
       self.preds.len()
     ) ;
-
 
     for (idx, clause) in self.clauses.index_iter() {
       if clause.rhs().is_none() && clause.lhs_pred_apps_len() == 1 {
@@ -856,6 +861,23 @@ impl Instance {
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: Cexs
   ) -> Res<bool> {
+    macro_rules! fix_cex {
+      ($clause:expr, $cex:expr, $args:expr) => ({
+        let mut modded_cex = $cex.clone() ;
+        let mut all_vars = VarSet::new() ;
+        for arg in $args.iter() {
+          for var in term::vars(arg) {
+            let is_new = all_vars.insert(var) ;
+            // Variable appears in more than one arg, force its value.
+            if ! is_new && ! modded_cex[var].is_known() {
+              modded_cex[var] = $clause[var].typ.default_val()
+            }
+          }
+        }
+        modded_cex
+      })
+    }
+
     let mut nu_stuff = false ;
     for (clause, cexs) in cexs.into_iter() {
 
@@ -878,12 +900,16 @@ impl Instance {
           // debug! { "        {}", self[pred] }
           if self.pred_terms[pred].is_none() {
             // debug! { "        -> is none, {} args", argss.len() }
+
             for args in argss {
               // debug! { "        {}", args }
+
+              let modded_cex = fix_cex!(clause, cex, args) ;
+
               let mut values = Args::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 values.push(
-                  arg.eval(& cex).chain_err(
+                  arg.eval(& modded_cex).chain_err(
                     || "during argument evaluation to generate learning data"
                   ) ?
                 )
@@ -903,9 +929,10 @@ impl Instance {
         let consequent = if let Some((pred, args)) = clause.rhs() {
           // debug! { "        ({} {})", self[pred], args }
           let mut values = Args::with_capacity( args.len() ) ;
+          let modded_cex = fix_cex!(clause, cex, args) ;
           'pred_args: for arg in args.iter() {
             values.push(
-              arg.eval(& cex).chain_err(
+              arg.eval(& modded_cex).chain_err(
                 || "during argument evaluation to generate learning data"
               ) ?
             )
@@ -922,11 +949,11 @@ impl Instance {
           ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            let new = data.stage_raw_neg(pred, args) ? ;
+            let new = data.stage_raw_neg(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (0, Some( (pred, args) )) => {
-            let new = data.stage_raw_pos(pred, args) ? ;
+            let new = data.stage_raw_pos(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (_, consequent) => {
@@ -936,6 +963,8 @@ impl Instance {
         }
       }
     }
+
+    data.propagate() ? ;
 
     Ok(nu_stuff)
   }

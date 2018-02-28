@@ -701,7 +701,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("5").takes_value(
+      ).default_value("0").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -713,7 +713,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("10").takes_value(
+      ).default_value("100").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -837,6 +837,8 @@ pub struct TeacherConf {
   pub assistant: bool,
   /// Try to find implication constraints related to existing samples first.
   pub bias_cexs: bool,
+  /// Allow partial samples.
+  pub partial: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
@@ -886,6 +888,18 @@ impl TeacherConf {
         "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("partial").long("--partial").help(
+        "(de)activate partial samples"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
     )
   }
 
@@ -894,9 +908,10 @@ impl TeacherConf {
     let step = bool_of_matches(matches, "step") ;
     let assistant = bool_of_matches(matches, "assistant") ;
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
+    let partial = bool_of_matches(matches, "partial") ;
 
     TeacherConf {
-      step, assistant, bias_cexs
+      step, assistant, bias_cexs, partial
     }
   }
 }

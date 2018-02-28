@@ -164,14 +164,56 @@ impl Args {
     Self::new( VarMap::with_capacity(capa) )
   }
 
+  /// True if at least one value is `Val::N`.
+  pub fn is_partial(& self) -> bool {
+    self.map.iter().any(|v| ! v.is_known())
+  }
+
+  /// True if the two args are the same.
+  pub fn same_as(& self, other: & Self) -> bool {
+    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
+      if ! v_1.same_as(v_2) { return false }
+    }
+    true
+  }
+
+  /// True if for all values in `self`, it is the same as `other` or is
+  /// `Val::N`, and at least one is `Val::N`.
+  ///
+  /// Both must have the same length.
+  pub fn sub(& self, other: & Self) -> bool {
+    debug_assert_eq! { self.map.len(), other.map.len() }
+    let mut same = true ;
+    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
+      if ! v_1.same_as(v_2) {
+        if v_1.is_known() {
+          return false
+        } else {
+          same = false
+        }
+      }
+    }
+    ! same
+  }
+
+  /// True if `s.sub(self) || s.same_as(self)` is true for some `s` in `set`.
+  pub fn is_subbed(& self, set: & HConSet<::common::data::HSample>) -> bool {
+    set.iter().any(|s| s.sub(self) || s.same_as(self))
+  }
+
   /// Constructor from a model.
   pub fn of_model<T>(
     info: & VarMap<::instance::info::VarInfo>,
-    model: Vec<(VarIdx, T, Val)>
+    model: Vec<(VarIdx, T, Val)>,
+    partial: bool,
   ) -> Self {
     let mut slf = Args::new(
       info.iter().map(
-        |info| info.typ.default_val()
+        |info| if partial {
+          Val::N
+        } else {
+          info.typ.default_val()
+        }
       ).collect()
     ) ;
     for (var, _, val) in model {
