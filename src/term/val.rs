@@ -268,6 +268,27 @@ impl Val {
     }
   }
 
+  /// Checks if the value is one (integer or rational).
+  pub fn is_one(& self) -> bool {
+    use num::One ;
+    match * self {
+      Val::I(ref i) => i == & Int::one(),
+      Val::R(ref r) => r == & Rat::one(),
+      Val::B(_) |
+      Val::N => false,
+    }
+  }
+
+  /// Transforms a value into a term.
+  pub fn to_term(self) -> Option<::term::Term> {
+    match self {
+      Val::I(i) => Some( ::term::int(i) ),
+      Val::R(r) => Some( ::term::real(r) ),
+      Val::B(b) => Some( ::term::bool(b) ),
+      Val::N => None,
+    }
+  }
+
   /// Conjunction.
   ///
   /// # Examples
@@ -618,7 +639,12 @@ impl From<bool> for Val {
 }
 impl From<Int> for Val {
   fn from(i: Int) -> Val {
-    Val::I( i.into() )
+    Val::I(i)
+  }
+}
+impl From<Rat> for Val {
+  fn from(r: Rat) -> Val {
+    Val::R(r)
   }
 }
 impl From<usize> for Val {

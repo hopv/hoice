@@ -49,7 +49,7 @@
 //! match * some_term {
 //!   RTerm::App { op: Op::Eql, ref args } => {
 //!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( format!("{}", some_term), "(= v_5 (/ 11 2))" )
+//!     assert_eq!( format!("{}", some_term), "(= 11 (* 2 v_5))" )
 //!   },
 //!   _ => panic!("not an equality"),
 //! }
@@ -190,12 +190,36 @@ impl RTerm {
       _ => None,
     }
   }
+  /// Returns the kids of a constant multiplication.
+  pub fn cmul_inspect(& self) -> Option<(Val, & Term)> {
+    match * self {
+      RTerm::App { op: Op::CMul, ref args } => {
+        if args.len() == 2 {
+          if let Some(val) = args[0].val() {
+            return Some((val, & args[1]))
+          }
+        }
+        panic!("illegal c_mul application: {}", self)
+      },
+      _ => None,
+    }
+  }
 
   /// True if the term is zero (integer or real).
   pub fn is_zero(& self) -> bool {
     match ( self.int(), self.real() ) {
       (Some(i), _) => i.is_zero(),
       (_, Some(r)) => r.is_zero(),
+      _ => false,
+    }
+  }
+
+  /// True if the term is one (integer or real).
+  pub fn is_one(& self) -> bool {
+    use num::One ;
+    match ( self.int(), self.real() ) {
+      (Some(i), _) => i == Int::one(),
+      (_, Some(r)) => r == Rat::one(),
       _ => false,
     }
   }
@@ -368,6 +392,16 @@ impl RTerm {
     match self.real_eval( & () ) {
       Ok(Some(r)) => Some(r),
       _ => None
+    }
+  }
+
+  /// Turns a constant term in a `Val`.
+  pub fn val(& self) -> Option<Val> {
+    match * self {
+      RTerm::Int(ref i) => Some( i.clone().into() ),
+      RTerm::Real(ref r) => Some( r.clone().into() ),
+      RTerm::Bool(b) => Some( b.into() ),
+      _ => None,
     }
   }
 
@@ -686,18 +720,54 @@ impl RTerm {
     let mut term = self ;
 
     loop {
+      // println!("inverting {}", term) ;
       match * term {
         RTerm::App { op, ref args } => {
           let (po, symmetric) = match op {
             Op::Add => (Op::Sub, true),
-            Op::Sub if args.len() == 1 => {
-              solution = term::u_minus( solution ) ;
-              term = & args[0] ;
-              continue
+            Op::Sub => {
+              if args.len() == 1 {
+                solution = term::u_minus( solution ) ;
+                term = & args[0] ;
+                continue
+              } else if args.len() == 2 {
+                if args[0].val().is_some() {
+                  solution = term::sub(
+                    vec![ args[0].clone(), solution ]
+                  ) ;
+                  term = & args[1] ;
+                  continue
+                } else if args[1].val().is_some() {
+                  solution = term::add(
+                    vec![ args[1].clone(), solution ]
+                  ) ;
+                  term = & args[0] ;
+                  continue
+                }
+              }
+              return None
             },
             Op::IDiv => return None,
-            Op::Div => (Op::Mul, false),
-            Op::Mul => (Op::Div, true),
+            Op::CMul => {
+              if args.len() == 2 {
+                if let Some(val) = args[0].val() {
+                  use num::One ;
+                  if val.minus().expect(
+                    "illegal c_mul application found in `invert`"
+                  ) == Int::one().into() {
+                    solution = term::u_minus(solution) ;
+                    term = & args[1] ;
+                    continue
+                  } else {
+                    return None
+                  }
+                }
+              }
+
+              panic!("illegal c_mul application found in `invert`")
+            },
+            // Op::Div => (Op::Mul, false),
+            // Op::Mul => (Op::Div, true),
             Op::ToReal => {
               solution = term::to_int(solution) ;
               term = & args[0] ;
@@ -1986,6 +2056,10 @@ pub enum Op {
   Sub,
   /// Multiplication.
   Mul,
+  /// Multiplication by a constant.
+  ///
+  /// Its arguments should always be [ constant, term ].
+  CMul,
   /// Integer division.
   IDiv,
   /// Division.
@@ -2030,6 +2104,7 @@ impl Op {
       Add => add_,
       Sub => sub_,
       Mul => mul_,
+      CMul => mul_,
       IDiv => idiv_,
       Div => div_,
       Rem => rem_,
@@ -2165,7 +2240,7 @@ impl Op {
     }
 
     let res = match * self {
-      Add | Sub | Mul | Div => {
+      Add | Sub | Mul | Div | CMul => {
         all_same!(arith)
       },
       IDiv | Rem | Mod => arity_check!(
@@ -2262,6 +2337,14 @@ impl Op {
       },
 
       Mul => {
+        let mut res: Val = 1.into() ;
+        for arg in args.into_iter() {
+          res = res.mul(arg) ?
+        }
+        Ok(res)
+      },
+
+      CMul => {
         let mut res: Val = 1.into() ;
         for arg in args.into_iter() {
           res = res.mul(arg) ?

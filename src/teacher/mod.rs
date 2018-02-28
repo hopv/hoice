@@ -262,7 +262,7 @@ impl<'a> Teacher<'a> {
     for set in self.data.neg.iter() {
       for sample in set {
         if sample.is_partial() {
-          profile! { self "partial negamples" => add 1 }
+          profile! { self "partial neg samples" => add 1 }
         }
       }
     }

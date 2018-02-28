@@ -515,8 +515,8 @@ macro_rules! eq {
     $({
       let (lhs, rhs) = ($lhs, $rhs) ;
       println!("") ;
-      println!("lhs: {}", lhs) ;
-      println!("rhs: {}", rhs) ;
+      println!("     got: {}", lhs) ;
+      println!("expected: {}", rhs) ;
       assert_eq!(lhs, rhs) ;
     })*
   }) ;
@@ -714,39 +714,22 @@ fn invert() {
      0 ;
   }
 
-  let term = term::mul( vec![ term::int(7), term::var(0) ] ) ;
-  let invert = term.invert( term::var(1) ).unwrap() ;
-  eq!{
-   > invert.1,
-     term::div( vec![ term::var(1), term::int(7) ] ) ;
-   > invert.0,
-     0 ;
-  }
-  let term = term::mul( vec![ term::var(0), term::int(7) ] ) ;
-  let invert = term.invert( term::var(1) ).unwrap() ;
-  eq!{
-   > invert.1,
-     term::div( vec![ term::var(1), term::int(7) ] ) ;
-   > invert.0,
-     0 ;
-  }
-
-  let term = term::mul( vec![ term::int(7), term::var(0) ] ) ;
-  let invert = term.invert( term::var(1) ).unwrap() ;
-  eq!{
-   > invert.1,
-     term::div( vec![ term::var(1), term::int(7) ] ) ;
-   > invert.0,
-     0 ;
-  }
-  let term = term::mul( vec![ term::var(0), term::int(7) ] ) ;
-  let invert = term.invert( term::var(1) ).unwrap() ;
-  eq!{
-   > invert.1,
-     term::div( vec![ term::var(1), term::int(7) ] ) ;
-   > invert.0,
-     0 ;
-  }
+  // let term = term::mul( vec![ term::int(7), term::var(0) ] ) ;
+  // let invert = term.invert( term::var(1) ).unwrap() ;
+  // eq!{
+  //  > invert.1,
+  //    term::div( vec![ term::var(1), term::int(7) ] ) ;
+  //  > invert.0,
+  //    0 ;
+  // }
+  // let term = term::mul( vec![ term::var(0), term::int(7) ] ) ;
+  // let invert = term.invert( term::var(1) ).unwrap() ;
+  // eq!{
+  //  > invert.1,
+  //    term::div( vec![ term::var(1), term::int(7) ] ) ;
+  //  > invert.0,
+  //    0 ;
+  // }
 }
 
 

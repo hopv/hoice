@@ -398,9 +398,10 @@ pub fn normalize(
           continue 'do_stuff
         },
 
-        Some( NormRes::App(nu_op, nu_to_do) ) => {
+        Some( NormRes::App(nu_op, mut nu_to_do) ) => {
           stack.push( (op, to_do, args) ) ;
           let nu_args = Vec::with_capacity( nu_to_do.len() ) ;
+          nu_to_do.reverse() ;
           stack.push( (nu_op, nu_to_do, nu_args) ) ;
           continue 'go_down
         },
@@ -662,6 +663,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
     },
 
     Op::Sub => {
+
       let mut args = args.into_iter() ;
       if let Some(first) = args.next() {
 
@@ -673,7 +675,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           }
 
           return NormRes::App(
-            Op::Mul, vec![
+            Op::CMul, vec![
               NormRes::Term( term::int(- 1) ),
               NormRes::Term(first),
             ]
@@ -704,83 +706,207 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
       panic!("trying to construct an empty sum")
     } else {
 
-      let mut cnt = 0 ;
-      let (mut int_sum, mut rat_sum): (Option<Int>, Option<Rat>) = (
-        None, None
-      ) ;
+      let mut sum: Val = 0.into() ;
 
-      macro_rules! sum {
-        (add int $e:expr) => (
-          int_sum = Some(
-            int_sum.unwrap_or( Int::zero() ) + $e
+      let mut c_args = HConMap::<Term, Val>::new() ;
+      let mut changed = false ;
+
+      while let Some(arg) = args.pop() {
+        if let Some(kids) = arg.add_inspect().map(|kids| kids.clone()) {
+          args.extend(kids)
+        } else if let Some(v) = arg.val() {
+          sum = sum.add(v).expect(
+            "during add simplification"
           )
-        ) ;
-        (add real $e:expr) => (
-          rat_sum = Some(
-            rat_sum.unwrap_or( Rat::zero() ) + $e
-          )
-        ) ;
-        (get) => (
-          match (int_sum, rat_sum) {
-            ( Some(i), None ) => if i.is_zero() {
-              None
-            } else {
-              Some( term::int(i) )
-            },
-            ( None, Some(r) ) => if r.is_zero() {
-              None
-            } else {
-              Some( term::real(r) )
-            },
-            ( Some(i), Some(r) ) => {
-              let r = r + Rat::new(i, 1.into()) ;
-              if r.is_zero() {
-                None
-              } else {
-                Some( term::real(r) )
-              }
-            },
-            (None, None) => None,
+        } else {
+          let (val, term) = if let Some((val, term)) = arg.cmul_inspect() {
+            (val, term)
+          } else {
+            (1.into(), & arg)
+          } ;
+
+          if let Some(value) = c_args.get_mut(term) {
+            * value = value.clone().add(val).expect(
+              "during add simplification"
+            ) ;
+            changed = true ;
+            continue
           }
-        ) ;
+
+          c_args.insert(term.clone(), val) ;
+        }
       }
 
-      while cnt < args.len() {
-        if let Some(kids) = args[cnt].add_inspect().map(|kids| kids.clone()) {
-          args.swap_remove(cnt) ;
-          args.extend(kids)
-        } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
-          args.swap_remove(cnt) ;
-          sum! { add int i }
-        } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
-          args.swap_remove(cnt) ;
-          sum! { add real r }
+      if changed {
+        let mut args = vec![
+          NormRes::Term( sum.to_term().unwrap() )
+        ] ;
+        for (term, coef) in c_args {
+          if coef.is_zero() {
+            continue
+          } else if coef.is_one() {
+            args.push( NormRes::Term(term) )
+          } else {
+            args.push(
+              NormRes::App(
+                Op::CMul, vec![
+                  NormRes::Term( coef.to_term().unwrap() ),
+                  NormRes::Term(term)
+                ]
+              )
+            )
+          }
+        }
+
+        return NormRes::App(Op::Add, args)
+      }
+
+      let mut args = Vec::with_capacity( c_args.len() ) ;
+      for (term, coef) in c_args {
+        if coef.is_zero() {
+          continue
+        } else if coef.is_one() {
+          args.push(term)
         } else {
-          cnt += 1
+          args.push(
+            factory.mk(
+              RTerm::App {
+                op: Op::CMul,
+                args: vec![ coef.to_term().unwrap(), term ]
+              }
+            )
+          )
         }
       }
 
       if args.len() == 0 {
-        if let Some(sum) = sum!(get) {
-          return NormRes::Term(sum)
+        return NormRes::Term(
+          sum.to_term().expect(
+            "coefficient cannot be unknown"
+          )
+        )
+      } else if sum.is_zero() {
+        if args.len() == 1 {
+          return NormRes::Term( args.pop().unwrap() )
         } else {
-          return NormRes::Term( int(0) )
-        }
-      } else if args.len() == 1 {
-        if let Some(sum) = sum!(get) {
-          args.push(sum) ;
           args.sort_unstable() ;
           (op, args)
-        } else {
-          return NormRes::Term( args.pop().unwrap() )
         }
       } else {
-        if let Some(sum) = sum!(get) {
-          args.push(sum)
-        }
+        let sum = sum.to_term().expect(
+          "coefficient cannot be unknown"
+        ) ;
+        args.push(sum) ;
         args.sort_unstable() ;
         (op, args)
       }
+
+    },
+
+    Op::CMul => {
+      let (cst, term) = if let Some(term) = args.pop() {
+        if let Some(cst) = args.pop() {
+          (cst, term)
+        } else {
+          panic!("trying to construct a c_mul with 1 != 2 arguments")
+        }
+      } else {
+        panic!("trying to construct a c_mul with 0 != 2 arguments")
+      } ;
+      if args.pop().is_some() {
+        panic!("trying to construct a c_mul with more than 2 arguments")
+      }
+      debug_assert! { cst.val().is_some() }
+
+      if let Some(val) = term.val() {
+        let cst_val = cst.val().expect(
+          & format!("illegal c_mul application: {} {}", cst, term)
+        ) ;
+        let res = cst_val.mul(val).expect(
+          & format!("illegal c_mul application: {} {}", cst, term)
+        ).to_term().expect(
+          "cannot be unknown"
+        ) ;
+        return NormRes::Term(res)
+      }
+
+      if cst.is_one() {
+        return NormRes::Term(term)
+      } else if cst.is_zero() {
+        return NormRes::Term( term::zero() )
+      }
+
+      if let Some((op, args)) = term.app_inspect() {
+        match op {
+          Op::Add | Op::Mul | Op::Sub => return NormRes::App(
+            op, args.iter().map(
+              |arg| {
+                NormRes::App(
+                  Op::CMul, vec![
+                    NormRes::Term( cst.clone() ),
+                    NormRes::Term( arg.clone() )
+                  ]
+                )
+              }
+            ).collect()
+          ),
+
+          Op::CMul => if args.len() != 2 {
+            panic!("illegal c_mul application to {} != 2 terms", args.len())
+          } else {
+            let cst_2 = args[0].clone() ;
+            let term = args[1].clone() ;
+            return NormRes::App(
+              op, vec![
+                NormRes::App(
+                  Op::Mul, vec![
+                    NormRes::Term(cst),
+                    NormRes::Term(cst_2),
+                  ]
+                ),
+                NormRes::Term(term)
+              ]
+            )
+          },
+
+          Op::Ite => if args.len() != 3 {
+            panic!("illegal ite application: {}", term)
+          } else {
+            let (c, t, e) = (
+              args[0].clone(),
+              args[1].clone(),
+              args[2].clone(),
+            ) ;
+            return NormRes::App(
+              op, vec![
+                NormRes::Term(c),
+                NormRes::App(
+                  Op::CMul, vec![
+                    NormRes::Term(cst.clone()),
+                    NormRes::Term(t),
+                  ]
+                ),
+                NormRes::App(
+                  Op::CMul, vec![
+                    NormRes::Term(cst),
+                    NormRes::Term(e),
+                  ]
+                )
+              ]
+            )
+          },
+
+          Op::IDiv | Op::Div | Op::Rem | Op::Mod |
+          Op::ToInt | Op::ToReal => (),
+
+          Op::Gt | Op::Ge | Op::Le | Op::Lt | Op::Eql |
+          Op::Impl | Op::Not | Op::And | Op::Or => panic!(
+            "illegal c_mul application {}", term
+          ),
+        }
+      }
+
+      (op, vec![ cst, term ])
 
     },
 
@@ -789,53 +915,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
     } else {
 
       let mut cnt = 0 ;
-      let (mut int_coef, mut rat_coef): (Option<Int>, Option<Rat>) = (
-        None, None
-      ) ;
-
-      macro_rules! coef {
-        (mul int $e:expr) => (
-          int_coef = Some(
-            int_coef.unwrap_or( Int::one() ) * $e
-          )
-        ) ;
-        (mul real $e:expr) => (
-          rat_coef = Some(
-            rat_coef.unwrap_or( Rat::one() ) * $e
-          )
-        ) ;
-        (get) => (
-          match (int_coef, rat_coef) {
-            ( Some(i), None ) => if i == Int::one() {
-              None
-            } else if i.is_zero() {
-              return NormRes::Term( int(0) )
-            } else {
-              Some( term::int(i) )
-            },
-            ( None, Some(r) ) => if r == Rat::one() {
-              None
-            } else if r.is_zero() {
-              return NormRes::Term(
-                real( Rat::new(0.into(), 1.into() ) )
-              )
-            } else {
-              Some( term::real(r) )
-            },
-            ( Some(i), Some(r) ) => {
-              let r = r * Rat::new(i, 1.into()) ;
-              if r == Rat::one() {
-                None
-              } else if r.is_zero() {
-                return NormRes::Term( int(0) )
-              } else {
-                Some( term::real(r) )
-              }
-            },
-            (None, None) => None,
-          }
-        ) ;
-      }
+      let mut coef: Val = 1.into() ;
 
       while cnt < args.len() {
         if let Some(kids) = args[cnt].mul_inspect().map(|kids| kids.clone()) {
@@ -843,47 +923,55 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           args.extend(kids)
         } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
-          coef! { mul int i }
+          coef = coef.mul( i.into() ).expect(
+            "during multiplication simplification"
+          )
         } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
-          coef! { mul real r }
+          coef = coef.mul( r.into() ).expect(
+            "during multiplication simplification"
+          )
         } else {
           cnt += 1
         }
       }
 
       if args.len() == 0 {
-        if let Some(coef) = coef!(get) {
-          return NormRes::Term(coef)
+        return NormRes::Term(
+          coef.to_term().expect(
+            "coefficient cannot be unknown"
+          )
+        )
+      } else if coef.is_one() {
+        if args.len() == 1 {
+          return NormRes::Term( args.pop().expect("mul1") )
         } else {
-          return NormRes::Term( int(1) )
-        }
-      } else if args.len() == 1 {
-        if let Some(coef) = coef!(get) {
-          if let Some(args) = args[0].add_inspect() {
-            return NormRes::App(
-              Op::Add, args.iter().map(
-                |arg| NormRes::App(
-                  Op::Mul, vec![
-                    NormRes::Term(coef.clone()),
-                    NormRes::Term(arg.clone()),
-                  ]
-                )
-              ).collect()
-            )
-          }
-          args.push(coef) ;
           args.sort_unstable() ;
           (op, args)
-        } else {
-          return NormRes::Term( args.pop().unwrap() )
         }
       } else {
-        if let Some(coef) = coef!(get) {
-          args.push(coef)
+        let coef = coef.to_term().expect(
+          "coefficient cannot be unknown"
+        ) ;
+        if args.len() == 1 {
+          return NormRes::App(
+            Op::CMul, vec![
+              NormRes::Term(coef),
+              NormRes::Term( args.pop().expect("mul2") )
+            ]
+          )
+        } else {
+          return NormRes::App(
+            Op::Mul, args.into_iter().map(
+              |arg| NormRes::App(
+                Op::CMul, vec![
+                  NormRes::Term( coef.clone() ),
+                  NormRes::Term( arg )
+                ]
+              )
+            ).collect()
+          )
         }
-        args.sort_unstable() ;
-        (op, args)
       }
 
     },
