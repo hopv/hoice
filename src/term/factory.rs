@@ -1,5 +1,8 @@
 //! Term creation functions.
 
+use std::ops::Deref ;
+use std::cmp::Ordering ;
+
 use hashconsing::{ HashConsign, HConser } ;
 
 use common::* ;
@@ -588,24 +591,29 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           )
         },
 
-        RTerm::App { op: Op::Gt, ref args } => {
-          let mut args = args.clone() ;
-          args.reverse() ;
-          return NormRes::Term((
-            factory.mk(
-              RTerm::App { op: Op::Ge, args }
-            )
-          ))
-        },
-        RTerm::App { op: Op::Ge, ref args } => {
-          let mut args = args.clone() ;
-          args.reverse() ;
-          return NormRes::Term((
-            factory.mk(
-              RTerm::App { op: Op::Gt, args }
-            )
-          ))
-        },
+        RTerm::App { op: Op::Gt, ref args } => return NormRes::App(
+          Op::Ge, args.iter().map(
+            |arg| NormRes::Term( arg.clone() )
+          ).rev().collect()
+          //^^^~~~~ IMPORTANT.
+        ),
+        RTerm::App { op: Op::Ge, ref args } => return NormRes::App(
+          Op::Gt, args.iter().map(
+            |arg| NormRes::Term( arg.clone() )
+          ).rev().collect()
+          //^^^~~~~ IMPORTANT.
+        ),
+        RTerm::App { op: Op::Lt, ref args } => return NormRes::App(
+          Op::Ge, args.iter().map(
+            |arg| NormRes::Term( arg.clone() )
+          ).collect()
+        ),
+        RTerm::App { op: Op::Le, ref args } => return NormRes::App(
+          Op::Gt, args.iter().map(
+            |arg| NormRes::Term( arg.clone() )
+          ).rev().collect()
+          //^^^~~~~ IMPORTANT.
+        ),
         _ => (),
       }
 
@@ -686,7 +694,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
           for arg in args {
             to_do.push(
               NormRes::App(
-                Op::Mul, vec![
+                Op::CMul, vec![
                   NormRes::Term( term::int(- 1) ),
                   NormRes::Term(arg),
                 ]
@@ -1074,76 +1082,95 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
       (op, args)
     },
 
-    Op::Ge => if args.len() == 2 {
-      if args[0] == args[1] {
-        return NormRes::Term( tru() )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].int(), args[1].int()
-      ) {
-        return NormRes::Term( bool(lhs >= rhs) )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].real(), args[1].real()
-      ) {
-        return NormRes::Term( bool(lhs >= rhs) )
-      } else {
-        (op, args)
-      }
-    } else {
-      (op, args)
-    },
+    Op::Ge | Op::Gt => if args.len() == 2 {
 
-    Op::Gt => if args.len() == 2 {
       if args[0] == args[1] {
-        return NormRes::Term( fls() )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].int(), args[1].int()
-      ) {
-        return NormRes::Term( bool(lhs > rhs) )
-      } else if let (Some(lhs), Some(rhs)) = (
-        args[0].real(), args[1].real()
-      ) {
-        return NormRes::Term( bool(lhs > rhs) )
+        return NormRes::Term( bool( op == Op::Ge ) )
+      } else
+
+      // We want the rhs to be a constant.
+      if let Some(rhs_val) = args[1].val() {
+        // If lhs is also a constant, we done.
+        if let Some(lhs_val) = args[0].val() {
+          let res = if op == Op::Ge {
+            lhs_val.ge(rhs_val)
+          } else {
+            lhs_val.gt(rhs_val)
+          } ;
+          return NormRes::Term(
+            bool( res.unwrap().to_bool().unwrap().unwrap() )
+          )
+        }
+
+        let (rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
+
+        // Is lhs a sum with a constant in it?.
+        let mut correction = None ;
+
+        if let Some(kids) = lhs.add_inspect() {
+          for kid in kids {
+            if let Some(cst) = kid.val() { correction = Some(cst) }
+          }
+        }
+        if let Some(correction) = correction {
+          return NormRes::App(
+            op, vec![
+              NormRes::App(
+                Op::Sub, vec![
+                  NormRes::Term( lhs ),
+                  NormRes::Term( correction.clone().to_term().unwrap() )
+                ]
+              ),
+              NormRes::Term(
+                rhs_val.sub(correction).unwrap().to_term().unwrap()
+              )
+            ]
+          )
+        } else {
+          // No correction, let's dodis.
+          args.push(lhs) ;
+          args.push(rhs)
+        }
+
       } else {
-        (op, args)
+        // Rhs is not a constant.
+        let (rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
+        return NormRes::App(
+          op, vec![
+            NormRes::App(
+              Op::Sub, vec![
+                NormRes::Term( lhs ),
+                NormRes::Term( rhs )
+              ]
+            ),
+            NormRes::Term( term::zero() )
+          ]
+        )
       }
-    } else {
+
       (op, args)
+    } else {
+      panic!(
+        "illegal `{}` application to {} != 2 argument(s)", op, args.len()
+      )
     },
 
     Op::Le => {
-      if args.len() == 2 {
-        if args[0] == args[1] {
-          return NormRes::Term( tru() )
-        } else if let (Some(lhs), Some(rhs)) = (
-          args[0].int(), args[1].int()
-        ) {
-          return NormRes::Term( bool(lhs <= rhs) )
-        } else if let (Some(lhs), Some(rhs)) = (
-          args[0].real(), args[1].real()
-        ) {
-          return NormRes::Term( bool(lhs <= rhs) )
-        }
-      }
       args.reverse() ;
-      (Op::Ge, args)
+      return NormRes::App(
+        Op::Ge, args.into_iter().map(
+          |arg| NormRes::Term(arg)
+        ).collect()
+      )
     },
 
     Op::Lt => {
-      if args.len() == 2 {
-        if args[0] == args[1] {
-          return NormRes::Term( fls() )
-        } else if let (Some(lhs), Some(rhs)) = (
-          args[0].int(), args[1].int()
-        ) {
-          return NormRes::Term( bool(lhs < rhs) )
-        } else if let (Some(lhs), Some(rhs)) = (
-          args[0].real(), args[1].real()
-        ) {
-          return NormRes::Term( bool(lhs < rhs) )
-        }
-      }
       args.reverse() ;
-      (Op::Gt, args)
+      return NormRes::App(
+        Op::Gt, args.into_iter().map(
+          |arg| NormRes::Term(arg)
+        ).collect()
+      )
     },
 
     Op::Mod => if args.len() == 2 {
@@ -1185,4 +1212,120 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
   } ;
 
   NormRes::Term( factory.mk( RTerm::App { op, args } ) )
+}
+
+
+
+/// Checks two atoms for syntactic implication.
+///
+/// Returns
+///
+/// - `None` if no conclusion was reached,
+/// - `Some(Greater)` if `lhs => rhs`,
+/// - `Some(Less)` if `lhs <= rhs`,
+/// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
+///
+/// So *greater* really means *more generic*.
+///
+/// # Examples
+///
+/// ```
+/// use std::cmp::Ordering::* ;
+/// use hoice::term ;
+///
+/// let lhs = term::not(
+///   term::lt(
+///     term::int(0),
+///     term::sub( vec![ term::int(3), term::var(0) ] )
+///   )
+/// ) ;
+/// # println!("   {}\n\n", lhs) ;
+/// let rhs = term::ge( term::var(0), term::int(3) ) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Equal) }
+///
+/// # println!("   {}\n\n", lhs) ;
+/// let rhs = term::ge( term::var(0), term::int(7) ) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Greater) }
+///
+/// # println!("   {}\n\n", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// debug_assert_eq! { term::atom_implies(& rhs, & lhs), Some(Less) }
+/// ```
+pub fn atom_implies<T1, T2>(lhs: & T1, rhs: & T2) -> Option<Ordering>
+where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
+  use std::cmp::Ordering::* ;
+  // Input boolean is true (false) for `lhs` => `rhs` (reversed).
+  macro_rules! ord_of_bool {
+    ($b:expr) => (
+      if $b {
+        Some(Greater)
+      } else {
+        Some(Less)
+      }
+    ) ;
+  }
+
+  let (lhs, rhs) = ( lhs.deref(), rhs.deref() ) ;
+
+  // A term implies itself.
+  if lhs == rhs { return Some(Equal) }
+
+  match ( lhs.bool(), rhs.bool() ) {
+    // True can only imply true.
+    (Some(true), rhs) => return ord_of_bool!(
+      rhs.unwrap_or(false)
+    ),
+    // False implies anything.
+    (Some(false), _) => return ord_of_bool!(true),
+    // False can only be implied by false.
+    (lhs, Some(false)) => return ord_of_bool!(
+      ! lhs.unwrap_or(true)
+    ),
+    // True is implied by anything.
+    (_, Some(true)) => return ord_of_bool!(true),
+    // Otherwise we don't know (yet).
+    (None, None) => (),
+  }
+
+  // Only legal atoms are `vars >= cst` and `vars > cst`.
+  let (
+    lhs_op, lhs_vars, lhs_cst
+  ) = if let Some((op, args)) = lhs.app_inspect() {
+    if op != Op::Ge && op != Op::Gt { return None }
+    (op, & args[0], args[1].val().unwrap())
+  } else {
+    return None
+  } ;
+  let (
+    rhs_op, rhs_vars, rhs_cst
+  ) = if let Some((op, args)) = rhs.app_inspect() {
+    if op != Op::Ge && op != Op::Gt { return None }
+    (op, & args[0], args[1].val().unwrap())
+  } else {
+    return None
+  } ;
+
+  if lhs_vars == rhs_vars {
+    if lhs_cst.eq(& rhs_cst) {
+      if lhs_op == rhs_op {
+        return Some(Equal)
+      } else if lhs_op == Op::Ge && rhs_op == Op::Gt {
+        return ord_of_bool!(true)
+      } else if lhs_op == Op::Gt && rhs_op == Op::Ge {
+        return ord_of_bool!(false)
+      } else {
+        unreachable!()
+      }
+    } else
+
+    if lhs_cst.lt(rhs_cst).unwrap().to_bool().unwrap().unwrap() {
+      return ord_of_bool!(false)
+    } else {
+      return ord_of_bool!(true)
+    }
+  }
+
+  None
 }

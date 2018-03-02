@@ -164,7 +164,7 @@ pub fn read_and_work<R: ::std::io::Read>(
             },
           }
         }
-        instance.finalize() ;
+        instance.finalize() ? ;
 
         if conf.stats {
           if instance.is_solved() {

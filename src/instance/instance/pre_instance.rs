@@ -141,18 +141,28 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    if ! self.instance[clause].terms_changed() {
-      if self.instance[clause].is_unsat() {
-        bail!( ErrorKind::Unsat )
-      }
-      return Ok( RedInfo::new() )
+    log_debug! { "simplifying clause #{}", clause }
+
+    if self.instance[clause].is_unsat() {
+      bail!( ErrorKind::Unsat )
     }
 
-    // Propagate.
+    log_debug! {
+      "{}", self[clause].to_string_info(self.preds()).unwrap()
+    }
+
+
+    if ! self.instance[clause].terms_changed() {
+      // Propagate.
+      rm_return! {
+        clause if self.simplifier.clause_propagate(
+          & mut self.instance[clause]
+        ) ? => "propagation"
+      }
+    }
+
     rm_return! {
-      clause if self.simplifier.clause_propagate(
-        & mut self.instance[clause]
-      ) ? => "propagation"
+      clause if self.is_redundant(clause) => "clause redundant"
     }
 
     // Check for triviality.
@@ -160,21 +170,35 @@ impl<'a> PreInstance<'a> {
       clause if self.is_clause_trivial(clause) ? => "clause trivial"
     }
 
-    // Remove redundant atoms.
-    if conf.preproc.prune_terms {
-      self.prune_atoms(clause) ?
+    if ! self.instance[clause].terms_changed() {
+      // Remove redundant atoms.
+      if conf.preproc.prune_terms {
+        self.prune_atoms(clause) ?
+      }
     }
 
     self.instance[clause].lhs_terms_checked() ;
 
     // Try to split the clause.
-    let res = self.split_disj(clause) ;
+    let res = self.split_disj(clause) ? ;
 
-    if self.instance[clause].is_unsat() {
-      bail!( ErrorKind::Unsat )
+    // Splitting the disjunction might have removed this clause and all other
+    // ones.
+    if res.clauses_rmed > res.clauses_added {
+      debug_assert_eq! { res.clauses_rmed, res.clauses_added + 1 }
+      Ok(res)
+    } else {
+
+      rm_return! {
+        clause if self.is_redundant(clause) => "clause redundant"
+      }
+
+      if self.instance[clause].is_unsat() {
+        bail!( ErrorKind::Unsat )
+      }
+
+      Ok(res)
     }
-
-    res
   }
 
   /// Splits disjunctions.
@@ -232,10 +256,10 @@ impl<'a> PreInstance<'a> {
         for kid in kids {
           let mut clause = clause.clone() ;
           clause.insert_term(kid) ;
-          let this_clause_idx = self.instance.clauses.next_index() ;
-          self.instance.push_clause(clause) ? ;
-          info.clauses_added += 1 ;
-          info += self.simplify_clause( this_clause_idx ) ?
+          if let Some(this_clause_idx) = self.instance.push_clause(clause) ? {
+            info.clauses_added += 1 ;
+            info += self.simplify_clause( this_clause_idx ) ?
+          }
         }
         Ok(info)
       } else {
@@ -843,8 +867,11 @@ impl<'a> PreInstance<'a> {
         // the clause list, meaning simplifying it will not impact other
         // clauses.
         let this_clause = self.instance.clauses.next_index() ;
-        self.instance.push_clause_unchecked(clause) ;
-        info += self.simplify_clause(this_clause) ? ;
+        let is_new = self.instance.push_clause_unchecked(clause) ;
+        if is_new {
+          info.clauses_added += 1 ;
+          info += self.simplify_clause(this_clause) ?
+        }
 
         // Increment.
         let mut n = def_indices.len() ;
@@ -1116,20 +1143,22 @@ impl<'a> PreInstance<'a> {
     }
 
     for mut clause in to_add {
-      let index = self.clauses.next_index() ;
       log_debug! {
         "  adding clause {}",
         clause.to_string_info(& self.preds).unwrap()
       }
-      self.instance.push_clause(clause) ? ;
-      let mut simplinfo = self.simplify_clause(index) ? ;
-      if simplinfo.clauses_rmed > 0 {
-        simplinfo.clauses_rmed -= 1
-      } else {
-        simplinfo.clauses_added += 1
+      if let Some(index) = self.instance.push_clause(clause) ? {
+        let mut simplinfo = self.simplify_clause(index) ? ;
+        if simplinfo.clauses_rmed > 0 {
+          simplinfo.clauses_rmed -= 1
+        } else {
+          simplinfo.clauses_added += 1
+        }
+        info += simplinfo
       }
-      info += simplinfo
     }
+
+    self.check("after unroll") ? ;
 
     Ok(info)
   }
@@ -1183,20 +1212,22 @@ impl<'a> PreInstance<'a> {
     }
 
     for mut clause in to_add {
-      let index = self.clauses.next_index() ;
       log_debug! {
         "  adding clause {}",
         clause.to_string_info(& self.preds).unwrap()
       }
-      self.instance.push_clause(clause) ? ;
-      let mut simplinfo = self.simplify_clause(index) ? ;
-      if simplinfo.clauses_rmed > 0 {
-        simplinfo.clauses_rmed -= 1
-      } else {
-        simplinfo.clauses_added += 1
+      if let Some(index) = self.instance.push_clause(clause) ? {
+        let mut simplinfo = self.simplify_clause(index) ? ;
+        if simplinfo.clauses_rmed > 0 {
+          simplinfo.clauses_rmed -= 1
+        } else {
+          simplinfo.clauses_added += 1
+        }
+        info += simplinfo
       }
-      info += simplinfo
     }
+
+    self.check("after runroll") ? ;
 
     Ok(info)
   }
@@ -1380,7 +1411,7 @@ impl<'a> PreInstance<'a> {
     self.solver.reset() ? ;
 
     let set = PrdSet::new() ;
-    self.instance.finalize() ;
+    self.instance.finalize() ? ;
     for pred in self.instance.sorted_forced_terms() {
       let pred = * pred ;
       log_debug! { "    definining {}", self[pred] }

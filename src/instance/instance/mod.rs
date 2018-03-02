@@ -233,8 +233,8 @@ impl Instance {
   /// # TO DO
   ///
   /// - optimize sorting of forced preds by dependencies (low priority)
-  pub fn finalize(& mut self) {
-    if self.is_finalized { return () }
+  pub fn finalize(& mut self) -> Res<()> {
+    if self.is_finalized { return Ok(()) }
     self.is_finalized = true ;
 
     self.sorted_pred_terms.clear() ;
@@ -253,7 +253,14 @@ impl Instance {
         let is_new = self.neg_clauses.insert(idx) ;
         debug_assert! { is_new }
       } else if clause.lhs_preds().is_empty() {
-        debug_assert! { self.is_unsat || clause.rhs().is_some() }
+        if ! (
+          self.is_unsat || clause.rhs().is_some()
+        ) {
+          bail!(
+            "{}\nfound a clause with no predicate during finalization",
+            clause.to_string_info(& self.preds()).unwrap()
+          )
+        }
         let is_new = self.pos_clauses.insert(idx) ;
         debug_assert! { is_new }
       } else {
@@ -304,6 +311,8 @@ impl Instance {
     //     self.clusters.push( Cluster::of_clause(idx, clause) )
     //   }
     // }
+
+    Ok(())
   }
 
 
@@ -649,24 +658,59 @@ impl Instance {
   }
 
   /// Pushes a new clause.
-  pub fn push_clause(& mut self, clause: Clause) -> Res<()> {
-    self.push_clause_unchecked(clause) ;
-    self.check("after `push_clause`")
+  ///
+  /// Returns its index, if it was added.
+  pub fn push_clause(& mut self, clause: Clause) -> Res< Option<ClsIdx> > {
+    let idx = self.clauses.next_index() ;
+    let is_new = self.push_clause_unchecked(clause) ;
+    self.check("after `push_clause`") ? ;
+    Ok( if is_new { Some(idx) } else { None } )
+  }
+
+  /// True if the clause is redundant.
+  pub fn is_redundant(& self, idx: ClsIdx) -> bool {
+    let clause = & self.clauses[idx] ;
+
+    if let Some((pred, _)) = clause.rhs() {
+      for i in & self.pred_to_clauses[pred].1 {
+        if * i != idx && self[* i].same_as(& clause) {
+          return true
+        }
+      }
+    } else if let Some((pred, _)) = clause.lhs_preds().iter().next() {
+      for i in & self.pred_to_clauses[* pred].0 {
+        if * i != idx && self[* i].same_as(& clause) {
+          return true
+        }
+      }
+    } else {
+      for (i, c) in self.clauses.index_iter() {
+        if i != idx && c.same_as(& clause) { return true }
+      }
+    }
+    false
   }
 
   /// Pushes a new clause, does not sanity-check.
-  fn push_clause_unchecked(& mut self, clause: Clause) -> () {
+  fn push_clause_unchecked(& mut self, clause: Clause) -> bool {
     let clause_index = self.clauses.next_index() ;
-    for pred in clause.lhs_preds().keys() {
+    self.clauses.push(clause) ;
+
+    if self.is_redundant(clause_index) {
+      self.clauses.pop() ;
+      return false
+    }
+
+    for pred in self.clauses[clause_index].lhs_preds().keys() {
       let pred = * pred ;
       let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
       debug_assert!(is_new)
     }
-    if let Some((pred, _)) = clause.rhs() {
+    if let Some((pred, _)) = self.clauses[clause_index].rhs() {
       let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
       debug_assert!(is_new)
     }
-    self.clauses.push(clause)
+    true
   }
 
   /// Extracts some qualifiers from all clauses.
@@ -1009,6 +1053,22 @@ impl Instance {
       }
     }
 
+    scoped! {
+      let mut clauses = self.clauses.iter() ;
+      while let Some(clause) = clauses.next() {
+        for c in clauses.clone() {
+          if clause.same_as(c) {
+            bail!(
+              "{}\n\n{}\n\nsame clause appears multiple times\n{}",
+              clause.to_string_info(self.preds()).unwrap(),
+              c.to_string_info(self.preds()).unwrap(),
+              conf.bad(s)
+            )
+          }
+        }
+      }
+    }
+
     Ok(())
   }
 
@@ -1175,13 +1235,19 @@ impl Instance {
       write!(w, "\n; Clause #{}\n", idx) ? ;
       clause.write(
         w, |w, p, args| {
-          write!(w, "(") ? ;
+          if ! args.is_empty() {
+            write!(w, "(") ?
+          }
           w.write_all( self[p].name.as_bytes() ) ? ;
           for arg in args.iter() {
             write!(w, " ") ? ;
             arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
           }
-          write!(w, ")")
+          if ! args.is_empty() {
+            write!(w, ")")
+          } else {
+            Ok(())
+          }
         }
       ) ? ;
       write!(w, "\n\n") ?
@@ -1205,7 +1271,7 @@ impl Instance {
     }
 
     if self.sorted_pred_terms.is_empty() {
-      self.finalize()
+      self.finalize() ?
     }
 
     let mut old_tterms: PrdMap<Option<TTerms>> = vec![

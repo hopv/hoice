@@ -767,6 +767,7 @@ macro_rules! parser {
       ).expect(
         "failed to parse term"
       ) ;
+      println!("term: {}", $term) ;
       parser! { @ $b }
     })*
   }) ;

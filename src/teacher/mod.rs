@@ -610,6 +610,16 @@ impl<'a> Teacher<'a> {
       () => (& self.instance[clause_idx])
     }
 
+    if conf.solver.log {
+      self.solver.comment_args(
+        format_args!(
+          "\n\nClause # {}: {}",
+          clause_idx,
+          clause!().to_string_info(& self.instance.preds()).unwrap()
+        )
+      ) ?
+    }
+
     profile!{ self tick "cexs", "prep" }
     clause!().declare(& mut self.solver) ? ;
     self.solver.assert_with(

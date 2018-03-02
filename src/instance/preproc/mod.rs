@@ -1330,12 +1330,20 @@ impl RedStrat for Unroll {
 
     let mut info = RedInfo::new() ;
     for (pred, terms) in prd_map {
-      log_info! {
-        "unrolling {}, {} term(s)",
-        conf.emph(& instance[pred].name),
-        terms.len()
+      if terms.len() <= 50 {
+        log_info! {
+          "unrolling {}, {} term(s)",
+          conf.emph(& instance[pred].name),
+          terms.len()
+        }
+        info += instance.unroll(pred, terms) ?
+      } else {
+        log_info! {
+          "unrolling {}, {} (> 50) term(s)",
+          conf.emph(& instance[pred].name),
+          terms.len()
+        }
       }
-      info += instance.unroll(pred, terms) ?
     }
     Ok(info)
   }

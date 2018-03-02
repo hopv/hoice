@@ -28,7 +28,7 @@ pub struct Clause {
   ///
   /// [checked]: #methods.lhs_terms_checked
   /// (lhs_terms_checked method)
-  term_changed: bool,
+  terms_changed: bool,
   /// True if the clause is the result of unrolling.
   ///
   /// Means the terms will be ignored during mining.
@@ -43,10 +43,17 @@ impl Clause {
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause {
       vars, lhs_terms, lhs_preds, rhs,
-      term_changed: true, from_unrolling: false
+      terms_changed: true, from_unrolling: false
     } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
     clause
+  }
+
+  /// Checks if two clauses are the same.
+  pub fn same_as(& self, other: & Self) -> bool {
+    self.rhs == other.rhs &&
+    self.lhs_preds == other.lhs_preds &&
+    self.lhs_terms == other.lhs_terms
   }
 
   /// Cheap unsat check.
@@ -59,11 +66,11 @@ impl Clause {
     && self.rhs.is_none()
   }
 
-  /// Sets the internal flag `term_changed` to false.
+  /// Sets the internal flag `terms_changed` to false.
   ///
   /// Also shrinks the variables.
   pub fn lhs_terms_checked(& mut self) {
-    self.term_changed = false ;
+    self.terms_changed = false ;
     self.shrink_vars()
   }
 
@@ -72,7 +79,7 @@ impl Clause {
   ///
   /// [checked]: #methods.lhs_terms_checked
   /// (lhs_terms_checked method)
-  pub fn terms_changed(& self) -> bool { self.term_changed }
+  pub fn terms_changed(& self) -> bool { self.terms_changed }
 
   /// Shrinks the clause: detects inactive variables.
   pub fn shrink_vars(& mut self) {
@@ -121,6 +128,22 @@ impl Clause {
     for term in & self.lhs_terms {
       vars.extend( term::vars( term ) )
     }
+
+    scoped! {
+      let mut terms = self.lhs_terms.iter() ;
+
+      while let Some(term) = terms.next() {
+        for t in terms.clone() {
+          if term.atom_implies(t).is_some() {
+            bail!(
+              "redundant atoms in clause:\n  {}\n  {}\n{}",
+              term, t, conf.bad(blah)
+            )
+          }
+        }
+      }
+    }
+
     for (_, argss) in & self.lhs_preds {
       for args in argss {
         for arg in args.iter() {
@@ -190,6 +213,34 @@ impl Clause {
     self.lhs_preds.insert_pred_app(pred, args)
   }
 
+  /// Checks if `term` is implied by a term in `set`.
+  ///
+  /// Removes the terms from `set` that are implied (strictly) by `term`.
+  fn is_redundant(term: & Term, set: & mut HConSet<Term>) -> bool {
+    use std::cmp::Ordering::* ;
+    let mut redundant = false ;
+    let mut rmed_stuff = false ;
+    set.retain(
+      |t| match t.atom_implies(term) {
+        // `t` is more generic, `term` is redundant, keep `t`.
+        Some(Equal) | Some(Greater) => {
+          redundant = true ;
+          true
+        },
+        // `term` is more generic, discard.
+        Some(Less) => {
+          rmed_stuff = true ;
+          false
+        },
+        // No relation, keep `t`.
+        None => true,
+      }
+    ) ;
+    // If we removed stuff, it means the term should not be redundant.
+    assert! { ! rmed_stuff || ! redundant }
+    redundant
+  }
+
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
     if let Some(kids) = term.conj_inspect() {
@@ -201,8 +252,10 @@ impl Clause {
         } else if let Some(true) = term.bool() {
           ()
         } else {
-          let is_new = lhs_terms.insert( kid.clone() ) ;
-          new_stuff = new_stuff || is_new
+          if ! Self::is_redundant(& term, lhs_terms) {
+            let is_new = lhs_terms.insert( kid.clone() ) ;
+            new_stuff = new_stuff || is_new
+          }
         }
       }
       while let Some(term) = stack.pop() {
@@ -211,8 +264,10 @@ impl Clause {
         } else if let Some(true) = term.bool() {
           ()
         } else {
-          let is_new = lhs_terms.insert( term.clone() ) ;
-          new_stuff = new_stuff || is_new
+          if ! Self::is_redundant(& term, lhs_terms) {
+            let is_new = lhs_terms.insert( term.clone() ) ;
+            new_stuff = new_stuff || is_new
+          }
         }
       }
       return new_stuff
@@ -223,7 +278,11 @@ impl Clause {
     if let Some(true) = term.bool() {
       false
     } else {
-      lhs_terms.insert(term)
+      if ! Self::is_redundant(& term, lhs_terms) {
+        lhs_terms.insert(term)
+      } else {
+        false
+      }
     }
   }
 
@@ -231,9 +290,11 @@ impl Clause {
   pub fn insert_term(& mut self, term: Term) -> bool {
     let is_new = Self::lhs_insert_term(& mut self.lhs_terms, term) ;
     if is_new {
-      self.term_changed = true
+      self.terms_changed = true ;
+      true
+    } else {
+      false
     }
-    is_new
   }
   /// Removes a term from the LHS.
   pub fn rm_term(& mut self, term: & Term) -> bool {
@@ -394,7 +455,7 @@ impl Clause {
       vars: self.vars.clone(),
       lhs_terms: self.lhs_terms.clone(), lhs_preds,
       rhs: self.rhs.clone(),
-      term_changed: true,
+      terms_changed: true,
       from_unrolling: self.from_unrolling,
     }
   }
@@ -404,9 +465,9 @@ impl Clause {
   pub fn clone_with_rhs(& self, rhs: Option<TTerm>) -> Self {
     let mut lhs_terms = self.lhs_terms.clone() ;
 
-    let (rhs, term_changed) = match rhs {
+    let (rhs, terms_changed) = match rhs {
       Some( TTerm::P { pred, args } ) => (
-        Some((pred, args)), self.term_changed
+        Some((pred, args)), self.terms_changed
       ),
       Some( TTerm::T(term) ) => {
         let added = if term.bool() != Some(false) {
@@ -414,9 +475,9 @@ impl Clause {
         } else {
           false
         } ;
-        (None, self.term_changed || added)
+        (None, self.terms_changed || added)
       },
-      None => (None, self.term_changed),
+      None => (None, self.terms_changed),
     } ;
 
     Clause {
@@ -424,11 +485,40 @@ impl Clause {
       lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
       rhs,
-      term_changed,
+      terms_changed,
       from_unrolling: self.from_unrolling,
     }
   }
 
+
+  /// Removes all redundant terms from `lhs_terms`.
+  fn prune(& mut self) {
+    use std::cmp::Ordering::* ;
+    let mut to_rm = HConSet::<Term>::new() ;
+    scoped! {
+      let mut terms = self.lhs_terms.iter() ;
+      while let Some(term) = terms.next() {
+        for t in terms.clone() {
+          match t.atom_implies(term) {
+            // `t` is more generic, `term` is redundant, keep `t`.
+            Some(Equal) | Some(Greater) => {
+              to_rm.insert( term.clone() ) ;
+            },
+            // `term` is more generic, discard `t`.
+            Some(Less) => {
+              to_rm.insert( t.clone() ) ;
+            },
+            // No relation.
+            None => (),
+          }
+        }
+      }
+    }
+    for to_rm in to_rm {
+      let was_there = self.lhs_terms.remove(& to_rm) ;
+      debug_assert! { was_there }
+    }
+  }
 
 
   /// Variable substitution.
@@ -472,6 +562,8 @@ impl Clause {
         ( pred, nu_args.into() )
       }
     ) ;
+
+    if changed { self.prune() }
 
     changed
   }

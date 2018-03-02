@@ -265,6 +265,24 @@ impl RTerm {
     Ok(())
   }
 
+  /// True if atom `self` implies atom `other` syntactically.
+  ///
+  /// Returns
+  ///
+  /// - `None` if no conclusion was reached,
+  /// - `Some(Greater)` if `lhs => rhs`,
+  /// - `Some(Less)` if `lhs <= rhs`,
+  /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
+  ///
+  /// So *greater* really means *more generic*.
+  ///
+  /// See [the module's function][atom implies] for more details and examples.
+  ///
+  /// [atom implies]: fn.atom_implies.html (atom_implies module-level function)
+  pub fn atom_implies(& self, other: & Self) -> Option<::std::cmp::Ordering> {
+    factory::atom_implies(& self, & other)
+  }
+
   /// Term evaluation (int).
   pub fn int_eval<E: Evaluator>(
     & self, model: & E
