@@ -1239,19 +1239,24 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
 ///     term::sub( vec![ term::int(3), term::var(0) ] )
 ///   )
 /// ) ;
-/// # println!("   {}\n\n", lhs) ;
+/// # println!("   {}", lhs) ;
 /// let rhs = term::ge( term::var(0), term::int(3) ) ;
 /// # println!("=> {}\n\n", rhs) ;
 /// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Equal) }
 ///
-/// # println!("   {}\n\n", lhs) ;
+/// # println!("   {}", lhs) ;
 /// let rhs = term::ge( term::var(0), term::int(7) ) ;
 /// # println!("<= {}\n\n", rhs) ;
 /// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Less) }
 ///
-/// # println!("   {}\n\n", rhs) ;
+/// # println!("   {}", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
 /// debug_assert_eq! { term::atom_implies(& rhs, & lhs), Some(Greater) }
+///
+/// let lhs = term::gt( term::var(0), term::int(7) ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Greater) }
 /// ```
 pub fn atom_implies<T1, T2>(lhs: & T1, rhs: & T2) -> Option<Ordering>
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
@@ -1312,9 +1317,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       if lhs_op == rhs_op {
         return Some(Equal)
       } else if lhs_op == Op::Ge && rhs_op == Op::Gt {
-        return ord_of_bool!(true)
-      } else if lhs_op == Op::Gt && rhs_op == Op::Ge {
         return ord_of_bool!(false)
+      } else if lhs_op == Op::Gt && rhs_op == Op::Ge {
+        return ord_of_bool!(true)
       } else {
         unreachable!()
       }

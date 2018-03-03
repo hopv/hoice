@@ -1334,7 +1334,7 @@ impl RedStrat for Unroll {
     for (pred, terms) in prd_map {
       if terms.len() <= 50 {
         log_info! {
-          "unrolling {}, {} term(s)",
+          "unrolling {}, {} variants",
           conf.emph(& instance[pred].name),
           terms.len()
         }

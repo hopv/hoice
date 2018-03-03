@@ -1095,6 +1095,8 @@ impl<'a> PreInstance<'a> {
     for clause in & self.instance.pred_to_clauses[pred].0 {
       let clause = & self.instance[* clause] ;
 
+      println!("unrolling from {}", clause.to_string_info(self.preds()).unwrap()) ;
+
       // Negative clause and `pred` is the only application.
       if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
         continue
@@ -1126,10 +1128,19 @@ impl<'a> PreInstance<'a> {
           }
         }
 
+        log_debug! {
+          "  pre-simplification {}",
+          nu_clause.to_string_info(& self.preds).unwrap()
+        }
+
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
+          log_debug! {
+            "  staging clause {}",
+            nu_clause.to_string_info(& self.preds).unwrap()
+          }
           nu_clause.from_unrolling = true ;
           to_add.push( nu_clause )
         }
@@ -1139,10 +1150,6 @@ impl<'a> PreInstance<'a> {
     info! { "  adding {} clauses", to_add.len() }
 
     for mut clause in to_add {
-      log_debug! {
-        "  adding clause {}",
-        clause.to_string_info(& self.preds).unwrap()
-      }
       if let Some(index) = self.instance.push_clause(clause) ? {
         let mut simplinfo = self.simplify_clause(index) ? ;
         if simplinfo.clauses_rmed > 0 {
