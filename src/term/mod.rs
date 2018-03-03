@@ -698,6 +698,7 @@ impl RTerm {
   pub fn invert_var(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
     self.invert( term::var(var) )
   }
+
   /// Attempts to invert a term.
   ///
   /// More precisely, if the term only mentions one variable `v`, attempts to

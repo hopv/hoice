@@ -368,6 +368,21 @@ impl RedInfo {
     || self.clauses_added > 0
     || self.args_rmed > 0
   }
+
+  /// True if `clause_added > clause_rmed`.
+  pub fn added_clauses(& self) -> bool {
+    self.clauses_added > self.clauses_rmed
+  }
+  /// Clauses added minus clauses removed.
+  ///
+  /// Zero if clauses removed greater than clauses added.
+  pub fn clause_diff(& self) -> usize {
+    if self.clauses_added > self.clauses_rmed {
+      self.clauses_added - self.clauses_rmed
+    } else {
+      0
+    }
+  }
 }
 impl From<(usize, usize, usize)> for RedInfo {
   fn from(

@@ -255,6 +255,7 @@ impl<'a> Reductor<'a> {
       run! { arg_red } ;
 
       let changed = run! { s_one_rhs } ;
+
       let changed = run! { s_one_lhs } || changed ;
 
       if changed {
@@ -288,43 +289,44 @@ impl<'a> Reductor<'a> {
 
     conf.check_timeout() ? ;
 
-    let max_clause_add = if conf.preproc.mult_unroll {
-      self.instance.clauses().len() / 3
+    let max_clause_add = if conf.preproc.mult_unroll
+    && ! self.instance.clauses().is_empty() {
+      (
+        50. * (
+          self.instance.clauses().len() as f64
+        ).log(10.)
+      ).round() as usize
     } else {
       0
     } ;
-    let mut clauses_added = 0 ;
+    let (
+      mut added, mut r_added,
+      mut added_pre, mut r_added_pre,
+    ) = (
+      0, 0,
+      run!(runroll info).clause_diff(),
+      run!(unroll info).clause_diff(),
+    ) ;
     loop {
+      added += added_pre ;
+      r_added += r_added_pre ;
 
-      let mut added = run!(unroll info).clauses_added ;
-      let mut r_added = run!(runroll info).clauses_added ;
+      info! { "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre }
+      info! { "           bakward {} ({})", r_added, r_added_pre }
+      info! { "             total {} / {}", added + r_added, max_clause_add }
 
-      if r_added > 10
-      && added > 0
-      && added <= r_added / 2 {
-        loop {
-          let nu_added = run!(unroll info).clauses_added ;
-          added += nu_added ;
-          if nu_added == 0
-          || added > r_added / 2 { break }
-        }
-      } else
-      if added > 10
-      && r_added > 0
-      && r_added <= added / 2  {
-        loop {
-          let nu_r_added = run!(runroll info).clauses_added ;
-          r_added += nu_r_added ;
-          if nu_r_added == 0
-          || r_added > added / 2 { break }
-        }
+      if (
+        added_pre == 0 && r_added_pre == 0
+      ) || added + r_added > max_clause_add {
+        // (R)Unrolling is not producing anything anymore or has gone above the
+        // threshold.
+        break
+      } else if added_pre == 0 || added > r_added {
+        // Unrolling is stuck or has produced more clauses than runrolling.
+        r_added_pre = run!(runroll info).clause_diff()
+      } else {
+        added_pre = run!(unroll info).clause_diff()
       }
-
-      clauses_added += added ;
-      clauses_added += r_added ;
-
-      if added == 0
-      || clauses_added > max_clause_add { break }
     }
 
     preproc_dump!(
@@ -1339,7 +1341,7 @@ impl RedStrat for Unroll {
         info += instance.unroll(pred, terms) ?
       } else {
         log_info! {
-          "unrolling {}, {} (> 50) term(s)",
+          "not unrolling {}, {} (> 50) term(s)",
           conf.emph(& instance[pred].name),
           terms.len()
         }

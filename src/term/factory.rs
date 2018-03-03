@@ -1246,12 +1246,12 @@ fn normalize_app(op: Op, mut args: Vec<Term>) -> NormRes {
 ///
 /// # println!("   {}\n\n", lhs) ;
 /// let rhs = term::ge( term::var(0), term::int(7) ) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Greater) }
+/// # println!("<= {}\n\n", rhs) ;
+/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Less) }
 ///
 /// # println!("   {}\n\n", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
-/// debug_assert_eq! { term::atom_implies(& rhs, & lhs), Some(Less) }
+/// debug_assert_eq! { term::atom_implies(& rhs, & lhs), Some(Greater) }
 /// ```
 pub fn atom_implies<T1, T2>(lhs: & T1, rhs: & T2) -> Option<Ordering>
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {

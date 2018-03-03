@@ -1765,7 +1765,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     } ;
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::new(var_map.clone(), nu_lhs, rhs)
+        Clause::new(var_map.clone(), nu_lhs, rhs, "parsing")
       ) ? ;
       ()
     }

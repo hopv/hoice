@@ -33,17 +33,21 @@ pub struct Clause {
   ///
   /// Means the terms will be ignored during mining.
   pub from_unrolling: bool,
+  /// Info about who created this clause.
+  pub info: & 'static str,
 }
 impl Clause {
   /// Creates a clause.
   pub fn new(
-    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: Option<PredApp>
+    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: Option<PredApp>,
+    info: & 'static str
   ) -> Self {
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause {
       vars, lhs_terms, lhs_preds, rhs,
-      terms_changed: true, from_unrolling: false
+      terms_changed: true, from_unrolling: false,
+      info
     } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
     clause
@@ -168,7 +172,7 @@ impl Clause {
     Ok(())
   }
   #[cfg(not(debug_assertions))]
-  #[inline(always)]
+  #[inline]
   pub fn check(& self, _: & 'static str) -> Res<()> {
     Ok(())
   }
@@ -181,7 +185,7 @@ impl Clause {
   }
 
   /// Inserts a top term in the lhs. Returns true if it was not there.
-  #[inline(always)]
+  #[inline]
   pub fn lhs_insert(& mut self, tterm: TTerm) -> bool {
     match tterm {
       TTerm::T(term) => if let Some(true) = term.bool() {
@@ -196,7 +200,7 @@ impl Clause {
   /// Removes all predicate application of `pred` in the LHS.
   ///
   /// Returns true if the predicate application was there.
-  #[inline(always)]
+  #[inline]
   pub fn drop_lhs_pred(
     & mut self, pred: PrdIdx
   ) -> Option< HTArgss > {
@@ -206,7 +210,7 @@ impl Clause {
   /// Inserts a predicate application in the LHS.
   ///
   /// Returns true if the predicate application is new.
-  #[inline(always)]
+  #[inline]
   pub fn insert_pred_app(
     & mut self, pred: PrdIdx, args: HTArgs
   ) -> bool {
@@ -302,23 +306,23 @@ impl Clause {
   }
 
   /// Length of a clause's LHS.
-  #[inline(always)]
+  #[inline]
   pub fn lhs_len(& self) -> usize {
     self.lhs_terms.len() + self.lhs_preds.len()
   }
   /// True if the clause's LHS is empty.
-  #[inline(always)]
+  #[inline]
   pub fn lhs_is_empty(& self) -> bool {
     self.lhs_terms.is_empty() && self.lhs_preds.is_empty()
   }
 
   /// LHS accessor (terms).
-  #[inline(always)]
+  #[inline]
   pub fn lhs_terms(& self) -> & HConSet<Term> {
     & self.lhs_terms
   }
   /// LHS accessor (predicate applications).
-  #[inline(always)]
+  #[inline]
   pub fn lhs_preds(& self) -> & PredApps {
     & self.lhs_preds
   }
@@ -437,13 +441,15 @@ impl Clause {
   }
 
   /// Variables accessor.
-  #[inline(always)]
+  #[inline]
   pub fn vars(& self) -> & VarMap<VarInfo> {
     & self.vars
   }
 
   /// Clones a clause without the lhs predicate applications.
-  pub fn clone_except_lhs_of(& self, pred: PrdIdx) -> Self {
+  pub fn clone_except_lhs_of(
+    & self, pred: PrdIdx, info: & 'static str
+  ) -> Self {
     let mut lhs_preds = PredApps::with_capacity( self.lhs_preds.len() ) ;
     for (p, argss) in & self.lhs_preds {
       if pred != * p {
@@ -457,12 +463,15 @@ impl Clause {
       rhs: self.rhs.clone(),
       terms_changed: true,
       from_unrolling: self.from_unrolling,
+      info,
     }
   }
 
   /// Clones a clause but changes the rhs.
   #[inline]
-  pub fn clone_with_rhs(& self, rhs: Option<TTerm>) -> Self {
+  pub fn clone_with_rhs(
+    & self, rhs: Option<TTerm>, info: & 'static str
+  ) -> Self {
     let mut lhs_terms = self.lhs_terms.clone() ;
 
     let (rhs, terms_changed) = match rhs {
@@ -487,6 +496,7 @@ impl Clause {
       rhs,
       terms_changed,
       from_unrolling: self.from_unrolling,
+      info
     }
   }
 
@@ -637,13 +647,15 @@ impl Clause {
       }
     }
     write!(w, " )") ? ;
-    if inactive > 0 {
-      write!(
-        w, " ; {} inactive variable(s), unroll: {}",
-        inactive, self.from_unrolling
-      ) ?
-    }
-    write!(w, "\n") ? ;
+    write!(
+      w, "\n  \
+        ; {} inactive variable(s)\n  \
+        ; unroll: {}\n  \
+        ; terms_changed: {}\n  \
+        ; created by `{}`\n\
+      ",
+      inactive, self.from_unrolling, self.terms_changed, self.info
+    ) ? ;
 
     let lhs_len = self.lhs_len() ;
 

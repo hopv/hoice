@@ -132,8 +132,8 @@ impl<'a> PreInstance<'a> {
     macro_rules! rm_return {
       ($clause:ident if $should_remove:expr => $blah:expr) => (
         if $should_remove {
-          log_debug! {
-            "removing clause #{} by {}", clause, $blah
+          info! {
+            "  removing clause #{} by {}", clause, $blah
           }
           self.instance.forget_clause(clause) ? ;
           return Ok( RedInfo::of_clauses_rmed(1) )
@@ -147,17 +147,22 @@ impl<'a> PreInstance<'a> {
       bail!( ErrorKind::Unsat )
     }
 
-    log_debug! {
-      "{}", self[clause].to_string_info(self.preds()).unwrap()
-    }
+    // log_debug! {
+    //   "{}", self[clause].to_string_info(self.preds()).unwrap()
+    // }
 
 
-    if ! self.instance[clause].terms_changed() {
+    if self.instance[clause].terms_changed() {
       // Propagate.
       rm_return! {
         clause if self.simplifier.clause_propagate(
           & mut self.instance[clause]
         ) ? => "propagation"
+      }
+
+      // Check for triviality.
+      rm_return! {
+        clause if self.is_clause_trivial(clause) ? => "clause trivial"
       }
     }
 
@@ -165,12 +170,7 @@ impl<'a> PreInstance<'a> {
       clause if self.is_redundant(clause) => "clause redundant"
     }
 
-    // Check for triviality.
-    rm_return! {
-      clause if self.is_clause_trivial(clause) ? => "clause trivial"
-    }
-
-    if ! self.instance[clause].terms_changed() {
+    if self.instance[clause].terms_changed() {
       // Remove redundant atoms.
       if conf.preproc.prune_terms {
         self.prune_atoms(clause) ?
@@ -180,25 +180,7 @@ impl<'a> PreInstance<'a> {
     self.instance[clause].lhs_terms_checked() ;
 
     // Try to split the clause.
-    let res = self.split_disj(clause) ? ;
-
-    // Splitting the disjunction might have removed this clause and all other
-    // ones.
-    if res.clauses_rmed > res.clauses_added {
-      debug_assert_eq! { res.clauses_rmed, res.clauses_added + 1 }
-      Ok(res)
-    } else {
-
-      rm_return! {
-        clause if self.is_redundant(clause) => "clause redundant"
-      }
-
-      if self.instance[clause].is_unsat() {
-        bail!( ErrorKind::Unsat )
-      }
-
-      Ok(res)
-    }
+    self.split_disj(clause)
   }
 
   /// Splits disjunctions.
@@ -1102,9 +1084,16 @@ impl<'a> PreInstance<'a> {
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
     let mut to_add = Vec::with_capacity(17) ;
+    let fls = term::fls() ;
+
+    info! {
+      "  {} appears in {} clause's lhs",
+      conf.emph(& self[pred].name),
+      self.instance.pred_to_clauses[pred].0.len()
+    }
 
     for clause in & self.instance.pred_to_clauses[pred].0 {
-      let clause = & self[* clause] ;
+      let clause = & self.instance[* clause] ;
 
       // Negative clause and `pred` is the only application.
       if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
@@ -1118,7 +1107,7 @@ impl<'a> PreInstance<'a> {
       } ;
 
       for & (ref quant, ref tterms) in & terms {
-        let mut nu_clause = clause.clone_except_lhs_of(pred) ;
+        let mut nu_clause = clause.clone_except_lhs_of(pred, "unrolling") ;
         let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
 
         for args in argss {
@@ -1137,10 +1126,19 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        nu_clause.from_unrolling = true ;
-        to_add.push( nu_clause )
+        println!("propagating in {}", nu_clause.to_string_info(self.preds()).unwrap()) ;
+        let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
+        println!("looking for false") ;
+        skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
+
+        if ! skip {
+          nu_clause.from_unrolling = true ;
+          to_add.push( nu_clause )
+        }
       }
     }
+
+    info! { "  adding {} clauses", to_add.len() }
 
     for mut clause in to_add {
       log_debug! {
@@ -1175,9 +1173,10 @@ impl<'a> PreInstance<'a> {
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
     let mut to_add = Vec::with_capacity(17) ;
+    let fls = term::fls() ;
 
     for clause in & self.instance.pred_to_clauses[pred].1 {
-      let clause = & self[* clause] ;
+      let clause = & self.instance[* clause] ;
 
       // Negative clause and `pred` is the only application.
       if clause.lhs_preds().is_empty() {
@@ -1192,7 +1191,7 @@ impl<'a> PreInstance<'a> {
       } ;
 
       for & (ref quant, ref terms) in & terms {
-        let mut nu_clause = clause.clone_with_rhs(None) ;
+        let mut nu_clause = clause.clone_with_rhs(None, "r_unroll") ;
         let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
 
         for term in terms {
@@ -1206,8 +1205,13 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        nu_clause.from_unrolling = true ;
-        to_add.push( nu_clause )
+        let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
+        skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
+
+        if ! skip {
+          nu_clause.from_unrolling = true ;
+          to_add.push( nu_clause )
+        }
       }
     }
 
@@ -1368,12 +1372,12 @@ impl<'a> PreInstance<'a> {
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.clauses_to_simplify = self.clauses_to_check.drain().collect() ;
 
-    self.check(" after `rm_args`") ? ;
-
     info += self.simplify_clauses() ? ;
 
     // Force trivial predicates if any.
     info += self.force_trivial() ? ;
+
+    self.check("after `rm_args`") ? ;
 
     Ok(info)
   }
@@ -1630,7 +1634,6 @@ impl ClauseSimplifier {
   ///
   /// Assumes equalities have arity `2`.
   pub fn clause_propagate(& mut self, clause: & mut Clause) -> Res<bool> {
-
     self.var_to_rep.clear() ;
     self.var_to_rep_term.clear() ;
     self.rep_to_vars.clear() ;
@@ -1742,6 +1745,7 @@ impl ClauseSimplifier {
             let term = if args[0].var_idx().is_some() {
               args[1].clone()
             } else { args[0].clone() } ;
+
             let rep = if let Some(rep) = self.var_to_rep.get(& var).map(
               |rep| * rep
             ) { rep } else {
@@ -1753,15 +1757,34 @@ impl ClauseSimplifier {
               debug_assert!( _prev.is_none() ) ;
               var
             } ;
-            // log_debug!{ "rep of {} is {}", var, rep }
-            let prev = self.rep_to_term.insert(rep, term.clone()) ;
-            if let Some(prev) = prev {
-              let eq = term::eq(prev, term) ;
-              match eq.eval( & () ) {
-                Ok(Val::B(true)) => (),
-                Ok(Val::B(false)) => return Ok(true),
-                Ok(Val::I(_)) => bail!("equality evaluation yielded integer"),
-                _ => self.terms_to_add.push(eq),
+
+            // Check for cycles.
+            let mut skip = false ;
+            for is_rep in term::vars(& term) {
+              if let Some(rep_term) = self.rep_to_term.get(& is_rep) {
+                if term::vars(& rep_term).contains(& rep) {
+                  // Cycle, skip this equality.
+                  skip = true ;
+                  break
+                }
+              }
+            }
+
+            if skip {
+              remove = false
+            } else {
+              // log_debug!{ "rep of {} is {}", var, rep }
+              let prev = self.rep_to_term.insert(rep, term.clone()) ;
+              if let Some(prev) = prev {
+                let eq = term::eq(prev, term) ;
+                match eq.eval( & () ) {
+                  Ok(Val::B(true)) => (),
+                  Ok(Val::B(false)) => return Ok(true),
+                  Ok(Val::I(_)) => bail!(
+                    "equality evaluation yielded integer"
+                  ),
+                  _ => self.terms_to_add.push(eq),
+                }
               }
             }
           },
@@ -1831,7 +1854,7 @@ impl ClauseSimplifier {
     }
     // if_debug!{
     //   for (var, rep) in & self.var_to_rep {
-    //     log_debug!{ "    {} -> {}", var, rep }
+    //     log_debug!{ "    {} -> {}", var.default_str(), rep.default_str() }
     //   }
     // }
 
@@ -1842,7 +1865,7 @@ impl ClauseSimplifier {
     }
     let mut to_rm = vec![] ;
     for (rep, term) in & self.rep_to_term {
-      // log_debug!{ "    {} -> {}", rep, term }
+      // log_debug!{ "    {} -> {}", rep.default_str(), term }
       if term::vars(term).contains(rep) {
         // log_debug!{ "      -> recursive, putting equality back." }
         to_rm.push(* rep)
@@ -1861,9 +1884,11 @@ impl ClauseSimplifier {
     //   "  stabilizing `rep_to_term` (second step, {})",
     //   self.rep_to_term.len()
     // }
-    // self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
+    self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
+      // log_debug! { "    pre subst: {}", term }
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
+      // log_debug! { "    post subst" }
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
       debug_assert!( _prev.is_none() )
     }
