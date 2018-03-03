@@ -829,14 +829,20 @@ impl<'core> IceLearner<'core> {
       let gain_pivot_synth = self.gain_pivot_synth ;
       known_quals.clear() ;
 
+      // println!("synthesizing") ;
+
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        if ! known_quals.insert( term.clone() ) {
+        let is_new = known_quals.insert( term.clone() ) ;
+        // println!("  {}", term) ;
+        // println!("  - {}", is_new) ;
+        if ! is_new {
           // Term already known, skip.
           Ok(false)
         } else if let Some(gain) = data.gain(
           pred, self_data, & term, & self_core._profiler, false
         ) ? {
+          // println!("  - {}", gain) ;
           if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
             quals.insert(& term, pred) ? ;

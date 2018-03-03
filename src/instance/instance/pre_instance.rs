@@ -1095,8 +1095,6 @@ impl<'a> PreInstance<'a> {
     for clause in & self.instance.pred_to_clauses[pred].0 {
       let clause = & self.instance[* clause] ;
 
-      println!("unrolling from {}", clause.to_string_info(self.preds()).unwrap()) ;
-
       // Negative clause and `pred` is the only application.
       if clause.rhs().is_none() && clause.lhs_preds().len() == 1 {
         continue

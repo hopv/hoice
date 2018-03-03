@@ -228,6 +228,8 @@ impl CData {
     let (
       mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
     ) = (0, 0, 0., 0, 0, 0.) ;
+    // Number of samples the qualifier does not differentiate.
+    let mut none = 0. ;
 
     profile! { |_profiler| tick "learning", "qual", "gain", "pos eval" }
     for pos in & self.pos {
@@ -250,7 +252,7 @@ impl CData {
       ) ? {
         Some(true) => q_neg += 1,
         Some(false) => nq_neg += 1,
-        None => return Ok(None),
+        None => none += 1.,
       }
     }
     q_ent.set_neg_count(q_neg) ;
@@ -313,7 +315,7 @@ impl CData {
          q_sum *  q_entropy / self.len +
         nq_sum * nq_entropy / self.len
       )
-    ) / my_entropy ;
+    ) / (my_entropy + none) ;
 
     if gain.is_nan() {
       bail!(
@@ -321,9 +323,10 @@ impl CData {
           "gain is NaN :(
   my_entropy: {}
   my_card: {}
+  none: {}
   q  numerator: {} * {} = {}
   nq numerator: {} * {} = {}",
-          my_entropy, self.len,
+          my_entropy, self.len, none,
           q_sum,
           q_entropy,
           q_sum * q_entropy,
@@ -355,35 +358,44 @@ impl CData {
     ) ;
 
     for pos in self.pos {
-      if qual.bool_eval( pos.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.add_pos( pos )
+      if let Some(value) = qual.bool_eval( pos.get() ).expect(
+        "During qualifier evaluation"
+      ) {
+        if value {
+          q.add_pos( pos )
+        } else {
+          nq.add_pos( pos )
+        }
       } else {
+        q.add_pos( pos.clone() ) ;
         nq.add_pos( pos )
       }
     }
     for neg in self.neg {
-      if qual.bool_eval( neg.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.add_neg( neg )
+      if let Some(value) = qual.bool_eval( neg.get() ).expect(
+        "During qualifier evaluation"
+      ) {
+        if value {
+          q.add_neg( neg )
+        } else {
+          nq.add_neg( neg )
+        }
       } else {
+        q.add_neg( neg.clone() ) ;
         nq.add_neg( neg )
       }
     }
     for unc in self.unc {
-      if qual.bool_eval( unc.get() ).and_then(
-        |res| res.ok_or_else(
-          || ErrorKind::Msg( "model is not complete enough".into() ).into()
-        )
-      ).expect("error evaluating qualifier") {
-        q.add_unc( unc )
+      if let Some(value) = qual.bool_eval( unc.get() ).expect(
+        "During qualifier evaluation"
+      ) {
+        if value {
+          q.add_unc( unc )
+        } else {
+          nq.add_unc( unc )
+        }
       } else {
+        q.add_unc( unc.clone() ) ;
         nq.add_unc( unc )
       }
     }
