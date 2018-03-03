@@ -1126,9 +1126,7 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        println!("propagating in {}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
-        println!("looking for false") ;
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
