@@ -125,15 +125,16 @@ impl CData {
     ) ;
     let card = (self.pos.len() as f64) + (self.neg.len() as f64) ;
     let (
-      mut q_pos, mut q_neg, mut q_unc, mut nq_pos, mut nq_neg, mut nq_unc
-    ) = (0., 0., 0., 0., 0., 0.) ;
+      mut q_pos, mut q_neg, mut nq_pos, mut nq_neg
+    ) = (0., 0., 0., 0.) ;
+    let mut none = 0. ;
     for pos in & self.pos {
       match qual.bool_eval( pos.get() ).chain_err(
         || format!("while evaluating qualifier {} on {}", qual.qual, pos)
       ) ? {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,
-        None => return Ok(None),
+        None => none += 1.,
       }
     }
     for neg in & self.neg {
@@ -142,19 +143,10 @@ impl CData {
       ) ? {
         Some(true) => q_neg += 1.,
         Some(false) => nq_neg += 1.,
-        None => return Ok(None),
+        None => none += 1.,
       }
     }
-    for unc in & self.unc {
-      match qual.bool_eval( unc.get() ).chain_err(
-        || format!("while evaluating qualifier {} on {}", qual.qual, unc)
-      ) ? {
-        Some(true) => q_unc += 1.,
-        Some(false) => nq_unc += 1.,
-        None => return Ok(None),
-      }
-    }
-    if q_pos + q_neg + q_unc == 0. || nq_pos + nq_neg + nq_unc == 0. {
+    if q_pos + q_neg == 0. || nq_pos + nq_neg == 0. {
       Ok( None )
     } else {
       let (q_entropy, nq_entropy) = (
@@ -164,10 +156,15 @@ impl CData {
 
       // Entropy can be 0 because we're in simple gain, which ignores
       // unclassified data.
+      let none_adjust = if self.pos.len() + self.neg.len() == 0 {
+        0.
+      } else {
+        none / ( (self.pos.len() + self.neg.len()) as f64)
+      } ;
       let gain = if my_entropy == 0. {
         0.
       } else {
-        (
+        (1. - none_adjust) * (
           my_entropy - (
             ( (q_pos + q_neg) *  q_entropy / card ) +
             ( (nq_pos + nq_neg) * nq_entropy / card )
@@ -181,7 +178,8 @@ impl CData {
     my_entropy: {}
     my_card: {}
     q  numerator: {} * {} = {}
-    nq numerator: {} * {} = {}",
+    nq numerator: {} * {} = {}
+    none adjust: {}",
             my_entropy, self.len,
             (q_pos + q_neg),
             q_entropy,
@@ -189,6 +187,7 @@ impl CData {
             (nq_pos + nq_neg),
             nq_entropy,
             (nq_pos + nq_neg) * nq_entropy,
+            none_adjust
           )
         )
       }
@@ -238,7 +237,7 @@ impl CData {
       ) ? {
         Some(true) => q_pos += 1,
         Some(false) => nq_pos += 1,
-        None => return Ok(None),
+        None => none += 1.,
       }
     }
     q_ent.set_pos_count(q_pos) ;
@@ -272,7 +271,7 @@ impl CData {
           nq_unc += 1. ;
           nq_ent.add_unc(data, pred, unc) ?
         },
-        None => return Ok(None),
+        None => (),
       }
     }
     profile! { |_profiler| mark "learning", "qual", "gain", "unc eval" }
@@ -310,12 +309,17 @@ impl CData {
       println!("  nq_entropy: {}", nq_entropy) ;
     }
 
-    let gain = (
+    let none_adjust = if self.pos.len() + self.neg.len() == 0 {
+      0.
+    } else {
+      none / ( (self.pos.len() + self.neg.len()) as f64)
+    } ;
+    let gain = (1. - none_adjust) * (
       my_entropy - (
          q_sum *  q_entropy / self.len +
         nq_sum * nq_entropy / self.len
       )
-    ) / (my_entropy + none) ;
+    ) / my_entropy ;
 
     if gain.is_nan() {
       bail!(
@@ -325,7 +329,8 @@ impl CData {
   my_card: {}
   none: {}
   q  numerator: {} * {} = {}
-  nq numerator: {} * {} = {}",
+  nq numerator: {} * {} = {}
+  none_adjust: {}",
           my_entropy, self.len, none,
           q_sum,
           q_entropy,
@@ -333,6 +338,7 @@ impl CData {
           nq_sum,
           nq_entropy,
           nq_sum * nq_entropy,
+          none_adjust
         )
       )
     }
