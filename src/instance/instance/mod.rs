@@ -67,7 +67,7 @@ impl Instance {
   pub fn new() -> Instance {
     let pred_capa = conf.instance.pred_capa ;
     let clause_capa = conf.instance.clause_capa ;
-    let mut instance = Instance {
+    Instance {
       consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       old_preds: PrdMap::with_capacity(pred_capa),
@@ -82,13 +82,7 @@ impl Instance {
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
-    } ;
-    // Create basic constants, adding to consts to have mining take them into
-    // account.
-    let (wan,too) = (term::one(), term::zero()) ;
-    instance.consts.insert(wan) ;
-    instance.consts.insert(too) ;
-    instance
+    }
   }
 
   /// Set of positive clauses.
@@ -411,11 +405,11 @@ impl Instance {
     Ok(())
   }
 
-  /// Set of int constants **appearing in the predicates**. If more constants
-  /// are created after the instance building step, they will not appear here.
-  pub fn consts(& self) -> & HConSet<Term> {
-    & self.consts
-  }
+  // /// Set of int constants **appearing in the predicates**. If more constants
+  // /// are created after the instance building step, they will not appear here.
+  // pub fn consts(& self) -> & HConSet<Term> {
+  //   & self.consts
+  // }
 
   /// Range over the predicate indices.
   pub fn pred_indices(& self) -> PrdRange {
@@ -723,7 +717,7 @@ impl Instance {
       for (var, typ) in pred.sig.index_iter() {
         let mut bool_vars = Vec::new() ;
         if * typ == Typ::Bool {
-          let var = term::var(var) ;
+          let var = term::var(var, Typ::Bool) ;
           quals.insert( & var, pred.idx ) ? ;
           bool_vars.push(var)
         }
@@ -772,6 +766,7 @@ impl Instance {
           let mut map: VarHMap<Term> = VarHMap::with_capacity( args.len() ) ;
 
           for (pred_var, term) in args.index_iter() {
+            let pred_var_typ = self[pred].sig[pred_var] ;
             // Parameter's a variable?
             if let Some(clause_var_index) = term.var_idx() {
 
@@ -781,20 +776,28 @@ impl Instance {
               ) {
                 // Equality qualifier.
                 app_quals.insert(
-                  term::eq( term::var(pred_var), other_pred_var.clone() )
+                  term::eq(
+                    term::var(pred_var, pred_var_typ), other_pred_var.clone()
+                  )
                 ) ;
               } else {
                 // Add to map.
-                let _prev = map.insert(clause_var_index, term::var(pred_var)) ;
+                let _prev = map.insert(
+                  clause_var_index, term::var(pred_var, pred_var_typ)
+                ) ;
                 debug_assert!( _prev.is_none() )
               }
 
             } else {
               // Parameter's not a variable, store potential equality.
-              let _prev = eq_quals.insert( pred_var, term.clone() ) ;
+              let _prev = eq_quals.insert(
+                pred_var, (pred_var_typ, term.clone())
+              ) ;
               debug_assert!( _prev.is_none() ) ;
               // Try to revert the term.
-              if let Some((var, term)) = term.invert_var(pred_var) {
+              if let Some((var, term)) = term.invert_var(
+                pred_var, pred_var_typ
+              ) {
                 if ! map.contains_key(& var) {
                   map.insert(var, term) ;
                 } else if let Some(other_pred_var) = map.get(& var) {
@@ -808,14 +811,16 @@ impl Instance {
 
           }
 
-          for (pred, term) in eq_quals.drain() {
+          for (pred_var, (typ, term)) in eq_quals.drain() {
             if let Some((term, _)) = term.subst_total(& map) {
-              app_quals.insert( term::eq( term::var(pred), term ) ) ;
+              app_quals.insert(
+                term::eq( term::var(pred_var, typ), term )
+              ) ;
             }
           }
 
           if ! app_quals.is_empty() {
-            let build_conj = build_conj && app_quals.len() > 1 ;
+            let build_conj = app_quals.len() > 1 ;
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
             for term in app_quals.drain() {
               if build_conj { conj.push(term.clone()) }
@@ -1311,7 +1316,7 @@ impl Instance {
       for (var, typ) in old_sig.index_iter() {
         write!(w, " (") ? ;
         if let Some(var) = pam_rav.remove(& var) {
-          write!(w, "{}", term::var(var)) ?
+          write!(w, "{}", var.default_str()) ?
         } else {
           write!(w, "unused_{}", var) ?
         }

@@ -37,17 +37,18 @@
 //!
 //! ```rust
 //! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm } ;
+//! # use hoice::term::{ Op, RTerm, Typ } ;
 //! let some_term = term::eq(
 //!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::var(5), term::int(2) ]
+//!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
 //!   )
 //! ) ;
 //! # println!("{}", some_term) ;
 //! 
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { op: Op::Eql, ref args } => {
+//!   RTerm::App { typ, op: Op::Eql, ref args } => {
+//!     assert_eq!( typ, Typ::Bool ) ;
 //!     assert_eq!( args.len(), 2 ) ;
 //!     assert_eq!( format!("{}", some_term), "(= 11 (* 2 v_5))" )
 //!   },
@@ -60,6 +61,8 @@ use hashconsing::* ;
 use common::* ;
 
 #[macro_use]
+mod op ;
+pub use self::op::* ;
 mod factory ;
 mod val ;
 #[cfg(test)]
@@ -101,6 +104,18 @@ impl Typ {
       _ => false,
     }
   }
+
+  /// Given two arithmetic types, returns `Real` if one of them is `Real`.
+  pub fn arith_join(self, other: Self) -> Self {
+    debug_assert! { self.is_arith() }
+    debug_assert! { other.is_arith() }
+    if self == Typ::Real || other == Typ::Real {
+      Typ::Real
+    } else {
+      Typ::Int
+    }
+  }
+
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
@@ -132,7 +147,7 @@ impl_fmt!{
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {
   /// A clause variable.
-  Var(VarIdx),
+  Var(Typ, VarIdx),
   /// An integer.
   Int(Int),
   /// A real (actually a rational).
@@ -141,6 +156,8 @@ pub enum RTerm {
   Bool(bool),
   /// An operator application.
   App {
+    /// Type of the application.
+    typ: Typ,
     /// The operator.
     op: Op,
     /// The arguments.
@@ -151,49 +168,49 @@ impl RTerm {
   /// The operator and the kids of a term.
   pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
     match * self {
-      RTerm::App { op, ref args } => Some((op, args)),
+      RTerm::App { op, ref args, .. } => Some((op, args)),
       _ => None,
     }
   }
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::And, ref args } => Some(args),
+      RTerm::App { op: Op::And, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of disjunctions.
   pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Or, ref args } => Some(args),
+      RTerm::App { op: Op::Or, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of equalities.
   pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Eql, ref args } => Some(args),
+      RTerm::App { op: Op::Eql, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of additions.
   pub fn add_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Add, ref args } => Some(args),
+      RTerm::App { op: Op::Add, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of multiplications.
   pub fn mul_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Mul, ref args } => Some(args),
+      RTerm::App { op: Op::Mul, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of a constant multiplication.
   pub fn cmul_inspect(& self) -> Option<(Val, & Term)> {
     match * self {
-      RTerm::App { op: Op::CMul, ref args } => {
+      RTerm::App { op: Op::CMul, ref args, .. } => {
         if args.len() == 2 {
           if let Some(val) = args[0].val() {
             return Some((val, & args[1]))
@@ -202,6 +219,17 @@ impl RTerm {
         panic!("illegal c_mul application: {}", self)
       },
       _ => None,
+    }
+  }
+
+  /// Type of the term.
+  pub fn typ(& self) -> Typ {
+    match * self {
+      RTerm::Var(typ, _) => typ,
+      RTerm::Int(_) => Typ::Int,
+      RTerm::Real(_) => Typ::Real,
+      RTerm::Bool(_) => Typ::Bool,
+      RTerm::App { typ, .. } => typ,
     }
   }
 
@@ -240,7 +268,7 @@ impl RTerm {
       if let Some(term) = to_do.pop() {
         stack.push( (to_do, sep, end) ) ;
         match * term {
-          Var(v) => {
+          Var(_, v) => {
             write!(w, "{}", sep) ? ;
             write_var(w, v) ?
           },
@@ -253,7 +281,7 @@ impl RTerm {
             rat_to_smt!(w, r) ?
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
-          App { op, ref args } => {
+          App { op, ref args, .. } => {
             write!(w, "{}({}", sep, op) ? ;
             stack.push(
               (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
@@ -319,7 +347,7 @@ impl RTerm {
   /// println!("false") ;
   /// assert!( ! term.is_true() ) ;
   /// let term = term::eq(
-  ///   term::int(7), term::var(1)
+  ///   term::int(7), term::int_var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_true() ) ;
@@ -363,7 +391,7 @@ impl RTerm {
   /// println!("false") ;
   /// assert!( term.is_false() ) ;
   /// let term = term::eq(
-  ///   term::int(7), term::var(1)
+  ///   term::int(7), term::int_var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_false() ) ;
@@ -398,8 +426,15 @@ impl RTerm {
       _ => None
     }
   }
+
+  /// Evaluates a term with an empty model.
+  pub fn as_val(& self) -> Val {
+    if let Ok(res) = self.eval(& ()) { res } else { Val::N }
+  }
+
   /// Integer a constant integer term evaluates to.
   pub fn int(& self) -> Option<Int> {
+    if self.typ() != Typ::Int { return None }
     match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
       _ => None
@@ -442,26 +477,7 @@ impl RTerm {
       None
     }
   }
-  /// True if this term is known to have type bool.
-  pub fn has_type_bool(
-    & self, vars: & VarMap<::instance::info::VarInfo>
-  ) -> bool {
-    match * self {
-      RTerm::App { op: Op::Eql, .. } |
-      RTerm::App { op: Op::And, .. } |
-      RTerm::App { op: Op::Or, .. } |
-      RTerm::App { op: Op::Impl, .. } |
-      RTerm::App { op: Op::Gt, .. } |
-      RTerm::App { op: Op::Ge, .. } |
-      RTerm::App { op: Op::Lt, .. } |
-      RTerm::App { op: Op::Le, .. } => true,
-      RTerm::App { op: Op::Not, ref args } => args[0].has_type_bool(vars),
-      RTerm::App { op: Op::Ite, ref args } => args[1].has_type_bool(vars),
-      RTerm::Var(idx) => vars[idx].typ == Typ::Bool,
-      RTerm::Bool(_) => true,
-      _ => false,
-    }
-  }
+
   /// Checks whether the term is a relation.
   pub fn is_relation(& self) -> bool {
     match * self {
@@ -470,7 +486,7 @@ impl RTerm {
       RTerm::App { op: Op::Ge, .. } |
       RTerm::App { op: Op::Lt, .. } |
       RTerm::App { op: Op::Le, .. } => true,
-      RTerm::App { op: Op::Not, ref args } => args[0].is_relation(),
+      RTerm::App { op: Op::Not, ref args, .. } => args[0].is_relation(),
       _ => false,
     }
   }
@@ -493,16 +509,16 @@ impl RTerm {
 
       // Go down applications.
       let mut evaled = match * current {
-        App { op, ref args } => {
+        App { op, ref args, .. } => {
           current = & args[0] ;
           stack.push( (op, & args[1..], vec![]) ) ;
           continue 'eval
         },
         // Rest are leaves, going up.
-        Var(v) => if v < model.len() {
+        Var(_, v) => if v < model.len() {
           model.get(v).clone()
         } else {
-          bail!("model is too short")
+          bail!("model is too short ({})", model.len())
         },
         Int(ref i) => Val::I( i.clone() ),
         Real(ref r) => Val::R( r.clone() ),
@@ -550,7 +566,7 @@ impl RTerm {
     let mut max = None ;
     while let Some(term) = to_do.pop() {
       match * term {
-        RTerm::Var(i) => max = Some(
+        RTerm::Var(_, i) => max = Some(
           ::std::cmp::max( i, max.unwrap_or(0.into()) )
         ),
         RTerm::Int(_) |
@@ -567,7 +583,7 @@ impl RTerm {
   /// Returns the variable index if the term is a variable.
   pub fn var_idx(& self) -> Option<VarIdx> {
     match * self {
-      RTerm::Var(i) => Some(i),
+      RTerm::Var(_, i) => Some(i),
       _ => None,
     }
   }
@@ -575,7 +591,7 @@ impl RTerm {
   /// If the term is a negation, returns what's below the negation.
   pub fn rm_neg(& self) -> Option<Term> {
     match * self {
-      RTerm::App { op: Op::Not, ref args } => {
+      RTerm::App { op: Op::Not, ref args, .. } => {
         debug_assert_eq!( args.len(), 1 ) ;
         Some( args[0].clone() )
       },
@@ -611,7 +627,8 @@ impl RTerm {
 
       // Go down.
       let mut term = match * current.get() {
-        RTerm::Var(var) => if let Some(term) = map.var_get(var) {
+        RTerm::Var(typ, var) => if let Some(term) = map.var_get(var) {
+          debug_assert_eq! { typ, term.typ() }
           subst_count += 1 ;
           term
         } else if total {
@@ -619,7 +636,7 @@ impl RTerm {
         } else {
           current.clone()
         },
-        RTerm::App { op, ref args } => {
+        RTerm::App { op, ref args, .. } => {
           current = & args[0] ;
           stack.push(
             (op, & args[1..], Vec::with_capacity( args.len() ))
@@ -695,8 +712,8 @@ impl RTerm {
 
 
   /// Attempts to invert a term from a variable.
-  pub fn invert_var(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
-    self.invert( term::var(var) )
+  pub fn invert_var(& self, var: VarIdx, typ: Typ) -> Option<(VarIdx, Term)> {
+    self.invert( term::var(var, typ) )
   }
 
   /// Attempts to invert a term.
@@ -715,23 +732,25 @@ impl RTerm {
   /// ```rust
   /// use hoice::term ;
   ///
-  /// let term = term::u_minus( term::var(0) ) ;
+  /// let term = term::u_minus( term::int_var(0) ) ;
   /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( term::var(1) ),
-  ///   Some( (0.into(), term::u_minus( term::var(1) ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
   /// }
-  /// let term = term::sub( vec![ term::var(0), term::int(7) ] ) ;
+  /// let term = term::sub( vec![ term::int_var(0), term::int(7) ] ) ;
   /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( term::var(1) ),
-  ///   Some( (0.into(), term::add( vec![ term::var(1), term::int(7) ] ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
   /// }
-  /// let term = term::add( vec![ term::int(7), term::var(0) ] ) ;
+  /// let term = term::add( vec![ term::int(7), term::int_var(0) ] ) ;
   /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( term::var(1) ),
-  ///   Some( (0.into(), term::sub( vec![ term::var(1), term::int(7) ] ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some(
+  ///     (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
+  ///   )
   /// }
   /// ```
   pub fn invert(& self, term: Term) -> Option<(VarIdx, Term)> {
@@ -741,7 +760,7 @@ impl RTerm {
     loop {
       // println!("inverting {}", term) ;
       match * term {
-        RTerm::App { op, ref args } => {
+        RTerm::App { op, ref args, .. } => {
           let (po, symmetric) = match op {
             Op::Add => (Op::Sub, true),
             Op::Sub => {
@@ -815,7 +834,7 @@ impl RTerm {
             return None
           }
         },
-        RTerm::Var(v) => return Some((v, solution)),
+        RTerm::Var(_, v) => return Some((v, solution)),
         _ => return None,
       }
     }
@@ -875,6 +894,16 @@ impl TTerm {
   /// The false top term.
   pub fn fls() -> Self {
     TTerm::T( term::fls() )
+  }
+
+  /// Type of the top term.
+  ///
+  /// Should always be bool, except during parsing.
+  pub fn typ(& self) -> Typ {
+    match * self {
+      TTerm::P { .. } => Typ::Bool,
+      TTerm::T(ref term) => term.typ(),
+    }
   }
 
   /// True if the top term is a term with no variables and evaluates to true.
@@ -2057,592 +2086,6 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
       }
     ) ? ;
     Ok(())
-  }
-}
-
-
-
-
-
-
-
-/// Operators.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum Op {
-  /// Addition.
-  Add,
-  /// Subtraction.
-  Sub,
-  /// Multiplication.
-  Mul,
-  /// Multiplication by a constant.
-  ///
-  /// Its arguments should always be [ constant, term ].
-  CMul,
-  /// Integer division.
-  IDiv,
-  /// Division.
-  Div,
-  /// Remainder.
-  Rem,
-  /// Modulo.
-  Mod,
-
-  /// Greater than.
-  Gt,
-  /// Greater than or equal to.
-  Ge,
-  /// Less than or equal to.
-  Le,
-  /// Less than.
-  Lt,
-
-  /// Implication.
-  Impl,
-  /// Equal to.
-  Eql,
-  /// Negation.
-  Not,
-  /// Conjunction.
-  And,
-  /// Disjunction.
-  Or,
-  /// If-then-else.
-  Ite,
-  /// Conversion from `Int` to `Real`.
-  ToInt,
-  /// Conversion from `Real` to `Int`.
-  ToReal,
-}
-impl Op {
-  /// String representation.
-  pub fn as_str(& self) -> & str {
-    use self::Op::* ;
-    use keywords::op::* ;
-    match * self {
-      Add => add_,
-      Sub => sub_,
-      Mul => mul_,
-      CMul => mul_,
-      IDiv => idiv_,
-      Div => div_,
-      Rem => rem_,
-      Mod => mod_,
-      Gt => gt_,
-      Ge => ge_,
-      Le => le_,
-      Lt => lt_,
-      Eql => eq_,
-      Not => not_,
-      And => and_,
-      Or => or_,
-      Impl => impl_,
-      Ite => ite_,
-      ToInt => to_int_,
-      ToReal => to_real_,
-    }
-  }
-
-
-  /// Type checking.
-  ///
-  /// Checks that a potentially incomplete list of types makes sense for an
-  /// operator.
-  ///
-  /// **NB**: this operation should be called incrementally by the parser, so
-  /// the error, if any, should always be about the last type in the list.
-  ///
-  /// Returns the type the last argument should have (if this type it should
-  /// have is known) and the one found if there is an error.
-  pub fn type_check<Pos>(
-    & self, args: Vec<(Typ, Pos)>
-  ) -> Result<
-    Typ, Either< (Option<Typ>, (Typ, Pos)), String >
-  > where Pos: PartialEq + ::std::fmt::Debug {
-    use Op::* ;
-    let mut args = args.into_iter() ;
-    macro_rules! err {
-      (lft $($lft:tt)*) => (
-        return Err( Either::Left($($lft)*) )
-      ) ;
-
-      (rgt $($lft:tt)*) => (
-        return Err( Either::Right($($lft)*) )
-      ) ;
-
-      (nullary) => (
-        err!(rgt
-          format!("illegal nullary application of `{}`", self)
-        )
-      ) ;
-    }
-
-    macro_rules! arity_check {
-      ( [ $min:tt, . ] => $e:expr ) => (
-        if args.len() < $min {
-          err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args.len(), $min
-            )
-          )
-        } else {
-          $e
-        }
-      ) ;
-
-      ( [ $min:tt, $max:tt ] => $e:expr ) => (
-        if args.len() > $max {
-          err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args.len(), $max
-            )
-          )
-        } else {
-          arity_check!( [ $min, .] => $e )
-        }
-      ) ;
-    }
-
-    macro_rules! all_same {
-      (arith) => (
-        if let Some((fst, pos)) = args.next() {
-          if ! fst.is_arith() {
-            err!(lft (None, (fst, pos)))
-          }
-          while let Some((typ, pos)) = args.next() {
-            if typ != fst {
-              debug_assert_eq! { args.next(), None }
-              err!(lft (Some(fst), (typ, pos)) )
-            }
-          }
-          fst
-        } else {
-          err!(nullary)
-        }
-      ) ;
-
-      (bool) => ({
-        while let Some((typ, pos)) = args.next() {
-          if typ != Typ::Bool {
-            debug_assert_eq! { args.next(), None }
-            err!(lft (Some(Typ::Bool), (typ, pos)) )
-          }
-        }
-        Typ::Bool
-      }) ;
-
-      () => ({
-        if let Some((fst, _)) = args.next() {
-          while let Some((typ, pos)) = args.next() {
-            if typ != fst {
-              debug_assert_eq! { args.next(), None }
-              err!(lft (Some(fst), (typ, pos)) )
-            }
-          }
-          fst
-        } else {
-          err!(nullary)
-        }
-      }) ;
-
-      ($typ:expr) => ({
-        while let Some((typ, pos)) = args.next() {
-          if typ != $typ {
-            debug_assert_eq! { args.next(), None }
-            err!(lft (Some($typ), (typ, pos)))
-          }
-        }
-        $typ
-      }) ;
-    }
-
-    let res = match * self {
-      Add | Sub | Mul | Div | CMul => {
-        all_same!(arith)
-      },
-      IDiv | Rem | Mod => arity_check!(
-        [ 2, 2 ] => {
-          all_same!(Typ::Int)
-        }
-      ),
-      Gt | Ge | Le | Lt => arity_check!(
-        [ 2, 2 ] => {
-          all_same!(arith) ;
-          Typ::Bool
-        }
-      ),
-      Eql => {
-        all_same!() ;
-        Typ::Bool
-      },
-      Not => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Bool)
-      ),
-      And | Or | Impl => arity_check!(
-        [ 1, . ] => all_same!(bool)
-      ),
-      ToInt => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Real)
-      ),
-      ToReal => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Int)
-      ),
-      Ite => arity_check!(
-        [ 3, 3 ] => if let Some((typ, pos)) = args.next() {
-          if ! typ.is_bool() {
-            err!(lft (Some(Typ::Bool), (typ, pos)))
-          }
-          all_same!()
-        } else {
-          err!(nullary)
-        }
-      ),
-    } ;
-    Ok(res)
-  }
-
-
-  /// Evaluation.
-  pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
-    use term::Op::* ;
-    if args.is_empty() {
-      bail!("evaluating operator on 0 elements")
-    }
-
-    // print!("evaluating `({}", self) ;
-    // for val in & args {
-    //   print!(" {}", val)
-    // }
-    // println!(")`") ;
-
-    macro_rules! arith_app {
-      (relation $op:tt $str:tt => $args:expr) => ({
-        let mut args = $args.into_iter() ;
-        if let (
-          Some(fst), Some(mut pre)
-        ) = (args.next(), args.next()) {
-          let mut res = fst.$op( pre.clone() ) ? ;
-          for arg in args {
-            res = res.and( pre.$op( arg.clone() ) ? ) ? ;
-            pre = arg
-          }
-          Ok(res)
-        } else {
-          bail!("`{}` applied to 0 or 1 argument(s)")
-        }
-      }) ;
-      ($op:tt $str:tt => $args:expr) => ({
-        let mut args = $args.into_iter() ;
-        if let Some(mut acc) = args.next() {
-          for arg in args {
-            acc = acc.$op(arg) ?
-          }
-          Ok(acc)
-        } else {
-          bail!("`{}` applied to zero arguments", $str)
-        }
-      }) ;
-    }
-
-    match * self {
-      Add => arith_app!(add "+" => args),
-
-      Sub => if args.len() == 1 {
-        args.pop().unwrap().minus()
-      } else {
-        arith_app!(sub "-" => args)
-      },
-
-      Mul => {
-        let mut res: Val = 1.into() ;
-        for arg in args.into_iter() {
-          res = res.mul(arg) ?
-        }
-        Ok(res)
-      },
-
-      CMul => {
-        let mut res: Val = 1.into() ;
-        for arg in args.into_iter() {
-          res = res.mul(arg) ?
-        }
-        Ok(res)
-      },
-
-      Div => {
-        let (den, num) = (
-          if let Some(den) = args.pop() { den } else {
-            bail!(
-              "illegal application of division to less than two arguments"
-            )
-          },
-          if let Some(num) = args.pop() { num } else {
-            bail!(
-              "illegal application of division to less than two arguments"
-            )
-          }
-        ) ;
-        if args.pop().is_some() {
-          bail!("unexpected division over {} numbers", args.len())
-        }
-
-        let res = match (num.clone(), den.clone()) {
-          (num, Val::N) => if num.is_zero() {
-            Ok(num)
-          } else {
-            Ok(Val::N)
-          },
-
-          (Val::I(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
-          } else if & num % & den == Int::zero() {
-            Ok( Val::I( num / den ) )
-          } else {
-            Ok( Val::R( Rat::new(num, den) ) )
-          },
-
-          (Val::I(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
-          } else {
-            Ok( Val::R( Rat::new(num, 1.into()) / den ) )
-          },
-
-          (Val::R(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
-          } else {
-            Ok( Val::R( num / Rat::new(den, 1.into()) ) )
-          },
-
-          (Val::R(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
-          } else {
-            Ok( Val::R( num / den ) )
-          },
-
-          (Val::B(_), _) | (_, Val::B(_)) => bail!(
-            "illegal application of division to booleans"
-          ),
-
-          (Val::N, _) => Ok(Val::N),
-        } ;
-
-        // println!("(/ {} {}) = {}", num, den, res.as_ref().unwrap()) ;
-
-        res
-
-      },
-
-      IDiv => if args.len() != 2 {
-        bail!("unexpected division over {} numbers", args.len())
-      } else {
-        let den = try_val!( int args.pop().unwrap() ) ;
-        let num = try_val!( int args.pop().unwrap() ) ;
-        if den.is_zero() {
-          bail!("denominator is zero...")
-        }
-        let mut res = & num / & den ;
-        use num::Signed ;
-        if num.is_negative() ^ den.is_negative() {
-          if den.clone() * & res != num {
-            res = res - 1
-          }
-        }
-        // println!("(div {} {}) = {}", num, den, res) ;
-        Ok( Val::I(res) )
-      },
-
-      Rem => if args.len() != 2 {
-        bail!(
-          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
-        )
-      } else {
-        use num::Integer ;
-        let b = try_val!( int args.pop().unwrap() ) ;
-        if b == 1.into() {
-          Ok( 0.into() )
-        } else {
-          let a = try_val!( int args.pop().unwrap() ) ;
-          Ok( Val::I( a.div_rem(& b).1 ) )
-        }
-      },
-
-      Mod => if args.len() != 2 {
-        bail!(
-          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
-        )
-      } else {
-        use num::{ Integer, Signed } ;
-        let b = try_val!( int args.pop().unwrap() ) ;
-        if b == 1.into() {
-          Ok( 0.into() )
-        } else {
-          let a = try_val!( int args.pop().unwrap() ) ;
-          let res = a.mod_floor(& b) ;
-          let res = if res.is_negative() {
-            b.abs() - res.abs()
-          } else {
-            res
-          } ;
-          Ok( Val::I( res ) )
-        }
-      },
-
-      // Bool operators.
-
-      Gt => arith_app! {
-        relation gt ">" => args
-      },
-
-      Ge => arith_app! {
-        relation ge ">=" => args
-      },
-
-      Le => arith_app! {
-        relation le "<=" => args
-      },
-
-      Lt => arith_app! {
-        relation lt "<" => args
-      },
-
-      Eql => {
-        let mem ;
-        let mut res = true ;
-        for_first!{
-          args.into_iter() => {
-            |fst| mem = fst,
-            then |nxt| {
-              // println!("{} != {} : {}", mem, nxt, mem != nxt) ;
-              if ! mem.same_type( & nxt ) {
-                return Ok(Val::N)
-              }
-              if mem != nxt {
-                res = false ;
-                break
-              }
-            },
-          } else unreachable!()
-        }
-        Ok( Val::B(res) )
-      },
-
-      Not => if args.len() != 1 {
-        bail!(
-          format!("evaluating `Not` with {} (!= 1) arguments", args.len())
-        )
-      } else {
-        if let Some(b) = args.pop().unwrap().to_bool() ? {
-          Ok( Val::B(! b) )
-        } else {
-          Ok(Val::N)
-        }
-      },
-
-      And => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(false) => return Ok( Val::B(false) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(true) )
-        }
-      },
-
-      Or => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(true) => return Ok( Val::B(true) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(false) )
-        }
-      },
-
-      Impl => if args.len() != 2 {
-        bail!(
-          format!("evaluating `Impl` with {} (!= 2) arguments", args.len())
-        )
-      } else {
-        // Safe because of the check above.
-        let rhs = args.pop().unwrap() ;
-        let lhs = args.pop().unwrap() ;
-        match ( lhs.to_bool() ?, rhs.to_bool() ? ) {
-          (_, Some(true)) | (Some(false), _) => Ok( Val::B(true) ),
-          (Some(lhs), Some(rhs)) => Ok( Val::B(rhs || ! lhs) ),
-          _ => Ok(Val::N),
-        }
-      },
-
-      Ite => if args.len() != 3 {
-        bail!(
-          format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
-        )
-      } else {
-        let (els, thn, cnd) = (
-          args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
-        ) ;
-        match cnd.to_bool() ? {
-          Some(true) => Ok(thn),
-          Some(false) => Ok(els),
-          _ => Ok(Val::N),
-        }
-      }
-
-      ToInt => if let Some(val) = args.pop() {
-        if ! args.is_empty() {
-          bail!(
-            "expected two arguments for `{}`, found {}", ToInt, args.len() + 1
-          )
-        }
-        if let Some(rat) = val.to_real() ? {
-          let res = rat.denom() / rat.denom() ;
-          if rat.denom().is_negative() ^ rat.denom().is_negative() {
-            Ok( Val::I(- res) )
-          } else {
-            Ok( Val::I(res) )
-          }
-        } else {
-          Ok(Val::N)
-        }
-      } else {
-        bail!("expected one argument for `{}`, found none", ToInt)
-      },
-
-      ToReal => if let Some(val) = args.pop() {
-        if ! args.is_empty() {
-          bail!(
-            "expected two arguments for `{}`, found {}", ToReal, args.len() + 1
-          )
-        }
-        if let Some(i) = val.to_int() ? {
-          Ok( Val::R( Rat::new(i.clone(), 1.into()) ) )
-        } else {
-          Ok(Val::N)
-        }
-      } else {
-        bail!("expected one argument for `{}`, found none", ToReal)
-      },
-
-    }
-  }
-}
-impl_fmt!{
-  Op(self, fmt) {
-    fmt.write_str( self.as_str() )
   }
 }
 

@@ -55,7 +55,9 @@ macro_rules! add_vars {
         let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
         debug_assert_eq!( None, _prev ) ;
         log_debug! { "    adding fresh v_{} for {}", $fresh, $info[var] }
-        let _prev = $map.insert( var, term::var(* $fresh) ) ;
+        let _prev = $map.insert(
+          var, term::var(* $fresh, $info[var].typ)
+        ) ;
         debug_assert_eq!( None, _prev ) ;
         $fresh.inc()
       }
@@ -278,31 +280,31 @@ pub fn terms_of_app(
   for (index, arg) in args.index_iter() {
     if let Some(var) = arg.var_idx() {
       let _ = app_vars.insert(var) ;
-      if let Some(pre) = map.insert(var, term::var(index)) {
+      if let Some(pre) = map.insert(var, term::var(index, arg.typ())) {
         terms.insert(
-          term::eq( term::var(index), pre )
+          term::eq( term::var(index, arg.typ()), pre )
         ) ;
       }
-    } else if let Some(b) = arg.bool() {
-      let var = term::var(index) ;
-      terms.insert(
-        if b { var } else { term::not(var) }
-      ) ;
-    } else if let Some(i) = arg.int() {
-      terms.insert(
-        term::eq( term::var(index), term::int(i) )
-      ) ;
     } else {
-      postponed.push( (index, arg) ) ;
+      match arg.as_val().to_term() {
+        Some(trm) => {
+          debug_assert_eq! { trm.typ(), arg.typ() }
+          let var = term::var(index, trm.typ()) ;
+          terms.insert(
+            term::eq(var, trm)
+          ) ;
+        },
+        None => postponed.push( (index, arg) ),
+      }
     }
   }
 
   for (var, arg) in postponed {
     if let Some( (term, _) ) = arg.subst_total(& map) {
       terms.insert(
-        term::eq(term::var(var), term)
+        term::eq(term::var(var, arg.typ()), term)
       ) ;
-    } else if let Some((v, inverted)) = arg.invert_var(var) {
+    } else if let Some((v, inverted)) = arg.invert_var(var, arg.typ()) {
       let _prev = map.insert(v, inverted) ;
       debug_assert_eq!( _prev, None ) ;
       let is_new = app_vars.insert(v) ;
@@ -311,7 +313,7 @@ pub fn terms_of_app(
       if let TExtractRes::Failed = terms_of_terms(
         quantifiers, var_info, Some(arg), & mut terms,
         & mut app_vars, & mut map, qvars, fresh,
-        true, |term| term::eq( term::var(var), term )
+        true, |term| term::eq( term::var(var, term.typ()), term )
       ) ? {
         return Ok(None)
       }

@@ -214,7 +214,7 @@ impl Cxt {
     for (pvar, term) in args.index_iter() {
       // println!("{} -> {}", pvar, term) ;
       match ** term {
-        RTerm::Var(var) => {
+        RTerm::Var(_, var) => {
           if self.term_vars.contains(& var) {
             // println!("keeping {} {}", pred, var) ;
             self.keep(pred, pvar)

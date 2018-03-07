@@ -167,7 +167,7 @@ impl ::std::ops::Deref for Pos {
 pub struct ParserCxt {
   /// Term stack to avoid recursion.
   term_stack: Vec<
-    (Op, Pos, Vec<(Typ, Pos)>, Vec<Term>, LetCount)
+    (Op, Pos, Vec<Pos>, Vec<Term>, LetCount)
   >,
   /// Memory for backtracking.
   mem: Vec<Cursor>,
@@ -226,7 +226,7 @@ pub struct Parser<'cxt, 's> {
   /// Line offset (for errors).
   line_off: usize,
   /// Stack of bindings.
-  bindings: Vec< HashMap<& 's str, (PTTerms, Typ)> >,
+  bindings: Vec< HashMap<& 's str, PTTerms> >,
 }
 
 
@@ -690,10 +690,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Adds a binding to the current bindings.
   fn insert_bind(
-    & mut self, var: & 's str, term: PTTerms, typ: Typ
+    & mut self, var: & 's str, term: PTTerms
   ) -> Res<()> {
     if let Some(bindings) = self.bindings.last_mut() {
-      bindings.insert(var, (term, typ)) ;
+      bindings.insert(var, term) ;
       Ok(())
     } else {
       bail!("bug, adding binding before pushing a binding scope")
@@ -711,10 +711,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(())
   }
   /// Finds what a variable is mapped to.
-  fn get_bind(& self, var: & str) -> Option< (& PTTerms, Typ) > {
+  fn get_bind(& self, var: & str) -> Option<& PTTerms> {
     for bindings in & self.bindings {
-      if let Some(& (ref tterms, typ)) = bindings.get(var) {
-        return Some( (tterms, typ) )
+      if let Some(tterms) = bindings.get(var) {
+        return Some(tterms)
       }
     }
     None
@@ -766,10 +766,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
-            let (tterms, typ) = self.parse_ptterms(
+            let tterms = self.parse_ptterms(
               var_map, map, instance
             ) ? ;
-            self.insert_bind(id, tterms, typ) ? ;
+            self.insert_bind(id, tterms) ? ;
             self.ws_cmt() ;
             self.tag(")") ? ;
             self.ws_cmt() ;
@@ -904,22 +904,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Type checks an operator application.
-  fn op_type_check(
-    & self, op: Op, op_pos: Pos, args: Vec<(Typ, Pos)>
-  ) -> Res<Typ> {
-    match op.type_check(args) {
+  fn build_app(
+    & self, op: Op, op_pos: Pos, args: Vec<Term>, pos: Vec<Pos>
+  ) -> Res<Term> {
+    debug_assert_eq! { args.len(), pos.len() }
+    match term::try_app(op, args) {
       Ok(typ) => Ok(typ),
-      Err(Either::Left((Some(exp), (found, pos)))) => err_chain! {
+      Err(Either::Left((Some(exp), (found, index)))) => err_chain! {
         self.error(
-          pos, format!(
+          pos[index], format!(
             "expected an expression of sort {}, found {}", exp, found
           )
         )
         => self.error(op_pos, "in this operator application")
       },
-      Err(Either::Left((None, (found, pos)))) => err_chain! {
+      Err(Either::Left((None, (found, index)))) => err_chain! {
         self.error(
-          pos, format!(
+          pos[index], format!(
             "expected the expression starting here has sort {} \
             which is illegal here", found
           )
@@ -1079,7 +1080,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
-  ) -> Res< Option<(Term, Typ)> > {
+  ) -> Res< Option<Term> > {
     debug_assert! { self.cxt.term_stack.is_empty() }
     let start_pos = self.pos() ;
 
@@ -1096,32 +1097,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
       self.ws_cmt() ;
       let mut term_pos = self.pos() ;
-      let (mut term, mut typ) = if let Some(int) = self.int() {
-        ( term::int(int), Typ::Int )
+      let mut term = if let Some(int) = self.int() {
+        term::int(int)
       } else if let Some(real) = self.real() ? {
-        use num::One ;
-        let term = if real.denom().abs() == Int::one() {
-          let int = term::int( real.numer().clone() ) ;
-          if real.denom().is_negative() {
-            term::u_minus(int)
-          } else {
-            int
-          }
-        } else {
-          term::real(real)
-        } ;
-        ( term, Typ::Real )
+        term::real(real)
       } else if let Some(b) = self.bool() {
-        ( term::bool(b), Typ::Bool )
+        term::bool(b)
       } else if let Some((pos, id)) = self.ident_opt()? {
 
         if let Some(idx) = map.get(id) {
-          ( term::var(* idx), var_map[* idx].typ )
-        } else if let Some((ptterms, typ)) = self.get_bind(id) {
+          term::var(* idx, var_map[* idx].typ)
+        } else if let Some(ptterms) = self.get_bind(id) {
           if let Some(term) = ptterms.to_term().chain_err(
             || format!("while retrieving binding for {}", conf.emph(id))
           ) ? {
-            (term, typ)
+            term
           } else {
             // Not in a legal term.
             break 'read_kids None
@@ -1142,9 +1132,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.ws_cmt() ;
         let op_pos = self.pos() ;
         if let Some(op) = self.op_opt() ? {
-          let typs = Vec::with_capacity(11) ;
+          let kid_pos = Vec::with_capacity(11) ;
           let kids = Vec::with_capacity(11) ;
-          self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
+          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
           continue 'read_kids
         } else if self.cxt.term_stack.is_empty() {
           break 'read_kids None
@@ -1160,28 +1150,37 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } ;
 
       'go_up: while let Some(
-        (op, op_pos, mut typs, mut kids, bind_count)
+        (op, op_pos, mut kid_pos, mut kids, bind_count)
       ) = self.cxt.term_stack.pop() {
-        debug_assert_eq! { typs.len(), kids.len() }
-        typs.push( (typ, term_pos) ) ;
+        debug_assert_eq! { kid_pos.len(), kids.len() }
+        kid_pos.push( term_pos ) ;
         kids.push(term) ;
         self.ws_cmt() ;
         if self.tag_opt(")") {
-          typ = self.op_type_check(op, op_pos, typs) ? ;
-          term = term::app(op, kids) ;
+          if kids.is_empty() {
+            bail!(
+              self.error(
+                op_pos, format!(
+                  "Illegal nullary application of operator `{}`",
+                  conf.bad(op.as_str())
+                )
+              )
+            )
+          }
+          term = self.build_app(op, op_pos, kids, kid_pos) ? ;
           term_pos = op_pos ;
           self.ws_cmt() ;
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
         } else {
-          self.cxt.term_stack.push( (op, op_pos, typs, kids, bind_count) ) ;
+          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
           continue 'read_kids
         }
       }
 
       // Stack is empty, done.
       debug_assert!( self.cxt.term_stack.is_empty() ) ;
-      break 'read_kids Some((term, typ))
+      break 'read_kids Some(term)
     } ;
 
     if res.is_none() {
@@ -1202,15 +1201,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     instance: & Instance
   ) -> Res< Option<PTTerms> > {
     let mut args = VarMap::with_capacity(11) ;
-    let mut typs = Vec::with_capacity(11) ;
+    let mut kid_pos = Vec::with_capacity(11) ;
 
     let mut backtrack_pos = self.pos() ;
     let mut term_pos = self.pos() ;
 
-    while let Some((term, typ)) = self.term_opt(
+    while let Some(term) = self.term_opt(
       var_map, map, instance
     ) ? {
-      typs.push( (typ, term_pos) ) ;
+      kid_pos.push(term_pos) ;
       args.push(term) ;
       backtrack_pos = self.pos() ;
       self.ws_cmt() ;
@@ -1223,31 +1222,30 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     let sig = & instance[pred].sig ;
 
-    if sig.len() != typs.len() {
+    if sig.len() != kid_pos.len() {
       bail!(
         self.error(
           pred_pos, format!(
             "predicate {} takes {} arguments, but is applied to {}",
-            conf.emph(& instance[pred].name), sig.len(), typs.len()
+            conf.emph(& instance[pred].name), sig.len(), kid_pos.len()
           )
         )
       )
     } else {
-      let mut count = 0 ;
-      for (exp, (found, pos)) in sig.iter().zip( typs.into_iter() ) {
-        count += 1 ;
+      for ((index, exp), pos) in sig.index_iter().zip( kid_pos.into_iter() ) {
+        let found = args[index].typ() ;
         if exp != & found {
           err_chain! {
             self.error(
               pos, format!(
-                "expected an expression of sort {}, found {}",
-                exp, found
+                "expected an expression of sort {}, found {} ({})",
+                exp, & args[index], found
               )
             )
             => self.error(
               pred_pos, format!(
                 "in this application of {}, parameter #{}",
-                conf.emph(& instance[pred].name), count
+                conf.emph(& instance[pred].name), index
               )
             )
           }
@@ -1270,7 +1268,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res<(PTTerms, Typ)> {
+  ) -> Res<PTTerms> {
     if let Some(res) = self.top_term_opt(var_map, map, instance) ? {
       Ok(res)
     } else {
@@ -1283,27 +1281,25 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res< Option< (PTTerms, Typ) > > {
+  ) -> Res< Option< PTTerms > > {
     let bind_count = self.let_bindings(var_map, map, instance) ? ;
 
     self.ws_cmt() ;
     let start_pos = self.pos() ;
 
-    let res = if let Some((term, typ)) = self.term_opt(
+    let res = if let Some(term) = self.term_opt(
       var_map, map, instance
     ) ? {
       Ok( Some(
-        ( PTTerms::tterm( TTerm::T( term ) ), typ )
+        PTTerms::tterm( TTerm::T( term ) )
       ) )
     } else if let Some((pos, id)) = self.ident_opt() ? {
       if let Some(idx) = self.cxt.pred_name_map.get(id) {
         let idx = * idx ;
         if instance[idx].sig.is_empty() {
           Ok( Some(
-            (
-              PTTerms::TTerm(
-                TTerm::P { pred: idx, args: VarMap::with_capacity(0).into() }
-              ), Typ::Bool
+            PTTerms::TTerm(
+              TTerm::P { pred: idx, args: VarMap::with_capacity(0).into() }
             )
           ) )
         } else {
@@ -1317,8 +1313,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             )
           )
         }
-      } else if let Some((ptterms, typ)) = self.get_bind(id) {
-        Ok( Some( (ptterms.clone(), typ) ) )
+      } else if let Some(ptterms) = self.get_bind(id) {
+        Ok( Some( ptterms.clone() ) )
       } else {
         bail!(
           self.error(
@@ -1350,7 +1346,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           let res = self.pred_args(idx, pred_pos, var_map, map, instance) ? ;
           self.ws_cmt() ;
           self.tag(")") ? ;
-          Ok(res.map(|res| (res, Typ::Bool)))
+          Ok(res.map(|res| res))
         } else {
           bail!(
             self.error(
@@ -1385,7 +1381,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     var_map: & VarMap<VarInfo>,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
-  ) -> Res<(PTTerms, Typ)> {
+  ) -> Res<PTTerms> {
     enum Frame {
       And(Vec<PTTerms>), Or(Vec<PTTerms>), Impl(Vec<PTTerms>),
       Not, Let(LetCount)
@@ -1421,33 +1417,31 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           continue 'go_down
         } else {
           self.backtrack_to(pos) ;
-          if let Some((top, typ)) = self.top_term_opt(
+          if let Some(top) = self.top_term_opt(
             var_map, & map, instance
           ) ? {
-            if typ.is_bool() {
+            if top.typ().is_bool() {
               top
             } else
             // If we get here, it means what we're parsing does not have type
             // bool. Which means we're not inside a top-term (we're most likely
             // parsing a let-binding).
             if stack.is_empty() {
-              return Ok(
-                (top, typ)
-              )
+              return Ok(top)
             } else {
               err_chain! {
                 "while parsing top term"
                 => self.error(
                   start_pos, format!(
-                    "expected expression of type Bool, found {}", typ
+                    "expected expression of type Bool, found {}", top.typ()
                   )
                 )
               }
             }
-          } else if let Some((top, typ)) = self.term_opt(
+          } else if let Some(top) = self.term_opt(
             var_map, & map, instance
           ) ? {
-            if typ.is_bool() {
+            if top.typ().is_bool() {
               PTTerms::TTerm( TTerm::T(top) )
             } else
             // If we get here, it means what we're parsing does not have type
@@ -1455,14 +1449,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             // parsing a let-binding).
             if stack.is_empty() {
               return Ok(
-                ( PTTerms::TTerm( TTerm::T(top) ), typ )
+                PTTerms::TTerm( TTerm::T(top) )
               )
             } else {
               err_chain! {
                 "while parsing subterm"
                 => self.error(
                   start_pos, format!(
-                    "expected expression of type Bool, found {}", typ
+                    "expected expression of type Bool, found {}", top.typ()
                   )
                 )
               }
@@ -1476,33 +1470,31 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           }
         }
       } else {
-        if let Some((top, typ)) = self.top_term_opt(
+        if let Some(top) = self.top_term_opt(
           var_map, & map, instance
         ) ? {
-          if typ.is_bool() {
+          if top.typ().is_bool() {
             top
           } else
           // If we get here, it means what we're parsing does not have type
           // bool. Which means we're not inside a top-term (we're most likely
           // parsing a let-binding).
           if stack.is_empty() {
-            return Ok(
-              (top, typ)
-            )
+            return Ok(top)
           } else {
             err_chain! {
               "while parsing top term"
               => self.error(
                 start_pos, format!(
-                  "expected expression of type Bool, found {}", typ
+                  "expected expression of type Bool, found {}", top.typ()
                 )
               )
             }
           }
-        } else if let Some((top, typ)) = self.term_opt(
+        } else if let Some(top) = self.term_opt(
           var_map, & map, instance
         ) ? {
-          if typ.is_bool() {
+          if top.typ().is_bool() {
             PTTerms::TTerm( TTerm::T(top) )
           } else
           // If we get here, it means what we're parsing does not have type
@@ -1510,14 +1502,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           // parsing a let-binding).
           if stack.is_empty() {
             return Ok(
-              ( PTTerms::TTerm( TTerm::T(top) ), typ )
+              PTTerms::TTerm( TTerm::T(top) )
             )
           } else {
             err_chain! {
               "while parsing subterm (ident or constant)"
               => self.error(
                 start_pos, format!(
-                  "expected expression of type Bool, found {}", typ
+                  "expected expression of type Bool, found {}", top.typ()
                 )
               )
             }
@@ -1582,7 +1574,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.close_let_bindings(bind_count) ? ;
             continue 'go_up
           },
-          None => break 'go_down Ok( (ptterm, Typ::Bool) ),
+          None => break 'go_down Ok(ptterm),
         }
       }
 
@@ -1710,15 +1702,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
 
     let start_pos = self.pos() ;
-    let (mut ptterms, typ) = self.parse_ptterms(
+    let mut ptterms = self.parse_ptterms(
       & var_map, & map, instance
     ) ? ;
-    if ! typ.is_bool() {
+    if ! ptterms.typ().is_bool() {
       err_chain! {
         "while parsing clause terms"
         => self.error(
           start_pos, format!(
-            "expected expression of type Bool, got {}", typ
+            "expected expression of type Bool, got {}", ptterms.typ()
           )
         )
       }
@@ -1925,6 +1917,14 @@ pub enum PTTerms {
   TTerm( TTerm ),
 }
 impl PTTerms {
+  pub fn typ(& self) -> Typ {
+    match * self {
+      PTTerms::And(_) |
+      PTTerms::Or(_) |
+      PTTerms::NTTerm(_) => Typ::Bool,
+      PTTerms::TTerm(ref tterm) => tterm.typ(),
+    }
+  }
   pub fn and(mut tterms: Vec<PTTerms>) -> Self {
     use std::iter::Extend ;
     debug_assert!( ! tterms.is_empty() ) ;

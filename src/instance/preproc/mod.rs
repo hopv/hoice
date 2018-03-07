@@ -1271,13 +1271,19 @@ impl RedStrat for CfgRed {
 
 
 /// Unrolls positive constraints once.
-pub struct Unroll {}
+pub struct Unroll {
+  max_new_clauses: usize,
+  ignore: PrdSet,
+}
 
 impl RedStrat for Unroll {
   fn name(& self) -> & 'static str { "unroll" }
 
-  fn new(_: & Instance) -> Self {
-    Unroll {}
+  fn new(instance: & Instance) -> Self {
+    Unroll {
+      max_new_clauses: instance.clauses().len() * 5 / 100 + 1,
+      ignore: PrdSet::new(),
+    }
   }
 
   fn apply<'a>(
@@ -1295,35 +1301,37 @@ impl RedStrat for Unroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'all_clauses: for clause in instance.clause_indices() {
+      'pos_clauses: for clause in instance.pos_clauses() {
+        let clause = & instance[* clause] ;
+        debug_assert! { clause.lhs_preds().is_empty() }
         conf.check_timeout() ? ;
-        let clause = & instance[clause] ;
 
-        if clause.lhs_preds().is_empty() {
-          if let Some((pred, args)) = clause.rhs() {
-            match utils::terms_of_rhs_app(
-              true, instance, & clause.vars,
-              clause.lhs_terms(), clause.lhs_preds(),
-              pred, args
-            ) ? {
-              ExtractRes::Success((q, ts)) => insert(
-                pred, Quant::forall(q), ts
-              ),
-              ExtractRes::SuccessTrue => {
-                let mut set = TTermSet::new() ;
-                set.insert_term( term::tru() ) ;
-                insert(
-                  pred, None, set
-                )
-              },
-              ExtractRes::Failed => continue 'all_clauses,
-              ExtractRes::Trivial => bail!(
-                "found a trivial clause during unrolling"
-              ),
-              ExtractRes::SuccessFalse => bail!(
-                "found a predicate equivalent to false during unrolling"
-              ),
-            }
+        if let Some((pred, args)) = clause.rhs() {
+          if self.ignore.contains(& pred) {
+            continue 'pos_clauses
+          }
+          match utils::terms_of_rhs_app(
+            true, instance, & clause.vars,
+            clause.lhs_terms(), clause.lhs_preds(),
+            pred, args
+          ) ? {
+            ExtractRes::Success((q, ts)) => insert(
+              pred, Quant::forall(q), ts
+            ),
+            ExtractRes::SuccessTrue => {
+              let mut set = TTermSet::new() ;
+              set.insert_term( term::tru() ) ;
+              insert(
+                pred, None, set
+              )
+            },
+            ExtractRes::Failed => continue 'pos_clauses,
+            ExtractRes::Trivial => bail!(
+              "found a trivial clause during unrolling"
+            ),
+            ExtractRes::SuccessFalse => bail!(
+              "found a predicate equivalent to false during unrolling"
+            ),
           }
         }
 
@@ -1332,19 +1340,24 @@ impl RedStrat for Unroll {
 
     let mut info = RedInfo::new() ;
     for (pred, terms) in prd_map {
-      if terms.len() <= 50 {
+      // Anticipate blowup.
+      let appearances = instance.clauses_of(pred).0.len() ;
+      if terms.len() * appearances >= self.max_new_clauses {
+        let is_new = self.ignore.insert(pred) ;
+        debug_assert! { is_new }
         log_info! {
-          "unrolling {}, {} variants",
+          "not unrolling {}, {} variant(s), estimation: {} new clauses",
+          conf.emph(& instance[pred].name),
+          terms.len(),
+          terms.len() * appearances
+        }
+      } else {
+        log_info! {
+          "unrolling {}, {} variant(s)",
           conf.emph(& instance[pred].name),
           terms.len()
         }
         info += instance.unroll(pred, terms) ?
-      } else {
-        log_info! {
-          "not unrolling {}, {} (> 50) term(s)",
-          conf.emph(& instance[pred].name),
-          terms.len()
-        }
       }
     }
     Ok(info)
@@ -1354,13 +1367,19 @@ impl RedStrat for Unroll {
 
 
 /// Reverse-unrolls negative constraints once.
-pub struct RUnroll {}
+pub struct RUnroll {
+  max_new_clauses: usize,
+  ignore: PrdSet,
+}
 
 impl RedStrat for RUnroll {
   fn name(& self) -> & 'static str { "runroll" }
 
-  fn new(_: & Instance) -> Self {
-    RUnroll {}
+  fn new(instance: & Instance) -> Self {
+    RUnroll {
+      max_new_clauses: instance.clauses().len() * 5 / 100 + 1,
+      ignore: PrdSet::new(),
+    }
   }
 
   fn apply<'a>(
@@ -1378,76 +1397,76 @@ impl RedStrat for RUnroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'all_clauses: for clause in instance.clause_indices() {
+      'neg_clauses: for clause in instance.neg_clauses() {
+        let clause = & instance[* clause] ;
+        debug_assert! { clause.rhs().is_none() }
         conf.check_timeout() ? ;
-        let clause = & instance[clause] ;
 
-        if clause.rhs().is_none() {
-          let mut apps = clause.lhs_preds().iter() ;
+        let mut apps = clause.lhs_preds().iter() ;
 
-          if let Some((pred, argss)) = apps.next() {
-            let pred = * pred ;
-            let mut argss = argss.iter() ;
-            let args = if let Some(args) = argss.next() {
-              args
-            } else {
-              bail!("illegal clause, predicate application leads to nothing")
-            } ;
+        if let Some((pred, argss)) = apps.next() {
+          if self.ignore.contains(& pred) {
+            continue 'neg_clauses
+          }
+          let pred = * pred ;
+          let mut argss = argss.iter() ;
+          let args = if let Some(args) = argss.next() {
+            args
+          } else {
+            bail!("illegal clause, predicate application leads to nothing")
+          } ;
 
-            if argss.next().is_some() || apps.next().is_some() {
-              continue 'all_clauses
-            }
+          debug_assert! { argss.next().is_none() }
+          debug_assert! { apps.next().is_some() }
 
-            // Negative constraint with only one pred app, reverse-unrolling.
-            match utils::terms_of_lhs_app(
-              true, instance, & clause.vars,
-              clause.lhs_terms(), & PredApps::with_capacity(0),
-              None, pred, args
-            ) ? {
+          // Negative constraint with only one pred app, reverse-unrolling.
+          match utils::terms_of_lhs_app(
+            true, instance, & clause.vars,
+            clause.lhs_terms(), & PredApps::with_capacity(0),
+            None, pred, args
+          ) ? {
 
-              ExtractRes::Success((q, apps, ts)) => {
-                debug_assert! { apps.is_none() }
-                let (terms, pred_apps) = ts.destroy() ;
-                if_verb! {
-                  log_debug!{
-                    "from {}",
-                    clause.to_string_info(
-                      instance.preds()
-                    ) ?
-                  }
-                  log_debug! { "terms {{" }
-                  for term in & terms {
-                    log_debug! { "  {}", term }
-                  }
-                  log_debug! { "}}" }
-                  log_debug! { "pred apps {{" }
-                  for (pred, argss) in & pred_apps {
-                    for args in argss {
-                      let mut s = format!("({}", instance[* pred]) ;
-                      for arg in args.iter() {
-                        s = format!("{} {}", s, arg)
-                      }
-                      log_debug! { "  {})", s }
-                    }
-                  }
-                  log_debug! { "}}" }
+            ExtractRes::Success((q, apps, ts)) => {
+              debug_assert! { apps.is_none() }
+              let (terms, pred_apps) = ts.destroy() ;
+              if_verb! {
+                log_debug!{
+                  "from {}",
+                  clause.to_string_info(
+                    instance.preds()
+                  ) ?
                 }
-                debug_assert! { pred_apps.is_empty() }
-                insert( pred, Quant::exists(q), terms )
-              },
-              ExtractRes::SuccessFalse => {
-                let mut set = HConSet::<Term>::new() ;
-                insert( pred, None, set )
-              },
-              ExtractRes::Failed => continue 'all_clauses,
-              ExtractRes::Trivial => bail!(
-                "found a trivial clause during unrolling"
-              ),
-              ExtractRes::SuccessTrue => bail!(
-                "found a predicate equivalent to true during reverse-unrolling"
-              ),
-
-            }
+                log_debug! { "terms {{" }
+                for term in & terms {
+                  log_debug! { "  {}", term }
+                }
+                log_debug! { "}}" }
+                log_debug! { "pred apps {{" }
+                for (pred, argss) in & pred_apps {
+                  for args in argss {
+                    let mut s = format!("({}", instance[* pred]) ;
+                    for arg in args.iter() {
+                      s = format!("{} {}", s, arg)
+                    }
+                    log_debug! { "  {})", s }
+                  }
+                }
+                log_debug! { "}}" }
+              }
+              debug_assert! { pred_apps.is_empty() }
+              insert( pred, Quant::exists(q), terms )
+            },
+            ExtractRes::SuccessFalse => {
+              let mut set = HConSet::<Term>::new() ;
+              insert( pred, None, set )
+            },
+            ExtractRes::Failed => continue 'neg_clauses,
+            ExtractRes::Trivial => bail!(
+              "found a trivial clause during unrolling"
+            ),
+            ExtractRes::SuccessTrue => bail!(
+              "found a predicate equivalent to true during reverse-unrolling"
+            ),
 
           }
 
@@ -1458,12 +1477,25 @@ impl RedStrat for RUnroll {
 
     let mut info = RedInfo::new() ;
     for (pred, terms) in prd_map {
-      log_info! {
-        "reverse unrolling {}, {} unrolling(s)",
-        conf.emph(& instance[pred].name),
-        terms.len()
+      // Anticipate blowup.
+      let appearances = instance.clauses_of(pred).0.len() ;
+      if terms.len() * appearances >= self.max_new_clauses {
+        let is_new = self.ignore.insert(pred) ;
+        debug_assert! { is_new }
+        log_info! {
+          "not r_unrolling {}, {} variant(s), estimation: {} new clauses",
+          conf.emph(& instance[pred].name),
+          terms.len(),
+          terms.len() * appearances
+        }
+      } else {
+        log_info! {
+          "r_unrolling {}, {} variant(s)",
+          conf.emph(& instance[pred].name),
+          terms.len()
+        }
+        info += instance.reverse_unroll(pred, terms) ?
       }
-      info += instance.reverse_unroll(pred, terms) ?
     }
     Ok(info)
   }

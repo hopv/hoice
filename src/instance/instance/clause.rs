@@ -224,6 +224,7 @@ impl Clause {
     use std::cmp::Ordering::* ;
     let mut redundant = false ;
     let mut rmed_stuff = false ;
+    println!("is redundant {}", term) ;
     set.retain(
       |t| match t.atom_implies(term) {
         // `t` is more generic, `term` is redundant, keep `t`.
@@ -234,6 +235,7 @@ impl Clause {
         // `term` is more generic, discard.
         Some(Less) => {
           rmed_stuff = true ;
+          println!("  removing {}", t) ;
           false
         },
         // No relation, keep `t`.
@@ -247,47 +249,33 @@ impl Clause {
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
-    if let Some(kids) = term.conj_inspect() {
-      let mut new_stuff = false ;
-      let mut stack = vec![] ;
-      for kid in kids {
-        if let Some(kids) = kid.conj_inspect() {
-          for kid in kids { stack.push(kid) }
-        } else if let Some(true) = term.bool() {
-          ()
-        } else {
-          if ! Self::is_redundant(& term, lhs_terms) {
-            let is_new = lhs_terms.insert( kid.clone() ) ;
-            new_stuff = new_stuff || is_new
-          }
+    println!("inserting {}", term) ;
+    let mut new_stuff = false ;
+    let mut stack = vec![term] ;
+
+    while let Some(term) = stack.pop() {
+      debug_assert! { term.typ() == Typ::Bool }
+      if let Some(kids) = term.conj_inspect() {
+        for kid in kids {
+          stack.push( kid.clone() )
+        }
+      } else if let Some(b) = term.bool() {
+        if ! b {
+          lhs_terms.clear() ;
+          lhs_terms.insert( term::fls() ) ;
+          return true
+        }
+      } else {
+        if ! Self::is_redundant(& term, lhs_terms) {
+          let is_new = lhs_terms.insert( term.clone() ) ;
+          // Should be true since term is not redundant.
+          debug_assert! { is_new }
+          new_stuff = new_stuff || is_new
         }
       }
-      while let Some(term) = stack.pop() {
-        if let Some(kids) = term.conj_inspect() {
-          for kid in kids { stack.push(kid) }
-        } else if let Some(true) = term.bool() {
-          ()
-        } else {
-          if ! Self::is_redundant(& term, lhs_terms) {
-            let is_new = lhs_terms.insert( term.clone() ) ;
-            new_stuff = new_stuff || is_new
-          }
-        }
-      }
-      return new_stuff
     }
 
-    // Only reachable when `term.conj_inspect()` is `None`. Needs to be outside
-    // the match because of lexical lifetimes.
-    if let Some(true) = term.bool() {
-      false
-    } else {
-      if ! Self::is_redundant(& term, lhs_terms) {
-        lhs_terms.insert(term)
-      } else {
-        false
-      }
-    }
+    return new_stuff
   }
 
   /// Inserts a term in the LHS.
@@ -589,7 +577,7 @@ impl Clause {
       let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
       let info = VarInfo::new(fresh_name, * typ, fresh) ;
       self.vars.push(info) ;
-      let _prev = map.insert(* var, term::var(fresh)) ;
+      let _prev = map.insert(* var, term::var(fresh, * typ)) ;
       debug_assert!( _prev.is_none() )
     }
     map
@@ -610,7 +598,7 @@ impl Clause {
         let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
         let info = VarInfo::new(fresh_name, * typ, fresh) ;
         self.vars.push(info) ;
-        let _prev = map.insert(* var, term::var(fresh)) ;
+        let _prev = map.insert(* var, term::var(fresh, * typ)) ;
         debug_assert!( _prev.is_none() )
       }
       map

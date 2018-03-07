@@ -744,6 +744,7 @@ impl<'core> IceLearner<'core> {
 
     // Synthesize qualifier separating the data.
     let mut best_synth_qual = None ;
+    msg! { self => "synthesizing" }
     profile!{ self tick "learning", "qual", "synthesis" } ;
     let res = self.synthesize(pred, & data, & mut best_synth_qual) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;

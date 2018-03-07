@@ -1,6 +1,32 @@
 //! Macros.
 
 
+/// If the input is an error, prints it and panics.
+macro_rules! catch_unwrap {
+  ($e:expr => |$err:pat| $($action:tt)*) => (
+    match $e {
+      Ok(res) => res,
+      Err($err) => {
+        $crate::errors::print_err(
+          { $($action)* }.into()
+        ) ;
+        ::std::process::exit(2)
+      }
+    }
+  ) ;
+  ($e:expr) => (
+    catch_unwrap! {
+      $e => |e|
+      $crate::errors::print_err(
+        e.chain_err(|| "Fatal internal error")
+      ) ;
+      ::std::process::exit(2)
+    }
+  ) ;
+}
+
+
+
 /// Wraps stuff in a block, usually to please borrow-checking.
 macro_rules! scoped {
   ($($tokens:tt)*) => ({

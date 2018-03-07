@@ -1780,13 +1780,10 @@ impl ClauseSimplifier {
               let prev = self.rep_to_term.insert(rep, term.clone()) ;
               if let Some(prev) = prev {
                 let eq = term::eq(prev, term) ;
-                match eq.eval( & () ) {
-                  Ok(Val::B(true)) => (),
-                  Ok(Val::B(false)) => return Ok(true),
-                  Ok(Val::I(_)) => bail!(
-                    "equality evaluation yielded integer"
-                  ),
-                  _ => self.terms_to_add.push(eq),
+                match eq.bool() {
+                  Some(true) => (),
+                  Some(false) => return Ok(true),
+                  None => self.terms_to_add.push(eq),
                 }
               }
             }
@@ -1794,30 +1791,37 @@ impl ClauseSimplifier {
 
           // Two terms.
           (None, None) => {
-            let inline = if clause.lhs_terms().contains(& args[0]) {
-              Some( args[1].clone() )
-            } else if clause.lhs_terms().contains(& args[1]) {
-              Some( args[0].clone() )
-            } else {
-              let not_lhs = term::not( args[0].clone() ) ;
-              let not_rhs = term::not( args[1].clone() ) ;
-              if clause.lhs_terms().contains(& not_lhs) {
-                Some(not_rhs)
-              } else if clause.lhs_terms().contains(& not_rhs) {
-                Some(not_lhs)
+            debug_assert_eq! { args[1].typ(), args[0].typ() }
+            let inline = if args[0].typ() == Typ::Bool {
+              if clause.lhs_terms().contains(& args[0]) {
+                Some( args[1].clone() )
+              } else if clause.lhs_terms().contains(& args[1]) {
+                Some( args[0].clone() )
               } else {
-                self.other_eqs.push( eq.clone() ) ;
-                None
+                let not_lhs = term::not( args[0].clone() ) ;
+                let not_rhs = term::not( args[1].clone() ) ;
+                if clause.lhs_terms().contains(& not_lhs) {
+                  Some(not_rhs)
+                } else if clause.lhs_terms().contains(& not_rhs) {
+                  Some(not_lhs)
+                } else {
+                  self.other_eqs.push( eq.clone() ) ;
+                  None
+                }
               }
+            } else {
+              None
             } ;
             if let Some(term) = inline {
               inlined = true ;
-              clause.insert_term( term.clone() ) ;
-              remove = true ;
-              if term.is_eq() {
+              println!("inserting {}", term) ;
+              println!("from {}", eq) ;
+              let is_new = clause.insert_term( term.clone() ) ;
+              remove = is_new ;
+              if term.is_eq() && is_new {
                 self.eqs.push(term)
               } else {
-                self.terms_to_add.push(term)
+                // self.terms_to_add.push(term)
               }
             } else {
               remove = false
@@ -1827,7 +1831,7 @@ impl ClauseSimplifier {
         }
 
         if remove {
-          // log_debug!{ "  removing..." }
+          log_debug!{ "  removing {}", eq }
           let was_there = clause.rm_term(& eq) ;
           debug_assert!(was_there)
         } else {
@@ -1850,7 +1854,9 @@ impl ClauseSimplifier {
     for (rep, set) in & self.rep_to_vars {
       for var in set {
         if var != rep {
-          let _prev = self.var_to_rep_term.insert(* var, term::var(* rep)) ;
+          let _prev = self.var_to_rep_term.insert(
+            * var, term::var(* rep, clause[* var].typ)
+          ) ;
           debug_assert!( _prev.is_none() )
         }
       }
@@ -1879,7 +1885,7 @@ impl ClauseSimplifier {
         "unreachable".into()
       ) ? ;
       self.terms_to_add.push(
-        term::eq( term::var(to_rm), term )
+        term::eq( term::var(to_rm, clause[to_rm].typ), term )
       )
     }
 
@@ -1910,7 +1916,7 @@ impl ClauseSimplifier {
         term.clone()
       } else {
         debug_assert!( clause.vars[rep].active ) ;
-        term::var(rep)
+        term::var(rep, clause[rep].typ)
       } ;
       for var in vars {
         if var != rep {

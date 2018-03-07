@@ -297,11 +297,11 @@ impl Evaluator for () {
 }
 /// This implements a redirection `(map, vals)`, where a variable `var` from
 /// the term evaluated is evaluated to `vals[ map[var] ]`.
-impl<'a, E> Evaluator for (& 'a VarMap<VarIdx>, & 'a E)
+impl<'a, E> Evaluator for (& 'a VarMap<(VarIdx, Typ)>, & 'a E)
 where E: Evaluator {
   #[inline]
   fn get(& self, var: VarIdx) -> & Val {
-    self.1.get( self.0[var] )
+    self.1.get( self.0[var].0 )
   }
   #[inline]
   fn len(& self) -> usize { self.0.len() }
@@ -486,19 +486,19 @@ impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
     self.get(& var).map(|e| e.clone())
   }
 }
-impl VarIndexed<Term> for VarMap<VarIdx> {
+impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
-      Some( term::var( self[var] ) )
+      Some( term::var( self[var].0, self[var].1 ) )
     } else {
       None
     }
   }
 }
-impl VarIndexed<Term> for VarHMap<VarIdx> {
+impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     self.get(& var).map(
-      |v| term::var(* v)
+      |& (v, t)| term::var(v, t)
     )
   }
 }

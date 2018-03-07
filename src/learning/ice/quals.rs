@@ -116,7 +116,7 @@ impl QInfo {
 
 
 /// Type of a signature transformation.
-pub type Transform = VarMap<VarIdx> ;
+pub type Transform = VarMap<(VarIdx, Typ)> ;
 
 /// Some transformations, either complete or partial.
 ///
@@ -199,7 +199,7 @@ impl SigTransforms {
             non-unique transformation arity"
           )
         }
-        for idx in trans {
+        for & (idx, _) in trans {
           if * idx >= sig.len() {
             bail!(
               "sig transform is inconsistent: \
@@ -319,7 +319,7 @@ impl SigTransforms {
               ( old_q_sig.clone(), map.clone(), used.clone(), p_sig )
             ) ;
             // ...update map...
-            map.push(idx) ;
+            map.push((idx, * p_typ)) ;
             // ...update used predicate variables...
             let is_new = used.insert(idx) ;
             debug_assert! { is_new }
@@ -437,7 +437,7 @@ impl QualClass {
   /// (SigTransforms' Partial variant)
   pub fn insert(
     & mut self, term: Term, pred: PrdIdx,
-    pred_sig: & VarMap<Typ>, hint_map: VarMap<VarIdx>
+    pred_sig: & VarMap<Typ>, hint_map: VarMap<(VarIdx, Typ)>
   ) -> bool {
     use std::collections::hash_map::Entry ;
     if let Some(transforms) = self.transforms.get_mut(pred_sig) {
@@ -486,7 +486,7 @@ pub struct Qual<'a> {
   pub qual: & 'a Term,
   // cache: & 'a mut EvalCache,
   /// Maps qualifier variables to predicate variables.
-  pub map: & 'a VarMap<VarIdx>,
+  pub map: & 'a VarMap<(VarIdx, Typ)>,
 }
 impl<'a> Qual<'a> {
   /// Checks consistency.
@@ -546,7 +546,7 @@ pub struct Qualifiers {
   pub instance: Arc<Instance>,
   /// Maps predicate variables to alpha-renamed qualifier variables. Factored
   /// to avoid allocation.
-  alpha_map: VarHMap<VarIdx>,
+  alpha_map: VarHMap<(VarIdx, Typ)>,
 }
 
 impl Qualifiers {
@@ -808,14 +808,15 @@ impl Qualifiers {
     let mut transform = VarMap::with_capacity( vars.len() ) ;
 
     for var in vars {
+      let typ = pred_sig[var] ;
       // Next qualifier variable index...
       let q_var = sig.next_index() ;
       // ...maps to `var`,
-      transform.push(var) ;
+      transform.push((var, typ)) ;
       // ...has its type,
       sig.push( pred_sig[var] ) ;
       // ...substitution will change `var` to `q_var`.
-      let prev = self.alpha_map.insert(var, q_var) ;
+      let prev = self.alpha_map.insert(var, (q_var, typ)) ;
       debug_assert_eq! { prev, None }
     }
 
@@ -883,9 +884,11 @@ impl Qualifiers {
         println!("{}      for {}", pref, s) ;
         s.clear() ;
         for trans in transs.iter() {
-          for (var, v) in trans.index_iter() {
+          for (var, & (v, t)) in trans.index_iter() {
             s.push_str(
-              & format!(" {} -> {},", v.default_str(), var.default_str())
+              & format!(
+                " {}: {} -> {},", v.default_str(), t, var.default_str()
+              )
             )
           }
           println!("{}      |{}", pref, s) ;

@@ -108,8 +108,10 @@ impl Sample {
   /// Tests if a sample is about some predicate and its arguments is subsumed
   /// by one of the elements of a set.
   pub fn is_subbed(& self, pred: PrdIdx, samples: & HConSet<HSample>) -> bool {
-    self.pred == pred && samples.iter().any(
-      |other| other == & self.args || other.sub(& self.args)
+    self.pred == pred && (
+      samples.contains(& self.args) || samples.iter().any(
+        |other| other.sub(& self.args)
+      )
     )
   }
 }

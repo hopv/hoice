@@ -62,7 +62,7 @@ impl TheoSynth for IntSynth {
           Val::I(ref i) => {
             let val = Op::ToReal.eval( vec![ Val::I( i.clone() ) ] ) ? ;
             let prev = map.insert(
-              term::to_real( term::var(var) ), val
+              term::to_real( term::var(var, Typ::Real) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -96,7 +96,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx) ;
+        let var = term::var(var_idx, Typ::Int) ;
         simple_arith_synth! { previous_int, f, int | var = ( val.clone() ) }
       },
       _ => (),
@@ -132,7 +132,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx) ;
+        let var = term::var(var_idx, Typ::Int) ;
         arith_synth_non_lin! {
           previous_int, f, int | var = ( val.clone() )
         }
@@ -172,7 +172,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx) ;
+        let var = term::var(var_idx, Typ::Int) ;
         arith_synth_three_terms! {
           previous_int, f, int | var = ( val.clone() )
         }

@@ -6,9 +6,49 @@ use common::* ;
 use common::data::{
   Data, Sample, HSample
 } ;
+use common::msg::MsgCore ;
+
+/// Launches the assistant.
+pub fn launch(
+  instance: Arc<Instance>,
+  core: MsgCore,
+) {
+  let mut error = None ;
+
+  match Assistant::new(instance, & core) {
+    Ok(mut assistant) => {
+      while error.is_none() {
+        if let Err(e) = profile!(
+          |assistant.core._profiler| wrap {
+            assistant.core.recv()
+          } "waiting"
+        ).and_then(
+          |mut data| assistant.break_implications(& mut data).map(
+            |()| assistant.core.send_samples(data)
+          )
+        ) {
+          error = Some(e) ;
+          break
+        }
+      }
+      if let Err(e) = assistant.finalize() {
+        if error.is_none() {
+          error = Some(e) ;
+        }
+      }
+    },
+    Err(e) => error = Some(e),
+  } ;
+
+  if let Some(error) = error {
+    core.err(error)
+  }
+}
 
 /// Propagates examples, tries to break implication constraints.
-pub struct Assistant {
+pub struct Assistant<'a> {
+  /// Core, to communicate with the teacher.
+  core: & 'a MsgCore,
   /// Solver.
   solver: Solver<()>,
   /// Instance.
@@ -21,11 +61,11 @@ pub struct Assistant {
   _profiler: Profiler,
 }
 
-impl Assistant {
+impl<'a> Assistant<'a> {
 
   /// Constructor.
   pub fn new(
-    instance: Arc<Instance>
+    instance: Arc<Instance>, core: & 'a MsgCore
   ) -> Res<Self> {
     let solver = conf.solver.spawn("assistant", ()) ? ;
     let _profiler = Profiler::new() ;
@@ -79,7 +119,7 @@ impl Assistant {
 
     Ok(
       Assistant {
-        solver, instance, pos, neg, _profiler
+        core, solver, instance, pos, neg, _profiler
       }
     )
   }
@@ -99,7 +139,7 @@ impl Assistant {
     if data.constraints.is_empty() { return Ok(()) }
 
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
-    debug! { "breaking implications..." }
+    msg! { debug self.core => "breaking implications..." }
     profile! { self "constraints received" => add data.constraints.len() }
 
     'all_constraints: for cstr in CstrRange::zero_to(

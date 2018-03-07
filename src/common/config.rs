@@ -610,7 +610,7 @@ impl IceConf {
     app.arg(
 
       Arg::with_name("simple_gain_ratio").long("--simple_gain_ratio").help(
-        "percent of times simple gain will be used instead of generalized gain"
+        "percent of times simple gain will be used"
       ).validator(
         int_validator
       ).value_name(

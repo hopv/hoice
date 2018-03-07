@@ -58,7 +58,7 @@ impl TheoSynth for RealSynth {
           Val::R(ref r) => {
             let val = Op::ToInt.eval( vec![ Val::R( r.clone() ) ] ) ? ;
             let prev = map.insert(
-              term::to_int( term::var(var) ), val
+              term::to_int( term::var(var, Typ::Int) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -92,7 +92,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::R(ref val) => {
-        let var = term::var(var_idx) ;
+        let var = term::var(var_idx, Typ::Real) ;
         simple_arith_synth! { previous_real, f, real | var = ( val.clone() ) }
       },
       _ => (),
@@ -128,7 +128,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx) ;
+        let var = term::var(var_idx, Typ::Real) ;
         arith_synth_three_terms! {
           previous_real, f, real | var = ( val.clone() )
         }
