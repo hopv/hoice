@@ -107,18 +107,14 @@ impl Args {
         |info| if partial {
           Val::N
         } else {
-          info.typ.default_val()
+          let default = info.typ.default_val() ;
+          default
         }
       ).collect()
     ) ;
     for (var, _, val) in model {
-      slf[var] = val.cast(info[var].typ) ?
+      slf[var] = val.cast(info[var].typ) ? ;
     }
-    print!("       ") ;
-    for info in info.iter() {
-      print!("{} ", info.typ)
-    }
-    println!("model: {}", slf) ;
     Ok(slf)
   }
 
@@ -208,8 +204,6 @@ impl SubsumeExt for HSample {
     if ! conf.teacher.partial {
       None
     } else {
-
-      println!("> {}\n  {}\n", self, other) ;
 
       let (mut less, mut greater) = (true, true) ;
 

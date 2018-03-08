@@ -1814,8 +1814,6 @@ impl ClauseSimplifier {
             } ;
             if let Some(term) = inline {
               inlined = true ;
-              println!("inserting {}", term) ;
-              println!("from {}", eq) ;
               let is_new = clause.insert_term( term.clone() ) ;
               remove = is_new ;
               if term.is_eq() && is_new {

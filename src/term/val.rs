@@ -212,24 +212,25 @@ impl Val {
 
   /// Normalizes `Rat`.
   pub fn normalize(& mut self) {
-    use num::{ One, Zero } ;
-    let val: Val = match * self {
-      Val::R(ref r) => if r.denom().is_zero() {
-        panic!("division by zero during normalization")
-      } else if r.numer().is_zero() {
-        0.into()
-      } else if r.denom().abs() == Int::one() {
-        if r.denom().is_negative() {
-          Val::I( - r.numer() )
-        } else {
-          Val::I( r.numer().clone() )
-        }
-      } else {
-        return ()
-      },
-      _ => return (),
-    } ;
-    * self = val
+    // use num::{ One, Zero } ;
+    // let val: Val = match * self {
+    //   Val::R(ref r) => if r.denom().is_zero() {
+    //     panic!("division by zero during normalization")
+    //   } else if r.numer().is_zero() {
+    //     0.into()
+    //   } else if r.denom().abs() == Int::one() {
+    //     if r.denom().is_negative() {
+    //       Val::I( - r.numer() )
+    //     } else {
+    //       Val::I( r.numer().clone() )
+    //     }
+    //   } else {
+    //     return ()
+    //   },
+    //   _ => return (),
+    // } ;
+    // * self = val
+    ()
   }
 
   /// Extracts a boolean value.
