@@ -504,7 +504,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_pos(pred, unc) ;
+              self.data.stage_pos(pred, unc) ? ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -550,7 +550,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_neg(pred, unc) ;
+              self.data.stage_neg(pred, unc) ? ;
             }
             self.data.propagate()
 

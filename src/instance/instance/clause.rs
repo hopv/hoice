@@ -224,7 +224,7 @@ impl Clause {
     use std::cmp::Ordering::* ;
     let mut redundant = false ;
     let mut rmed_stuff = false ;
-    println!("is redundant {}", term) ;
+    // println!("is redundant {}", term) ;
     set.retain(
       |t| match t.atom_implies(term) {
         // `t` is more generic, `term` is redundant, keep `t`.
@@ -235,7 +235,7 @@ impl Clause {
         // `term` is more generic, discard.
         Some(Less) => {
           rmed_stuff = true ;
-          println!("  removing {}", t) ;
+          // println!("  removing {}", t) ;
           false
         },
         // No relation, keep `t`.
@@ -249,7 +249,7 @@ impl Clause {
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
-    println!("inserting {}", term) ;
+    // println!("inserting {}", term) ;
     let mut new_stuff = false ;
     let mut stack = vec![term] ;
 

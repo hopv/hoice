@@ -998,11 +998,11 @@ impl Instance {
           ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            let new = data.stage_raw_neg(pred, args) ;
+            let new = data.stage_raw_neg(pred, args) ? ;
             nu_stuff = nu_stuff || new
           },
           (0, Some( (pred, args) )) => {
-            let new = data.stage_raw_pos(pred, args) ;
+            let new = data.stage_raw_pos(pred, args) ? ;
             nu_stuff = nu_stuff || new
           },
           (_, consequent) => {

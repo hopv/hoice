@@ -18,10 +18,151 @@ use learning::ice::data::CData ;
 
 
 
+/// Mapping from variables to values, used for learning data.
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct Args {
+  /// Internal map.
+  map: VarMap<Val>,
+}
+impl From< VarMap<Val> > for Args {
+  fn from(map: VarMap<Val>) -> Self {
+    Args::new(map)
+  }
+}
+impl_fmt! {
+  Args(self, fmt) {
+    write!(fmt, "{}", self.map)
+  }
+}
+impl Args {
+  /// Constructor.
+  pub fn new(mut map: VarMap<Val>) -> Self {
+    for val in map.iter_mut() {
+      val.normalize()
+    }
+    Args { map }
+  }
+  /// Pushes a value.
+  pub fn push(& mut self, val: Val) {
+    self.map.push(val)
+  }
+  /// Constructor with some capacity.
+  pub fn with_capacity(capa: usize) -> Self {
+    Self::new( VarMap::with_capacity(capa) )
+  }
+
+  /// True if at least one value is `Val::N`.
+  pub fn is_partial(& self) -> bool {
+    self.map.iter().any(|v| ! v.is_known())
+  }
+
+  /// True if the two args are the same.
+  pub fn same_as(& self, other: & Self) -> bool {
+    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
+      if ! v_1.same_as(v_2) { return false }
+    }
+    true
+  }
+
+  /// Check whether `self` subsumes `other`.
+  ///
+  /// - `Some(true)` if `self` strictly subsumes `other`
+  /// - `Some(false)` if `self` is the same as `other`
+  /// - None otherwise
+  ///
+  /// Both must have the same length (asserted in debug).
+  pub fn sub(& self, other: & Self) -> Option<bool> {
+    debug_assert_eq! { self.map.len(), other.map.len() }
+    let mut same = true ;
+    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
+      if ! v_1.same_as(v_2) {
+        // Different values.
+        if v_1.is_known() {
+          // Value from self is known and is different from that from other,
+          // not equal and not subsumed.
+          return None
+        } else {
+          // Value from self is `N`, which implies an value. v_2 cannot be `N`,
+          // so the sample are different.
+          same = false
+        }
+      }
+    }
+    Some(! same)
+  }
+
+  /// True if `s.sub(self).is_some()` is true for some `s` in `set`.
+  pub fn is_subbed(& self, set: & HConSet<::common::data::HSample>) -> bool {
+    set.iter().any(|s| s.sub(self).is_some())
+  }
+
+  /// Constructor from a model.
+  pub fn of_model<T>(
+    info: & VarMap<::instance::info::VarInfo>,
+    model: Vec<(VarIdx, T, Val)>,
+    partial: bool,
+  ) -> Res<Self> {
+    let mut slf = Args::new(
+      info.iter().map(
+        |info| if partial {
+          Val::N
+        } else {
+          info.typ.default_val()
+        }
+      ).collect()
+    ) ;
+    for (var, _, val) in model {
+      slf[var] = val.cast(info[var].typ) ?
+    }
+    print!("       ") ;
+    for info in info.iter() {
+      print!("{} ", info.typ)
+    }
+    println!("model: {}", slf) ;
+    Ok(slf)
+  }
+
+  /// Evaluates some arguments and yields the resulting `VarMap`.
+  pub fn apply_to(
+    & self, args: & VarMap<::term::Term>
+  ) -> ::errors::Res<Self> {
+    let mut res = Self::with_capacity( args.len() ) ;
+    for arg in args {
+      res.push( arg.eval(self) ? )
+    }
+    Ok(res)
+  }
+}
+impl ::std::ops::Deref for Args {
+  type Target = VarMap<Val> ;
+  fn deref(& self) -> & VarMap<Val> { & self.map }
+}
+impl ::std::ops::DerefMut for Args {
+  fn deref_mut(& mut self) -> & mut VarMap<Val> { & mut self.map }
+}
+impl Evaluator for Args {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    & self.map[var]
+  }
+  #[inline]
+  fn len(& self) -> usize { VarMap::len(& self.map) }
+}
+
 /// Hash consed samples.
 pub type HSample = HConsed<Args> ;
+
+
+
+
+
+
+
 /// Helper functions for `HSample`.
-pub trait HSampleExt {
+pub trait SubsumeExt {
+  /// Type of the sets we want to check for subsumption.
+  type Set ;
+
   /// Compares two samples w.r.t. subsumption.
   ///
   /// Returns
@@ -32,53 +173,122 @@ pub trait HSampleExt {
   /// - `None` if `self` and `other` cannot be compared.
   ///
   /// Returns an error if `self` and `other` do not have the same length.
-  fn compare(& self, other: & Self) -> Res< Option<Ordering> > ;
+  fn compare(& self, other: & Self) -> Option<Ordering> ;
 
   /// True iff `self` subsumes or is equal to `other`.
-  fn subsumes(& self, other: & Self) -> Res<bool> {
-    Ok(
-      match self.compare(other) ? {
-        Some(Ordering::Greater) | Some(Ordering::Equal) => true,
-        _ => false,
-      }
-    )
+  fn subsumes(& self, other: & Self) -> bool {
+    match self.compare(other) {
+      Some(Ordering::Greater) | Some(Ordering::Equal) => true,
+      _ => false,
+    }
   }
   /// True iff `other` subsumes or is equal to `self`.
-  fn subsumed_by(& self, other: & Self) -> Res<bool> {
+  fn subsumed_by(& self, other: & Self) -> bool {
     other.subsumes(self)
   }
+  /// Checks whether `self` is subsumed by anything in the set.
+  ///
+  /// Returns `(b, n)`:
+  ///
+  /// - `b` indicates whether `self` is subsumed
+  /// - `n` is the number of elements removed because they were subsumed
+  ///   by `self` (only when `rm`)
+  ///
+  /// Generally speaking, it is expected that `n > 0 => ! b`. In particular, if
+  /// `self` is in the set the expected output is `(true, 0)`.
+  fn set_subsumed(& self, set: & mut Self::Set, rm: bool) -> (bool, usize) ;
 }
-impl HSampleExt for HSample {
-  fn compare(& self, other: & Self) -> Res< Option<Ordering> > {
-    if_debug! {
-      if self.len() != other.len() {
-        bail!("attempting to compare two hsamples of different length")
+impl SubsumeExt for HSample {
+  type Set = HConSet<HSample> ;
+  fn compare(& self, other: & Self) -> Option<Ordering> {
+    debug_assert_eq! { self.len(), other.len() }
+
+    if self == other { return Some(Ordering::Equal) }
+
+    if ! conf.teacher.partial {
+      None
+    } else {
+
+      println!("> {}\n  {}\n", self, other) ;
+
+      let (mut less, mut greater) = (true, true) ;
+
+      for (val, other_val) in self.iter().zip( other.iter() ) {
+        greater = greater && (
+          ! val.is_known() || val == other_val
+        ) ;
+        less = less && (
+          ! other_val.is_known() || val == other_val
+        ) ;
       }
+
+      match (less, greater) {
+        (false, false) => None,
+        (true, false) => Some(Ordering::Less),
+        (false, true) => Some(Ordering::Greater),
+        (true, true) => catch_unwrap!(
+          Err(()) => |_| "Fatal error in sample hashconsing"
+        ),
+      }
+
     }
+  }
 
-    if self == other { return Ok( Some(Ordering::Equal) ) }
-
-    let (mut less, mut greater) = (true, true) ;
-
-    for (val, other_val) in self.iter().zip( other.iter() ) {
-      greater = greater && (
-        ! val.is_known() || val == other_val
+  fn set_subsumed(
+    & self, set: & mut HConSet<HSample>, rm: bool
+  ) -> (bool, usize) {
+    if ! conf.teacher.partial {
+      (set.contains(self), 0)
+    } else if self.is_partial() {
+      for elem in set.iter() {
+        if elem.subsumes(self) {
+          return { (true, 0) }
+        }
+      }
+      (false, 0)
+    } else if rm {
+      let mut subsumed = false ;
+      let mut count = 0 ;
+      set.retain(
+        |other| match self.compare(other) {
+          Some(Ordering::Equal) => {
+            subsumed = true ;
+            true
+          },
+          Some(Ordering::Greater) => {
+            count += 1 ;
+            false
+          },
+          Some(Ordering::Less) => {
+            subsumed = true ;
+            true
+          },
+          None => true,
+        }
       ) ;
-      less = less && (
-        ! other_val.is_known() || val == other_val
-      ) ;
-    }
-
-    match (less, greater) {
-      (false, false) => Ok(None),
-      (true, false) => Ok( Some(Ordering::Less) ),
-      (false, true) => Ok( Some(Ordering::Greater) ),
-      (true, true) => bail!(
-        "problem in hsample hconsing..."
-      ),
+      (subsumed, count)
+    } else {
+      // Not in remove mode.
+      for elem in set.iter() {
+        if elem.subsumes(self) { return (true, 0) }
+      }
+      (false, 0)
     }
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /// Consign for hash consed samples.
 pub type HSampleConsign = Arc< RwLock<HashConsign<Args>> > ;
@@ -107,12 +317,15 @@ impl Sample {
 
   /// Tests if a sample is about some predicate and its arguments is subsumed
   /// by one of the elements of a set.
-  pub fn is_subbed(& self, pred: PrdIdx, samples: & HConSet<HSample>) -> bool {
-    self.pred == pred && (
-      samples.contains(& self.args) || samples.iter().any(
-        |other| other.sub(& self.args)
-      )
-    )
+  ///
+  /// Samples from the set that are subsumed by `self` are removed if `rm`.
+  pub fn set_subsumed(
+    & self, pred: PrdIdx, samples: & mut HConSet<HSample>, rm: bool
+  ) -> bool {
+    if self.pred != pred { return false }
+    let (subbed, rmed) = self.args.set_subsumed(samples, rm) ;
+    debug_assert! { ! subbed || rmed == 0 }
+    subbed
   }
 }
 impl<'a> PebcakFmt<'a> for Sample {
@@ -440,7 +653,7 @@ impl DataCore {
     for set in & self.pos {
       for sample in set {
         for s in set {
-          if sample.sub(s) {
+          if sample.sub(s) == Some(true) {
             bail!(
               "positive samples are redundant: {} => {}", sample, s
             )
@@ -451,7 +664,7 @@ impl DataCore {
     for set in & self.neg {
       for sample in set {
         for s in set {
-          if sample.sub(s) {
+          if sample.sub(s) == Some(true) {
             bail!(
               "negative samples are redundant: {} => {}", sample, s
             )
@@ -470,7 +683,7 @@ impl DataCore {
       ) ;
       for (sample, polarity) in pos.chain(neg) {
         for (s, set) in & self.map[pred] {
-          if sample.sub(s) {
+          if sample.sub(s).is_some() {
             let mut s: String = "{".into() ;
             for idx in set {
               s.push_str(& format!(" {}", idx))
@@ -577,33 +790,39 @@ impl DataCore {
   }
 
   /// Remember a positive example to add.
-  pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) -> bool {
-    if args.is_subbed( & self.pos[pred] ) {
-      return false
-    }
+  pub fn stage_pos(& mut self, pred: PrdIdx, args: HSample) -> Res<bool> {
+    // Working on pos_to_add.
     let set = self.pos_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
     ) ;
-    if args.is_subbed( set ) {
-      return false
+    let (subsumed, rmed) = args.set_subsumed(set, true) ;
+    if subsumed {
+      debug_assert_eq! { rmed, 0 }
+      return Ok(false)
     }
-    set.retain( |s| ! args.sub(s) ) ;
-    set.insert(args)
+
+    let is_new = set.insert(args) ;
+    // We checked `args` is not subsumed already, so it's necessarily new.
+    debug_assert! { is_new }
+    Ok(true)
   }
 
   /// Remember a negative example to add.
-  pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) -> bool {
-    if args.is_subbed( & self.neg[pred] ) {
-      return false
-    }
+  pub fn stage_neg(& mut self, pred: PrdIdx, args: HSample) -> Res<bool> {
+    // Working on neg_to_add.
     let set = self.neg_to_add.entry(pred).or_insert_with(
       || HConSet::with_capacity(11)
     ) ;
-    if args.is_subbed( set ) {
-      return false
+    let (subsumed, rmed) = args.set_subsumed(set, true) ;
+    if subsumed {
+      debug_assert_eq! { rmed, 0 }
+      return Ok(false)
     }
-    set.retain( |s| ! args.sub(s) ) ;
-    set.insert(args)
+
+    let is_new = set.insert(args) ;
+    // We checked `args` is not subsumed already, so it's necessarily new.
+    debug_assert! { is_new }
+    Ok(true)
   }
 
   /// Diff between two data structures. Returns the new positive, negative,
@@ -689,16 +908,16 @@ impl DataCore {
     Ok(())
   }
 
-  /// Retrieves all samples `s` from `map` such that `sample.sub(s)`
+  /// Retrieves all samples `s` from `self.map` such that `sample.subsumes(s)`
   fn remove_subs(
     & mut self, pred: PrdIdx, sample: & HSample
   ) -> Option<CstrSet> {
-    if ! sample.is_partial() {
+    if sample.is_partial() {
       return self.map[pred].remove(sample)
     }
     let mut res = None ;
     self.map[pred].retain(
-      |s, set| if sample == s || sample.sub(s) {
+      |s, set| if sample.subsumes(s) {
         res.get_or_insert_with(
           || CstrSet::with_capacity(set.len())
         ).extend( set.drain() ) ;
@@ -708,7 +927,7 @@ impl DataCore {
       }
     ) ;
     res
-  }
+}
 
   /// Adds some positive examples from `pos_to_add`.
   ///
@@ -730,28 +949,34 @@ impl DataCore {
     }
 
     'propagate: while let Some(
-      (curr_pred, curr_samples)
+      (curr_pred, mut curr_samples)
     ) = to_propagate.pop() {
-      if curr_samples.is_empty() { continue 'propagate }
 
       // log_debug!(
       //   "propagating {} samples for predicate {}",
       //   curr_samples.len(), self.instance[curr_pred]
       // ) ;
 
-      let mut new_stuff = false ;
-      self.pos[curr_pred].retain(
-        |other| ! curr_samples.iter().any(
-          |sample| sample.sub(other)
-        )
+      // Remove stuff we already know, while removing from `pos` the samples
+      // which are subsumed by the new ones.
+      curr_samples.retain(
+        |s| {
+          let (subsumed, _) = s.set_subsumed(
+            & mut self.pos[curr_pred], true
+          ) ;
+          if subsumed {
+            false
+          } else {
+            let is_new = self.pos[curr_pred].insert(s.clone()) ;
+            debug_assert! { is_new }
+            true
+          }
+        }
       ) ;
-      for sample in & curr_samples {
-        let is_new = self.pos[curr_pred].insert( sample.clone() ) ;
-        new_stuff = new_stuff || is_new
-      }
-      if ! new_stuff { continue 'propagate }
 
-      // Get the constraints mentioning the positive samples.
+      if curr_samples.is_empty() { continue 'propagate }
+
+      // Get the constraints mentioning the new positive samples.
       let mut constraints ;
       {
         let mut tmp = None ;
@@ -807,7 +1032,9 @@ impl DataCore {
         
         // Is `rhs` true?
         if self.constraints[c_idx].rhs.as_ref().map(
-          | sample | sample.is_subbed(curr_pred, & curr_samples)
+          | sample | sample.set_subsumed(
+            curr_pred, & mut curr_samples, false
+          )
         ).unwrap_or(false) {
           // log_debug!("    -> rhs is true, tautologizing") ;
           // Tautologize and break links.
@@ -838,7 +1065,7 @@ impl DataCore {
           let _ = self.modded_constraints.remove(& c_idx) ;
           if let Some( Sample { pred, args } ) = maybe_rhs {
             // Remember the sample has to be true.
-            self.stage_pos(pred, args) ;
+            self.stage_pos(pred, args) ? ;
           } else {
             // No `rhs`, we have `true => false`, contradiction.
             bail!(ErrorKind::Unsat)
@@ -856,7 +1083,7 @@ impl DataCore {
           if let Some( Sample { pred, args } ) = lhs.pop() {
             debug_assert!( lhs.is_empty() ) ;
             // Remember the sample has to be false.
-            self.stage_neg(pred, args) ;
+            self.stage_neg(pred, args) ? ;
           } else {
             bail!(
               "[unreachable] just checked lhs's length is 1 but it's empty now"
@@ -900,21 +1127,27 @@ impl DataCore {
     }
 
     'propagate: while let Some(
-      (curr_pred, curr_samples)
+      (curr_pred, mut curr_samples)
     ) = to_propagate.pop() {
-      if curr_samples.is_empty() { continue }
 
-      let mut new_stuff = false ;
-      self.neg[curr_pred].retain(
-        |other| ! curr_samples.iter().any(
-          |sample| sample.sub(other)
-        )
+      // Remove stuff we already know, while removing from `neg` the samples
+      // which are subsumed by the new ones.
+      curr_samples.retain(
+        |s| {
+          let (subsumed, _) = s.set_subsumed(
+            & mut self.neg[curr_pred], true
+          ) ;
+          if subsumed {
+            false
+          } else {
+            let is_new = self.neg[curr_pred].insert(s.clone()) ;
+            debug_assert! { is_new }
+            true
+          }
+        }
       ) ;
-      for sample in & curr_samples {
-        let is_new = self.neg[curr_pred].insert( sample.clone() ) ;
-        new_stuff = new_stuff || is_new
-      }
-      if ! new_stuff { continue 'propagate }
+
+      if curr_samples.is_empty() { continue 'propagate }
 
       // log_debug!(
       //   "propagating {} samples for predicate {}",
@@ -977,7 +1210,7 @@ impl DataCore {
         
         // Is `rhs` false?
         if self.constraints[c_idx].rhs.as_ref().map(
-          | sample | sample.is_subbed(curr_pred, & curr_samples)
+          | sample | sample.set_subsumed(curr_pred, & mut curr_samples, false)
         ).unwrap_or(false) {
           // log_debug!("    -> rhs is false, constraint is negative") ;
           // Forget rhs.
@@ -1191,14 +1424,14 @@ impl Data {
     let (mut pos, mut neg) = (0, 0) ;
     for (pred, samples) in other.core.pos.into_index_iter() {
       for sample in samples {
-        if self.stage_pos(pred, sample) {
+        if self.stage_pos(pred, sample) ? {
           pos += 1
         }
       }
     }
     for (pred, samples) in other.core.neg.into_index_iter() {
       for sample in samples {
-        if self.stage_neg(pred, sample) {
+        if self.stage_neg(pred, sample) ? {
           neg += 1
         }
       }
@@ -1260,7 +1493,7 @@ impl Data {
     if nu_lhs.is_empty() {
       // unit, rhs has to be true.
       if let Some( Sample { pred, args } ) = nu_rhs {
-        self.stage_pos(pred, args) ;
+        self.stage_pos(pred, args) ? ;
         self.add_propagate_pos() ? ;
         // Necessarily new, otherwise we would know that the constraint is a
         // tautology.
@@ -1273,7 +1506,7 @@ impl Data {
       if let Some((pred, samples)) = lhs.next() {
         let mut samples = samples.into_iter() ;
         if let Some(sample) = samples.next() {
-          self.stage_neg(pred, sample) ;
+          self.stage_neg(pred, sample) ? ;
           self.add_propagate_neg() ? ;
           // Necessarily new, otherwise we would know that the constraint is a
           // tautology.
@@ -1360,7 +1593,7 @@ impl Data {
   /// Stages propagation but does not run it.
   pub fn stage_raw_pos(
     & mut self, pred: PrdIdx, args: Args
-  ) -> bool {
+  ) -> Res<bool> {
     let (args, _) = self.mk_sample(args) ;
     self.stage_pos(pred, args)
   }
@@ -1368,7 +1601,7 @@ impl Data {
   /// Adds negative data after hash consing. True if new.
   pub fn stage_raw_neg(
     & mut self, pred: PrdIdx, args: Args
-  ) -> bool {
+  ) -> Res<bool> {
     let (args, _) = self.mk_sample(args) ;
     self.stage_neg(pred, args)
   }

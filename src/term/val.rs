@@ -166,9 +166,37 @@ impl Val {
     }
   }
 
+  /// Attempts to cast a value.
+  pub fn cast(self, typ: ::term::Typ) -> Res<Self> {
+    use num::One ;
+    use term::Typ ;
+    match (self, typ) {
+      (Val::I(i), Typ::Int) => Ok(
+        Val::I(i)
+      ),
+      (Val::I(num), Typ::Real) => Ok(
+        Val::R( (num, Int::one()).into() )
+      ),
+
+      (Val::R(r), Typ::Real) => Ok(
+        Val::R(r)
+      ),
+
+      (Val::B(b), Typ::Bool) => Ok(
+        Val::B(b)
+      ),
+
+      (Val::N, _) => Ok(Val::N),
+
+      (val, typ) => bail!(
+        "Cannot cast value {} to type {}", val, typ
+      ),
+    }
+  }
+
   /// Checks if two values are the same.
   ///
-  /// Different from partial eq!
+  /// Different from partial eq! Here, `N` is the `same_as` `N`.
   pub fn same_as(& self, other: & Self) -> bool {
     use Val::* ;
     match (self, other) {

@@ -43,6 +43,7 @@ pub mod profiling ;
 pub mod smt ;
 mod revision ;
 
+pub use self::data::Args ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -131,116 +132,6 @@ pub type Cex = Args ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap< Vec<Cex> > ;
 
-/// Mapping from variables to values, used for learning data.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub struct Args {
-  /// Internal map.
-  map: VarMap<Val>,
-}
-impl From< VarMap<Val> > for Args {
-  fn from(map: VarMap<Val>) -> Self {
-    Args::new(map)
-  }
-}
-impl_fmt! {
-  Args(self, fmt) {
-    write!(fmt, "{}", self.map)
-  }
-}
-impl Args {
-  /// Constructor.
-  pub fn new(mut map: VarMap<Val>) -> Self {
-    for val in map.iter_mut() {
-      val.normalize()
-    }
-    Args { map }
-  }
-  /// Pushes a value.
-  pub fn push(& mut self, val: Val) {
-    self.map.push(val)
-  }
-  /// Constructor with some capacity.
-  pub fn with_capacity(capa: usize) -> Self {
-    Self::new( VarMap::with_capacity(capa) )
-  }
-
-  /// True if at least one value is `Val::N`.
-  pub fn is_partial(& self) -> bool {
-    self.map.iter().any(|v| ! v.is_known())
-  }
-
-  /// True if the two args are the same.
-  pub fn same_as(& self, other: & Self) -> bool {
-    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
-      if ! v_1.same_as(v_2) { return false }
-    }
-    true
-  }
-
-  /// True if for all values in `self`, it is the same as `other` or is
-  /// `Val::N`, and at least one is `Val::N`.
-  ///
-  /// Both must have the same length.
-  pub fn sub(& self, other: & Self) -> bool {
-    debug_assert_eq! { self.map.len(), other.map.len() }
-    let mut same = true ;
-    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
-      if ! v_1.same_as(v_2) {
-        if v_1.is_known() {
-          return false
-        } else {
-          same = false
-        }
-      }
-    }
-    ! same
-  }
-
-  /// True if `s.sub(self) || s.same_as(self)` is true for some `s` in `set`.
-  pub fn is_subbed(& self, set: & HConSet<::common::data::HSample>) -> bool {
-    set.iter().any(|s| s.sub(self) || s.same_as(self))
-  }
-
-  /// Constructor from a model.
-  pub fn of_model<T>(
-    info: & VarMap<::instance::info::VarInfo>,
-    model: Vec<(VarIdx, T, Val)>,
-    partial: bool,
-  ) -> Self {
-    let mut slf = Args::new(
-      info.iter().map(
-        |info| if partial {
-          Val::N
-        } else {
-          info.typ.default_val()
-        }
-      ).collect()
-    ) ;
-    for (var, _, val) in model {
-      slf[var] = val
-    }
-    slf
-  }
-
-  /// Evaluates some arguments and yields the resulting `VarMap`.
-  pub fn apply_to(
-    & self, args: & VarMap<::term::Term>
-  ) -> ::errors::Res<Self> {
-    let mut res = Self::with_capacity( args.len() ) ;
-    for arg in args {
-      res.push( arg.eval(self) ? )
-    }
-    Ok(res)
-  }
-}
-impl ::std::ops::Deref for Args {
-  type Target = VarMap<Val> ;
-  fn deref(& self) -> & VarMap<Val> { & self.map }
-}
-impl ::std::ops::DerefMut for Args {
-  fn deref_mut(& mut self) -> & mut VarMap<Val> { & mut self.map }
-}
-
 /// Signature trait, for polymorphic term insertion.
 pub trait Signature {
   /// Type of a variable.
@@ -278,14 +169,6 @@ impl Evaluator for VarMap<Val> {
   }
   #[inline]
   fn len(& self) -> usize { VarMap::len(self) }
-}
-impl Evaluator for Args {
-  #[inline]
-  fn get(& self, var: VarIdx) -> & Val {
-    & self.map[var]
-  }
-  #[inline]
-  fn len(& self) -> usize { VarMap::len(& self.map) }
 }
 impl Evaluator for () {
   #[inline]

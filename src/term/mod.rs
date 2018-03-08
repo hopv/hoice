@@ -119,7 +119,8 @@ impl Typ {
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
-      Typ::Real | Typ::Int => Val::I( Int::zero() ),
+      Typ::Real => Val::R( Rat::zero() ),
+      Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
     }
   }

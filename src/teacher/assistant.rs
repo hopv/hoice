@@ -175,10 +175,10 @@ impl<'a> Assistant<'a> {
           profile! { self tick "data" }
           data.tautologize(cstr) ;
           for Sample { pred, args } in pos.drain(0..) {
-            data.stage_pos(pred, args) ;
+            data.stage_pos(pred, args) ? ;
           }
           for Sample { pred, args } in neg.drain(0..) {
-            data.stage_neg(pred, args) ;
+            data.stage_neg(pred, args) ? ;
           }
           data.propagate() ? ;
           profile! { self mark "data" }

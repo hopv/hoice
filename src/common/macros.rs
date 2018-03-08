@@ -26,6 +26,12 @@ macro_rules! catch_unwrap {
 }
 
 
+// /// Bails with unsat.
+// macro_rules! unsat {
+//   () => (bail!($crate::errors::ErrorKind::Unsat)) ;
+// }
+
+
 
 /// Wraps stuff in a block, usually to please borrow-checking.
 macro_rules! scoped {

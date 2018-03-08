@@ -662,7 +662,7 @@ impl<'a> Teacher<'a> {
           let model = self.solver.get_model_const() ? ;
           let cex = Args::of_model(
             clause!().vars(), model, partial
-          ) ;
+          ) ? ;
           profile!{ self mark "cexs", "model" }
           cexs.push(cex) ;
           $($stuff)*
