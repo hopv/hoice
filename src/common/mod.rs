@@ -35,6 +35,7 @@ pub mod config ;
 
 #[macro_use]
 pub mod macros ;
+// pub mod data ;
 pub mod data ;
 #[macro_use]
 pub mod msg ;
@@ -43,7 +44,7 @@ pub mod profiling ;
 pub mod smt ;
 mod revision ;
 
-pub use self::data::Args ;
+pub use self::data::{ RArgs, Args, ArgsSet } ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -117,6 +118,11 @@ impl PredAppsExt for PredApps {
   }
 }
 
+/// Predicate informations.
+pub type PrdInfos = PrdMap<::instance::info::PrdInfo> ;
+/// Variable informations.
+pub type VarInfos = VarMap<::instance::info::VarInfo> ;
+
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
@@ -128,7 +134,7 @@ pub type Quantfed = VarHMap<Typ> ;
 pub type Model = Vec< (PrdIdx, TTerms) > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = Args ;
+pub type Cex = RArgs ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap< Vec<Cex> > ;
 

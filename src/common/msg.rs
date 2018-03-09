@@ -3,7 +3,7 @@
 use std::sync::mpsc::channel ;
 
 use common::* ;
-use common::data::* ;
+use common::data::Data ;
 
 use common::profiling::Profiler ;
 
@@ -225,9 +225,6 @@ impl MsgCore {
   }
 
   /// Sends statistics.
-  #[cfg(feature = "bench")]
-  pub fn stats(self) -> Res<()> { Ok(()) }
-  #[cfg( not(feature = "bench") )]
   pub fn stats(self) -> Res<()> {
     if self.sender.send(
       Msg::new(self.id, self._profiler)

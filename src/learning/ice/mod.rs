@@ -1,7 +1,7 @@
 //! ICE learner.
 
 use common::* ;
-use common::data::* ;
+use common::data::Data ;
 use common::msg::* ;
 use common::smt::{
   SmtSample, SmtConstraint, SmtActSamples
@@ -76,7 +76,7 @@ pub struct IceLearner<'core> {
   /// Branches to construct later, used when constructing a decision tree.
   unfinished: Vec< (Branch, CData) >,
   /// Classifier for constraint data.
-  classifier: HConMap<HSample, bool>,
+  classifier: HConMap<Args, bool>,
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,
@@ -298,9 +298,9 @@ impl<'core> IceLearner<'core> {
           self.candidate[pred] = Some( term::fls() ) ;
           profile!(
             |self.core._profiler| wrap {
-              self.data.pred_all_false(pred).chain_err(
+              self.data.force_pred(pred, false).chain_err(
                 || format!(
-                  "while setting all false for {}", pred
+                  "while setting all false for {}", self.instance[pred]
                 )
               )
             } "learning", "data"
@@ -322,9 +322,9 @@ impl<'core> IceLearner<'core> {
           self.candidate[pred] = Some( term::tru() ) ;
           profile!(
             |self.core._profiler| wrap {
-              self.data.pred_all_true(pred).chain_err(
+              self.data.force_pred(pred, true).chain_err(
                 || format!(
-                  "while setting all true for {}", pred
+                  "while setting all true for {}", self.instance[pred]
                 )
               )
             } "learning", "data"
@@ -504,7 +504,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_pos(pred, unc) ? ;
+              self.data.add_pos(pred, unc) ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -550,7 +550,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_neg(pred, unc) ? ;
+              self.data.add_neg(pred, unc) ;
             }
             self.data.propagate()
 
@@ -906,7 +906,7 @@ impl<'core> IceLearner<'core> {
   /// the data will be forced to be positive / negative in the solver
   /// automatically. Otherwise, the actlit is deactivated.
   pub fn is_legal(
-    & mut self, pred: PrdIdx, unc: & HSamples, pos: bool
+    & mut self, pred: PrdIdx, unc: & Vec<Args>, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
     profile!{ self tick "learning", "smt", "legal" }

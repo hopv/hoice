@@ -3,9 +3,7 @@
 use rsmt2::to_smt::Expr2Smt ;
 
 use common::* ;
-use common::data::{
-  Data, Sample, HSample
-} ;
+use common::data::{ Data, Sample } ;
 use common::msg::MsgCore ;
 
 /// Launches the assistant.
@@ -173,12 +171,12 @@ impl<'a> Assistant<'a> {
           }
           // Discard the constraint, regardless of what will happen.
           profile! { self tick "data" }
-          data.tautologize(cstr) ;
+          data.tautologize(cstr) ? ;
           for Sample { pred, args } in pos.drain(0..) {
-            data.stage_pos(pred, args) ? ;
+            data.add_pos(pred, args) ;
           }
           for Sample { pred, args } in neg.drain(0..) {
-            data.stage_neg(pred, args) ? ;
+            data.add_neg(pred, args) ;
           }
           data.propagate() ? ;
           profile! { self mark "data" }
@@ -188,7 +186,7 @@ impl<'a> Assistant<'a> {
 
       if let Some(
         & Sample { pred, ref args }
-      ) = data.constraints[cstr].rhs.as_ref() {
+      ) = data.constraints[cstr].rhs() {
         match self.try_force(data, pred, args) ? {
           None => (),
           Some( Either::Left(pos_sample) ) => {
@@ -205,24 +203,28 @@ impl<'a> Assistant<'a> {
 
       // move_on!(if trivial) ;
 
-      'lhs: for (pred, samples) in & data.constraints[cstr].lhs {
-        let mut lhs_trivial = true ;
-        for sample in samples {
-          match self.try_force(data, * pred, sample) ? {
-            None => {
-              lhs_unknown += 1 ;
-              lhs_trivial = false
-            },
-            Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
-            Some( Either::Right(neg_sample) ) => {
-              neg.push(neg_sample) ;
-              trivial = true ;
-              // Constraint is trivial, move on.
-              // break 'lhs
-            },
+      if let Some(lhs) = data.constraints[cstr].lhs() {
+        'lhs: for (pred, samples) in lhs {
+          let mut lhs_trivial = true ;
+          for sample in samples {
+            match self.try_force(data, * pred, sample) ? {
+              None => {
+                lhs_unknown += 1 ;
+                lhs_trivial = false
+              },
+              Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
+              Some( Either::Right(neg_sample) ) => {
+                neg.push(neg_sample) ;
+                trivial = true ;
+                // Constraint is trivial, move on.
+                // break 'lhs
+              },
+            }
           }
+          trivial = trivial || lhs_trivial
         }
-        trivial = trivial || lhs_trivial
+      } else {
+        bail!("Illegal constraint")
       }
 
       move_on!()
@@ -249,7 +251,7 @@ impl<'a> Assistant<'a> {
   /// - `Right` of a sample which, when forced negative, will force the input
   ///   sample to be classified negative.
   pub fn try_force(
-    & mut self, _data: & Data, pred: PrdIdx, vals: & HSample
+    & mut self, _data: & Data, pred: PrdIdx, vals: & Args
   ) -> Res< Option< Either<Sample, Sample> > > {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
@@ -386,11 +388,11 @@ pub struct ArgValEq<'a> {
   /// Arguments.
   args: & 'a HTArgs,
   /// Values.
-  vals: & 'a HSample,
+  vals: & 'a Args,
 }
 impl<'a> ArgValEq<'a> {
   /// Constructor.
-  pub fn new(args: & 'a HTArgs, vals: & 'a HSample) -> Self {
+  pub fn new(args: & 'a HTArgs, vals: & 'a Args) -> Self {
     debug_assert_eq! { args.len(), vals.len() }
     ArgValEq { args, vals }
   }

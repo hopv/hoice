@@ -1,6 +1,7 @@
 //! Actual instance structure.
 
 use common::* ;
+use common::data::RArgs ;
 use instance::info::* ;
 use learning::ice::quals::Qualifiers ;
 
@@ -26,12 +27,12 @@ pub struct Instance {
   /// Constants constructed so far.
   consts: HConSet<Term>,
   /// Predicates.
-  preds: PrdMap<PrdInfo>,
+  preds: PrdInfos,
   /// Original predicates, for reconstruction.
   ///
   /// Stores the original signature of the predicates, and a map from the
   /// variables of `preds` to the original signature.
-  old_preds: PrdMap< (VarMap<Typ>, VarMap<VarIdx>) >,
+  old_preds: PrdMap< (Sig, VarMap<VarIdx>) >,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
@@ -421,7 +422,7 @@ impl Instance {
   }
 
   /// Predicate accessor.
-  pub fn preds(& self) -> & PrdMap<PrdInfo> {
+  pub fn preds(& self) -> & PrdInfos {
     & self.preds
   }
   /// Clause accessor.
@@ -540,7 +541,7 @@ impl Instance {
 
   /// Pushes a new predicate and returns its index.
   pub fn push_pred(
-    & mut self, name: String, sig: VarMap<Typ>
+    & mut self, name: String, sig: Sig
   ) -> PrdIdx {
     self.max_pred_arity = ::std::cmp::max(
       self.max_pred_arity, (sig.len() + 1).into()
@@ -955,7 +956,7 @@ impl Instance {
 
               let modded_cex = fix_cex!(clause, cex, args) ;
 
-              let mut values = Args::with_capacity( args.len() ) ;
+              let mut values = RArgs::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 values.push(
                   arg.eval(& modded_cex).chain_err(
@@ -977,7 +978,7 @@ impl Instance {
         // debug! { "    working on rhs..." }
         let consequent = if let Some((pred, args)) = clause.rhs() {
           // debug! { "        ({} {})", self[pred], args }
-          let mut values = Args::with_capacity( args.len() ) ;
+          let mut values = RArgs::with_capacity( args.len() ) ;
           let modded_cex = fix_cex!(clause, cex, args) ;
           'pred_args: for arg in args.iter() {
             values.push(
@@ -998,11 +999,11 @@ impl Instance {
           ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            let new = data.stage_raw_neg(pred, args) ? ;
+            let new = data.add_raw_neg(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (0, Some( (pred, args) )) => {
-            let new = data.stage_raw_pos(pred, args) ? ;
+            let new = data.add_raw_pos(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (_, consequent) => {
@@ -1354,33 +1355,13 @@ impl ::std::ops::IndexMut<ClsIdx> for Instance {
 
 
 
-
-
-
-// impl<'a> PebcakFmt<'a> for TTerm {
-//   type Info = (& 'a VarMap<VarInfo>, & 'a PrdMap<PrdInfo>) ;
-//   fn pebcak_err(& self) -> ErrorKind {
-//     "during top term pebcak formatting".into()
-//   }
-//   fn pebcak_io_fmt<W: Write>(
-//     & self, w: & mut W,
-//     (vars, prds): (& 'a VarMap<VarInfo>, & 'a PrdMap<PrdInfo>)
-//   ) -> IoRes<()> {
-//     self.write(
-//       w,
-//       |w, var| w.write_all( vars[var].as_bytes() ),
-//       |w, prd| w.write_all( prds[prd].as_bytes() )
-//     )
-//   }
-// }
-
 impl<'a> PebcakFmt<'a> for Clause {
-  type Info = & 'a PrdMap<PrdInfo> ;
+  type Info = & 'a PrdInfos ;
   fn pebcak_err(& self) -> ErrorKind {
     "during clause pebcak formatting".into()
   }
   fn pebcak_io_fmt<W: Write>(
-    & self, w: & mut W, prds: & 'a PrdMap<PrdInfo>
+    & self, w: & mut W, prds: & 'a PrdInfos
   ) -> IoRes<()> {
     self.write(
       w, |w, prd, args| {

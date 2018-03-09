@@ -12,10 +12,17 @@ use common::{ Int, Rat, Signed } ;
 
 /// Values.
 ///
+/// Not that the `PartialEq` implementation is syntactic equality. In
+/// particular, `Val::N == Val::N` which is not true semantically.
+///
+/// See [`equal`][equal] for semantic equality.
+///
 /// # TODO
 ///
 /// - document partial eq and same_as
-#[derive(Debug, Clone, Hash)]
+///
+/// [equal]: #method.equal (equal method)
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum Val {
   /// Boolean value.
   B(bool),
@@ -26,32 +33,7 @@ pub enum Val {
   /// No value (context was incomplete).
   N,
 }
-impl ::std::cmp::PartialEq for Val {
-  fn eq(& self, other: & Self) -> bool {
-    use Val::* ;
-    match (self, other) {
-      (& B(lft), & B(rgt)) => lft == rgt,
-      (& I(ref lft), & I(ref rgt)) => lft == rgt,
-      (& R(ref lft), & R(ref rgt)) => lft == rgt,
-      (& N, _) | (_, & N) => false,
-      (& I(ref i), & R(ref r)) |
-      (& R(ref r), & I(ref i)) => {
-        use num::One ;
-        r.denom().abs() == Int::one() && if r.denom().is_negative() {
-          i == & - r.numer()
-        } else {
-          i == r.numer()
-        }
-      },
 
-      (& B(_), & I(_)) |
-      (& B(_), & R(_)) |
-      (& I(_), & B(_)) |
-      (& R(_), & B(_)) => false
-    }
-  }
-}
-impl ::std::cmp::Eq for Val {}
 /// Applies a binary operation on two compatible values.
 ///
 /// The first token specifies the mode:
@@ -194,43 +176,15 @@ impl Val {
     }
   }
 
-  /// Checks if two values are the same.
+  /// Checks if two values are the semantically equal.
   ///
-  /// Different from partial eq! Here, `N` is the `same_as` `N`.
-  pub fn same_as(& self, other: & Self) -> bool {
-    use Val::* ;
-    match (self, other) {
-      (& N, & N) => true,
-      (& I(ref i_1), & I(ref i_2)) => i_1 == i_2,
-      (& R(ref r_1), & R(ref r_2)) => r_1 == r_2,
-      (& B(ref b_1), & B(ref b_2)) => b_1 == b_2,
-      (& I(_), _) | (_, & I(_)) |
-      (& R(_), _) | (_, & R(_)) |
-      (& B(_), _) | (_, & B(_)) => false,
+  /// Different from partial eq! Here, `N` is not equal to `N`.
+  pub fn equal(& self, other: & Self) -> bool {
+    if self.is_known() && other.is_known() {
+      self == other
+    } else {
+      false
     }
-  }
-
-  /// Normalizes `Rat`.
-  pub fn normalize(& mut self) {
-    // use num::{ One, Zero } ;
-    // let val: Val = match * self {
-    //   Val::R(ref r) => if r.denom().is_zero() {
-    //     panic!("division by zero during normalization")
-    //   } else if r.numer().is_zero() {
-    //     0.into()
-    //   } else if r.denom().abs() == Int::one() {
-    //     if r.denom().is_negative() {
-    //       Val::I( - r.numer() )
-    //     } else {
-    //       Val::I( r.numer().clone() )
-    //     }
-    //   } else {
-    //     return ()
-    //   },
-    //   _ => return (),
-    // } ;
-    // * self = val
-    ()
   }
 
   /// Extracts a boolean value.

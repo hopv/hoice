@@ -9,7 +9,7 @@
 //! (Teacher's teach function)
 
 use common::* ;
-use common::data::* ;
+use common::data::Data ;
 use common::msg::* ;
 use common::smt::SmtTerm ;
 
@@ -306,6 +306,9 @@ impl<'a> Teacher<'a> {
     //   let profiler = assistant.finalize() ? ;
     //   self._profiler.add_sub("assistant", profiler)
     // }
+    if conf.stats {
+      self._profiler.add_sub("data", self.data.destroy())
+    }
     Ok(())
   }
 
@@ -396,6 +399,16 @@ impl<'a> Teacher<'a> {
     }
 
     'recv: loop {
+
+      if ! drain {
+        if self.learners.iter().all(
+          |& (ref channel, _, _)| {
+            channel.is_none()
+          }
+        ) {
+          all_dead!()
+        }
+      }
 
       profile!{ self tick "waiting" }
       let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
@@ -490,7 +503,7 @@ impl<'a> Teacher<'a> {
           print_err( err.unwrap_err() )
         },
 
-        MsgKind::Stats(profiler) => if conf.stats {
+        MsgKind::Stats(profiler) => {
           let id = match id {
             Id::Learner(idx) => {
               self.learners[idx].0 = None ;
@@ -498,7 +511,9 @@ impl<'a> Teacher<'a> {
             },
             Id::Assistant => "assistant".into(),
           } ;
-          self._profiler.add_sub(id, profiler)
+          if conf.stats {
+            self._profiler.add_sub(id, profiler)
+          }
         },
 
         MsgKind::Unsat => return Ok(None),
@@ -660,7 +675,7 @@ impl<'a> Teacher<'a> {
           log_debug! { "  getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
-          let cex = Args::of_model(
+          let cex = RArgs::of_model(
             clause!().vars(), model, partial
           ) ? ;
           profile!{ self mark "cexs", "model" }
@@ -872,7 +887,6 @@ mod smt {
         }
       ) ? {
         let mut val = Val::R(val) ;
-        val.normalize() ;
         Ok(val)
       } else {
         input.fail_with("unexpected value")

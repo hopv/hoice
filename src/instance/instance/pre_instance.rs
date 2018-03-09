@@ -3,8 +3,6 @@
 
 use common::* ;
 use common::smt::{ SmtConj, SmtImpl } ;
-
-use instance::info::* ;
 use instance::Clause ;
 
 
@@ -1585,7 +1583,7 @@ impl ClauseSimplifier {
 
   /// Checks internal consistency.
   #[cfg(debug_assertions)]
-  fn check(& self, vars: & VarMap<VarInfo>) -> Res<()> {
+  fn check(& self, vars: & VarInfos) -> Res<()> {
     // Representatives can only be mapped to themselves.
     for (var, rep) in & self.var_to_rep {
       if var != rep {
@@ -1627,7 +1625,7 @@ impl ClauseSimplifier {
   }
   #[cfg( not(debug_assertions) )]
   #[inline(always)]
-  fn check(& self, _: & VarMap<VarInfo>) -> Res<()> {
+  fn check(& self, _: & VarInfos) -> Res<()> {
     Ok(())
   }
 

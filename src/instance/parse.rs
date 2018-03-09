@@ -656,7 +656,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses some arguments `( (<id> <ty>) ... )`.
   fn args(
     & mut self,
-    var_map: & mut VarMap<VarInfo>, hash_map: & mut HashMap<& 's str, VarIdx>
+    var_map: & mut VarInfos, hash_map: & mut HashMap<& 's str, VarIdx>
   ) -> Res<()> {
     self.tag("(") ? ;
 
@@ -746,7 +746,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   #[inline]
   fn let_bindings(
     & mut self,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res<LetCount> {
@@ -1077,7 +1077,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses a single term.
   pub fn term_opt(
     & mut self,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<Term> > {
@@ -1196,7 +1196,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     & mut self,
     pred: PrdIdx,
     pred_pos: Pos,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<PTTerms> > {
@@ -1265,7 +1265,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   #[allow(dead_code)]
   fn top_term(
     & mut self,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res<PTTerms> {
@@ -1278,7 +1278,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Tries to parse a top term.
   fn top_term_opt(
     & mut self,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res< Option< PTTerms > > {
@@ -1378,7 +1378,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses some top terms (parsing variant, for simplifications).
   fn parse_ptterms(
     & mut self,
-    var_map: & VarMap<VarInfo>,
+    var_map: & VarInfos,
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res<PTTerms> {
@@ -1694,7 +1694,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   fn parse_clause(
     & mut self,
-    var_map: VarMap<VarInfo>,
+    var_map: VarInfos,
     map: HashMap<& 's str, VarIdx>,
     instance: & mut Instance,
     negated: bool,
@@ -1732,7 +1732,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Adds a clause to an instance.
   fn add_clause(
     & self, instance: & mut Instance,
-    var_map: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
+    var_map: VarInfos, lhs: Vec<TTerm>, rhs: TTerm
   ) -> Res<()> {
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     let mut lhs_is_false = false ;

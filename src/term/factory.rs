@@ -210,7 +210,7 @@ pub fn and(terms: Vec<Term>) -> Term {
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline(always)]
 pub fn app(op: Op, args: Vec<Term>) -> Term {
-  let typ = catch_unwrap!(
+  let typ = expect!(
     op.type_check(& args) => |e|
       let res: Res<()> = Err(
         "Fatal internal type checking error, \

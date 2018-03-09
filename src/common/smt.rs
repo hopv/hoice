@@ -3,10 +3,7 @@
 use rsmt2::to_smt::* ;
 
 use common::* ;
-use common::data::{
-  HSample, HSamples, Constraint
-} ;
-use instance::info::VarInfo ;
+use common::data::Constraint ;
 
 
 /// SMT-prints a term using the default var writer.
@@ -47,7 +44,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
 
   /// Checks if this conjunction is unsatisfiable.
   pub fn is_unsat<Parser: Copy>(
-    & self, solver: & mut Solver<Parser>, vars: & VarMap<VarInfo>
+    & self, solver: & mut Solver<Parser>, vars: & VarInfos
   ) -> Res<bool> {
     if self.terms.len() == 0 { return Ok(false) }
     solver.push(1) ? ;
@@ -138,11 +135,11 @@ pub struct SmtSample<'a> {
   /// Predicate index.
   pub pred: PrdIdx,
   /// Reference to a sample.
-  pub smpl: & 'a HSample,
+  pub smpl: & 'a Args,
 }
 impl<'a> SmtSample<'a> {
   /// Constructor.
-  pub fn new(pred: PrdIdx, smpl: & 'a HSample) -> Self {
+  pub fn new(pred: PrdIdx, smpl: & 'a Args) -> Self {
     SmtSample { pred, smpl }
   }
 }
@@ -181,17 +178,22 @@ impl<'a> Expr2Smt<()> for SmtConstraint<'a> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
-    write!(w, "(=> (and") ? ;
-    for (pred, samples) in & self.constr.lhs {
-      for sample in samples {
-        write!(w, " ", ) ? ;
-        SmtSample::new(
-          * pred, sample
-        ).expr_to_smt2(w, ()) ?
+    write!(w, "(=> ") ? ;
+    if let Some(lhs) = self.constr.lhs() {
+      write!(w, "(and") ? ;
+      for (pred, samples) in lhs {
+        for sample in samples {
+          write!(w, " ", ) ? ;
+          SmtSample::new(
+            * pred, sample
+          ).expr_to_smt2(w, ()) ?
+        }
       }
+      write!(w, ") ") ?
+    } else {
+      write!(w, "false ") ?
     }
-    write!(w, ") ") ? ;
-    if let Some(rhs) = self.constr.rhs.as_ref() {
+    if let Some(rhs) = self.constr.rhs() {
       SmtSample::new(
         rhs.pred, & rhs.args
       ).expr_to_smt2(w, ()) ?
@@ -241,7 +243,7 @@ impl<Samples> SmtActSamples<Samples> {
     Ok(())
   }
 }
-impl<'a> Expr2Smt<()> for SmtActSamples<& 'a HSamples> {
+impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<Args>> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
@@ -262,7 +264,7 @@ impl<'a> Expr2Smt<()> for SmtActSamples<& 'a HSamples> {
   }
 }
 impl<'a, T> Expr2Smt<()> for SmtActSamples<
-  & 'a HConMap<HSample, T>
+  & 'a HConMap<Args, T>
 > {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
@@ -291,7 +293,7 @@ pub struct DisjArgs<'a> {
   /// Arguments.
   pub args: & 'a HTArgs,
   /// Values to force the arguments to.
-  pub vals: & 'a HConSet<HSample>,
+  pub vals: & 'a ArgsSet,
 }
 impl<'a> DisjArgs<'a> {
   /// Constructor.
@@ -299,7 +301,7 @@ impl<'a> DisjArgs<'a> {
   /// Error if `args` or `vals` is empty.
   #[inline]
   pub fn new(
-    args: & 'a HTArgs, vals: & 'a HConSet<HSample>
+    args: & 'a HTArgs, vals: & 'a ArgsSet
   ) -> Res<Self> {
     if args.is_empty() {
       bail!("can't create a `DisjArgs` with empty `args`")

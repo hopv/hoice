@@ -2,7 +2,7 @@
 
 
 /// If the input is an error, prints it and panics.
-macro_rules! catch_unwrap {
+macro_rules! expect {
   ($e:expr => |$err:pat| $($action:tt)*) => (
     match $e {
       Ok(res) => res,
@@ -10,19 +10,30 @@ macro_rules! catch_unwrap {
         $crate::errors::print_err(
           { $($action)* }.into()
         ) ;
-        ::std::process::exit(2)
+        panic!("Fatal internal error, please contact the developper")
       }
     }
   ) ;
   ($e:expr) => (
-    catch_unwrap! {
-      $e => |e|
-      $crate::errors::print_err(
-        e.chain_err(|| "Fatal internal error")
-      ) ;
-      ::std::process::exit(2)
+    expect! {
+      $e => |e| e
     }
   ) ;
+}
+/// Fails with some message.
+macro_rules! fail_with {
+  ( $($head:expr),* $(,)* $( ; $($blah:expr),* $(,)* )* $(;)* ) => ({
+    let err: Res<()> = Err(
+      format!($($head),*).into()
+    ) ;
+    $(
+      let err = err.chain_err(
+        || format!( $($blah),* )
+      ) ;
+    )*
+    expect!(err) ;
+    unreachable!()
+  }) ;
 }
 
 
