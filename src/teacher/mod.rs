@@ -54,7 +54,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   if ! nu_stuff {
     bail! { "translation of initial cexs to data generated no new data" }
   }
-  teacher.run_assistant() ;
+  teacher.run_assistant() ? ;
 
   // Index of the learner the teacher is currently working for.
   //
@@ -127,7 +127,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         ) ;
         profile!{ teacher mark "data", "registration" }
         profile!{ teacher mark "data" }
-        teacher.run_assistant() ;
+        teacher.run_assistant() ? ;
         match res {
           Ok(true) => {
             // New data.
@@ -244,7 +244,7 @@ impl<'a> Teacher<'a> {
   }
 
   /// Runs the assistant (if any) on the current data.
-  pub fn run_assistant(& mut self) -> () {
+  pub fn run_assistant(& mut self) -> Res<()> {
     let mut res = Ok(()) ;
     if let Some(
       & mut (ref mut sender, ref mut running)
@@ -252,7 +252,7 @@ impl<'a> Teacher<'a> {
       // profile! { self tick "assistant" }
       if ! * running {
         * running = true ;
-        if let Some(data) = self.data.clone_new_constraints() {
+        if let Some(data) = self.data.clone_new_constraints() ? {
           res = sender.send( FromTeacher::Data(data) )
           // assistant.break_implications(& mut data) ? ;
           // let (_nu_pos, _nu_neg) = self.data.merge_samples(data) ? ;
@@ -261,12 +261,14 @@ impl<'a> Teacher<'a> {
         }
       }
       // profile! { self mark "assistant" }
+    } else {
+      self.data.clear_modded()
     }
     if res.is_err() {
       warn! { "assistant is dead" }
       self.assistant = None
     }
-    ()
+    Ok(())
   }
 
   /// Finalizes the run.

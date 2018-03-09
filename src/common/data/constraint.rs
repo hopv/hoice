@@ -103,29 +103,33 @@ impl Constraint {
     self.rhs.as_ref()
   }
 
-  /// Removes a sample from the lhs.
+  /// Removes samples subsumed by a sample from the lhs.
   ///
-  /// Returns `true` if the sample was there.
+  /// Returns the number of sample removed.
   ///
   /// This function guarantees that `lhs` does not map to an empty `ArgsSet`,
   /// so please use this. Do not access `lhs` directly for sample removal.
-  fn lhs_rm(& mut self, pred: PrdIdx, args: & Args) -> bool {
-    let was_there = self.lhs.as_mut().and_then(
-      |lhs| lhs.get_mut(& pred).map(
-        |s| s.remove(args)
-      )
-    ).unwrap_or(false) ;
-    if was_there {
-      self.lhs.as_mut().map(
-        |lhs| if lhs.get(& pred).unwrap().is_empty() {
-          lhs.remove(& pred) ;
-          ()
+  fn lhs_rm(& mut self, pred: PrdIdx, args: & Args) -> usize {
+    self.lhs.as_mut().map(
+      |lhs| {
+        let (pred_rm, rmed) = if let Some(argss) = lhs.get_mut(& pred) {
+          let mut rmed = if argss.remove(args) { 1 } else { 0 } ;
+          if conf.teacher.partial && args.is_partial() {
+            let (subsumed, nu_rmed) = args.set_subsumed_rm(argss) ;
+            debug_assert! { ! subsumed }
+            rmed += nu_rmed
+          }
+          (argss.is_empty(), rmed)
+        } else {
+          (false, 0)
+        } ;
+        if pred_rm {
+          let prev = lhs.remove(& pred) ;
+          debug_assert! { prev.is_some() }
         }
-      ) ;
-      true
-    } else {
-      false
-    }
+        rmed
+      }
+    ).unwrap_or(0)
   }
 
   /// Transforms a constraint in a tautology.
@@ -171,16 +175,22 @@ impl Constraint {
   /// - `None` otherwise
   ///
   /// So `c >= c'` means `c` has a lhs strictly more generic than `c'`, so `c'`
-  /// is rendundant.
-  pub fn compare(& self, other: & Constraint) -> Option<
-    ::std::cmp::Ordering
+  /// is redundant.
+  ///
+  /// Error if `self` or `other` is a tautology.
+  pub fn compare(& self, other: & Constraint) -> Res<
+    Option<::std::cmp::Ordering>
   > {
     use std::cmp::Ordering ;
 
-    if self.lhs.is_none() || other.lhs.is_none() {
-      None
-    } else if self.rhs != other.rhs {
-      None
+    if self.is_tautology() {
+      bail!("self is tautology")
+    } else if other.is_tautology() {
+      bail!("other is tautology")
+    }
+
+    if self.rhs != other.rhs {
+      Ok(None)
     } else {
 
       let (reversed, c_1, c_2) = match self.lhs_len().cmp(
@@ -188,9 +198,9 @@ impl Constraint {
       ) {
         Ordering::Less => (false, self, other),
         Ordering::Equal => if self == other {
-          return Some( Ordering::Equal )
+          return Ok( Some( Ordering::Equal ) )
         } else {
-          return None
+          return Ok( None )
         },
         Ordering::Greater => (true, other, self),
       } ;
@@ -200,10 +210,10 @@ impl Constraint {
           for (pred, samples_1) in lhs_1 {
             if let Some(samples_2) = lhs_2.get(pred) {
               if ! samples_1.is_subset(samples_2) {
-                return None
+                return Ok(None)
               }
             } else {
-              return None
+              return Ok(None)
             }
           }
         },
@@ -214,9 +224,9 @@ impl Constraint {
 
 
       if reversed {
-        Some(Ordering::Less)
+        Ok( Some(Ordering::Less) )
       } else {
-        Some(Ordering::Greater)
+        Ok( Some(Ordering::Greater) )
       }
     }
   }
@@ -232,31 +242,33 @@ impl Constraint {
     & mut self, pred: PrdIdx, args: & Args, pos: bool, if_tautology: F
   ) -> Res<bool>
   where F: FnMut(PrdIdx, Args) -> Res<()> {
-    let was_in_lhs = self.lhs_rm(pred, args) ;
-    if was_in_lhs && ! pos {
+    let rmed = self.lhs_rm(pred, args) ;
+    if rmed > 0 && ! pos {
       self.tautologize(if_tautology) ? ;
       return Ok(true)
     }
+    let was_in_lhs = rmed > 0 ;
 
-    let is_in_rhs = if was_in_lhs {
-      // A sample should not be in both the lhs and rhs by construction.
-      false
-    } else if let Some(
+    let is_in_rhs = if let Some(
       Sample { pred: rhs_pred, args: ref rhs_args }
     ) = self.rhs {
-      rhs_pred == pred && rhs_args == args
+      rhs_pred == pred && args.subsumes(rhs_args)
     } else {
       false
     } ;
-    if is_in_rhs {
+
+    let was_in_rhs = if is_in_rhs {
       self.rhs = None ;
       if pos {
         self.tautologize(if_tautology) ? ;
         return Ok(true)
       }
-    }
+      true
+    } else {
+      false
+    } ;
 
-    if ! is_in_rhs && ! was_in_lhs {
+    if ! was_in_rhs && ! was_in_lhs {
       bail!("asked to remove sample from a clause where it wasn't")
     }
 
@@ -291,7 +303,7 @@ impl Constraint {
     if tautology {
       self.tautologize(if_tautology) ?
     }
-    Ok(false)
+    Ok(tautology)
   }
 
   /// Checks if the constraint is trivial.
@@ -304,14 +316,17 @@ impl Constraint {
   ///
   /// If the result isn't `None`, the sample returned has been removed and the
   /// constraint is now a tautology.
-  pub fn is_trivial(& mut self) -> Option<(Sample, bool)> {
+  pub fn is_trivial(& mut self) -> Res< Option<(Sample, bool)> > {
     if self.lhs().map(|lhs| lhs.is_empty()).unwrap_or(false) {
       let mut rhs = None ;
       ::std::mem::swap(& mut rhs, & mut self.rhs) ;
       let mut lhs = None ;
       ::std::mem::swap(& mut lhs, & mut self.lhs) ;
-      debug_assert! { rhs.is_some() }
-      rhs.map(|s| (s, true))
+      if rhs.is_none() {
+        // true => false
+        unsat!()
+      }
+      Ok( rhs.map(|s| (s, true)) )
     } else if self.rhs.is_none() {
       if let Some(lhs) = self.lhs() {
         let mut first = true ;
@@ -320,12 +335,12 @@ impl Constraint {
             if first {
               first = false
             } else {
-              return None
+              return Ok(None)
             }
           }
         }
       } else {
-        return None
+        return Ok(None)
       }
 
       let mut old_lhs = None ;
@@ -334,11 +349,13 @@ impl Constraint {
       // Only reachable if there's one pred app in lhs.
       let (pred, argss) = old_lhs.unwrap().into_iter().next().unwrap() ;
       let args = argss.into_iter().next().unwrap() ;
-      Some((
-        Sample { pred, args }, false
-      ))
+      Ok(
+        Some((
+          Sample { pred, args }, false
+        ))
+      )
     } else {
-      None
+      Ok(None)
     }
   }
 }

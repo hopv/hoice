@@ -37,10 +37,10 @@ macro_rules! fail_with {
 }
 
 
-// /// Bails with unsat.
-// macro_rules! unsat {
-//   () => (bail!($crate::errors::ErrorKind::Unsat)) ;
-// }
+/// Bails with unsat.
+macro_rules! unsat {
+  () => (bail!($crate::errors::ErrorKind::Unsat)) ;
+}
 
 
 

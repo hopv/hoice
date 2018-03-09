@@ -6,12 +6,13 @@ use learning::ice::data::CData ;
 pub mod args ;
 pub mod sample ;
 pub mod constraint ;
+mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
 use self::args::{ SubsumeExt, ArgFactory, new_factory } ;
 pub use self::sample::{ Sample } ;
 pub use self::constraint::Constraint ;
-
+use self::info::CstrInfo ;
 
 
 
@@ -31,17 +32,15 @@ pub struct Data {
   pub neg: PrdMap< ArgsSet >,
   /// Constraints.
   pub constraints: CstrMap<Constraint>,
-  ///  Map from samples to constraints.
-  pub map: PrdMap< ArgsMap<CstrSet> >,
 
+  /// Map from samples to constraints.
+  map: PrdMap< ArgsMap<CstrSet> >,
   /// Argument factory.
   factory: ArgFactory,
   /// Stores pos/neg samples temporarily before they're added.
   staged: Staged,
-  /// Constraints that have changed or are new since the last reset.
-  modded_constraints: CstrSet,
-  /// Set of constraints to avoid reallocation.
-  cstr_set: CstrSet,
+  /// Constraint info.
+  cstr_info: CstrInfo,
   /// Profiler.
   _profiler: Profiler,
 }
@@ -71,10 +70,14 @@ impl Data {
       instance, pos, neg, constraints, map,
       factory: new_factory(),
       staged: Staged::with_capacity(pred_count),
-      modded_constraints: CstrSet::new(),
-      cstr_set: CstrSet::new(),
+      cstr_info: CstrInfo::new(),
       _profiler: Profiler::new(),
     }
+  }
+
+  /// Accessor for the map from samples to constraints.
+  pub fn map(& self) -> & PrdMap< ArgsMap<CstrSet> > {
+    & self.map
   }
 
   /// Destroys the data and returns profiling info.
@@ -82,23 +85,39 @@ impl Data {
     self._profiler
   }
 
+  /// Clears the modified constraint set.
+  pub fn clear_modded(& mut self) {
+    self.cstr_info.clear_modded()
+  }
+
+  /// String representation of a constraint.
+  #[allow(dead_code)]
+  fn str_of(& self, c: CstrIdx) -> String {
+    format!(
+      "{}",
+      self.constraints[c].to_string_info(
+        self.instance.preds()
+      ).unwrap()
+    )
+  }
+
   /// Clones the new/modded constraints to create a new `Data`.
   ///
   /// **Clears the set of modified constraints.**
   ///
   /// Used to send modified implications to the assistant.
-  pub fn clone_new_constraints(& mut self) -> Option<Data> {
+  pub fn clone_new_constraints(& mut self) -> Res< Option<Data> > {
     let mut data = None ;
-    for idx in & self.modded_constraints {
+    for idx in self.cstr_info.modded() {
       let constraint = & self.constraints[* idx] ;
       if ! constraint.is_tautology() {
         data.get_or_insert_with(
           || Data::new( self.instance.clone() )
-        ).raw_add_cstr( constraint.clone() )  ;
+        ).raw_add_cstr( constraint.clone() ) ? ;
       }
     }
-    self.modded_constraints.clear() ;
-    data
+    self.cstr_info.clear_modded() ;
+    Ok(data)
   }
 
   /// Merges the positive and negative samples in `other` to `self`.
@@ -121,6 +140,56 @@ impl Data {
     self.propagate()
   }
 
+
+  /// Checks whether a constraint is useful.
+  ///
+  /// Remove all constraints that this constraint makes useless, including the
+  /// one(s) it is equal to.
+  pub fn cstr_useful(& mut self, index: CstrIdx) -> Res<bool> {
+    let mut to_check = CstrSet::new() ;
+    scoped! {
+      let constraint = & self.constraints[index] ;
+      let similar = if let Some(
+        & Sample { pred, ref args }
+      ) = constraint.rhs() {
+        if let Some(similar) = self.map[pred].get(args) {
+          similar
+        } else {
+          bail!("sample to constraint map is inconsistent")
+        }
+      } else {
+        self.cstr_info.neg()
+      } ;
+      for idx in similar { 
+        if * idx != index {
+          let is_new = to_check.insert(* idx) ;
+          debug_assert! { is_new }
+        }
+      }
+    }
+
+    let mut useful = true ;
+
+    for similar in to_check.drain() {
+      use std::cmp::Ordering::* ;
+      match self.constraints[index].compare(
+        & self.constraints[similar]
+      ) ? {
+        // `similar` is implied by `index`, drop it.
+        Some(Equal) | Some(Greater) => {
+          profile! { self "useless constraints" => add 1 }
+          self.tautologize(similar) ?
+        },
+        // `index` is useless.
+        Some(Less) => useful = false,
+        // Not comparable.
+        None => (),
+      }
+    }
+    profile! { self "useless constraints" => add 1 }
+
+    Ok(useful)
+  }
 
 
   /// Adds a new positive example.
@@ -168,14 +237,6 @@ impl Data {
       neg += samples.len()
     }
     (pos, neg)
-  }
-
-  /// Forgets a constraint.
-  ///
-  /// - removes it from `self.modded_constraints`
-  fn forget(& mut self, constraint: CstrIdx) {
-    self.modded_constraints.remove(& constraint) ;
-    ()
   }
 
   /// Shrinks the list of constraints.
@@ -243,23 +304,23 @@ impl Data {
         |pred, args| Self::tauto_fun(map, constraint, pred, args)
       ) ? ;
     }
-    self.forget(constraint) ;
+    self.cstr_info.forget(constraint) ;
     Ok(())
   }
 
 
 
 
-  /// Retrieves all samples `s` from `self.map` such that `sample.subsumes(s)`
+  /// Retrieves all args `s` from `self.map` such that `args.subsumes(s)`
   fn remove_subs(
-    & mut self, pred: PrdIdx, sample: & Args
+    & mut self, pred: PrdIdx, args: & Args
   ) -> Option<CstrSet> {
-    if conf.teacher.partial || sample.is_partial() {
-      return self.map[pred].remove(sample)
+    if ! conf.teacher.partial || ! args.is_partial() {
+      return self.map[pred].remove(args)
     }
     let mut res = None ;
     self.map[pred].retain(
-      |s, set| if sample.subsumes(s) {
+      |s, set| if args.subsumes(s) {
         res.get_or_insert_with(
           || CstrSet::with_capacity(set.len())
         ).extend( set.drain() ) ;
@@ -282,6 +343,10 @@ impl Data {
     profile! { self tick "sample_propagate" }
 
     let (mut pos_cnt, mut neg_cnt) = (0, 0) ;
+
+    // This is used to remember new constraints from this propagation phase, to
+    // check for useless constraints after propagation is over.
+    let mut modded_constraints = CstrSet::new() ;
 
     'propagate: while let Some(
       (pred, mut argss, pos)
@@ -327,20 +392,15 @@ impl Data {
 
       // Update the constraints that mention these new `pos` samples.
       for args in argss {
+
         if let Some(constraints) = self.remove_subs(pred, & args) {
-          // println!(
-          //   "forcing ({} {}) {} in", self.instance[pred], args, pos
-          // ) ;
-          // println!("{}", self.to_string_info(& ()).unwrap()) ;
+
           for constraint_idx in constraints {
             let blah = self.to_string_info(& ()).unwrap() ;
             let constraint = & mut self.constraints[constraint_idx] ;
             let preds = self.instance.preds() ;
             let map = & mut self.map ;
-            // println!(
-            //   "  {}",
-            //   constraint.to_string_info(self.instance.preds()).unwrap()
-            // ) ;
+
             let tautology = constraint.force_sample(
               pred, & args, pos, |pred, args| Self::tauto_fun(
                 map, constraint_idx, pred, args
@@ -356,34 +416,45 @@ impl Data {
                 "in {}", blah
               )
             ) ? ;
-            // println!(
-            //   "  -> {}",
-            //   constraint.to_string_info(self.instance.preds()).unwrap()
-            // ) ;
+
             if tautology {
-              // println!("  tautology") ;
-              self.modded_constraints.remove(& constraint_idx) ;
+              // Tautology, discard.
+              self.cstr_info.forget(constraint_idx)
             } else if let Some((
               Sample { pred, args }, pos
-            )) = constraint.is_trivial() {
-              // println!(
-              //   "  trivial ({} {}) {}", self.instance[pred], args, pos
-              // ) ;
+            )) = constraint.is_trivial() ? {
+              // Constraint is trivial: unlink and forget.
               if let Some(set) = map[pred].get_mut(& args) {
                 let was_there = set.remove(& constraint_idx) ;
                 debug_assert! { was_there }
               }
-              self.modded_constraints.remove(& constraint_idx) ;
+              self.cstr_info.forget(constraint_idx) ;
+              // Stage the consequence of the triviality.
               self.staged.add(pred, args, pos) ;
+            } else {
+              // Otherwise, the constraint was modified and we're keeping it.
+              self.cstr_info.register_modded(
+                constraint_idx, & constraint
+              ) ? ;
+              modded_constraints.insert(constraint_idx) ;
             }
           }
+
+          for constraint in modded_constraints.drain() {
+            if ! self.cstr_useful(constraint) ? {
+              self.tautologize(constraint) ?
+            }
+          }
+
         }
       }
     }
 
     profile! { self mark "sample_propagate" }
 
-    self.check() ? ;
+    self.check("after propagate") ? ;
+
+    self.shrink_constraints() ;
 
     Ok((pos_cnt, neg_cnt))
   }
@@ -394,8 +465,9 @@ impl Data {
   ///
   /// - should only be called by `add_cstr`
   /// - shrinks the constraints first
-  /// - inserts in `modded_constraints`
-  fn raw_add_cstr(& mut self, constraint: Constraint) -> () {
+  /// - registers the constraint in the constraint info structure
+  /// - performs the usefulness check
+  fn raw_add_cstr(& mut self, constraint: Constraint) -> Res<bool> {
     self.shrink_constraints() ;
     let cstr_index = self.constraints.next_index() ;
 
@@ -417,12 +489,18 @@ impl Data {
       debug_assert! { is_new }
     }
 
-    let is_new = self.modded_constraints.insert(cstr_index) ;
-    debug_assert! { is_new }
+    self.cstr_info.register_modded(
+      cstr_index, & constraint
+    ) ? ;
 
     self.constraints.push(constraint) ;
 
-    ()
+    if ! self.cstr_useful(cstr_index) ? {
+      self.tautologize(cstr_index) ? ;
+      Ok(false)
+    } else {
+      Ok(true)
+    }
   }
 
   /// Creates a new sample. Returns true if it's new.
@@ -432,6 +510,16 @@ impl Data {
     use hashconsing::HConser ;
     self.factory.mk_is_new( args.into() )
   }
+
+
+  // /// Checks whether a constraint is redundant.
+  // ///
+  // /// Removes all constraints for which this constraint is more general.
+  // fn cstr_redundant_rm(
+  //   & mut self, constraint: CstrIdx
+  // ) -> bool {
+
+  // }
 
 
   /// Adds a constraint.
@@ -471,8 +559,6 @@ impl Data {
       ()
     }
 
-    let mut similar_constraints = None ;
-
     let nu_rhs = if let Some((pred, args)) = rhs {
       // Not a look, just makes early return easier thanks to breaking.
       'get_rhs: loop {
@@ -499,10 +585,6 @@ impl Data {
           }
         }
 
-        similar_constraints = self.map[pred].get(& args).map(
-          |set| set.clone()
-        ) ;
-
         break 'get_rhs Some( Sample { pred, args } )
       }
     } else {
@@ -521,28 +603,17 @@ impl Data {
     ) ? ;
     debug_assert! { ! constraint.is_tautology() }
 
-    if let Some((Sample { pred, args }, pos)) = constraint.is_trivial() {
+    if let Some((Sample { pred, args }, pos)) = constraint.is_trivial() ? {
       let is_new = self.staged.add(pred, args, pos) ;
       Ok(is_new)
     } else {
-      // Is there a constraint that's more generic than this one?
-      if let Some(similar) = similar_constraints {
-        for similar in similar {
-          use std::cmp::Ordering::* ;
-          match self.constraints[similar].compare(& constraint) {
-            // New constraint is not useful.
-            Some(Equal) |
-            Some(Greater) => return Ok(false),
-            // New constraint is more generic than this one.
-            Some(Less) => self.tautologize(similar) ?,
-            // No relation.
-            None => (),
-          }
-        }
-      }
 
-      self.raw_add_cstr(constraint) ;
-      Ok(true)
+      // Handles linking and constraint info registration.
+      let is_new = self.raw_add_cstr(constraint) ? ;
+
+      self.check("after add_cstr") ? ;
+
+      Ok(is_new)
     }
   }
 
@@ -562,38 +633,55 @@ impl Data {
   pub fn force_pred(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<()> {
+    let mut modded_constraints = CstrSet::new() ;
     scoped! {
       let map = & mut self.map ;
-      let mut constraints = ArgsMap::new() ;
-      ::std::mem::swap(& mut constraints, & mut map[pred]) ;
-      for (_, constraints) in constraints {
-        for constraint in constraints {
-          let tautology = self.constraints[constraint].force(
-            pred, pos, |pred, args| Self::tauto_fun(
-              map, constraint, pred, args
-            )
-          ) ? ;
-          if tautology {
-            self.modded_constraints.remove(& constraint) ;
-          } else if let Some((
-            Sample { pred, args }, pos
-          )) = self.constraints[constraint].is_trivial() {
-            if let Some(set) = map[pred].get_mut(& args) {
-              let was_there = set.remove(& constraint) ;
-              debug_assert! { was_there }
-            }
-            self.modded_constraints.remove(& constraint) ;
-            let is_new = if pos {
-              self.staged.add_pos(pred, args)
-            } else {
-              self.staged.add_neg(pred, args)
-            } ;
-            debug_assert! { is_new }
+      let mut constraints = CstrSet::new() ;
+      for (_, cs) in map[pred].drain() {
+        for c in cs {
+          constraints.insert(c) ;
+        }
+      }
+      for constraint in constraints {
+        let tautology = self.constraints[constraint].force(
+          pred, pos, |pred, args| Self::tauto_fun(
+            map, constraint, pred, args
+          )
+        ) ? ;
+
+        if tautology {
+          // Tautology, discard.
+          self.cstr_info.forget(constraint)
+        } else if let Some((
+          Sample { pred, args }, pos
+        )) = self.constraints[constraint].is_trivial() ? {
+          // Constraint is trivial: unlink and forget.
+          if let Some(set) = map[pred].get_mut(& args) {
+            let was_there = set.remove(& constraint) ;
+            debug_assert! { was_there }
           }
+          self.cstr_info.forget(constraint) ;
+          // Stage the consequence of the triviality.
+          self.staged.add(pred, args, pos) ;
+        } else {
+          // Otherwise, the constraint was modified and we're keeping it.
+          self.cstr_info.register_modded(
+            constraint, & self.constraints[constraint]
+          ) ? ;
+          modded_constraints.insert(constraint) ;
         }
       }
     }
+
+    for constraint in modded_constraints.drain() {
+      if ! self.constraints[constraint].is_tautology()
+      && ! self.cstr_useful(constraint) ? {
+        self.tautologize(constraint) ?
+      }
+    }
+
     self.propagate() ? ;
+
     Ok(())
   }
 
@@ -662,20 +750,55 @@ impl Data {
   /// [map]: #structfield.map (map field)
   /// [cstrs]: #structfield.constraints (constraints field)
   #[cfg(debug_assertions)]
-  pub fn check(& self) -> Res<()> {
+  pub fn check(& self, blah: & 'static str) -> Res<()> {
     self.check_internal().chain_err(
       || self.string_do(& (), |s| s.to_string()).unwrap()
-    )
+    ).chain_err(|| blah)
   }
   #[cfg(debug_assertions)]
   fn check_internal(& self) -> Res<()> {
     if ! self.staged.is_empty() {
-      bail!("there are staged samples examples...")
+      bail!("there are staged samples...")
     }
 
-    for constraint in & self.modded_constraints {
-      if * constraint >= self.constraints.len() {
+    for constraint in self.cstr_info.modded() {
+      if * constraint >= self.constraints.len()
+      || self.constraints[* constraint].is_tautology() {
         bail!("modded_constraints is out of sync")
+      }
+    }
+
+    for constraint in self.cstr_info.neg() {
+      if * constraint >= self.constraints.len() {
+        bail!("neg_constraints is out of sync")
+      }
+      if self.constraints[* constraint].rhs().is_some() {
+        bail!(
+          "neg_constraints contains non-negative constraint {}",
+          self.constraints[* constraint].to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      }
+      if self.constraints[* constraint].is_tautology() {
+        bail!(
+          "neg_constraints contains tautology {}",
+          self.constraints[* constraint].to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      }
+    }
+    for (index, constraint) in self.constraints.index_iter() {
+      if ! constraint.is_tautology()
+      && constraint.rhs().is_none()
+      && ! self.cstr_info.neg().contains(& index) {
+        bail!(
+          "unregistered negative constraint {}",
+          constraint.to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
       }
     }
 
@@ -792,7 +915,9 @@ impl Data {
     while let Some(c_1) = constraint_iter.next() {
       c_1.check() ? ;
       for c_2 in constraint_iter.clone() {
-        if c_1.compare(c_2).is_some() {
+        if ! c_1.is_tautology()
+        && ! c_2.is_tautology()
+        && c_1.compare(c_2)?.is_some() {
           bail!(
             format!(
               "found two redundant constraints:\n{}\n{}",
@@ -822,7 +947,7 @@ impl Data {
   }
   #[cfg(not(debug_assertions))]
   #[inline]
-  pub fn check(& self) -> Res<()> { Ok(()) }
+  pub fn check(& self, _: & 'static str) -> Res<()> { Ok(()) }
 
 }
 
@@ -892,7 +1017,16 @@ impl<'a> PebcakFmt<'a> for Data {
       }
       write!(w, "\n") ?
     }
-    write!(w, ")\n")
+    write!(w, ") modded (\n") ? ;
+    for cstr in self.cstr_info.modded() {
+      write!(w, "  #{}\n", cstr) ?
+    }
+    write!(w, ") neg (\n") ? ;
+    for cstr in self.cstr_info.neg() {
+      write!(w, "  #{}\n", cstr) ?
+    }
+    write!(w, ")\n") ? ;
+    Ok(())
   }
 }
 
@@ -915,6 +1049,7 @@ impl Staged {
   }
 
   /// True if empty.
+  #[allow(dead_code)]
   pub fn is_empty(& self) -> bool {
     self.pos.is_empty() && self.neg.is_empty()
   }

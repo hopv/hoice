@@ -251,7 +251,7 @@ impl SubsumeExt for Args {
   ) -> (bool, usize) {
     if ! conf.teacher.partial {
       (set.contains(self), 0)
-    } else if self.is_partial() {
+    } else if ! self.is_partial() {
       for elem in set.iter() {
         if elem.subsumes(self) {
           return { (true, 0) }

@@ -521,7 +521,7 @@ impl EntropyBuilder {
       mut sum_neg,
     ) = (0., 0., 0.) ;
 
-    if let Some(constraints) = data.map[prd].get(& sample) {
+    if let Some(constraints) = data.map()[prd].get(& sample) {
       for constraint in constraints {
         let constraint = & data.constraints[* constraint] ;
 

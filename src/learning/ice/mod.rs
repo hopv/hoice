@@ -284,7 +284,7 @@ impl<'core> IceLearner<'core> {
       }
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
-      let unc_len = self.data.map[pred].len() ;
+      let unc_len = self.data.map()[pred].len() ;
       if pos_len == 0 && neg_len > 0 {
         msg! { debug self => "legal_pred (1)" }
         // Maybe we can assert everything as negative right away?
@@ -943,7 +943,7 @@ impl<'core> IceLearner<'core> {
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
     profile!{ self tick "learning", "smt", "all legal" }
-    let unc = & self.data.map[pred] ;
+    let unc = & self.data.map()[pred] ;
     if unc.is_empty() {
       profile!{ self mark "learning", "smt", "all legal" }
       return Ok(true)
@@ -1014,7 +1014,7 @@ impl<'core> IceLearner<'core> {
 
     self.solver.comment("Sample declarations for constraints:") ? ;
     // Declare all samples used in constraints.
-    for (pred, map) in self.data.map.index_iter() {
+    for (pred, map) in self.data.map().index_iter() {
       // if let Some(term) = self.instance.term_of(pred) {
       //   if term.is_true() {
       //     self.solver.comment(
