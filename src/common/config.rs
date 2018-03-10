@@ -594,6 +594,8 @@ pub struct IceConf {
   pub mine_conjs: bool,
   /// Add synthesized qualifiers.
   pub add_synth: bool,
+  /// Lockstep for qualifiers.
+  pub qual_step: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -753,6 +755,18 @@ impl IceConf {
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("qual_step").long("--qual_step").help(
+        "lockstep qualifier selection"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
     )
   }
 
@@ -814,12 +828,13 @@ impl IceConf {
     let add_synth = bool_of_matches(matches, "add_synth") ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
+    let qual_step = bool_of_matches(matches, "qual_step") ;
 
     IceConf {
       simple_gain_ratio, sort_preds, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
-      pure_synth, mine_conjs, add_synth
+      pure_synth, mine_conjs, add_synth, qual_step
     }
   }
 }

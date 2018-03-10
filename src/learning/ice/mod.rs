@@ -85,7 +85,13 @@ pub struct IceLearner<'core> {
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
-  rng: ::rand::StdRng,
+  sort_rng_1: ::rand::StdRng,
+  /// Rng actually doing the predicate sorting.
+  sort_rng_2: ::rand::StdRng,
+  /// Rng to decide when to use simple gain.
+  simple_rng: ::rand::StdRng,
+  /// Rng to decide when skip preliminary.
+  pre_skip_rng: ::rand::StdRng,
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
@@ -133,9 +139,21 @@ impl<'core> IceLearner<'core> {
         unfinished: Vec::with_capacity(103),
         classifier: HConMap::with_capacity(1003),
         dec_mem, candidate, predicates,
-        rng: {
+        sort_rng_1: {
           use rand::SeedableRng ;
           ::rand::StdRng::from_seed(& [ 42 ])
+        },
+        sort_rng_2: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 79 ])
+        },
+        simple_rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 107 ])
+        },
+        pre_skip_rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 666 ])
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
@@ -236,6 +254,8 @@ impl<'core> IceLearner<'core> {
   pub fn learn(
     & mut self, data: Data
   ) -> Res< Option<Candidates> > {
+    use rand::Rng ;
+
     self.data = data ;
 
     self.count = (self.count + 1) % conf.ice.gain_pivot_mod ;
@@ -274,6 +294,23 @@ impl<'core> IceLearner<'core> {
         okay
       }
     }
+
+    // Decide whether to use simple gain.
+    let simple = self.simple_rng.next_f64() <= conf.ice.simple_gain_ratio ;
+    // Sort the predicates 90% of the time.
+    let sorted = conf.ice.sort_preds && self.sort_rng_1.next_f64() <= 0.90 ;
+    // Skip preliminary decision 50% of the time.
+    let skip_prelim = self.pre_skip_rng.next_f64() <= 0.50 ;
+
+    msg! {
+      self =>
+      "starting learning\n  \
+      simple:      {},\n  \
+      sorted:      {},\n  \
+      skip_prelim: {},",
+      simple, sorted, skip_prelim
+    }
+
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     debug_assert! { self.predicates.is_empty() }
 
@@ -282,55 +319,61 @@ impl<'core> IceLearner<'core> {
       if self.instance.is_known(pred) {
         continue
       }
+
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
       let unc_len = self.data.map()[pred].len() ;
-      if pos_len == 0 && neg_len > 0 {
-        msg! { debug self => "legal_pred (1)" }
-        // Maybe we can assert everything as negative right away?
-        if self.is_legal_pred(pred, false) ? {
-          msg! {
-            debug self =>
-            "{} only has negative ({}) and unclassified ({}) data\n\
-            legal check ok, assuming everything negative",
-            self.instance[pred], neg_len, unc_len
-          }
-          self.candidate[pred] = Some( term::fls() ) ;
-          profile!(
-            |self.core._profiler| wrap {
-              self.data.force_pred(pred, false).chain_err(
-                || format!(
-                  "while setting all false for {}", self.instance[pred]
-                )
-              )
-            } "learning", "data"
-          ) ? ;
-          continue
-        }
-      }
 
-      if neg_len == 0 && pos_len > 0 {
-        msg! { debug self => "legal_pred (2)" }
-        // Maybe we can assert everything as positive right away?
-        if self.is_legal_pred(pred, true) ? {
-          msg! {
-            debug self =>
-            "{} only has positive ({}) and unclassified ({}) data\n\
-            legal check ok, assuming everything positive",
-            self.instance[pred], pos_len, unc_len
-          }
-          self.candidate[pred] = Some( term::tru() ) ;
-          profile!(
-            |self.core._profiler| wrap {
-              self.data.force_pred(pred, true).chain_err(
-                || format!(
-                  "while setting all true for {}", self.instance[pred]
+      if ! skip_prelim {
+
+        if pos_len == 0 && neg_len > 0 {
+          msg! { debug self => "legal_pred (1)" }
+          // Maybe we can assert everything as negative right away?
+          if self.is_legal_pred(pred, false) ? {
+            msg! {
+              debug self =>
+              "{} only has negative ({}) and unclassified ({}) data\n\
+              legal check ok, assuming everything negative",
+              self.instance[pred], neg_len, unc_len
+            }
+            self.candidate[pred] = Some( term::fls() ) ;
+            profile!(
+              |self.core._profiler| wrap {
+                self.data.force_pred(pred, false).chain_err(
+                  || format!(
+                    "while setting all false for {}", self.instance[pred]
+                  )
                 )
-              )
-            } "learning", "data"
-          ) ? ;
-          continue
+              } "learning", "data"
+            ) ? ;
+            continue
+          }
         }
+
+        if neg_len == 0 && pos_len > 0 {
+          msg! { debug self => "legal_pred (2)" }
+          // Maybe we can assert everything as positive right away?
+          if self.is_legal_pred(pred, true) ? {
+            msg! {
+              debug self =>
+              "{} only has positive ({}) and unclassified ({}) data\n\
+              legal check ok, assuming everything positive",
+              self.instance[pred], pos_len, unc_len
+            }
+            self.candidate[pred] = Some( term::tru() ) ;
+            profile!(
+              |self.core._profiler| wrap {
+                self.data.force_pred(pred, true).chain_err(
+                  || format!(
+                    "while setting all true for {}", self.instance[pred]
+                  )
+                )
+              } "learning", "data"
+            ) ? ;
+            continue
+          }
+        }
+
       }
 
       self.predicates.push((
@@ -340,18 +383,8 @@ impl<'core> IceLearner<'core> {
 
     self.check_exit() ? ;
 
-    use rand::Rng ;
-
-    let simple = self.rng.next_f64() <= conf.ice.simple_gain_ratio ;
     if simple {
       profile! { self "simple" => add 1 }
-    }
-
-    // Sort the predicates 80% of the time.    
-    let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
-    msg! {
-      self =>
-      "looking for qualifier (simple: {}, sorted: {})...", simple, sorted
     }
 
     if sorted {
@@ -384,11 +417,11 @@ impl<'core> IceLearner<'core> {
 
       // Not sorting, forcing random order.
       profile!{ self tick "learning", "predicate sorting" }
-      let mut rng = self.rng.clone() ;
+      let mut sort_rng = self.sort_rng_2 ;
       self.predicates.sort_unstable_by(
         |_, _| {
           use std::cmp::Ordering::* ;
-          let rand = rng.next_f64() ;
+          let rand = sort_rng.next_f64() ;
           if rand <= 0.33 {
             Less
           } else if rand <= 0.66 {
@@ -665,6 +698,14 @@ impl<'core> IceLearner<'core> {
         let res = self.qualifiers.maximize(
           pred, |qual| {
             let res = data.simple_gain(qual) ? ;
+            if conf.ice.qual_step {
+              println!(
+                "; {}: {}", qual,
+                res.map(|g| format!("{}", g)).unwrap_or("none".into())
+              ) ;
+              read_line("to continue (--qual_step on)") ;
+              ()
+            }
             core.check_exit() ? ;
             Ok(res)
           }, false
@@ -681,8 +722,16 @@ impl<'core> IceLearner<'core> {
         let res = qualifiers.maximize(
           pred, |qual| {
             let res = data.gain(
-              pred, all_data, qual, & self_core._profiler, false
+              pred, all_data, qual, & self_core._profiler, conf.ice.qual_step
             ) ? ;
+            if conf.ice.qual_step {
+              println!(
+                "; {}: {}", qual,
+                res.map(|g| format!("{}", g)).unwrap_or("none".into())
+              ) ;
+              read_line("to continue (--qual_step on)") ;
+              ()
+            }
             core.check_exit() ? ;
             Ok(res)
           }, false

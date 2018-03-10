@@ -258,6 +258,16 @@ impl CData {
     nq_ent.set_neg_count(nq_neg) ;
     profile! { |_profiler| mark "learning", "qual", "gain", "neg eval" }
 
+    if (
+      q_pos == 0 && nq_pos  > 0 &&
+      q_neg  > 0 && nq_neg == 0
+    ) || (
+      q_pos  > 0 && nq_pos == 0 &&
+      q_neg == 0 && nq_neg  > 0
+    ) {
+      return Ok( Some(1.0) )
+    }
+
     profile! { |_profiler| tick "learning", "qual", "gain", "unc eval" }
     for unc in & self.unc {
       match qual.evaluate( unc.get() ).chain_err(

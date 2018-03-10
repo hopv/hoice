@@ -174,6 +174,8 @@ impl Data {
       use std::cmp::Ordering::* ;
       match self.constraints[index].compare(
         & self.constraints[similar]
+      ).chain_err(
+        || "in cstr_useful"
       ) ? {
         // `similar` is implied by `index`, drop it.
         Some(Equal) | Some(Greater) => {
@@ -342,6 +344,8 @@ impl Data {
 
     profile! { self tick "sample_propagate" }
 
+    // println!("{}", self.to_string_info(& ()).unwrap()) ;
+
     let (mut pos_cnt, mut neg_cnt) = (0, 0) ;
 
     // This is used to remember new constraints from this propagation phase, to
@@ -441,8 +445,12 @@ impl Data {
           }
 
           for constraint in modded_constraints.drain() {
-            if ! self.cstr_useful(constraint) ? {
-              self.tautologize(constraint) ?
+            if ! self.constraints[constraint].is_tautology() {
+              if ! self.cstr_useful(constraint).chain_err(
+                || "in propagate"
+              ) ? {
+                self.tautologize(constraint) ?
+              }
             }
           }
 
@@ -495,7 +503,9 @@ impl Data {
 
     self.constraints.push(constraint) ;
 
-    if ! self.cstr_useful(cstr_index) ? {
+    if ! self.cstr_useful(cstr_index).chain_err(
+      || "in raw_add_cstr"
+    ) ? {
       self.tautologize(cstr_index) ? ;
       Ok(false)
     } else {

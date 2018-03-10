@@ -229,7 +229,7 @@ impl SigTransforms {
     // The stack is explained below.
     let mut stack = Vec::with_capacity(17) ;
 
-    let partial = ! conf.ice.complete ; // && qual_sig.len() > 1 ;
+    let partial = ! conf.ice.complete && qual_sig.len() > 1 ;
 
     'all_preds: for info in preds {
       // Skip if already known.
@@ -524,7 +524,7 @@ impl<'a> Qual<'a> {
 }
 impl<'a> ::std::fmt::Display for Qual<'a> {
   fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-    self.qual.fmt(fmt)
+    write!(fmt, "{}", self.qual.subst(& self.map).0)
   }
 }
 impl<'a> CanBEvaled for Qual<'a> {
@@ -714,7 +714,13 @@ impl Qualifiers {
   where Crit: FnMut( & mut Qual ) -> Res< Option<f64> > {
     let sig = & self.instance.preds()[pred].sig ;
     let mut prev = None ;
-    for class in self.classes.values_mut() {
+
+    let mut classes: Vec<_> = self.classes.iter_mut().collect() ;
+    classes.sort_unstable_by(
+      |& (sig_1, _), & (sig_2, _)| sig_1.len().cmp( & sig_2.len() )
+    ) ;
+
+    for (_, class) in classes {
       if let Some(maps) = class.transforms.get(sig) {
         let quals = & mut class.quals ;
         'all_quals: for (qual, info) in quals.iter_mut() {
