@@ -1,6 +1,7 @@
 //! Messages used in the framework.
 
 use std::sync::mpsc::channel ;
+use std::cell::RefCell ;
 
 use common::* ;
 use common::data::Data ;
@@ -176,6 +177,8 @@ pub struct MsgCore {
   recver: Receiver<FromTeacher>,
   /// Profiler.
   pub _profiler: Profiler,
+  /// Some profilers whoever is above the core can use.
+  _subs: RefCell< HashMap<& 'static str, Profiler> >,
 }
 
 impl MsgCore {
@@ -185,7 +188,8 @@ impl MsgCore {
     id: LrnIdx, sender: Sender<Msg>, recver: Receiver<FromTeacher>
   ) -> Self {
     MsgCore {
-      id: Id::Learner(id), sender, recver, _profiler: Profiler::new()
+      id: Id::Learner(id), sender, recver, _profiler: Profiler::new(),
+      _subs: RefCell::new( HashMap::new() ),
     }
   }
 
@@ -194,8 +198,16 @@ impl MsgCore {
     sender: Sender<Msg>, recver: Receiver<FromTeacher>
   ) -> Self {
     MsgCore {
-      id: Id::Assistant, sender, recver, _profiler: Profiler::new()
+      id: Id::Assistant, sender, recver, _profiler: Profiler::new(),
+      _subs: RefCell::new( HashMap::new() ),
     }
+  }
+
+  /// Merges a profiler with the subprofiler `name`.
+  pub fn merge_prof(& self, name: & 'static str, prof: Profiler) {
+    self._subs.borrow_mut().entry(name).or_insert_with(
+      || Profiler::new()
+    ).merge(prof)
   }
 
   /// Sends some candidates.
@@ -226,6 +238,9 @@ impl MsgCore {
 
   /// Sends statistics.
   pub fn stats(self) -> Res<()> {
+    for (name, prof) in self._subs.into_inner() {
+      self._profiler.add_sub(name, prof)
+    }
     if self.sender.send(
       Msg::new(self.id, self._profiler)
     ).is_ok() {

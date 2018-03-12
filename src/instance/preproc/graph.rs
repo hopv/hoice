@@ -444,7 +444,9 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log_debug! { "from clause {}", clause.to_string_info(& instance.preds()) ? }
+            log_debug! {
+              "from clause {}", clause.to_string_info(& instance.preds()) ?
+            }
             if ! forced_inlining && ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }

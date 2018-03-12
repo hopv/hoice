@@ -252,11 +252,12 @@ impl<'core> IceLearner<'core> {
   ///
   /// Returns `None` if asked to exit.
   pub fn learn(
-    & mut self, data: Data
+    & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
     use rand::Rng ;
 
-    self.data = data ;
+    ::std::mem::swap(& mut data, & mut self.data) ;
+    self.core.merge_prof( "data", data.destroy() ) ;
 
     self.count = (self.count + 1) % conf.ice.gain_pivot_mod ;
     if self.count == 0 {
@@ -586,7 +587,6 @@ impl<'core> IceLearner<'core> {
               self.data.add_neg(pred, unc) ;
             }
             self.data.propagate()
-
           } "learning", "data"
         ) ? ;
 
@@ -666,6 +666,9 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
+    let simple = data.unc().is_empty() || (
+      simple && ! data.pos().is_empty() && ! data.neg().is_empty()
+    )  ;
 
     if conf.ice.qual_print {
       self.qualifiers.log()

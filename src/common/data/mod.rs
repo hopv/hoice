@@ -126,7 +126,6 @@ impl Data {
   ///
   /// Returns the number of new positive/negative examples.
   pub fn merge_samples(& mut self, other: Data) -> Res<(usize, usize)> {
-    self.propagate() ? ;
     for (pred, samples) in other.pos.into_index_iter() {
       for sample in samples {
         self.staged.add_pos(pred, sample) ;
@@ -146,6 +145,7 @@ impl Data {
   /// Remove all constraints that this constraint makes useless, including the
   /// one(s) it is equal to.
   pub fn cstr_useful(& mut self, index: CstrIdx) -> Res<bool> {
+    profile! { self tick "constraint subsumption" }
     let mut to_check = CstrSet::new() ;
     scoped! {
       let constraint = & self.constraints[index] ;
@@ -183,12 +183,15 @@ impl Data {
           self.tautologize(similar) ?
         },
         // `index` is useless.
-        Some(Less) => useful = false,
+        Some(Less) => {
+          profile! { self "useless constraints" => add 1 }
+          useful = false
+        },
         // Not comparable.
         None => (),
       }
     }
-    profile! { self "useless constraints" => add 1 }
+    profile! { self mark "constraint subsumption" }
 
     Ok(useful)
   }
@@ -320,6 +323,7 @@ impl Data {
     if ! conf.teacher.partial || ! args.is_partial() {
       return self.map[pred].remove(args)
     }
+    profile! { self tick "remove_sub" }
     let mut res = None ;
     self.map[pred].retain(
       |s, set| if args.subsumes(s) {
@@ -331,6 +335,7 @@ impl Data {
         true
       }
     ) ;
+    profile! { self mark "remove_sub" }
     res
   }
 
@@ -342,7 +347,7 @@ impl Data {
   /// Returns the number of pos/neg samples added.
   pub fn propagate(& mut self) -> Res<(usize, usize)> {
 
-    profile! { self tick "sample_propagate" }
+    profile! { self tick "propagate" }
 
     // println!("{}", self.to_string_info(& ()).unwrap()) ;
 
@@ -366,6 +371,7 @@ impl Data {
         ) ;
       }
 
+      profile! { self tick "propagate", "filtering" }
       // Only keep those that are actually new.
       argss.retain(
         |s| {
@@ -384,6 +390,7 @@ impl Data {
           }
         }
       ) ;
+      profile! { self mark "propagate", "filtering" }
 
       // Move on if nothing's left.
       if argss.is_empty() { continue 'propagate }
@@ -399,25 +406,14 @@ impl Data {
 
         if let Some(constraints) = self.remove_subs(pred, & args) {
 
+          profile! { self tick "propagate", "cstr update" }
           for constraint_idx in constraints {
-            let blah = self.to_string_info(& ()).unwrap() ;
             let constraint = & mut self.constraints[constraint_idx] ;
-            let preds = self.instance.preds() ;
             let map = & mut self.map ;
 
             let tautology = constraint.force_sample(
               pred, & args, pos, |pred, args| Self::tauto_fun(
                 map, constraint_idx, pred, args
-              )
-            ).chain_err(
-              || format!(
-                "while forcing ({} {}) in {}",
-                preds[pred], args,
-                constraint.to_string_info(preds).unwrap()
-              )
-            ).chain_err(
-              || format!(
-                "in {}", blah
               )
             ) ? ;
 
@@ -443,6 +439,7 @@ impl Data {
               modded_constraints.insert(constraint_idx) ;
             }
           }
+          profile! { self mark "propagate", "cstr update" }
 
           for constraint in modded_constraints.drain() {
             if ! self.constraints[constraint].is_tautology() {
@@ -458,11 +455,13 @@ impl Data {
       }
     }
 
-    profile! { self mark "sample_propagate" }
-
+    profile! { self tick "propagate", "check shrink" }
     self.check("after propagate") ? ;
 
     self.shrink_constraints() ;
+    profile! { self mark "propagate", "check shrink" }
+
+    profile! { self mark "propagate" }
 
     Ok((pos_cnt, neg_cnt))
   }
@@ -540,7 +539,12 @@ impl Data {
   pub fn add_cstr(
     & mut self, lhs: Vec<(PrdIdx, RArgs)>, rhs: Option<(PrdIdx, RArgs)>
   ) -> Res<bool> {
-    self.propagate() ? ;
+    profile!(
+      self wrap { self.propagate() }
+      "add cstr", "pre-propagate"
+    ) ? ;
+
+    profile! { self tick "add cstr", "pre-checks" }
 
     let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
 
@@ -555,6 +559,8 @@ impl Data {
           continue 'lhs_iter
         } else if args.set_subsumed(& self.neg[pred]) {
           // Negative, constraint is trivial.
+          profile! { self mark "add cstr", "pre-checks" }
+          profile! { self "trivial constraints" => add 1 }
           return Ok(false)
         }
       }
@@ -577,6 +583,8 @@ impl Data {
         // If no partial examples and sample is new, no need to check anything.
         if conf.teacher.partial || ! is_new {
           if args.set_subsumed(& self.pos[pred]) {
+            profile! { self mark "add cstr", "pre-checks" }
+            profile! { self "trivial constraints" => add 1 }
             // Positive, constraint is trivial.
             return Ok(false)
           } else if args.set_subsumed(& self.neg[pred]) {
@@ -590,6 +598,8 @@ impl Data {
           // Partial samples are not allowed in constraints, no subsumption
           // check.
           if argss.contains(& args) {
+            profile! { self mark "add cstr", "pre-checks" }
+            profile! { self "trivial constraints" => add 1 }
             // Trivially implied by lhs.
             return Ok(false)
           }
@@ -613,13 +623,18 @@ impl Data {
     ) ? ;
     debug_assert! { ! constraint.is_tautology() }
 
+    profile! { self mark "add cstr", "pre-checks" }
+
     if let Some((Sample { pred, args }, pos)) = constraint.is_trivial() ? {
       let is_new = self.staged.add(pred, args, pos) ;
       Ok(is_new)
     } else {
 
       // Handles linking and constraint info registration.
-      let is_new = self.raw_add_cstr(constraint) ? ;
+      let is_new = profile!(
+        self wrap { self.raw_add_cstr(constraint) }
+        "add cstr", "raw"
+      ) ? ;
 
       self.check("after add_cstr") ? ;
 
@@ -643,6 +658,7 @@ impl Data {
   pub fn force_pred(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<()> {
+    profile! { self tick "force pred", "pre-checks" }
     let mut modded_constraints = CstrSet::new() ;
     scoped! {
       let map = & mut self.map ;
@@ -689,14 +705,19 @@ impl Data {
         self.tautologize(constraint) ?
       }
     }
+    profile! { self mark "force pred", "pre-checks" }
 
-    self.propagate() ? ;
+    profile!(
+      self wrap { self.propagate() }
+      "force pred", "propagate"
+    ) ? ;
 
     Ok(())
   }
 
   /// The projected data for some predicate.
   pub fn data_of(& self, pred: PrdIdx) -> CData {
+    profile! { self tick "data of" }
     let unc_set = & self.map[pred] ;
     let pos_set = & self.pos[pred] ;
     let neg_set = & self.neg[pred] ;
@@ -716,6 +737,7 @@ impl Data {
         unc.push( sample.clone() )
       }
     }
+    profile! { self mark "data of" }
     CData::new(pos, neg, unc)
   }
 
@@ -729,15 +751,19 @@ impl Data {
   pub fn classify(
     & self, pred: PrdIdx, data: & mut CData
   ) {
-    data.classify(
-      |sample| if self.pos[pred].contains(sample) {
-        Some(true)
-      } else if self.neg[pred].contains(sample) {
-        Some(false)
-      } else {
-        None
-      }
-    )
+    profile!{
+      self wrap {
+        data.classify(
+          |sample| if self.pos[pred].contains(sample) {
+            Some(true)
+          } else if self.neg[pred].contains(sample) {
+            Some(false)
+          } else {
+            None
+          }
+        )
+      } "classify"
+    }
   }
 
 

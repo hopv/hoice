@@ -50,7 +50,7 @@
 //!   RTerm::App { typ, op: Op::Eql, ref args } => {
 //!     assert_eq!( typ, Typ::Bool ) ;
 //!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( format!("{}", some_term), "(= 11 (* 2 v_5))" )
+//!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
 //!   },
 //!   _ => panic!("not an equality"),
 //! }
@@ -198,6 +198,13 @@ impl RTerm {
   pub fn add_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::Add, ref args, .. } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of subtractions.
+  pub fn sub_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Sub, ref args, .. } => Some(args),
       _ => None,
     }
   }
@@ -708,6 +715,89 @@ impl RTerm {
     & self, map: & Map
   ) -> Option< (Term, bool) > {
     self.subst_custom(map, true)
+  }
+
+
+  /// Tries to turn a term into a substitution.
+  ///
+  /// Works only on equalities.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use hoice::term ;
+  ///
+  /// let bv0 = term::bool_var(0) ;
+  /// let bv1 = term::bool_var(1) ;
+  /// let bv2 = term::bool_var(2) ;
+  /// let rhs = term::or(vec![bv1, bv2]) ;
+  /// let term = term::eq(bv0, rhs.clone()) ;
+  /// debug_assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
+  /// ```
+  pub fn as_subst(& self) -> Option<(VarIdx, Term)> {
+    if let Some(kids) = self.eq_inspect() {
+      debug_assert_eq! { kids.len(), 2 }
+      let (lhs, rhs) = (& kids[0], & kids[1]) ;
+
+      if let Some(var_idx) = lhs.var_idx() {
+        return Some((var_idx, rhs.clone()))
+      } else if let Some(var_idx) = rhs.var_idx() {
+        return Some((var_idx, lhs.clone()))
+      }
+
+      if lhs.typ().is_arith() {
+        debug_assert! { rhs.is_zero() }
+
+        let lhs = if let Some((_, term)) = lhs.cmul_inspect() {
+          term
+        } else { lhs } ;
+
+        let mut add = vec![] ;
+        let mut var = None ;
+        let mut negated = false ;
+
+        if let Some(kids) = lhs.add_inspect() {
+          for kid in kids {
+            if var.is_some() {
+              add.push(kid.clone()) ;
+              continue
+            }
+            if let Some(var_index) = kid.var_idx() {
+              debug_assert! { var.is_none() }
+              var = Some(var_index) ;
+              continue
+            } else if let Some((val, term)) = kid.cmul_inspect() {
+              if let Some(var_index) = term.var_idx() {
+                if val.is_one() {
+                  var = Some(var_index) ;
+                  continue
+                } else if val.is_minus_one() {
+                  var = Some(var_index) ;
+                  negated = true ;
+                  continue
+                }
+              }
+            }
+            add.push(kid.clone())
+          }
+
+          if let Some(var) = var {
+            let mut sum = term::add(add) ;
+            if ! negated { sum = term::u_minus(sum) }
+            Some((var, sum))
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+
+    } else {
+      None
+    }
   }
 
 

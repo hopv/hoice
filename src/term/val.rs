@@ -262,6 +262,17 @@ impl Val {
     }
   }
 
+  /// Checks if the value is minus one (integer or rational).
+  pub fn is_minus_one(& self) -> bool {
+    use num::One ;
+    match * self {
+      Val::I(ref i) => i == & - Int::one(),
+      Val::R(ref r) => r == & - Rat::one(),
+      Val::B(_) |
+      Val::N => false,
+    }
+  }
+
   /// Transforms a value into a term.
   pub fn to_term(self) -> Option<::term::Term> {
     match self {
