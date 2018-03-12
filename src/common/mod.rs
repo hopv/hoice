@@ -42,7 +42,6 @@ pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
-mod revision ;
 
 pub use self::data::{ RArgs, Args, ArgsSet } ;
 pub use self::config::* ;
@@ -54,12 +53,7 @@ lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
   static ref version_string: String = format!(
-    "{}#{}", crate_version!(),
-    if let Some(rev) = ::common::revision::REVISION {
-      rev
-    } else {
-      "unknown"
-    }
+    "{}", crate_version!()
   ) ;
   /// Version with revision info.
   pub static ref version: & 'static str = & version_string ;
@@ -80,6 +74,15 @@ pub fn pause(s: & str) {
   let mut dummy = String::new() ;
   println!("") ;
   println!( "; {}{}...", conf.emph("press return"), s ) ;
+  let _ = ::std::io::stdin().read_line(& mut dummy) ;
+}
+
+/// Notifies the user through a message and reads a line from stdin.
+pub fn pause_msg(core: & msg::MsgCore, s: & str) {
+  let mut dummy = String::new() ;
+  let _ = core.msg(
+    format!( "; {}{}...", conf.emph("press return"), s )
+  ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 

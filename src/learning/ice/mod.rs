@@ -297,10 +297,10 @@ impl<'core> IceLearner<'core> {
 
     // Decide whether to use simple gain.
     let simple = self.simple_rng.next_f64() <= conf.ice.simple_gain_ratio ;
-    // Sort the predicates 90% of the time.
-    let sorted = conf.ice.sort_preds && self.sort_rng_1.next_f64() <= 0.90 ;
-    // Skip preliminary decision 50% of the time.
-    let skip_prelim = self.pre_skip_rng.next_f64() <= 0.50 ;
+    // Sort the predicates 80% of the time.
+    let sorted = conf.ice.sort_preds && self.sort_rng_1.next_f64() <= 0.80 ;
+    // Skip preliminary decision 20% of the time.
+    let skip_prelim = self.pre_skip_rng.next_f64() <= 0.20 ;
 
     msg! {
       self =>
@@ -699,11 +699,13 @@ impl<'core> IceLearner<'core> {
           pred, |qual| {
             let res = data.simple_gain(qual) ? ;
             if conf.ice.qual_step {
-              println!(
-                "; {}: {}", qual,
-                res.map(|g| format!("{}", g)).unwrap_or("none".into())
+              let _ = core.msg(
+                format!(
+                  "; {}: {}", qual,
+                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                )
               ) ;
-              read_line("to continue (--qual_step on)") ;
+              pause_msg(core, "to continue (--qual_step on)") ;
               ()
             }
             core.check_exit() ? ;

@@ -2,7 +2,6 @@
 name = "hoice"
 version = "1.5.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
-build = "build.rs"
 
 readme = "README.md"
 categories = ["science"]
