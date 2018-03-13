@@ -403,6 +403,11 @@ impl Data {
 
       // Update the constraints that mention these new `pos` samples.
       for args in argss {
+        profile! {
+          self "partial samples" => add {
+            if args.is_partial() { 1 } else { 0 }
+          }
+        }
 
         if let Some(constraints) = self.remove_subs(pred, & args) {
 

@@ -33,7 +33,7 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & Args, & mut TermVals) -> Res<bool>
+  fn synth<F>(& mut self, F, & Args, & mut TermVals, & Profiler) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
@@ -112,7 +112,7 @@ impl SynthSys {
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "int" }
         let done = int_synth.synth(
-          & mut f, sample, & mut self.cross_synth
+          & mut f, sample, & mut self.cross_synth, _profiler
         ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "int" }
         if done ? { return Ok(true) }
@@ -133,7 +133,7 @@ impl SynthSys {
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "real" }
         let done = real_synth.synth(
-          & mut f, sample, & mut self.cross_synth
+          & mut f, sample, & mut self.cross_synth, _profiler
         ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "real" }
         if done ? { return Ok(true) }

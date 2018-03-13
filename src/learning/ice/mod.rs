@@ -273,6 +273,10 @@ impl<'core> IceLearner<'core> {
       }
     }
 
+    if conf.ice.qual_print {
+      self.qualifiers.log()
+    }
+
     let contradiction = profile!(
       |self.core._profiler| wrap {
         self.setup_solver().chain_err(
@@ -670,10 +674,6 @@ impl<'core> IceLearner<'core> {
       simple && ! data.pos().is_empty() && ! data.neg().is_empty()
     )  ;
 
-    if conf.ice.qual_print {
-      self.qualifiers.log()
-    }
-
     if_debug! {
       let mut s = format!("data:") ;
       s = format!("{}\n  pos {{", s) ;
@@ -704,7 +704,7 @@ impl<'core> IceLearner<'core> {
             if conf.ice.qual_step {
               let _ = core.msg(
                 format!(
-                  "; {}: {}", qual,
+                  "{}: {}", qual,
                   res.map(|g| format!("{}", g)).unwrap_or("none".into())
                 )
               ) ;
@@ -727,14 +727,16 @@ impl<'core> IceLearner<'core> {
         let res = qualifiers.maximize(
           pred, |qual| {
             let res = data.gain(
-              pred, all_data, qual, & self_core._profiler, conf.ice.qual_step
+              pred, all_data, qual, & self_core._profiler, false
             ) ? ;
             if conf.ice.qual_step {
-              println!(
-                "; {}: {}", qual,
-                res.map(|g| format!("{}", g)).unwrap_or("none".into())
+              let _ = self_core.msg(
+                format!(
+                  "; {}: {}", qual,
+                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                )
               ) ;
-              read_line("to continue (--qual_step on)") ;
+              pause_msg(self_core, "to continue (--qual_step on)") ;
               ()
             }
             core.check_exit() ? ;
@@ -800,7 +802,7 @@ impl<'core> IceLearner<'core> {
     let mut best_synth_qual = None ;
     msg! { self => "synthesizing" }
     profile!{ self tick "learning", "qual", "synthesis" } ;
-    let res = self.synthesize(pred, & data, & mut best_synth_qual) ;
+    let res = self.synthesize(pred, & data, & mut best_synth_qual, simple) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;
     if let None = res ? {
       return Ok(None)
@@ -872,7 +874,8 @@ impl<'core> IceLearner<'core> {
   ///
   /// Returns `None` if it received `Exit`.
   pub fn synthesize(
-    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>
+    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>,
+    simple: bool
   ) -> Res< Option<()> > {
 
     scoped! {
@@ -888,16 +891,34 @@ impl<'core> IceLearner<'core> {
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        let is_new = known_quals.insert( term.clone() ) ;
-        // println!("  {}", term) ;
-        // println!("  - {}", is_new) ;
+        let is_new = ! quals.all_quals[pred].contains(
+          & term
+        ) && known_quals.insert(
+          term.clone()
+        ) ;
+
         if ! is_new {
           // Term already known, skip.
           Ok(false)
-        } else if let Some(gain) = data.gain(
-          pred, self_data, & term, & self_core._profiler, false
-        ) ? {
+        } else if let Some(gain) = {
+          if simple {
+            data.simple_gain(& term) ?
+          } else {
+            data.gain(
+              pred, self_data, & term, & self_core._profiler, false
+            ) ?
+          }
+        } {
           // println!("  - {}", gain) ;
+          if conf.ice.qual_step {
+            let _ = self_core.msg(
+              format!(
+                "{}: {} (synthesis)", term, gain
+              )
+            ) ;
+            pause_msg(self_core, "to continue (--qual_step on)") ;
+            ()
+          }
           if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
             quals.insert(& term, pred) ? ;
@@ -921,7 +942,7 @@ impl<'core> IceLearner<'core> {
             }
             Ok( gain >= pivot )
           } else {
-            Ok(false)
+            Ok( gain >= 1.0 )
           }
         } else {
           Ok(false)

@@ -37,12 +37,21 @@ impl TheoSynth for RealSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & Args, others: & mut TermVals
+    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
-      0 => simple_real_synth(sample, others, f),
-      1 => real_synth_1(sample, others, f),
+      0 => profile!(
+        |_profiler| wrap {
+          simple_real_synth(sample, others, f)
+        } "learning", "qual", "synthesis", "real", "level 0"
+      ),
+      1 => profile!(
+        |_profiler| wrap {
+          real_synth_1(sample, others, f)
+        } "learning", "qual", "synthesis", "real", "level 1"
+      ),
       _ => Ok(false),
     }
   }

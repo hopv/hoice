@@ -3,8 +3,6 @@
 use common::* ;
 use common::data::{ Data, Sample } ;
 
-use super::quals::{ Qual } ;
-
 
 /// Projected data to classify.
 #[derive(Clone)]
@@ -119,7 +117,9 @@ impl CData {
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
-  pub fn simple_gain(& self, qual: & mut Qual) -> Res< Option<f64> > {
+  pub fn simple_gain<Trm: CanBEvaled>(
+    & self, qual: & Trm
+  ) -> Res< Option<f64> > {
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
     ) ;
@@ -129,8 +129,8 @@ impl CData {
     ) = (0., 0., 0., 0.) ;
     let mut none = 0. ;
     for pos in & self.pos {
-      match qual.bool_eval( pos.get() ).chain_err(
-        || format!("while evaluating qualifier {} on {}", qual.qual, pos)
+      match qual.evaluate( pos.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, pos)
       ) ? {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,
@@ -138,8 +138,8 @@ impl CData {
       }
     }
     for neg in & self.neg {
-      match qual.bool_eval( neg.get() ).chain_err(
-        || format!("while evaluating qualifier {} on {}", qual.qual, neg)
+      match qual.evaluate( neg.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, neg)
       ) ? {
         Some(true) => q_neg += 1.,
         Some(false) => nq_neg += 1.,

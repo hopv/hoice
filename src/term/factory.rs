@@ -514,7 +514,7 @@ enum NormRes {
 
 
 /// Normalizes an operation application.
-fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
+fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
   use num::Zero ;
 
   // println!("{} ({})", op, typ) ;
@@ -1233,7 +1233,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           )
         }
 
-        let (rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
+        let (mut rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
 
         // Is lhs a sum with a constant in it?.
         let mut correction = None ;
@@ -1258,6 +1258,17 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             ]
           )
         } else {
+          // Normalize gt to ge for integers.
+          if op == Op::Gt {
+            match rhs_val {
+              Val::I(ref i) => {
+                rhs = term::int(i + 1) ;
+                op = Op::Ge
+              },
+              _ => (),
+            }
+          }
+
           // No correction, let's dodis.
           args.push(lhs) ;
           args.push(rhs)

@@ -73,7 +73,7 @@ pub fn corrupted_err<T>(_: T) -> Error {
 pub fn pause(s: & str) {
   let mut dummy = String::new() ;
   println!("") ;
-  println!( "; {}{}...", conf.emph("press return"), s ) ;
+  println!( "; {} {}...", conf.emph("press return"), s ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 
@@ -81,7 +81,7 @@ pub fn pause(s: & str) {
 pub fn pause_msg(core: & msg::MsgCore, s: & str) {
   let mut dummy = String::new() ;
   let _ = core.msg(
-    format!( "; {}{}...", conf.emph("press return"), s )
+    format!( "; {} {}...", conf.emph("press return"), s )
   ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }

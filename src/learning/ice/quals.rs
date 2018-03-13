@@ -143,14 +143,17 @@ impl ::std::ops::Deref for Transforms {
 }
 impl Transforms {
   /// Inserts a transformation in `Partial`, does nothing on `Complete`.
-  pub fn insert(& mut self, transform: Transform) {
+  pub fn insert(& mut self, transform: Transform) -> bool {
     match * self {
       Transforms::Partial(ref mut ts) => if ts.iter().all(
         |t| t != & transform
       ) {
-        ts.push(transform)
+        ts.push(transform) ;
+        true
+      } else {
+        false
       },
-      Transforms::Complete(_) => (),
+      Transforms::Complete(_) => false,
     }
   }
 }
@@ -437,14 +440,30 @@ impl QualClass {
   /// (SigTransforms' Partial variant)
   pub fn insert(
     & mut self, term: Term, pred: PrdIdx,
-    pred_sig: & VarMap<Typ>, hint_map: VarMap<(VarIdx, Typ)>
+    pred_sig: & VarMap<Typ>, hint_map: VarMap<(VarIdx, Typ)>,
+    all_quals: & mut PrdMap<HConSet<Term>>
   ) -> bool {
     use std::collections::hash_map::Entry ;
     if let Some(transforms) = self.transforms.get_mut(pred_sig) {
-      transforms.insert(hint_map)
+      let is_new = transforms.insert( hint_map.clone() ) ;
+      if is_new {
+        for (qual, info) in & self.quals {
+          if info.preds.contains(& pred) {
+            let (term, changed) = qual.subst(& hint_map) ;
+            debug_assert! { changed }
+            all_quals[pred].insert(term) ;
+          }
+        }
+      }
+      for map in transforms.iter() {
+        let (term, changed) = term.subst(& map) ;
+        debug_assert! { changed }
+        all_quals[pred].insert(term) ;
+      }
     } else {
       panic!("unknown predicate signature {}", pred_sig)
     }
+
     if ! self.quals.contains_key( & term::not( term.clone() ) ) {
       match self.quals.entry(term) {
         Entry::Occupied(entry) => {
@@ -524,7 +543,8 @@ impl<'a> Qual<'a> {
 }
 impl<'a> ::std::fmt::Display for Qual<'a> {
   fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-    self.qual.fmt(fmt)
+    let (qual, _) = self.qual.subst(& self.map) ;
+    qual.fmt(fmt)
   }
 }
 impl<'a> CanBEvaled for Qual<'a> {
@@ -544,6 +564,8 @@ pub struct Qualifiers {
   pub classes: HConMap< HQSig, QualClass >,
   /// Arc to the instance.
   pub instance: Arc<Instance>,
+  /// All the qualifiers.
+  pub all_quals: PrdMap< HConSet<Term> >,
   /// Maps predicate variables to alpha-renamed qualifier variables. Factored
   /// to avoid allocation.
   alpha_map: VarHMap<(VarIdx, Typ)>,
@@ -583,10 +605,12 @@ impl Qualifiers {
       factory: Factory::with_capacity(17),
       classes: HConMap::with_capacity(class_capa),
       instance: instance.clone(),
+      all_quals: PrdMap::with_capacity( instance.preds().len() ),
       alpha_map: VarHMap::with_capacity(7),
     } ;
 
     'all_preds: for pred_info in instance.preds() {
+      quals.all_quals.push( HConSet::new() ) ;
       if instance.is_known(pred_info.idx) { continue 'all_preds }
       for (var, typ) in pred_info.sig.index_iter() {
 
@@ -787,6 +811,11 @@ impl Qualifiers {
     // This guarantees that two qualifiers that can have the same signature
     // will have the same signature.
 
+    if self.all_quals[pred].contains(term)
+    || self.all_quals[pred].contains( & term::not(term.clone()) ) {
+      return Ok(false)
+    }
+
     let mut vars = Vec::with_capacity( pred_sig.len() ) ;
     for var in term::vars( term ) {
       vars.push(var)
@@ -846,7 +875,7 @@ impl Qualifiers {
     match self.classes.entry(sig) {
       Entry::Occupied(entry) => Ok(
         entry.into_mut().insert(
-          term, pred, pred_sig, transform
+          term, pred, pred_sig, transform, & mut self.all_quals
         )
       ),
       Entry::Vacant(entry) => {
@@ -857,7 +886,7 @@ impl Qualifiers {
         if let Some(class) = QualClass::new(transforms, 107) {
           Ok(
             entry.insert(class).insert(
-              term, pred, pred_sig, transform
+              term, pred, pred_sig, transform, & mut self.all_quals
             )
           )
         } else {
@@ -871,6 +900,18 @@ impl Qualifiers {
   pub fn log(& self) {
     let pref = "; " ;
     println!("{}quals {{", pref) ;
+    // for (pred, terms) in self.all_quals.index_iter() {
+    //   if terms.is_empty() { continue }
+    //   println!(
+    //     "{}  {} {}",
+    //     pref,
+    //     conf.emph(& self.instance[pred].name),
+    //     & self.instance[pred].sig
+    //   ) ;
+    //   for term in terms {
+    //     println!("{}    {}", pref, term)
+    //   }
+    // }
     for (sig, class) in & self.classes {
       let mut s = String::new() ;
       for (var, typ) in sig.index_iter() {
