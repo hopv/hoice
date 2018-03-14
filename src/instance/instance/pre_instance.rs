@@ -268,6 +268,8 @@ impl<'a> PreInstance<'a> {
 
     let clause = & mut self.instance[clause] ;
 
+    self.solver.push(1) ? ;
+
     self.solver.comment("Pruning atoms...") ? ;
 
     clause.declare(& mut self.solver) ? ;
@@ -293,7 +295,8 @@ impl<'a> PreInstance<'a> {
 
     self.solver.comment("Done pruning atoms...") ? ;
 
-    self.solver.reset() ? ;
+    self.solver.pop(1) ? ;
+    // self.solver.reset() ? ;
 
     Ok(())
   }

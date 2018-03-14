@@ -524,13 +524,18 @@ impl<'a> Teacher<'a> {
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
     use std::iter::Extend ;
     self.count += 1 ;
-    self.solver.reset() ? ;
 
     // These will be passed to clause printing to inline trivial predicates.
     let (mut true_preds, mut false_preds) = ( PrdSet::new(), PrdSet::new() ) ;
     // Clauses to ignore, because they are trivially true. (lhs is false or
     // rhs is true).
     let mut clauses_to_ignore = ClsSet::new() ;
+
+    if self.count % 50 == 0 {
+      self.solver.reset() ?
+    }
+
+    self.solver.push(1) ? ;
 
     // Define non-forced predicates that are not trivially true or false.
     'define_non_forced: for (pred, cand) in cands.index_iter() {
@@ -605,6 +610,8 @@ impl<'a> Teacher<'a> {
         run!(clause, true)
       }
     }
+
+    self.solver.pop(1) ? ;
 
     Ok(map)
   }

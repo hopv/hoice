@@ -427,11 +427,11 @@ impl CData {
   }
 
   /// Iterator over some data.
-  pub fn iter<'a>(& 'a self) -> CDataIter<'a> {
+  pub fn iter<'a>(& 'a self, include_unc: bool) -> CDataIter<'a> {
     CDataIter {
       pos: self.pos.iter(),
       neg: self.neg.iter(),
-      unc: self.unc.iter(),
+      unc: if include_unc { Some(self.unc.iter()) } else { None },
     }
   }
 }
@@ -440,7 +440,7 @@ impl CData {
 pub struct CDataIter<'a> {
   pos: ::std::slice::Iter<'a, Args>,
   neg: ::std::slice::Iter<'a, Args>,
-  unc: ::std::slice::Iter<'a, Args>,
+  unc: Option<::std::slice::Iter<'a, Args>>,
 }
 impl<'a> ::std::iter::Iterator for CDataIter<'a> {
   type Item = & 'a Args ;
@@ -449,7 +449,11 @@ impl<'a> ::std::iter::Iterator for CDataIter<'a> {
     if next.is_some() { return next }
     let next = self.neg.next() ;
     if next.is_some() { return next }
-    self.unc.next()
+    if let Some(unc) = self.unc.as_mut() {
+      unc.next()
+    } else {
+      None
+    }
   }
 }
 

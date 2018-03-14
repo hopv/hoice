@@ -100,7 +100,7 @@ pub struct IceLearner<'core> {
   gain_pivot: f64,
   /// Gain pivot synth.
   gain_pivot_synth: Option<f64>,
-  /// Counter to 10 before incrementing gain pivots.
+  /// Learn step counter.
   count: usize,
 }
 impl<'core> IceLearner<'core> {
@@ -186,10 +186,17 @@ impl<'core> IceLearner<'core> {
         |self.core._profiler| wrap { self.recv() } "waiting"
       ) {
         Ok(data) => {
+          self.count += 1 ;
+          if self.count % 50 == 0 {
+            self.solver.reset() ?
+          }
           profile! { self "learn steps" => add 1 }
           if let Some(candidates) = profile!(
             |self.core._profiler| wrap {
-              self.learn(data)
+              self.solver.push(1) ? ;
+              let res = self.learn(data) ;
+              self.solver.pop(1) ? ;
+              res
             } "learning"
           ) ? {
             self.send_cands(candidates).chain_err(
@@ -238,10 +245,10 @@ impl<'core> IceLearner<'core> {
         )
       } "sending"
     ) ? ;
-    // Reset and clear declaration memory.
-    self.solver.reset().chain_err(
-      || "during solver reset"
-    ) ? ;
+    // // Reset and clear declaration memory.
+    // self.solver.reset().chain_err(
+    //   || "during solver reset"
+    // ) ? ;
     for set in self.dec_mem.iter_mut() {
       set.clear()
     } ;
@@ -259,8 +266,7 @@ impl<'core> IceLearner<'core> {
     ::std::mem::swap(& mut data, & mut self.data) ;
     self.core.merge_prof( "data", data.destroy() ) ;
 
-    self.count = (self.count + 1) % conf.ice.gain_pivot_mod ;
-    if self.count == 0 {
+    if self.count % conf.ice.gain_pivot_mod == 0 {
       self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
       if self.gain_pivot > 1.0 {
         self.gain_pivot = 1.0
@@ -954,7 +960,7 @@ impl<'core> IceLearner<'core> {
 
       'synth: loop {
 
-        for sample in data.iter() {
+        for sample in data.iter(! simple) {
           self_core.check_exit() ? ;
           let done = synth_sys.sample_synth(
             sample, & mut treatment, & self_core._profiler
