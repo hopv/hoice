@@ -291,11 +291,12 @@ impl<'a> Reductor<'a> {
 
     let max_clause_add = if conf.preproc.mult_unroll
     && ! self.instance.clauses().is_empty() {
-      (
-        50. * (
-          self.instance.clauses().len() as f64
-        ).log(10.)
-      ).round() as usize
+      let clause_count = self.instance.clauses().len() ;
+      ::std::cmp::min(
+        clause_count, (
+          50. * ( clause_count as f64 ).log(10.)
+        ).round() as usize
+      )
     } else {
       0
     } ;
@@ -1139,15 +1140,12 @@ impl RedStrat for CfgRed {
       upper_bound
     } else {
       let clause_count = instance.clauses().len() ;
-      let upper_bound = if clause_count <= 10 {
-        clause_count * 25
-      } else if clause_count <= 100 {
-        clause_count * 15
-      } else if clause_count <= 500 {
-        clause_count * 10
-      } else {
-        clause_count * 5
-      } ;
+      let upper_bound = ::std::cmp::min(
+        clause_count, (
+          50. * ( clause_count as f64 ).log(10.)
+        ).round() as usize
+      ) ;
+
       self.upper_bound = Some(upper_bound) ;
       upper_bound
     } ;
