@@ -4,49 +4,12 @@ use rsmt2::to_smt::Expr2Smt ;
 
 use common::* ;
 use common::data::{ Data, Sample } ;
-use common::msg::MsgCore ;
 
-/// Launches the assistant.
-pub fn launch(
-  instance: Arc<Instance>,
-  core: MsgCore,
-) {
-  let mut error = None ;
-
-  match Assistant::new(instance, & core) {
-    Ok(mut assistant) => {
-      while error.is_none() {
-        if let Err(e) = profile!(
-          |assistant.core._profiler| wrap {
-            assistant.core.recv()
-          } "waiting"
-        ).and_then(
-          |mut data| assistant.break_implications(& mut data).map(
-            |()| assistant.core.send_samples(data)
-          )
-        ) {
-          error = Some(e) ;
-          break
-        }
-      }
-      if let Err(e) = assistant.finalize() {
-        if error.is_none() {
-          error = Some(e) ;
-        }
-      }
-    },
-    Err(e) => error = Some(e),
-  } ;
-
-  if let Some(error) = error {
-    core.err(error)
-  }
-}
 
 /// Propagates examples, tries to break implication constraints.
-pub struct Assistant<'a> {
+pub struct Assistant {
   /// Core, to communicate with the teacher.
-  core: & 'a MsgCore,
+  // core: & 'a MsgCore,
   /// Solver.
   solver: Solver<()>,
   /// Instance.
@@ -59,11 +22,11 @@ pub struct Assistant<'a> {
   _profiler: Profiler,
 }
 
-impl<'a> Assistant<'a> {
+impl Assistant {
 
   /// Constructor.
   pub fn new(
-    instance: Arc<Instance>, core: & 'a MsgCore
+    instance: Arc<Instance>, // core: & 'a MsgCore
   ) -> Res<Self> {
     let solver = conf.solver.spawn("assistant", ()) ? ;
     let _profiler = Profiler::new() ;
@@ -117,7 +80,8 @@ impl<'a> Assistant<'a> {
 
     Ok(
       Assistant {
-        core, solver, instance, pos, neg, _profiler
+        // core,
+        solver, instance, pos, neg, _profiler
       }
     )
   }
@@ -137,7 +101,7 @@ impl<'a> Assistant<'a> {
     if data.constraints.is_empty() { return Ok(()) }
 
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
-    msg! { debug self.core => "breaking implications..." }
+    // msg! { debug self.core => "breaking implications..." }
     profile! { self "constraints received" => add data.constraints.len() }
 
     'all_constraints: for cstr in CstrRange::zero_to(

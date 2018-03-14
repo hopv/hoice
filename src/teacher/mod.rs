@@ -16,7 +16,7 @@ use common::smt::SmtTerm ;
 use self::smt::Parser ;
 
 pub mod assistant ;
-
+use self::assistant::Assistant ;
 
 /// Starts the teaching process.
 pub fn start_class(
@@ -195,8 +195,8 @@ pub struct Teacher<'a> {
   /// Assistant for implication constraint breaking.
   ///
   /// The boolean flag indicates whether the assistant was sent some stuff.
-  pub assistant: Option< (Sender<FromTeacher>, bool) >,
-
+  // pub assistant: Option< (Sender<FromTeacher>, bool) >,
+  pub assistant: Option<Assistant>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
   /// Number of guesses.
@@ -215,21 +215,11 @@ impl<'a> Teacher<'a> {
     let data = Data::new( instance.clone() ) ;
 
     let assistant = if conf.teacher.assistant {
-      let (to_assistant_send, to_assistant_recv) = FromTeacher::channel() ;
-      let instance = instance.clone() ;
-      let to_teacher = to_teacher.clone() ;
-
-      ::std::thread::Builder::new().name( "assistant".into() ).spawn(
-        move || assistant::launch(
-          instance, MsgCore::new_assistant(
-            to_teacher, to_assistant_recv
-          )
-        )
-      ).chain_err(
-        || format!("while spawning assistant")
-      ) ? ;
-
-      Some( (to_assistant_send, false) )
+      Some(
+        Assistant::new(instance.clone()).chain_err(
+          || format!("while spawning assistant")
+        ) ?
+      )
     } else {
       None
     } ;
@@ -245,28 +235,15 @@ impl<'a> Teacher<'a> {
 
   /// Runs the assistant (if any) on the current data.
   pub fn run_assistant(& mut self) -> Res<()> {
-    let mut res = Ok(()) ;
-    if let Some(
-      & mut (ref mut sender, ref mut running)
-    ) = self.assistant.as_mut() {
-      // profile! { self tick "assistant" }
-      if ! * running {
-        * running = true ;
-        if let Some(data) = self.data.clone_new_constraints() ? {
-          res = sender.send( FromTeacher::Data(data) )
-          // assistant.break_implications(& mut data) ? ;
-          // let (_nu_pos, _nu_neg) = self.data.merge_samples(data) ? ;
-          // profile! { self "assistant pos useful" => add _nu_pos }
-          // profile! { self "assistant neg useful" => add _nu_neg }
-        }
+    if let Some(assistant) = self.assistant.as_mut() {
+      profile! { self tick "assistant" }
+      if let Some(mut data) = self.data.clone_new_constraints() ? {
+        assistant.break_implications(& mut data) ? ;
+        let (nu_pos, nu_neg) = self.data.merge_samples(data) ? ;
+        profile! { self "assistant pos useful" => add nu_pos }
+        profile! { self "assistant neg useful" => add nu_neg }
       }
-      // profile! { self mark "assistant" }
-    } else {
-      self.data.clear_modded()
-    }
-    if res.is_err() {
-      warn! { "assistant is dead" }
-      self.assistant = None
+      profile! { self mark "assistant" }
     }
     Ok(())
   }
@@ -297,17 +274,15 @@ impl<'a> Teacher<'a> {
       }
       * sender = None
     }
-    if let Some( & (ref sender, _) ) = self.assistant.as_ref() {
-      let _ = sender.send( FromTeacher::Exit ) ;
-      ()
+
+    if let Some(assistant) = self.assistant {
+      let profiler = assistant.finalize() ? ;
+      self._profiler.add_sub("assistant", profiler)
     }
     self.assistant = None ;
     log_debug! { "draining messages" }
     while let Ok(_) = self.get_candidates(true) {}
-    // if let Some(assistant) = self.assistant {
-    //   let profiler = assistant.finalize() ? ;
-    //   self._profiler.add_sub("assistant", profiler)
-    // }
+
     if conf.stats {
       self._profiler.add_sub("data", self.data.destroy())
     }
