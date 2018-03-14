@@ -294,7 +294,7 @@ impl<'a> Reductor<'a> {
       let clause_count = self.instance.clauses().len() ;
       ::std::cmp::min(
         clause_count, (
-          50. * ( clause_count as f64 ).log(10.)
+          50. * ( clause_count as f64 ).log(2.)
         ).round() as usize
       )
     } else {
@@ -1140,9 +1140,11 @@ impl RedStrat for CfgRed {
       upper_bound
     } else {
       let clause_count = instance.clauses().len() ;
+      let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
+      // println!("adjusted: {}", adjusted) ;
       let upper_bound = ::std::cmp::min(
         clause_count, (
-          50. * ( clause_count as f64 ).log(10.)
+          adjusted
         ).round() as usize
       ) ;
 
