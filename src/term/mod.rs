@@ -1485,7 +1485,7 @@ fn remove_vars_from_pred_apps(
 
 
 /// A formula composed of top terms.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
   True,

@@ -36,6 +36,7 @@ pub mod instance ;
 pub mod teacher ;
 pub mod learning ;
 pub mod check ;
+pub mod split ;
 
 #[cfg(test)]
 mod tests ;
@@ -93,7 +94,7 @@ pub fn work() -> Res<()> {
 /// - `stop_on_err`: forces to stop at the first error. Only used in tests.
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
-) -> Res< (Option<Model>, Instance) > {
+) -> Res< (Option<DnfModel>, Instance) > {
   use instance::parse::ItemRead ;
 
   let profiler = Profiler::new() ;
@@ -181,43 +182,26 @@ pub fn read_and_work<R: ::std::io::Read>(
           ) ;
           maybe_model
         } else {
-          let arc_instance = Arc::new(instance) ;
 
-          let teacher_profiler = Profiler::new() ;
-          profile! { |profiler| tick "solving" }
-          let solve_res = teacher::start_class(
-            & arc_instance, & teacher_profiler
-          ) ;
-          profile! { |profiler| mark "solving" }
-          profiler.add_sub("solving", teacher_profiler) ;
+          let arc_instance = Arc::new(instance) ;
+          let solve_res = split::work(arc_instance.clone(), & profiler) ;
+
+          while Arc::strong_count(& arc_instance) != 1 {}
+          instance = if let Ok(
+            instance
+          ) = Arc::try_unwrap( arc_instance ) { instance } else {
+            bail!("\
+              [bug] finalized teacher but there are still \
+              strong references to the instance\
+            ")
+          } ;
 
           match solve_res {
-            Ok(partial_model) => {
-              while Arc::strong_count(& arc_instance) != 1 {}
-              instance = if let Ok(
-                instance
-              ) = Arc::try_unwrap( arc_instance ) { instance } else {
-                bail!("\
-                  [bug] finalized teacher but there are still \
-                  strong references to the instance\
-                ")
-              } ;
-              if let Some(partial_model) = partial_model {
-                Some( instance.model_of(partial_model) ? )
-              } else {
-                None
-              }
-            },
+            Ok(Some(res)) => Some(
+              instance.model_of_dnfs(res) ?
+            ),
+            Ok(None) => None,
             Err(e) => {
-              while Arc::strong_count(& arc_instance) != 1 {}
-              instance = if let Ok(
-                instance
-              ) = Arc::try_unwrap( arc_instance ) { instance } else {
-                bail!("\
-                  [bug] finalized teacher but there are still \
-                  strong references to the instance\
-                ")
-              } ;
               if e.is_unsat() {
                 None
               } else if e.is_timeout() {
@@ -246,7 +230,7 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Print model if available.
       Parsed::GetModel => if let Some(model) = model.as_mut() {
         // Simplify model before writing it.
-        instance.simplify_pred_defs(model) ? ;
+        // instance.simplify_pred_defs(model) ? ;
         let stdout = & mut ::std::io::stdout() ;
         instance.write_model(& model, stdout) ?
       } else {

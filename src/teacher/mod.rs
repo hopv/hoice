@@ -598,7 +598,7 @@ impl<'a> Teacher<'a> {
     info! {
       "looking for counterexamples in negative clauses..."
     }
-    for clause in instance.neg_clauses() {
+    for clause in instance.strict_neg_clauses() {
       run!(clause, false)
     }
 
@@ -624,7 +624,7 @@ impl<'a> Teacher<'a> {
   ) -> Res< Vec<Cex> > {
     let partial = conf.teacher.partial && (
       self.instance.pos_clauses().contains(& clause_idx) ||
-      self.instance.neg_clauses().contains(& clause_idx)
+      self.instance.strict_neg_clauses().contains(& clause_idx)
     ) ;
 
     self.solver.push(1) ? ;

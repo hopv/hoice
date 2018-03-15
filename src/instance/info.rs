@@ -44,6 +44,7 @@ impl_fmt!{
 
 
 /// Predicate info.
+#[derive(Clone)]
 pub struct PrdInfo {
   /// Predicate's name.
   pub name: String,

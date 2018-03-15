@@ -1397,7 +1397,7 @@ impl RedStrat for RUnroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'neg_clauses: for clause in instance.neg_clauses() {
+      'neg_clauses: for clause in instance.strict_neg_clauses() {
         let clause = & instance[* clause] ;
         debug_assert! { clause.rhs().is_none() }
         conf.check_timeout() ? ;

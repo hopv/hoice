@@ -24,8 +24,6 @@ pub use self::pre_instance::PreInstance ;
 /// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
 /// do this is to never access an instance's fields directly from the outside.
 pub struct Instance {
-  /// Constants constructed so far.
-  consts: HConSet<Term>,
   /// Predicates.
   preds: PrdInfos,
   /// Original predicates, for reconstruction.
@@ -52,9 +50,15 @@ pub struct Instance {
   ///
   /// Only available after finalize.
   pos_clauses: ClsSet,
-  /// Set of negative clauses.
+  /// Set of strictly negative clauses.
   ///
-  /// Only available after finalize.
+  /// A clause is strictly negative if it has strictly one predicate
+  /// application, and it's in the clause's body. Only available after
+  /// finalize.
+  strict_neg_clauses: ClsSet,
+  /// Set of (non-strictly) negative clauses.
+  ///
+  /// Super set of strictly negative clauses. Only available after finalize.
   neg_clauses: ClsSet,
   /// Set of implication clauses.
   ///
@@ -69,7 +73,6 @@ impl Instance {
     let pred_capa = conf.instance.pred_capa ;
     let clause_capa = conf.instance.clause_capa ;
     Instance {
-      consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       old_preds: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
@@ -80,6 +83,7 @@ impl Instance {
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       is_unsat: false,
       pos_clauses: ClsSet::new(),
+      strict_neg_clauses: ClsSet::new(),
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
@@ -93,6 +97,12 @@ impl Instance {
     & self.pos_clauses
   }
   /// Set of negative clauses with exactly one predicate application.
+  ///
+  /// Only available after finalize.
+  pub fn strict_neg_clauses(& self) -> & ClsSet {
+    & self.strict_neg_clauses
+  }
+  /// Set of negative clauses.
   ///
   /// Only available after finalize.
   pub fn neg_clauses(& self) -> & ClsSet {
@@ -122,6 +132,54 @@ impl Instance {
     }
     true
   }
+
+  /// Clones itself without the clauses.
+  fn clone_without_clauses(& self) -> Self {
+    let mut res = Instance::new() ;
+    res.preds = self.preds.clone() ;
+    res.old_preds = self.old_preds.clone() ;
+    res.pred_terms = self.pred_terms.clone() ;
+    res.pred_to_clauses = vec![
+      (ClsSet::new(), ClsSet::new()) ; self.preds.len()
+    ].into() ;
+    res
+  }
+
+
+  /// Clones itself dropping all positive clauses but `to_keep`.
+  ///
+  /// The resulting instance is *not* finalized.
+  pub fn clone_with_one_pos(
+    & self, to_keep: ClsIdx
+  ) -> Self {
+    let mut res = self.clone_without_clauses() ;
+    for (idx, clause) in self.clauses.index_iter() {
+      if ! clause.lhs_preds().is_empty() || idx == to_keep {
+        let is_new = res.push_clause_raw(clause.clone()) ;
+        debug_assert! { is_new }
+      }
+    }
+    res
+  }
+
+
+  /// Clones itself dropping all negative clauses but `to_keep`.
+  ///
+  /// The resulting instance is *not* finalized.
+  pub fn clone_with_one_neg(
+    & self, to_keep: ClsIdx
+  ) -> Self {
+    let mut res = self.clone_without_clauses() ;
+    for (idx, clause) in self.clauses.index_iter() {
+      if ! clause.rhs().is_none() || idx == to_keep {
+        let is_new = res.push_clause_raw(clause.clone()) ;
+        debug_assert! { is_new }
+      }
+    }
+    res
+  }
+
+
 
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
@@ -161,9 +219,32 @@ impl Instance {
     Ok( model )
   }
 
+  /// Returns the model corresponding to the input predicates and the forced
+  /// predicates.
+  ///
+  /// The model is sorted in topological order.
+  pub fn model_of_dnfs(& self, candidates: DnfCandidates) -> Res<DnfModel> {
+    use std::iter::Extend ;
+    let mut model = DnfModel::with_capacity( self.preds.len() ) ;
+    model.extend(
+      candidates.into_iter()
+    ) ;
+    for pred in & self.sorted_pred_terms {
+      let pred = * pred ;
+      if let Some(ref tterms) = self.pred_terms[pred] {
+        model.push(
+          (pred, vec![ vec![ tterms.clone() ] ])
+        )
+      } else {
+        bail!("inconsistency in sorted forced predicates")
+      }
+    }
+    Ok( model )
+  }
+
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
+  pub fn is_trivial(& self) -> Res< Option< Option<DnfModel> > > {
     if self.is_unsat { Ok( Some(None) ) } else {
       for pred in self.pred_indices() {
         if self.pred_terms[pred].is_none() {
@@ -171,7 +252,7 @@ impl Instance {
         }
       }
       // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
-      self.model_of( vec![].into() ).map(|res| Some(Some(res)))
+      self.model_of_dnfs( PrdHMap::new() ).map(|res| Some(Some(res)))
     }
   }
 
@@ -233,7 +314,6 @@ impl Instance {
     self.is_finalized = true ;
 
     self.sorted_pred_terms.clear() ;
-    self.consts.shrink_to_fit() ;
     self.preds.shrink_to_fit() ;
     self.old_preds.shrink_to_fit() ;
     self.pred_terms.shrink_to_fit() ;
@@ -244,7 +324,11 @@ impl Instance {
     ) ;
 
     for (idx, clause) in self.clauses.index_iter() {
-      if clause.rhs().is_none() && clause.lhs_pred_apps_len() == 1 {
+      if clause.rhs().is_none() {
+        if clause.lhs_pred_apps_len() == 1 {
+          let is_new = self.strict_neg_clauses.insert(idx) ;
+          debug_assert! { is_new }
+        }
         let is_new = self.neg_clauses.insert(idx) ;
         debug_assert! { is_new }
       } else if clause.lhs_preds().is_empty() {
@@ -686,7 +770,7 @@ impl Instance {
     false
   }
 
-  /// Pushes a new clause, does not sanity-check.
+  /// Pushes a new clause, does not sanity-check but redundancy-checks.
   fn push_clause_unchecked(& mut self, clause: Clause) -> bool {
     let clause_index = self.clauses.next_index() ;
     self.clauses.push(clause) ;
@@ -695,6 +779,23 @@ impl Instance {
       self.clauses.pop() ;
       return false
     }
+
+    for pred in self.clauses[clause_index].lhs_preds().keys() {
+      let pred = * pred ;
+      let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
+      debug_assert!(is_new)
+    }
+    if let Some((pred, _)) = self.clauses[clause_index].rhs() {
+      let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
+      debug_assert!(is_new)
+    }
+    true
+  }
+
+  /// Pushes a new clause and links, no redundancy check.
+  fn push_clause_raw(& mut self, clause: Clause) -> bool {
+    let clause_index = self.clauses.next_index() ;
+    self.clauses.push(clause) ;
 
     for pred in self.clauses[clause_index].lhs_preds().keys() {
       let pred = * pred ;
@@ -1296,8 +1397,50 @@ impl Instance {
   }
 
 
+  /// Writes a conjunction of top terms.
+  pub fn write_tterms_conj<W: Write>(
+    & self, w: & mut W, conj: & Vec<TTerms>
+  ) -> Res<()> {
+    if conj.is_empty() {
+      write!(w, "true") ?
+    } else if conj.len() == 1 {
+      self.print_tterms_as_model(w, & conj[0]) ?
+    } else {
+      write!(w, "(and") ? ;
+      for tterms in conj {
+        write!(w, " ") ? ;
+        self.print_tterms_as_model(w, tterms) ?
+      }
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
+
+
+  /// Writes a dnf of top terms.
+  pub fn write_tterms_dnf<W: Write>(
+    & self, w: & mut W, dnf: & Vec<Vec<TTerms>>
+  ) -> Res<()> {
+    if dnf.is_empty() {
+      write!(w, "false") ?
+    } else if dnf.len() == 1 {
+      self.write_tterms_conj(w, & dnf[0]) ?
+    } else {
+      write!(w, "(or") ? ;
+      for conj in dnf {
+        write!(w, " ") ? ;
+        self.write_tterms_conj(w, conj) ?
+      }
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
+
+
   /// Writes a model.
-  pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
+  pub fn write_model<W: Write>(
+    & self, model: & DnfModel, w: & mut W
+  ) -> Res<()> {
     writeln!(w, "(model") ? ;
     for & (pred, ref tterms) in model {
       let pred_info = & self[pred] ;
@@ -1326,7 +1469,7 @@ impl Instance {
 
       writeln!(w, " ) {}", Typ::Bool) ? ;
       write!(w, "    ") ? ;
-      self.print_tterms_as_model(w, tterms) ? ;
+      self.write_tterms_dnf(w, tterms) ? ;
       writeln!(w, "\n  )") ?
     }
     writeln!(w, ")") ? ;
