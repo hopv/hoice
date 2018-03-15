@@ -56,8 +56,6 @@ pub fn work(
         let mut this_model = instance.model_of(candidates) ? ;
         if let Some(instance) = Arc::get_mut(& mut instance) {
           instance.simplify_pred_defs(& mut this_model) ?
-        } else {
-          bail!("could not obtain instance as mut...")
         }
         for (pred, tterms) in this_model {
           if ! real_instance.is_known(pred) {
