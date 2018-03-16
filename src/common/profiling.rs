@@ -241,6 +241,7 @@ pub struct Profiler {
   subs: RefCell< Vec<(String, Profiler)> >,
 }
 #[cfg(feature = "bench")]
+#[derive(Clone)]
 pub struct Profiler ;
 impl Profiler {
   /// Constructor.

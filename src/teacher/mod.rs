@@ -239,9 +239,9 @@ impl<'a> Teacher<'a> {
       profile! { self tick "assistant" }
       if let Some(mut data) = self.data.clone_new_constraints() ? {
         assistant.break_implications(& mut data) ? ;
-        let (nu_pos, nu_neg) = self.data.merge_samples(data) ? ;
-        profile! { self "assistant pos useful" => add nu_pos }
-        profile! { self "assistant neg useful" => add nu_neg }
+        let (_nu_pos, _nu_neg) = self.data.merge_samples(data) ? ;
+        profile! { self "assistant pos useful" => add _nu_pos }
+        profile! { self "assistant neg useful" => add _nu_neg }
       }
       profile! { self mark "assistant" }
     }

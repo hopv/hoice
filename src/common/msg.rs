@@ -104,7 +104,6 @@ impl From<Error> for MsgKind {
     MsgKind::Err(err)
   }
 }
-#[cfg( not(feature = "bench") )]
 impl From<Profiler> for MsgKind {
   fn from(profiler: Profiler) -> MsgKind {
     MsgKind::Stats(profiler)
