@@ -226,14 +226,53 @@ impl Instance {
   pub fn model_of_dnfs(& self, candidates: DnfCandidates) -> Res<DnfModel> {
     use std::iter::Extend ;
     let mut model = DnfModel::with_capacity( self.preds.len() ) ;
-    model.extend(
-      candidates.into_iter()
-    ) ;
+    let mut known_preds = PrdSet::new() ;
+    let mut tmp: Vec<_> = candidates.into_iter().map(
+      |(pred, dnf)| {
+        let mut preds = PrdSet::new() ;
+        for conj in & dnf {
+          for tterms in conj {
+            preds.extend( tterms.preds() )
+          }
+        }
+        (pred, preds, dnf)
+      }
+    ).collect() ;
+    let mut cnt ;
+    let mut changed ;
+    while ! tmp.is_empty() {
+      cnt = 0 ;
+      changed = false ;
+      while cnt < tmp.len() {
+        if tmp[cnt].1.iter().all(
+          |pred| known_preds.contains(pred)
+        ) {
+          changed = true ;
+          let (pred, _, dnf) = tmp.swap_remove(cnt) ;
+          let is_new = known_preds.insert(pred) ;
+          debug_assert! { is_new }
+          model.push( vec![ (pred, dnf) ] )
+        } else {
+          cnt += 1
+        }
+      }
+      if ! changed {
+        break
+      }
+    }
+    if ! tmp.is_empty() {
+      model.push(
+        tmp.into_iter().map(
+          |(pred, _, dnf)| (pred, dnf)
+        ).collect()
+      )
+    }
+
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push(
-          (pred, vec![ vec![ tterms.clone() ] ])
+          vec![ (pred, vec![ vec![ tterms.clone() ] ]) ]
         )
       } else {
         bail!("inconsistency in sorted forced predicates")
@@ -1437,40 +1476,71 @@ impl Instance {
   }
 
 
+  /// Writes a predicate signature.
+  ///
+  /// Does not write the name of the predicate.
+  pub fn write_pred_sig<W: Write>(
+    & self, w: & mut W, pred: PrdIdx
+  ) -> Res<()> {
+    let (ref old_sig, ref var_map) = self.old_preds[pred] ;
+    // Reverse `var_map` so that it maps old vars to new ones.
+    let mut pam_rav = VarHMap::with_capacity( var_map.len() ) ;
+    for (new, old) in var_map.index_iter() {
+      let prev = pam_rav.insert( * old, new ) ;
+      debug_assert!( prev.is_none() )
+    }
+    write!(w, "( ")  ?;
+    for (var, typ) in old_sig.index_iter() {
+      write!(w, " (") ? ;
+      if let Some(var) = pam_rav.remove(& var) {
+        write!(w, "{}", var.default_str()) ?
+      } else {
+        write!(w, "unused_{}", var) ?
+      }
+      write!(w, " {})", typ) ?
+    }
+
+    write!(w, " ) {}", Typ::Bool) ? ;
+    Ok(())
+  }
+
+
   /// Writes a model.
   pub fn write_model<W: Write>(
     & self, model: & DnfModel, w: & mut W
   ) -> Res<()> {
     writeln!(w, "(model") ? ;
-    for & (pred, ref tterms) in model {
-      let pred_info = & self[pred] ;
-      let (ref old_sig, ref var_map) = self.old_preds[pred] ;
-      // Reverse `var_map` so that it maps old vars to new ones.
-      let mut pam_rav = VarHMap::with_capacity( var_map.len() ) ;
-      for (new, old) in var_map.index_iter() {
-        let prev = pam_rav.insert( * old, new ) ;
-        debug_assert!( prev.is_none() )
-      }
+    for defs in model {
 
-      writeln!(
-        w, "  ({} {}", keywords::cmd::def_fun, pred_info.name
-      ) ? ;
-      write!(w, "    (")  ?;
+      if defs.is_empty() {
+        ()
+      } else if defs.len() == 1 {
+        let (pred, ref tterms) = defs[0] ;
 
-      for (var, typ) in old_sig.index_iter() {
-        write!(w, " (") ? ;
-        if let Some(var) = pam_rav.remove(& var) {
-          write!(w, "{}", var.default_str()) ?
-        } else {
-          write!(w, "unused_{}", var) ?
+        writeln!(
+          w, "  ({} {}", keywords::cmd::def_fun, self[pred].name
+        ) ? ;
+        write!(w, "    ")  ?;
+        self.write_pred_sig(w, pred) ? ;
+        write!(w, "\n    ") ? ;
+        self.write_tterms_dnf(w, tterms) ? ;
+        writeln!(w, "\n  )") ?
+
+      } else {
+        write!(
+          w, "  ({} (", keywords::cmd::def_funs
+        ) ? ;
+        for & (pred, _) in defs {
+          write!(w, "\n    {} ", self[pred].name) ? ;
+          self.write_pred_sig(w, pred) ? ;
         }
-        write!(w, " {})", typ) ?
+        write!(w, "\n  ) (") ? ;
+        for & (_, ref tterms) in defs {
+          write!(w, "\n    ") ? ;
+          self.write_tterms_dnf(w, tterms) ? ;
+        }
+        writeln!(w, "\n  ) )") ? ;
       }
-
-      writeln!(w, " ) {}", Typ::Bool) ? ;
-      write!(w, "    ") ? ;
-      self.write_tterms_dnf(w, tterms) ? ;
-      writeln!(w, "\n  )") ?
     }
     writeln!(w, ")") ? ;
     Ok(())

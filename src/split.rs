@@ -39,9 +39,9 @@ pub fn work(
 
   while let Some(instance) = pos_splitter.next_instance() ? {
     let mut neg_splitter = Splitter::new(& instance, false, _profiler) ;
+    debug_assert! { neg_models.is_empty() }
 
     while let Some(mut instance) = neg_splitter.next_instance() ? {
-      debug_assert! { neg_models.is_empty() }
 
       if_verb! {
         if let Some((current, left)) = pos_splitter.info() {
@@ -50,6 +50,13 @@ pub fn work(
         if let Some((current, left)) = neg_splitter.info() {
           info! { "Splitting on negative clause {} of {}", current, left }
         }
+      }
+
+      if conf.teacher.step && (
+        pos_splitter.info().is_some() ||
+        neg_splitter.info().is_some()
+      ) {
+        pause("to start solving") ;
       }
 
       if let Some(candidates) = run_teacher(instance.clone(), _profiler) ? {
@@ -78,6 +85,9 @@ pub fn work(
     }
 
     'update_model: for (pred, mut conj) in neg_models.drain() {
+      let dnf = model.entry(pred).or_insert_with(
+        || vec![]
+      ) ;
       let mut cnt = 0 ;
       while cnt < conj.len() {
         match conj[cnt].bool() {
@@ -88,10 +98,9 @@ pub fn work(
           None => cnt += 1,
         }
       }
-      if ! conj.is_empty() {
-        model.entry(pred).or_insert_with(
-          || vec![]
-        ).push(conj)
+      if ! conj.is_empty()
+      || dnf.iter().all( |conj| ! conj.is_empty() ) {
+        dnf.push(conj)
       }
     }
 

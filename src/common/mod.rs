@@ -138,7 +138,7 @@ pub type Model = Vec< (PrdIdx, TTerms) > ;
 ///
 pub type DnfCandidates = PrdHMap< Vec<Vec<TTerms>> > ;
 ///
-pub type DnfModel = Vec< (PrdIdx, Vec<Vec<TTerms>>) > ;
+pub type DnfModel = Vec< Vec<(PrdIdx, Vec<Vec<TTerms>>)> > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = RArgs ;
