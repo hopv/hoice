@@ -940,7 +940,7 @@ use std::time::{ Instant, Duration } ;
 pub struct Config {
   file: Option<String>,
   /// Verbosity.
-  pub verb: Verb,
+  pub verb: usize,
   /// Statistics flag.
   pub stats: bool,
   /// Inference flag.
@@ -981,15 +981,23 @@ impl Config {
   pub fn out_dir(& self) -> PathBuf {
     PathBuf::from(& self.out_dir)
   }
-  /// True iff verbose or debug.
+
+
+
+  /// True if minimal mode.
+  #[inline]
+  pub fn minimal(& self) -> bool {
+    self.verb >= 2
+  }
+  /// True if verbose mode.
   #[inline]
   pub fn verbose(& self) -> bool {
-    self.verb.verbose()
+    self.verb >= 2
   }
-  /// True iff debug.
+  /// True if debug mode.
   #[inline]
   pub fn debug(& self) -> bool {
-    self.verb.debug()
+    self.verb >= 3
   }
   /// Input file.
   #[inline]
@@ -1044,12 +1052,14 @@ impl Config {
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity
-    let mut verb = Verb::default() ;
+    let mut verb = 0 ;
     for _ in 0..matches.occurrences_of("verb") {
-      verb.inc()
+      verb += 1
     }
     for _ in 0..matches.occurrences_of("quiet") {
-      verb.dec()
+      if verb > 0 {
+        verb -= 1
+      }
     }
 
     // Colors.
@@ -1276,78 +1286,6 @@ impl Config {
 
 
 
-
-
-
-
-
-
-/// Verbose level.
-///
-/// # Examples
-///
-/// ```rust
-/// # use hoice::common::Verb ;
-/// let mut verb = Verb::Quiet ;
-/// assert!( ! verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.inc() ;
-/// assert_eq!( verb, Verb::Verb ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.inc() ;
-/// assert_eq!( verb, Verb::Debug ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( verb.debug() ) ;
-/// verb.dec() ;
-/// assert_eq!( verb, Verb::Verb ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.dec() ;
-/// assert_eq!( verb, Verb::Quiet ) ;
-/// assert!( ! verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// ```
-#[derive(PartialEq, Eq, Debug)]
-pub enum Verb {
-  /// Quiet.
-  Quiet,
-  /// Verbose.
-  Verb,
-  /// Debug.
-  Debug,
-}
-impl Verb {
-  /// Default verbosity.
-  pub fn default() -> Self {
-    Verb::Quiet
-  }
-  /// Increments verbosity.
-  pub fn inc(& mut self) {
-    match * self {
-      Verb::Quiet => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Debug,
-      _ => ()
-    }
-  }
-  /// Decrements verbosity.
-  pub fn dec(& mut self) {
-    match * self {
-      Verb::Debug => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Quiet,
-      _ => ()
-    }
-  }
-
-  /// True iff verbose or debug.
-  pub fn verbose(& self) -> bool {
-    * self != Verb::Quiet
-  }
-  /// True iff debug.
-  pub fn debug(& self) -> bool {
-    * self == Verb::Debug
-  }
-}
 
 
 

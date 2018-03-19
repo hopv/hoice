@@ -6,21 +6,6 @@ use common::* ;
 
 
 
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg(feature = "bench")]
-fn print_stats(_: & 'static str, _: Profiler) {}
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg( not(feature = "bench") )]
-fn print_stats(name: & 'static str, profiler: Profiler) {
-  if conf.stats {
-    println!("") ;
-    profiler.print( name, "", & [ "data" ] ) ;
-    println!("") ;
-  }
-}
-
-
-
 
 
 /// Splits the instance if asked to do so, and solves it.
@@ -42,13 +27,18 @@ pub fn work(
     debug_assert! { neg_models.is_empty() }
 
     while let Some(mut instance) = neg_splitter.next_instance() ? {
+      profile! { |_profiler| "sub-systems" => add 1 }
 
       if_verb! {
         if let Some((current, left)) = pos_splitter.info() {
-          info! { "Splitting on positive clause {} of {}", current, left }
+          log! { @info
+            "Splitting on positive clause {} of {}", current, left
+          }
         }
         if let Some((current, left)) = neg_splitter.info() {
-          info! { "Splitting on negative clause {} of {}", current, left }
+          log! { @info
+            "Splitting on negative clause {} of {}", current, left
+          }
         }
       }
 
@@ -191,14 +181,19 @@ impl<'a> Splitter<'a> {
   pub fn next_instance(& mut self) -> Res< Option<Arc<Instance>> > {
     match self.clauses {
       Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
-        Ok(
-          Some(
-            Arc::new(
-              pre_proc(
-                self.instance.as_ref(), (self.pos, clause), self._profiler
-              ) ?
+        let sub_instance = profile! (
+          self wrap {
+            pre_proc(
+              self.instance.as_ref(), (self.pos, clause), self._profiler
             )
-          )
+          } if self.pos {
+            "positive sub preproc"
+          } else {
+            "negative sub preproc"
+          }
+        ) ? ;
+        Ok(
+          Some( Arc::new(sub_instance) )
         )
       } else {
         Ok(None)

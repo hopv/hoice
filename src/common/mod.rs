@@ -64,6 +64,19 @@ lazy_static!{
 
 // |===| Helpers.
 
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg(feature = "bench")]
+pub fn print_stats(_: & 'static str, _: Profiler) {}
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg( not(feature = "bench") )]
+pub fn print_stats(name: & 'static str, profiler: Profiler) {
+  if conf.stats {
+    println!("") ;
+    profiler.print( name, "", & [ "data" ] ) ;
+    println!("") ;
+  }
+}
+
 /// Lock corrupted error.
 pub fn corrupted_err<T>(_: T) -> Error {
   "[bug] lock on learning data is corrupted...".into()

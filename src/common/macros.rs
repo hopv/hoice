@@ -63,31 +63,45 @@ macro_rules! err_chain {
 }
 
 
+/// Logging macro.
+macro_rules! log {
+  ( @debug $($tail:tt)* ) => (
+    if conf.debug() {
+      log! { $($tail)* }
+    }
+  ) ;
+  ( @verb $($tail:tt)* ) => (
+    if conf.verbose() {
+      log! { $($tail)* }
+    }
+  ) ;
+  ( @info $($tail:tt)* ) => (
+    if conf.minimal() {
+      log! { $($tail)* }
+    }
+  ) ;
+  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+      for line in format!($str $(, $args)*).lines() {
+        println!("; {}", line)
+      }
+    )*
+    ()
+  }) ;
+}
+
+
 /// In verbose mode, same as `println` but with a "; " prefix.
 macro_rules! info {
-  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb.verbose() {
-      $(
-        for line in format!($str $(, $args)*).lines() {
-          println!("; {}", line)
-        }
-      )*
-      ()
-    }
+  ( $($stuff:tt)* ) => (
+    log! { @verb $($stuff)* }
   ) ;
 }
 /// In debug mode, same as `println` but with a "; " prefix.
 #[allow(unused_macros)]
 macro_rules! debug {
-  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb.debug() {
-      $(
-        for line in format!($str $(, $args)*).lines() {
-          println!("; {}", line)
-        }
-      )*
-      ()
-    }
+  ( $($stuff:tt)* ) => (
+    log! { @debug $($stuff)* }
   ) ;
 }
 /// Formats a warning.

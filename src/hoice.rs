@@ -151,29 +151,33 @@ pub fn read_and_work<R: ::std::io::Read>(
 
       // Check-sat, start class.
       Parsed::CheckSat => {
+        log! { @info "Running top pre-processing" }
+
         if conf.preproc.active {
-          match instance::preproc::work(& mut instance, & profiler) {
+          let preproc_profiler = Profiler::new() ;
+          match profile! {
+            |profiler| wrap {
+              instance::preproc::work(& mut instance, & preproc_profiler)
+            } "top preproc"
+          } {
             Ok(()) => (),
             Err(e) => if e.is_timeout() {
               if e.is_timeout() {
                 println!("unknown") ;
-                print_stats(profiler) ;
+                print_stats("top", profiler) ;
                 ::std::process::exit(0)
               }
             } else {
               bail!(e)
             },
           }
+          print_stats("top preproc", preproc_profiler)
         }
-        instance.finalize() ? ;
+        profile! (
+          |profiler| wrap { instance.finalize() } "top finalizing"
+        ) ? ;
 
-        if conf.stats {
-          if instance.is_solved() {
-            println!("; solved by pre-processing")
-          }
-        }
-
-        if ! conf.infer { continue 'parse_work }
+        log! { @info "; solved by pre-processing" }
 
         model = if let Some(maybe_model) = instance.is_trivial() ? {
           // Pre-processing already decided satisfiability.
@@ -182,6 +186,8 @@ pub fn read_and_work<R: ::std::io::Read>(
           ) ;
           maybe_model
         } else {
+
+          if ! conf.infer { continue 'parse_work }
 
           let arc_instance = Arc::new(instance) ;
           let solve_res = split::work(arc_instance.clone(), & profiler) ;
@@ -206,7 +212,7 @@ pub fn read_and_work<R: ::std::io::Read>(
                 None
               } else if e.is_timeout() {
                 println!("unknown") ;
-                print_stats(profiler) ;
+                print_stats("top", profiler) ;
                 ::std::process::exit(0)
               } else {
                 bail!(e)
@@ -255,27 +261,8 @@ pub fn read_and_work<R: ::std::io::Read>(
     }
   }
 
-  print_stats(profiler) ;
+  print_stats("top", profiler) ;
 
   Ok( (model, instance) )
 }
 
-
-
-
-
-
-
-
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg(feature = "bench")]
-fn print_stats(_: Profiler) {}
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg( not(feature = "bench") )]
-fn print_stats(profiler: Profiler) {
-  if conf.stats {
-    println!("") ;
-    profiler.print( "all stats", "", & [ "data" ] ) ;
-    println!("") ;
-  }
-}
