@@ -67,19 +67,27 @@ macro_rules! err_chain {
 macro_rules! log {
   ( @debug $($tail:tt)* ) => (
     if conf.debug() {
-      log! { $($tail)* }
+      log! { ";     " => $($tail)* }
     }
   ) ;
   ( @verb $($tail:tt)* ) => (
     if conf.verbose() {
-      log! { $($tail)* }
+      log! { ";   " => $($tail)* }
     }
   ) ;
   ( @info $($tail:tt)* ) => (
     if conf.minimal() {
-      log! { $($tail)* }
+      log! { "; " => $($tail)* }
     }
   ) ;
+  ( $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+      for line in format!($str $(, $args)*).lines() {
+        println!("{}{}", $pref, line)
+      }
+    )*
+    ()
+  }) ;
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     $(
       for line in format!($str $(, $args)*).lines() {

@@ -987,7 +987,7 @@ impl Config {
   /// True if minimal mode.
   #[inline]
   pub fn minimal(& self) -> bool {
-    self.verb >= 2
+    self.verb >= 1
   }
   /// True if verbose mode.
   #[inline]

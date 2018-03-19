@@ -1541,6 +1541,46 @@ impl TTerms {
     if b { Self::tru() } else { Self::fls() }
   }
 
+  /// Attempts to transform some terms in a term.
+  pub fn to_term(& self) -> Option<Term> {
+    match * self {
+      TTerms::True => Some( term::tru() ),
+      TTerms::False => Some( term::fls() ),
+
+      TTerms::Conj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
+      TTerms::Conj { ref tterms, .. } => Some(
+        term::and(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Disj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Disj {
+        ref tterms, ref neg_preds, ..
+      } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
+      TTerms::Disj { ref tterms, .. } => Some(
+        term::or(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Dnf { ref disj } => {
+        let mut disj_terms = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref conj) in disj {
+          if quant.is_some()
+          || ! conj.preds.is_empty() { return None }
+          disj_terms.push(
+            term::and(
+              conj.terms().iter().map(|term| term.clone()).collect()
+            )
+          )
+        }
+        Some( term::or(disj_terms) )
+      },
+    }
+  }
+
   /// Boolean value of some top terms.
   #[inline]
   pub fn bool(& self) -> Option<bool> {

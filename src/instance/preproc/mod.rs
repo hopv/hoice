@@ -23,7 +23,6 @@ pub fn work(
   instance: & mut Instance, profiler: & Profiler,
   simplify_first: bool
 ) -> Res<()> {
-  log_info!{ "starting pre-processing" }
 
   profile! { |profiler| tick "preproc" }
 

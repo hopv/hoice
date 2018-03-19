@@ -20,36 +20,41 @@ use self::assistant::Assistant ;
 
 /// Starts the teaching process.
 pub fn start_class(
-  instance: & Arc<Instance>, profiler: & Profiler
+  instance: & Arc<Instance>,
+  initial_candidates: & InitCandidates,
+  profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
   let mut teacher = Teacher::new(instance, profiler) ? ;
-  let res = teach( & mut teacher ) ;
+  let res = teach( & mut teacher, initial_candidates ) ;
   teacher.finalize() ? ;
   res
 }
 
 
 /// Teaching to the learners.
-pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
+pub fn teach(
+  teacher: & mut Teacher, initial_candidates: & InitCandidates
+) -> Res< Option<Candidates> > {
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
   //   teacher.add_learner( ::learning::smt::Launcher ) ?
   // }
-  log_debug!{ "  spawning ice learner..." }
+  log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
     teacher.add_learner( ::learning::ice::Launcher, false ) ? ;
   }
   teacher.add_learner( ::learning::ice::Launcher, true ) ? ;
 
-  log_debug!{ "  performing initial check..." }
-  let (cexs, cands) = teacher.initial_check() ? ;
+  log_debug!{ "performing initial check..." }
+  let (cexs, cands) = teacher.initial_check(initial_candidates) ? ;
   if cexs.is_empty() {
+    log_debug!{ "solved by initial cex..." }
     return Ok( Some(cands) )
   }
-  log_debug!{ "  generating data from initial cex..." }
+  log_debug!{ "generating data from initial cex..." }
   let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
   if ! nu_stuff {
     bail! { "translation of initial cexs to data generated no new data" }
@@ -505,18 +510,51 @@ impl<'a> Teacher<'a> {
   /// Drops the copy of the `Sender` end of the channel used to communicate
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
-  pub fn initial_check(& mut self) -> Res< (Cexs, Candidates) > {
+  pub fn initial_check(
+    & mut self, initial_candidates: & InitCandidates,
+  ) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    for pred in self.instance.pred_indices() {
+    'all_preds: for pred in self.instance.pred_indices() {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
+
+      } else if let Some(dnf) = initial_candidates.get(& pred) {
+        let mut cand_dnf = vec![] ;
+        for conj in dnf {
+          let mut cand_conj = vec![] ;
+          for tterms in conj {
+            if let Some(term) = tterms.to_term() {
+              cand_conj.push(term)
+            } else {
+              cand_conj.clear() ;
+              cand_dnf.clear() ;
+              cands.push( Some(term::tru()) ) ;
+              continue 'all_preds
+            }
+          }
+          cand_dnf.push( term::and(cand_conj) )
+        }
+        cands.push( Some( term::or(cand_dnf) ) )
+
       } else {
         cands.push( Some(term::tru()) )
       }
     }
+
+    if_verb! {
+      log! { @info "  initial candidates:" }
+      for (pred, cand) in cands.index_iter() {
+        if let Some(cand) = cand.as_ref() {
+          log! { @info
+            "    {}: {}", self.instance[pred], cand
+          }
+        }
+      }
+    }
+
     self.get_cexs(& cands).map(|res| (res, cands))
   }
 
@@ -588,18 +626,32 @@ impl<'a> Teacher<'a> {
       ) ;
     }
 
-    info! {
-      "looking for counterexamples in positive clauses..."
+    log! { @verb
+      "looking for counterexamples in positive clauses ({})...",
+      instance.pos_clauses().len()
     }
     for clause in instance.pos_clauses() {
       run!(clause, false)
     }
 
-    info! {
-      "looking for counterexamples in negative clauses..."
+    log! { @verb
+      "looking for counterexamples in strict negative clauses ({})...",
+      instance.strict_neg_clauses().len()
     }
     for clause in instance.strict_neg_clauses() {
       run!(clause, false)
+    }
+
+    if map.is_empty() {
+      log! { @verb
+        "looking for counterexamples in negative clauses ({})...",
+        instance.neg_clauses().len()
+      }
+      for clause in instance.neg_clauses() {
+        if ! instance.strict_neg_clauses().contains(clause) {
+          run!(clause, true)
+        }
+      }
     }
 
     if map.is_empty() {
