@@ -157,7 +157,7 @@ pub fn read_and_work<R: ::std::io::Read>(
           let preproc_profiler = Profiler::new() ;
           match profile! {
             |profiler| wrap {
-              instance::preproc::work(& mut instance, & preproc_profiler)
+              instance::preproc::work(& mut instance, & preproc_profiler, true)
             } "top preproc"
           } {
             Ok(()) => (),

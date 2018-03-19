@@ -14,9 +14,14 @@ pub mod args ;
 use self::graph::Graph ;
 
 
-/// Runs pre-processing
+/// Runs pre-processing.
+///
+/// The boolean indicates wether a first pass of simplification runs on the
+/// whole system before the rest. Should be true for top-level preproc, and
+/// false for subsystems.
 pub fn work(
-  instance: & mut Instance, profiler: & Profiler
+  instance: & mut Instance, profiler: & Profiler,
+  simplify_first: bool
 ) -> Res<()> {
   log_info!{ "starting pre-processing" }
 
@@ -24,7 +29,7 @@ pub fn work(
 
   let res = {
     let mut reductor = Reductor::new(instance) ? ;
-    reductor.run(profiler).and_then(
+    reductor.run(profiler, simplify_first).and_then(
       |_| reductor.destroy()
     )
   } ;
@@ -125,7 +130,9 @@ impl<'a> Reductor<'a> {
   }
 
   /// Runs the full pre-processing.
-  pub fn run(& mut self, _profiler: & Profiler) -> Res<()> {
+  pub fn run(
+    & mut self, _profiler: & Profiler, simplify_first: bool
+  ) -> Res<()> {
     // Counter for preproc dumping.
     //
     // Starts at `1`, `0` is reserved for the fixed point.
@@ -241,7 +248,9 @@ impl<'a> Reductor<'a> {
         }
     }
 
-    run! { simplify } ;
+    if simplify_first {
+      run! { simplify } ;
+    }
 
     // Used to avoid running cfg reduction if nothing has changed since the
     // last run.

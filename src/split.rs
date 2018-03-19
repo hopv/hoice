@@ -233,7 +233,7 @@ fn pre_proc(
   } ;
 
   if conf.preproc.active {
-    ::instance::preproc::work(& mut instance, profiler) ?
+    ::instance::preproc::work(& mut instance, profiler, false) ?
   }
   instance.finalize() ? ;
 
