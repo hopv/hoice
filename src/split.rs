@@ -20,7 +20,50 @@ pub fn work(
 
   let mut pos_splitter = Splitter::new(& real_instance, true) ;
 
-  while let Some(pre_proc_res) = profile!(
+  macro_rules! model {
+    (add $model:expr) => (
+      for (pred, tterms) in $model {
+        if ! real_instance.is_known(pred) {
+          let conj = neg_models.entry(pred).or_insert_with(
+            || vec![]
+          ) ;
+          if ! conj.iter().any( |tts| tts == & tterms ) {
+            if let Some(true) = tterms.bool() {
+              ()
+            } else {
+              conj.push(tterms)
+            }
+          }
+        }
+      }
+    ) ;
+    (update) => (
+      for (pred, mut conj) in neg_models.drain() {
+        let dnf = model.entry(pred).or_insert_with(
+          || vec![]
+        ) ;
+        let mut cnt = 0 ;
+        while cnt < conj.len() {
+          match conj[cnt].bool() {
+            Some(false) => {
+              conj.clear() ;
+              break
+            },
+            Some(true) => {
+              conj.swap_remove(cnt) ;
+            },
+            None => cnt += 1,
+          }
+        }
+        if ! conj.is_empty()
+        || dnf.iter().all( |conj| ! conj.is_empty() ) {
+          dnf.push(conj)
+        }
+      }
+    ) ;
+  }
+
+  'pos_loop: while let Some(preproc_res) = profile!(
     |_profiler| wrap {
       if let Some((current, left)) = pos_splitter.info() {
         log! { @info
@@ -34,12 +77,14 @@ pub fn work(
       print_stats("positive sub-preproc", prof)
     }
 
-    let instance = match pre_proc_res {
+    let instance = match preproc_res {
       Either::Left(instance) => instance,
       Either::Right(maybe_model) => {
         profile! { |_profiler| "sub-systems" => add 1 }
-        if let Some(_) = maybe_model {
-          unimplemented!()
+        if let Some(this_model) = maybe_model {
+          model! { add this_model }
+          model! { update }
+          continue 'pos_loop
         } else {
           return Ok(None)
         }
@@ -49,7 +94,7 @@ pub fn work(
     let mut neg_splitter = Splitter::new(& instance, false) ;
     debug_assert! { neg_models.is_empty() }
 
-    while let Some(pre_proc_res) = profile!(
+    'neg_loop: while let Some(preproc_res) = profile!(
       |_profiler| wrap {
         if_verb! {
           if let Some((current, left)) = neg_splitter.info() {
@@ -66,10 +111,14 @@ pub fn work(
       }
       profile! { |_profiler| "sub-systems" => add 1 }
 
-      let mut instance = match pre_proc_res {
+      let mut instance = match preproc_res {
         Either::Left(instance) => instance,
         Either::Right(None) => return Ok(None),
-        Either::Right(Some(_)) => unimplemented!(),
+        Either::Right(Some(this_model)) => {
+          model! { add this_model }
+          model! { update }
+          continue 'neg_loop
+        },
       } ;
 
       if conf.teacher.step && (
@@ -94,20 +143,7 @@ pub fn work(
         if let Some(instance) = Arc::get_mut(& mut instance) {
           instance.simplify_pred_defs(& mut this_model) ?
         }
-        for (pred, tterms) in this_model {
-          if ! real_instance.is_known(pred) {
-            let conj = neg_models.entry(pred).or_insert_with(
-              || vec![]
-            ) ;
-            if ! conj.iter().any( |tts| tts == & tterms ) {
-              if let Some(true) = tterms.bool() {
-                ()
-              } else {
-                conj.push(tterms)
-              }
-            }
-          }
-        }
+        model!(add this_model)
       } else {
         log! { @info "unsat\n" }
         return Ok(None)
@@ -115,25 +151,7 @@ pub fn work(
 
     }
 
-    'update_model: for (pred, mut conj) in neg_models.drain() {
-      let dnf = model.entry(pred).or_insert_with(
-        || vec![]
-      ) ;
-      let mut cnt = 0 ;
-      while cnt < conj.len() {
-        match conj[cnt].bool() {
-          Some(false) => continue 'update_model,
-          Some(true) => {
-            conj.swap_remove(cnt) ;
-          },
-          None => cnt += 1,
-        }
-      }
-      if ! conj.is_empty()
-      || dnf.iter().all( |conj| ! conj.is_empty() ) {
-        dnf.push(conj)
-      }
-    }
+    model!(update)
 
   }
 
@@ -228,14 +246,14 @@ impl Splitter {
 
   /// Returns the next instance to work on.
   pub fn next_instance(& mut self) -> Res<
-    Option< Either<Arc<Instance>, Option<DnfModel>> >
+    Option< Either<Arc<Instance>, Option<Model>> >
   > {
     match self.clauses {
       Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
         let profiler = Profiler::new() ;
-        let pre_proc_res = profile! (
+        let preproc_res = profile! (
           |profiler| wrap {
-            pre_proc(
+            preproc(
               self.instance.as_ref(), (self.pos, clause), & profiler
             )
           } if self.pos {
@@ -247,7 +265,7 @@ impl Splitter {
         self._profiler = Some(profiler) ;
         Ok(
           Some(
-            pre_proc_res.map_left(
+            preproc_res.map_left(
               |sub_instance| Arc::new(sub_instance)
             )
           )
@@ -273,10 +291,10 @@ impl Splitter {
 /// Generates the instance obtained by removing all positive (if `pos`,
 /// negative otherwise) clauses but `clause`. Preprocesses it and returns the
 /// result.
-fn pre_proc(
+fn preproc(
   instance: & Instance, (pos, clause): (bool, ClsIdx),
   profiler: & Profiler
-) -> Res< Either<Instance, Option<DnfModel>>> {
+) -> Res< Either<Instance, Option<Model>>> {
 
   debug_assert! {
     ( ! pos || instance[clause].lhs_preds().is_empty() ) &&
@@ -294,7 +312,7 @@ fn pre_proc(
   }
   instance.finalize() ? ;
 
-  if let Some(maybe_model) = instance.is_trivial() ? {
+  if let Some(maybe_model) = instance.is_trivial_model() ? {
     Ok( Either::Right(maybe_model) )
   } else {
     Ok( Either::Left(instance) )

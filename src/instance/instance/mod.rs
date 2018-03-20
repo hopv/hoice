@@ -281,17 +281,38 @@ impl Instance {
     Ok( model )
   }
 
+  /// True if the instance is sat, false if unsat.
+  fn is_trivial(& self) -> Option<bool> {
+    if self.is_unsat {
+      Some(false)
+    } else if self.pred_terms.iter().all(|term| term.is_some()) {
+      Some(true)
+    } else {
+      None
+    }
+  }
+
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Res< Option< Option<DnfModel> > > {
-    if self.is_unsat { Ok( Some(None) ) } else {
-      for pred in self.pred_indices() {
-        if self.pred_terms[pred].is_none() {
-          return Ok(None)
-        }
-      }
-      // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
-      self.model_of_dnfs( PrdHMap::new() ).map(|res| Some(Some(res)))
+  pub fn is_trivial_dnfs(& self) -> Res< Option< Option<DnfModel> > > {
+    match self.is_trivial() {
+      None => Ok(None),
+      Some(false) => Ok( Some(None) ),
+      Some(true) => self.model_of_dnfs(
+        PrdHMap::new()
+      ).map(|res| Some(Some(res))),
+    }
+  }
+
+  /// Returns a model for the instance when all the predicates have terms
+  /// assigned to them.
+  pub fn is_trivial_model(& self) -> Res< Option<Option<Model>> > {
+    match self.is_trivial() {
+      None => Ok(None),
+      Some(false) => Ok( Some(None) ),
+      Some(true) => self.model_of(
+        PrdMap::new()
+      ).map(|res| Some(Some(res))),
     }
   }
 
