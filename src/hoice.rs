@@ -173,9 +173,6 @@ pub fn read_and_work<R: ::std::io::Read>(
           }
           print_stats("top preproc", preproc_profiler)
         }
-        profile! (
-          |profiler| wrap { instance.finalize() } "top finalizing"
-        ) ? ;
 
         model = if let Some(maybe_model) = instance.is_trivial_dnfs() ? {
           // Pre-processing already decided satisfiability.

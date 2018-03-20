@@ -285,7 +285,9 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   let mut solver = conf.solver.spawn("check", Parser) ? ;
 
   let res = data.check(& mut solver) ;
-  println!("(safe)") ;
+  if res.is_ok() {
+    println!("(safe)")
+  }
 
   let end_res = solver.kill().chain_err(
     || "While killing solver"

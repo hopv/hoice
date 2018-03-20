@@ -76,14 +76,14 @@ pub fn teach(
     }
 
     if let Some(idx) = learner {
-      if conf.teacher.step {
-        read_line(
-          & format!(
-            "to send data to {} (--step on)...",
-            & conf.emph(& teacher.learners[idx].1)
-          )
-        ) ;
-      }
+      // if conf.teacher.step {
+      //   read_line(
+      //     & format!(
+      //       "to send data to {} (--step on)...",
+      //       & conf.emph(& teacher.learners[idx].1)
+      //     )
+      //   ) ;
+      // }
       let _ = teacher.send(idx) ? ;
       ()
     } else {
@@ -511,7 +511,7 @@ impl<'a> Teacher<'a> {
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
   pub fn initial_check(
-    & mut self, initial_candidates: & InitCandidates,
+    & mut self, _initial_candidates: & InitCandidates,
   ) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
@@ -521,23 +521,24 @@ impl<'a> Teacher<'a> {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
 
-      } else if let Some(dnf) = initial_candidates.get(& pred) {
-        let mut cand_dnf = vec![] ;
-        for conj in dnf {
-          let mut cand_conj = vec![] ;
-          for tterms in conj {
-            if let Some(term) = tterms.to_term() {
-              cand_conj.push(term)
-            } else {
-              cand_conj.clear() ;
-              cand_dnf.clear() ;
-              cands.push( Some(term::tru()) ) ;
-              continue 'all_preds
-            }
-          }
-          cand_dnf.push( term::and(cand_conj) )
-        }
-        cands.push( Some( term::or(cand_dnf) ) )
+      // } else if let Some(dnf) = initial_candidates.get(& pred) {
+      //   let mut cand_dnf = vec![] ;
+      //   for conj in dnf {
+      //     let mut cand_conj = vec![] ;
+      //     for tterms in conj {
+      //       if let Some(term) = tterms.to_term() {
+      //         term.subst()
+      //         cand_conj.push(term)
+      //       } else {
+      //         cand_conj.clear() ;
+      //         cand_dnf.clear() ;
+      //         cands.push( Some(term::tru()) ) ;
+      //         continue 'all_preds
+      //       }
+      //     }
+      //     cand_dnf.push( term::and(cand_conj) )
+      //   }
+      //   cands.push( Some( term::or(cand_dnf) ) )
 
       } else {
         cands.push( Some(term::tru()) )

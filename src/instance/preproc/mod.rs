@@ -19,6 +19,8 @@ use self::graph::Graph ;
 /// The boolean indicates wether a first pass of simplification runs on the
 /// whole system before the rest. Should be true for top-level preproc, and
 /// false for subsystems.
+///
+/// Finalizes the instance.
 pub fn work(
   instance: & mut Instance, profiler: & Profiler,
   simplify_first: bool
@@ -34,6 +36,22 @@ pub fn work(
   } ;
 
   profile! { |profiler| mark "preproc" }
+
+  profile!(
+    |profiler| wrap {
+      instance.finalize()
+    } "finalizing"
+  ) ? ;
+
+  profile! {
+    |profiler| "positive          clauses" => add instance.pos_clauses().len()
+  }
+  profile! {
+    |profiler| "negative          clauses" => add instance.neg_clauses().len()
+  }
+  profile! {
+    |profiler| "negative (strict) clauses" => add instance.neg_clauses().len()
+  }
 
   match res {
     Err(ref e) if e.is_unsat() => {
@@ -234,7 +252,15 @@ impl<'a> Reductor<'a> {
     }
     profile!{
       |_profiler|
-        "pred count original" => add self.instance.preds().len()
+        "pred count original" => add {
+          let mut count = 0 ;
+          for pred in self.instance.pred_indices() {
+            if ! self.instance.is_known(pred) {
+              count += 1
+            }
+          }
+          count
+        }
     }
     profile!{
       |_profiler|

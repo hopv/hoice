@@ -83,7 +83,11 @@ macro_rules! log {
   ( $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     $(
       for line in format!($str $(, $args)*).lines() {
-        println!("{}{}", $pref, line)
+        if line != "" {
+          println!("{}{}", $pref, line)
+        } else {
+          println!("")
+        }
       }
     )*
     ()
@@ -91,7 +95,11 @@ macro_rules! log {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     $(
       for line in format!($str $(, $args)*).lines() {
-        println!("; {}", line)
+        if line != "" {
+          println!("; {}", line)
+        } else {
+          println!("")
+        }
       }
     )*
     ()
