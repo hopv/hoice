@@ -13,148 +13,81 @@ use common::* ;
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
   real_instance: Arc<Instance>, _profiler: & Profiler
-) -> Res< Option<DnfCandidates> > {
-  // Encodes a DNF.
-  let mut model = DnfCandidates::new() ;
-  let mut neg_models = PrdHMap::new() ;
-
-  // log! { @info "{}", real_instance.to_string_info(()).unwrap() }
-
-  let mut pos_splitter = Splitter::new(& real_instance, true) ;
+) -> Res< Option<ConjCandidates> > {
+  let mut model = ConjCandidates::new() ;
 
   macro_rules! model {
     (add $model:expr) => ({
       for (pred, tterms) in $model {
         if ! real_instance.is_known(pred) {
-          let conj = neg_models.entry(pred).or_insert_with(
+          let conj = model.entry(pred).or_insert_with(
             || vec![]
           ) ;
-          conj.push(tterms)
-          // if ! conj.iter().any( |tts| tts == & tterms ) {
-          //   if let Some(true) = tterms.bool() {
-          //     ()
-          //   } else {
-          //     conj.push(tterms)
-          //   }
-          // }
+          match tterms.bool() {
+            Some(true) => continue,
+            Some(false) => conj.clear(),
+            None => (),
+          }
+
+          if ! conj.iter().any(
+            |tts| tts == & tterms || tts.bool() == Some(false)
+          ) {
+            conj.push(tterms)
+          }
         }
       }
-    }) ;
-    (update) => ({
-      for (pred, mut conj) in neg_models.drain() {
-        let dnf = model.entry(pred).or_insert_with(
-          || vec![]
-        ) ;
-        // let mut cnt = 0 ;
-        // while cnt < conj.len() {
-        //   match conj[cnt].bool() {
-        //     Some(false) => {
-        //       conj.clear() ;
-        //       break
-        //     },
-        //     Some(true) => {
-        //       conj.swap_remove(cnt) ;
-        //     },
-        //     None => cnt += 1,
-        //   }
-        // }
-        // if ! conj.is_empty()
-        // || dnf.iter().all( |conj| ! conj.is_empty() ) {
-          dnf.push(conj)
-        // }
-      }
-      // let stdout = & mut ::std::io::stdout() ;
-      // real_instance.write_model(
-      //   & real_instance.model_of_dnfs(model.clone()).unwrap(), stdout
-      // ) ?
     }) ;
   }
 
-  'pos_loop: while let Some(preproc_res) = {
-    if let Some((current, left)) = pos_splitter.info() {
+  let mut splitter = Splitter::new(& real_instance) ;
+
+  'neg_loop: while let Some(preproc_res) = {
+    if let Some((current, left)) = splitter.info() {
       log! { @info
-        "\nSplitting on positive clause {} of {}", current, left
+        "\nSplitting on negative clause {} of {}", current, left
       }
     }
-    pos_splitter.next_instance(& _profiler)
+    splitter.next_instance(& _profiler)
   } ? {
-    if let Some(prof) = pos_splitter.profiler() {
-      print_stats("positive sub-preproc", prof)
+    if let Some(prof) = splitter.profiler() {
+      print_stats("sub-preproc", prof)
     }
+    profile! { |_profiler| "sub-systems" => add 1 }
 
-    let instance = match preproc_res {
+    let mut instance = match preproc_res {
       Either::Left(instance) => instance,
-      Either::Right(maybe_model) => {
-        profile! { |_profiler| "sub-systems" => add 1 }
-        if let Some(this_model) = maybe_model {
-          log! { @info "sat by preproc" }
-          model! { add this_model }
-          model! { update }
-          continue 'pos_loop
-        } else {
-          log! { @info "unsat by preproc" }
-          return Ok(None)
-        }
+      Either::Right(None) => {
+        log! { @info "unsat by preproc" }
+        return Ok(None)
+      },
+      Either::Right(Some(this_model)) => {
+        log! { @info "sat by preproc" }
+        model! { add this_model }
+        continue 'neg_loop
       },
     } ;
 
-    let mut neg_splitter = Splitter::new(& instance, false) ;
-    debug_assert! { neg_models.is_empty() }
-
-    'neg_loop: while let Some(preproc_res) = {
-      if let Some((current, left)) = neg_splitter.info() {
-        log! { @info
-          "\nSplitting on negative clause {} of {}", current, left
-        }
-      }
-      neg_splitter.next_instance(& _profiler)
-    } ? {
-      if let Some(prof) = neg_splitter.profiler() {
-        print_stats("negative sub-preproc", prof)
-      }
-      profile! { |_profiler| "sub-systems" => add 1 }
-
-      let mut instance = match preproc_res {
-        Either::Left(instance) => instance,
-        Either::Right(None) => {
-          log! { @info "unsat by preproc" }
-          return Ok(None)
-        },
-        Either::Right(Some(this_model)) => {
-          log! { @info "sat by preproc" }
-          model! { add this_model }
-          continue 'neg_loop
-        },
-      } ;
-
-      if conf.teacher.step && (
-        pos_splitter.info().is_some() ||
-        neg_splitter.info().is_some()
-      ) {
-        pause("to start solving") ;
-      }
-
-      let res = profile!(
-        |_profiler| wrap {
-          run_teacher(instance.clone(), & model)
-        } "solving"
-      ) ? ;
-
-      if let Some(candidates) = res {
-        log! { @info "sat\n" }
-        let mut this_model = instance.model_of(candidates) ? ;
-        if let Some(instance) = Arc::get_mut(& mut instance) {
-          instance.simplify_pred_defs(& mut this_model) ?
-        }
-        model!(add this_model)
-      } else {
-        log! { @info "unsat\n" }
-        return Ok(None)
-      }
-
+    if conf.teacher.step && splitter.info().is_some() {
+      pause("to start solving") ;
     }
 
-    model!(update)
+    let res = profile!(
+      |_profiler| wrap {
+        run_teacher(instance.clone(), & model)
+      } "solving"
+    ) ? ;
+
+    if let Some(candidates) = res {
+      log! { @info "sat\n" }
+      let mut this_model = instance.model_of(candidates) ? ;
+      if let Some(instance) = Arc::get_mut(& mut instance) {
+        instance.simplify_pred_defs(& mut this_model) ?
+      }
+      model!(add this_model)
+    } else {
+      log! { @info "unsat\n" }
+      return Ok(None)
+    }
 
   }
 
@@ -182,8 +115,6 @@ pub fn run_teacher(
 pub struct Splitter {
   /// The instance we're working on.
   instance: Arc<Instance>,
-  /// True if the splitter works on positive clauses.
-  pos: bool,
   /// Clauses to look at separately. Indices refer to `self.instance`.
   ///
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
@@ -195,17 +126,8 @@ pub struct Splitter {
 impl Splitter {
 
   /// Constructor.
-  pub fn new(
-    instance: & Arc<Instance>, pos: bool
-  ) -> Self {
-    let clauses = if pos
-    && conf.split_pos
-    && instance.pos_clauses().len() > 1 {
-      Either::Left(
-        instance.pos_clauses().iter().map(|c| * c).collect()
-      )
-    } else if ! pos
-    && conf.split_neg
+  pub fn new(instance: & Arc<Instance>) -> Self {
+    let clauses = if conf.split
     && instance.neg_clauses().len() > 1 {
       Either::Left(
         instance.neg_clauses().iter().map(|c| * c).collect()
@@ -216,8 +138,7 @@ impl Splitter {
     let instance = instance.clone() ;
     // let model = Vec::new() ;
     Splitter {
-      instance, // model,
-      pos, clauses, _profiler: None,
+      instance, clauses, _profiler: None,
     }
   }
 
@@ -233,11 +154,7 @@ impl Splitter {
   pub fn info(& self) -> Option<(usize, usize)> {
     match self.clauses {
       Either::Left(ref clauses) => {
-        let total = if self.pos {
-          self.instance.pos_clauses().len()
-        } else {
-          self.instance.neg_clauses().len()
-        } ;
+        let total = self.instance.neg_clauses().len() ;
         if clauses.is_empty() {
           None
         } else {
@@ -258,13 +175,9 @@ impl Splitter {
         let preproc_res = profile! (
           |prof| wrap {
             preproc(
-              self.instance.as_ref(), (self.pos, clause), & profiler
+              self.instance.as_ref(), clause, & profiler
             )
-          } if self.pos {
-            "positive sub-preproc"
-          } else {
-            "negative sub-preproc"
-          }
+          } "negative sub-preproc"
         ) ? ;
         self._profiler = Some(profiler) ;
         Ok(
@@ -296,22 +209,16 @@ impl Splitter {
 /// negative otherwise) clauses but `clause`. Preprocesses it and returns the
 /// result.
 fn preproc(
-  instance: & Instance, (pos, clause): (bool, ClsIdx),
-  profiler: & Profiler
+  instance: & Instance, clause: ClsIdx, profiler: & Profiler
 ) -> Res< Either<Instance, Option<Model>>> {
 
   debug_assert! {
-    ( ! pos || instance[clause].lhs_preds().is_empty() ) &&
-    (   pos || instance[clause].rhs().is_none()        )
+    instance[clause].lhs_preds().is_empty()
   }
 
-  log! { @info "keeping #{} ({})", clause, pos }
+  log! { @info "keeping #{}", clause }
 
-  let mut instance = if pos {
-    instance.clone_with_one_pos(clause)
-  } else {
-    instance.clone_with_one_neg(clause)
-  } ;
+  let mut instance = instance.clone_with_one_neg(clause) ;
 
   // log! { @info "{}", instance.to_string_info(()).unwrap() }
 

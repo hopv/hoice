@@ -945,10 +945,8 @@ pub struct Config {
   pub stats: bool,
   /// Inference flag.
   pub infer: bool,
-  /// Reasons on each positive clause separately.
-  pub split_pos: bool,
-  /// Reasons on each negative clause separately.
-  pub split_neg: bool,
+  /// Reason on each negative clause separately.
+  pub split: bool,
   /// Instant at which we'll timeout.
   timeout: Option<Instant>,
   /// Output directory.
@@ -1087,8 +1085,7 @@ impl Config {
       ),
     } ;
 
-    let split_pos = bool_of_matches(& matches, "split_pos") ;
-    let split_neg = bool_of_matches(& matches, "split_neg") ;
+    let split = bool_of_matches(& matches, "split") ;
 
     // Result checking.
     let check = matches.value_of("check").map(
@@ -1107,8 +1104,7 @@ impl Config {
     let teacher = TeacherConf::new(& matches) ;
 
     Config {
-      file, verb, stats, infer,
-      split_pos, split_neg,
+      file, verb, stats, infer, split,
       timeout, out_dir, styles,
       check, check_eld,
       instance, preproc, solver, ice, teacher,
@@ -1204,20 +1200,8 @@ impl Config {
 
     ).arg(
 
-      Arg::with_name("split_pos").long("--split_pos").help(
-        "reasons on each positive constraints separately"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value(
-        "off"
-      ).takes_value(true).number_of_values(1).display_order( order() )
-
-    ).arg(
-
-      Arg::with_name("split_neg").long("--split_neg").help(
-        "reasons on each negative constraints separately"
+      Arg::with_name("split").long("--split").help(
+        "reason on each negative constraints separately"
       ).validator(
         bool_validator
       ).value_name(

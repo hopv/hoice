@@ -35,7 +35,6 @@ pub mod config ;
 
 #[macro_use]
 pub mod macros ;
-// pub mod data ;
 pub mod data ;
 #[macro_use]
 pub mod msg ;
@@ -120,9 +119,7 @@ pub type Sig = VarMap<Typ> ;
 pub type PredApp = (PrdIdx, HTArgs) ;
 
 /// An initial candidate for the teacher to start with.
-///
-/// Encodes a Dnf for (some of) the predicates.
-pub type InitCandidates = PrdHMap< Vec<Vec<TTerms>> > ;
+pub type InitCandidates = ConjCandidates ;
 
 /// Some predicate applications.
 pub type PredApps = PrdHMap< HTArgss > ;
@@ -154,9 +151,9 @@ pub type Quantfed = VarHMap<Typ> ;
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
 ///
-pub type DnfCandidates = PrdHMap< Vec<Vec<TTerms>> > ;
+pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 ///
-pub type DnfModel = Vec< Vec<(PrdIdx, Vec<Vec<TTerms>>)> > ;
+pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
 /// Alias type for a counterexample for a clause.
 pub type Cex = RArgs ;

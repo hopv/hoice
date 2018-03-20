@@ -1284,6 +1284,27 @@ impl TTermSet {
     true
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    let mut terms = HConSet::<Term>::with_capacity(self.terms.len()) ;
+    for term in self.terms() {
+      let (term, _) = term.subst(map) ;
+      terms.insert(term) ;
+    }
+
+    let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
+    for (pred, argss) in self.preds.iter() {
+      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      for args in argss {
+        let args = term::args::new( args.subst(map) ) ;
+        nu_argss.insert(args) ;
+      }
+      preds.insert(* pred, nu_argss) ;
+    }
+
+    TTermSet { terms, preds }
+  }
+
   /// Inserts a predicate application.
   #[inline]
   pub fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
@@ -1608,6 +1629,74 @@ impl TTerms {
     }
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    match * self {
+      TTerms::True => TTerms::True,
+      TTerms::False => TTerms::False,
+
+      TTerms::Conj { ref quant, ref tterms } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+        TTerms::Conj { quant: quant.clone(), tterms: tterms.subst(map) }
+      },
+
+      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+
+        let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
+        for (pred, argss) in neg_preds.iter() {
+          let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+          for args in argss {
+            let args = term::args::new( args.subst(map) ) ;
+            nu_argss.insert(args) ;
+          }
+          preds.insert(* pred, nu_argss) ;
+        }
+
+        TTerms::Disj {
+          quant: quant.clone(),
+          tterms: tterms.subst(map),
+          neg_preds: preds,
+        }
+      },
+
+      TTerms::Dnf { ref disj } => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref tterms) in disj {
+          debug_assert! {
+            if let Some(quant) = quant.as_ref() {
+              quant.vars().keys().all(
+                |v| map.var_get(* v).is_none()
+              )
+            } else {
+              true
+            }
+          }
+          nu_disj.push(
+            (quant.clone(), tterms.subst(map))
+          )
+        }
+        TTerms::Dnf { disj: nu_disj }
+      },
+    }
+  }
+
   /// Constructor for a single term.
   pub fn of_term(quant: Option<Quant>, term: Term) -> Self {
     Self::conj( quant, TTermSet::of_term(term) )
@@ -1615,14 +1704,14 @@ impl TTerms {
 
   /// Constructs a conjuction.
   pub fn conj(quant: Option<Quant>, tterms: TTermSet) -> Self {
-    TTerms::Conj{ quant, tterms }.simplify()
+    TTerms::Conj { quant, tterms }.simplify()
   }
 
   /// Constructs a disjuction.
   pub fn disj(
     quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<HTArgss>
   ) -> Self {
-    TTerms::Disj{ quant, tterms, neg_preds }.simplify()
+    TTerms::Disj { quant, tterms, neg_preds }.simplify()
   }
   /// Constructs a disjunction from a positive application and some negated top
   /// terms.

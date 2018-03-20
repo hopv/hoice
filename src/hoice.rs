@@ -94,7 +94,7 @@ pub fn work() -> Res<()> {
 /// - `stop_on_err`: forces to stop at the first error. Only used in tests.
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
-) -> Res< (Option<DnfModel>, Instance) > {
+) -> Res< (Option<ConjModel>, Instance) > {
   use instance::parse::ItemRead ;
 
   let profiler = Profiler::new() ;
@@ -174,7 +174,7 @@ pub fn read_and_work<R: ::std::io::Read>(
           print_stats("top preproc", preproc_profiler)
         }
 
-        model = if let Some(maybe_model) = instance.is_trivial_dnfs() ? {
+        model = if let Some(maybe_model) = instance.is_trivial_conj() ? {
           // Pre-processing already decided satisfiability.
           log! { @info "solved by pre-processing" }
           maybe_model
@@ -197,7 +197,7 @@ pub fn read_and_work<R: ::std::io::Read>(
 
           match solve_res {
             Ok(Some(res)) => Some(
-              instance.model_of_dnfs(res) ?
+              instance.extend_model(res) ?
             ),
             Ok(None) => None,
             Err(e) => {

@@ -31,6 +31,10 @@ pub struct Instance {
   /// Stores the original signature of the predicates, and a map from the
   /// variables of `preds` to the original signature.
   old_preds: PrdMap< (Sig, VarMap<VarIdx>) >,
+  /// Maps new variables to the new ones.
+  ///
+  /// Only available after finalize.
+  old_var_maps: PrdMap<VarMap<Term>>,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
@@ -75,6 +79,7 @@ impl Instance {
     Instance {
       preds: PrdMap::with_capacity(pred_capa),
       old_preds: PrdMap::with_capacity(pred_capa),
+      old_var_maps: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
@@ -133,6 +138,11 @@ impl Instance {
     true
   }
 
+  /// Original signature of a predicate.
+  pub fn original_sig_of(& self, pred: PrdIdx) -> & Sig {
+    & self.old_preds[pred].0
+  }
+
   /// Clones itself without the clauses.
   fn clone_without_clauses(& self) -> Self {
     let mut res = Instance::new() ;
@@ -142,23 +152,6 @@ impl Instance {
     res.pred_to_clauses = vec![
       (ClsSet::new(), ClsSet::new()) ; self.preds.len()
     ].into() ;
-    res
-  }
-
-
-  /// Clones itself dropping all positive clauses but `to_keep`.
-  ///
-  /// The resulting instance is *not* finalized.
-  pub fn clone_with_one_pos(
-    & self, to_keep: ClsIdx
-  ) -> Self {
-    let mut res = self.clone_without_clauses() ;
-    for (idx, clause) in self.clauses.index_iter() {
-      if ! clause.lhs_preds().is_empty() || idx == to_keep {
-        let is_new = res.push_clause_raw(clause.clone()) ;
-        debug_assert! { is_new }
-      }
-    }
     res
   }
 
@@ -198,24 +191,30 @@ impl Instance {
   /// The model is sorted in topological order.
   pub fn model_of(& self, candidates: Candidates) -> Res<Model> {
     use std::iter::Extend ;
+
     let mut model = Model::with_capacity( self.preds.len() ) ;
     model.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |term| (pred, TTerms::of_term(None, term))
+          |term| {
+            let (term, _) = term.subst(& self.old_var_maps[pred]) ;
+            (pred, TTerms::of_term(None, term))
+          }
         )
       )
     ) ;
+
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push(
-          (pred, tterms.clone())
+          (pred, tterms.subst(& self.old_var_maps[pred]))
         )
       } else {
         bail!("inconsistency in sorted forced predicates")
       }
     }
+
     Ok( model )
   }
 
@@ -223,19 +222,17 @@ impl Instance {
   /// predicates.
   ///
   /// The model is sorted in topological order.
-  pub fn model_of_dnfs(& self, candidates: DnfCandidates) -> Res<DnfModel> {
+  pub fn extend_model(& self, candidates: ConjCandidates) -> Res<ConjModel> {
     use std::iter::Extend ;
-    let mut model = DnfModel::with_capacity( self.preds.len() ) ;
+    let mut model = ConjModel::with_capacity( self.preds.len() ) ;
     let mut known_preds = PrdSet::new() ;
     let mut tmp: Vec<_> = candidates.into_iter().map(
-      |(pred, dnf)| {
+      |(pred, conj)| {
         let mut preds = PrdSet::new() ;
-        for conj in & dnf {
-          for tterms in conj {
-            preds.extend( tterms.preds() )
-          }
+        for tterms in & conj {
+          preds.extend( tterms.preds() )
         }
-        (pred, preds, dnf)
+        (pred, preds, conj)
       }
     ).collect() ;
     let mut cnt ;
@@ -271,8 +268,9 @@ impl Instance {
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
+        let tterms = tterms.subst(& self.old_var_maps[pred]) ;
         model.push(
-          vec![ (pred, vec![ vec![ tterms.clone() ] ]) ]
+          vec![ (pred, vec![ tterms ]) ]
         )
       } else {
         bail!("inconsistency in sorted forced predicates")
@@ -294,11 +292,11 @@ impl Instance {
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial_dnfs(& self) -> Res< Option< Option<DnfModel> > > {
+  pub fn is_trivial_conj(& self) -> Res< Option< Option<ConjModel> > > {
     match self.is_trivial() {
       None => Ok(None),
       Some(false) => Ok( Some(None) ),
-      Some(true) => self.model_of_dnfs(
+      Some(true) => self.extend_model(
         PrdHMap::new()
       ).map(|res| Some(Some(res))),
     }
@@ -439,6 +437,16 @@ impl Instance {
         known_preds.insert(pred) ;
         () // No `cnt` increment after swap remove.
       }
+    }
+
+    for (pred, info) in self.preds.index_iter() {
+      let mut map = VarMap::with_capacity( info.sig.len() ) ;
+      for (var, typ) in info.sig.index_iter() {
+        map.push(
+          term::var(self.old_preds[pred].1[var], * typ)
+        )
+      }
+      self.old_var_maps.push(map)
     }
 
     self.sorted_pred_terms.shrink_to_fit() ;
@@ -1477,50 +1485,17 @@ impl Instance {
   }
 
 
-  /// Writes a dnf of top terms.
-  pub fn write_tterms_dnf<W: Write>(
-    & self, w: & mut W, dnf: & Vec<Vec<TTerms>>
-  ) -> Res<()> {
-    if dnf.is_empty() {
-      write!(w, "false") ?
-    } else if dnf.len() == 1 {
-      self.write_tterms_conj(w, & dnf[0]) ?
-    } else {
-      write!(w, "(or") ? ;
-      for conj in dnf {
-        write!(w, " ") ? ;
-        self.write_tterms_conj(w, conj) ?
-      }
-      write!(w, ")") ?
-    }
-    Ok(())
-  }
-
-
   /// Writes a predicate signature.
   ///
   /// Does not write the name of the predicate.
   pub fn write_pred_sig<W: Write>(
     & self, w: & mut W, pred: PrdIdx
   ) -> Res<()> {
-    let (ref old_sig, ref var_map) = self.old_preds[pred] ;
-    // Reverse `var_map` so that it maps old vars to new ones.
-    let mut pam_rav = VarHMap::with_capacity( var_map.len() ) ;
-    for (new, old) in var_map.index_iter() {
-      let prev = pam_rav.insert( * old, new ) ;
-      debug_assert!( prev.is_none() )
-    }
-    write!(w, "( ")  ?;
+    let (ref old_sig, _) = self.old_preds[pred] ;
+    write!(w, "(")  ?;
     for (var, typ) in old_sig.index_iter() {
-      write!(w, " (") ? ;
-      if let Some(var) = pam_rav.remove(& var) {
-        write!(w, "{}", var.default_str()) ?
-      } else {
-        write!(w, "unused_{}", var) ?
-      }
-      write!(w, " {})", typ) ?
+      write!(w, " ({} {})", var.default_str(), typ) ?
     }
-
     write!(w, " ) {}", Typ::Bool) ? ;
     Ok(())
   }
@@ -1528,7 +1503,7 @@ impl Instance {
 
   /// Writes a model.
   pub fn write_model<W: Write>(
-    & self, model: & DnfModel, w: & mut W
+    & self, model: & ConjModel, w: & mut W
   ) -> Res<()> {
     writeln!(w, "(model") ? ;
     for defs in model {
@@ -1544,7 +1519,7 @@ impl Instance {
         write!(w, "    ")  ?;
         self.write_pred_sig(w, pred) ? ;
         write!(w, "\n    ") ? ;
-        self.write_tterms_dnf(w, tterms) ? ;
+        self.write_tterms_conj(w, tterms) ? ;
         writeln!(w, "\n  )") ?
 
       } else {
@@ -1558,7 +1533,7 @@ impl Instance {
         write!(w, "\n  ) (") ? ;
         for & (_, ref tterms) in defs {
           write!(w, "\n    ") ? ;
-          self.write_tterms_dnf(w, tterms) ? ;
+          self.write_tterms_conj(w, tterms) ? ;
         }
         writeln!(w, "\n  ) )") ? ;
       }
