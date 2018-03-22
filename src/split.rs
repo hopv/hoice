@@ -41,9 +41,9 @@ pub fn work(
 
   let mut splitter = Splitter::new(& real_instance) ;
 
-  'neg_loop: while let Some(preproc_res) = {
+  'split_loop: while let Some(preproc_res) = {
     if let Some((clause, handled, total)) = splitter.info() {
-      log! { @info
+      log! { conf.stats || conf.split_step, || @info
         "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
         conf.emph("|"),
         conf.happy("="),
@@ -51,6 +51,9 @@ pub fn work(
         conf.happy("="),
         conf.emph("|"),
         clause, handled + 1, total
+      }
+      if conf.split_step {
+        pause("to start sub-preprocessing", _profiler) ;
       }
     }
     splitter.next_instance(& _profiler)
@@ -69,12 +72,17 @@ pub fn work(
       Either::Right(Some(this_model)) => {
         log! { @info "sat by preproc\n\n" }
         model! { add this_model }
-        continue 'neg_loop
+        continue 'split_loop
       },
     } ;
 
-    if conf.split_step {
-      pause("to start solving") ;
+    if ! conf.infer {
+      if conf.split_step {
+        pause("to continue", _profiler) ;
+      }
+      continue 'split_loop
+    } else if conf.split_step {
+      pause("to start solving", _profiler) ;
     }
 
     let res = profile!(

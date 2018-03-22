@@ -76,19 +76,22 @@ pub fn teach(
     }
 
     if let Some(idx) = learner {
-      // if conf.teacher.step {
-      //   read_line(
-      //     & format!(
-      //       "to send data to {} (--step on)...",
-      //       & conf.emph(& teacher.learners[idx].1)
-      //     )
-      //   ) ;
-      // }
+      if conf.teacher.step {
+        pause(
+          & format!(
+            "to send data to {} (--step on)...",
+            & conf.emph(& teacher.learners[idx].1)
+          ), & teacher._profiler
+        ) ;
+      }
       let _ = teacher.send(idx) ? ;
       ()
     } else {
       if conf.teacher.step {
-        read_line("to broadcast data (--step on)...") ;
+        pause(
+          "to broadcast data (--step on)...",
+          & teacher._profiler
+        ) ;
       }
       let one_alive = teacher.broadcast() ;
       if ! one_alive {
@@ -105,17 +108,19 @@ pub fn teach(
       Some( ( idx, candidates) ) => {
         learner = Some(idx) ;
         if_verb!{
-          log_info!(
+          log! { conf.teacher.step, || @info
             "\nCurrent candidates from {} learner:",
             conf.emph( & teacher.learners[idx].1 )
-          ) ;
+          }
           for _pred in teacher.instance.preds() {
             if let Some(term) = candidates[_pred.idx].as_ref() {
-              log_info!("{}:", conf.emph(& _pred.name)) ;
-              log_info!("  {}", term)
+              log!( @info
+                "{}:", conf.emph(& _pred.name) ;
+                "  {}", term
+              )
             }
           }
-          log_info!( "" )
+          log!(@info "" )
         }
         profile!{ teacher tick "cexs" }
         let cexs = teacher.get_cexs(& candidates) ? ;
@@ -496,7 +501,7 @@ impl<'a> Teacher<'a> {
             Id::Assistant => "assistant".into(),
           } ;
           if conf.stats {
-            self._profiler.add_sub(id, profiler)
+            self._profiler.add_other(id, profiler)
           }
         },
 

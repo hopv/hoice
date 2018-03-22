@@ -177,8 +177,6 @@ pub fn read_and_work<R: ::std::io::Read>(
           maybe_model
         } else {
 
-          if ! conf.infer { continue 'parse_work }
-
           let arc_instance = Arc::new(instance) ;
           let solve_res = split::work(arc_instance.clone(), & profiler) ;
 

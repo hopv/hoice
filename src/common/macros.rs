@@ -65,21 +65,26 @@ macro_rules! err_chain {
 
 /// Logging macro.
 macro_rules! log {
-  ( @debug $($tail:tt)* ) => (
-    if conf.debug() {
-      log! { ";     " => $($tail)* }
+
+  (|pref_of| debug) => (";     ") ;
+  (|pref_of| verb)  => (";   ") ;
+  (|pref_of| info)  => ("; ") ;
+
+  (|cond_of| debug) => (conf.debug()) ;
+  (|cond_of| verb) => (conf.verbose()) ;
+  (|cond_of| info) => (conf.minimal()) ;
+
+  ( $cond:expr, $op:tt @$flag:tt $($tail:tt)* ) => (
+    if $cond $op log!(|cond_of| $flag) {
+      log! { log!(|pref_of| $flag) => $($tail)* }
     }
   ) ;
-  ( @verb $($tail:tt)* ) => (
-    if conf.verbose() {
-      log! { ";   " => $($tail)* }
+  ( @$flag:tt $($tail:tt)* ) => (
+    if log!(|cond_of| $flag) {
+      log! { log!(|pref_of| $flag) => $($tail)* }
     }
   ) ;
-  ( @info $($tail:tt)* ) => (
-    if conf.minimal() {
-      log! { "; " => $($tail)* }
-    }
-  ) ;
+
   ( $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     $(
       for line in format!($str $(, $args)*).lines() {

@@ -239,6 +239,8 @@ pub struct Profiler {
   stats: RefCell<Stats>,
   /// Sub-profilers.
   subs: RefCell< Vec<(String, Profiler)> >,
+  /// Other profilers.
+  others: RefCell< Vec<(String, Profiler)> >,
 }
 #[cfg(feature = "bench")]
 #[derive(Clone)]
@@ -253,6 +255,7 @@ impl Profiler {
       start: Instant::now(),
       stats: RefCell::new( Stats::new() ),
       subs: RefCell::new( Vec::new() ),
+      others: RefCell::new( Vec::new() ),
     }
   }
   #[cfg(feature = "bench")]
@@ -363,6 +366,34 @@ impl Profiler {
   pub fn add_sub< S: Into<String> >(
     & self, _: S, _: Self
   ) {}
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
+  pub fn add_other<S: Into<String>>(
+    & self, name: S, other: Self
+  ) -> () {
+    self.others.borrow_mut().push((name.into(), other))
+  }
+  #[cfg(feature = "bench")]
+  pub fn add_other<S>(
+    & self, _: S, _: Self
+  ) -> Option<Profiler> {}
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
+  pub fn drain_others(
+    & self,
+  ) -> Vec<(String, Profiler)> {
+    let mut res = vec![] ;
+    ::std::mem::swap(
+      & mut res, & mut * self.others.borrow_mut()
+    ) ;
+    res
+  }
+  #[cfg(feature = "bench")]
+  pub fn drain_others< S: Into<String> >(
+    & self,
+  ) -> Option<Profiler> {}
 
 
   /// Consumes and prints a profiler.

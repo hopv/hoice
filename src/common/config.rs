@@ -1340,11 +1340,15 @@ pub fn bool_of_str(s: & str) -> Option<bool> {
 /// Assumes a default is provided and the input has been validated with
 /// `bool_validator`.
 pub fn bool_of_matches(matches: & Matches, key: & str) -> bool {
-  matches.value_of(key).and_then(
-    |s| bool_of_str(& s)
-  ).expect(
-    "failed to retrieve boolean argument"
-  )
+  if matches.occurrences_of(key) == 0 {
+    matches.value_of(key).and_then(
+      |s| bool_of_str(& s)
+    ).expect(
+      "failed to retrieve boolean argument"
+    )
+  } else {
+    true
+  }
 }
 
 /// Integer of some matches.

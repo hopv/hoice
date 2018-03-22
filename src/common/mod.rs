@@ -68,11 +68,15 @@ lazy_static!{
 pub fn print_stats(_: & 'static str, _: Profiler) {}
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg( not(feature = "bench") )]
-pub fn print_stats(name: & 'static str, profiler: Profiler) {
+pub fn print_stats(name: & str, profiler: Profiler) {
   if conf.stats {
+    let others = profiler.drain_others() ;
     println!("") ;
     profiler.print( name, "", & [ "data" ] ) ;
     println!("") ;
+    for (name, other) in others {
+      print_stats(& name, other)
+    }
   }
 }
 
@@ -82,11 +86,15 @@ pub fn corrupted_err<T>(_: T) -> Error {
 }
 
 /// Notifies the user and reads a line from stdin.
-pub fn pause(s: & str) {
+pub fn pause(s: & str, _profiler: & Profiler) {
   let mut dummy = String::new() ;
   println!("") ;
   println!( "; {} {}...", conf.emph("press return"), s ) ;
-  let _ = ::std::io::stdin().read_line(& mut dummy) ;
+  let _ = profile!(
+    |_profiler| wrap {
+      ::std::io::stdin().read_line(& mut dummy)
+    } "waiting for user input"
+  ) ;
 }
 
 /// Notifies the user through a message and reads a line from stdin.
@@ -515,16 +523,6 @@ mod hash {
   }
 }
 
-
-
-/// Prints some text and reads a line.
-pub fn read_line(blah: & str) -> String {
-  let mut line = String::new() ;
-  println!("") ;
-  println!( "; {} {}", conf.emph("press return"), blah ) ;
-  let _ = ::std::io::stdin().read_line(& mut line) ;
-  line
-}
 
 
 
