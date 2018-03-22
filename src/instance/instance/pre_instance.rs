@@ -748,7 +748,8 @@ impl<'a> PreInstance<'a> {
   ///
   /// - sub instance generation, when splitting on one clause
   pub fn extend_pred_left(
-    & mut self, pred: PrdIdx, qvars: Quantfed, term: Term
+    & mut self, pred: PrdIdx,
+    terms: HConSet<Term>, quantified: Vec<(Quantfed, HConSet<Term>)>
   ) -> Res<RedInfo> {
     self.check("before `extend_pred_left`") ? ;
 
@@ -760,26 +761,26 @@ impl<'a> PreInstance<'a> {
 
     let mut info = RedInfo::new() ;
 
-    match term.bool() {
-      Some(true) => return Ok(info),
-      Some(false) => {
-        let mut to_forget: Vec<_> = self.pred_to_clauses[
-          pred
-        ].0.iter().map(|c| * c).collect() ;
-        info.clauses_rmed += to_forget.len() ;
-        self.instance.forget_clauses(& mut to_forget) ? ;
-        // pred only appears in some rhs-s now, force true
-        info += self.force_true(pred) ? ;
-        return Ok(info)
-      },
-      None => (),
-    }
+    // match term.bool() {
+    //   Some(true) => return Ok(info),
+    //   Some(false) => {
+    //     let mut to_forget: Vec<_> = self.pred_to_clauses[
+    //       pred
+    //     ].0.iter().map(|c| * c).collect() ;
+    //     info.clauses_rmed += to_forget.len() ;
+    //     self.instance.forget_clauses(& mut to_forget) ? ;
+    //     // pred only appears in some rhs-s now, force true
+    //     info += self.force_true(pred) ? ;
+    //     return Ok(info)
+    //   },
+    //   None => (),
+    // }
 
-    log! { @3
-      "extend pred left on {} with {}...",
-      conf.emph(& self[pred].name),
-      term
-    }
+    // log! { @3
+    //   "extend pred left on {} with {}...",
+    //   conf.emph(& self[pred].name),
+    //   term
+    // }
 
     // Update lhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -807,15 +808,41 @@ impl<'a> PreInstance<'a> {
         )
       } ;
 
-      for args in argss {
-        // Generate fresh variables for the clause if needed.
-        let qual_map = self.instance.clauses[clause].fresh_vars_for(& qvars) ;
+      // Reusable set of terms to build the disjunction.
+      let mut term_set = HConSet::<Term>::new() ;
 
-        if let Some((term, _)) = term.subst_total( & (& args, & qual_map) ) {
-          self.instance.clause_add_lhs_term(clause, term)
-        } else {
-          bail!("error during total substitution in `extend_pred_left`")
+      for args in argss {
+
+        for term in & terms {
+          if let Some((term, _)) = term.subst_total(& args) {
+            term_set.insert(term) ;
+          } else {
+            bail!("error during total substitution in `extend_pred_left`")
+          }
         }
+
+        for & (ref qvars, ref terms) in & quantified {
+          // Generate fresh variables for the clause if needed.
+          let qual_map = self.instance.clauses[
+            clause
+          ].fresh_vars_for(qvars) ;
+
+          for term in terms {
+            if let Some((term, _)) = term.subst_total(
+              & (& args, & qual_map)
+            ) {
+              term_set.insert(term) ;
+            } else {
+              bail!("error during total substitution in `extend_pred_left`")
+            }
+          }
+        }
+
+        let term = term::or(
+          term_set.drain().map(|term| term::not(term)).collect()
+        ) ;
+
+        self.instance.clause_add_lhs_term(clause, term)
       }
 
       log! { @4

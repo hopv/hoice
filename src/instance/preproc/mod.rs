@@ -122,6 +122,9 @@ pub fn work_on_split(
     let mut pre_instance = PreInstance::new(& mut split_instance) ? ;
     let mut info = RedInfo::new() ;
 
+    // Maps predicates to strengthening terms.
+    let mut strength_map = PrdHMap::new() ;
+
     'strengthen: for clause in neg_clauses {
       macro_rules! inconsistent {
         () => ({
@@ -135,15 +138,11 @@ pub fn work_on_split(
         let mut pred_apps = clause.lhs_preds().iter() ;
 
         if let Some((pred, argss)) = pred_apps.next() {
-          if pred_apps.next().is_some() {
-            continue 'strengthen
-          }
+          debug_assert! { pred_apps.next().is_none() }
 
           let mut argss = argss.iter() ;
           if let Some(args) = argss.next() {
-            if argss.next().is_some() {
-              continue 'strengthen
-            }
+            debug_assert! { argss.next().is_none() }
             (* pred, args)
           } else {
             inconsistent!()
@@ -176,15 +175,31 @@ pub fn work_on_split(
           debug_assert! { is_none.is_none() } ;
           let (terms, preds) = only_terms.destroy() ;
           debug_assert! { preds.is_empty() } ;
-          let term = term::not(
-            term::and( terms.into_iter().collect() )
+          let entry = strength_map.entry(pred).or_insert_with(
+            || (HConSet::<Term>::new(), Vec::new())
           ) ;
-          log! { @info "extending {} with {}", instance[pred], term }
-          info += pre_instance.extend_pred_left(
-            pred, qvars, term
-          ) ? ;
+          if qvars.is_empty() {
+            entry.0.extend( terms )
+          } else {
+            entry.1.push((qvars, terms))
+          }
         },
       }
+    }
+
+    for (pred, (terms, quantified)) in strength_map {
+      log! {
+        @info "extending {} with {} terms in {} clauses ({} quantifiers)",
+        instance[pred],
+        terms.len() + quantified.iter().fold(
+          0, |acc, & (_, ref terms)| acc + terms.len()
+        ),
+        instance.clauses_of(pred).0.len(),
+        quantified.len()
+      }
+      info += pre_instance.extend_pred_left(
+        pred, terms, quantified
+      ) ? ;
     }
 
     profile! { |profiler| mark "strengthening" }
@@ -1352,7 +1367,7 @@ impl RedStrat for CfgRed {
         instance, & mut to_keep, upper_bound
       ) ? ;
 
-      if pred_defs.len() == 0 { return Ok(info) }
+      if pred_defs.len() == 0 { break }
 
       info.preds += pred_defs.len() ;
 
@@ -1365,7 +1380,8 @@ impl RedStrat for CfgRed {
         if ! is_sat {
           bail!( ErrorKind::Unsat )
         } else {
-          return Ok(info)
+          total_info += info ;
+          break
         }
       }
 

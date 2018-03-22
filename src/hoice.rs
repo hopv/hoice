@@ -37,7 +37,7 @@ pub mod learning ;
 pub mod check ;
 pub mod split ;
 
-#[cfg(test)]
+#[cfg( all(test, not(windows)) )]
 mod tests ;
 
 use common::* ;

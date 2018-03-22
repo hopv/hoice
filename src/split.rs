@@ -85,10 +85,14 @@ pub fn work(
     if ! conf.infer {
       if conf.split_step {
         pause("to continue", _profiler) ;
+      } else {
+        log! { @info "Skipping learning..." }
       }
       continue 'split_loop
     } else if conf.split_step {
       pause("to start solving", _profiler) ;
+    } else {
+      log! { @info "Starting learning..." }
     }
 
     let res = profile!(
