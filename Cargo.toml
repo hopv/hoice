@@ -1,6 +1,6 @@
 [package]
 name = "hoice"
-version = "1.0.0"
+version = "1.5.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
 
 readme = "README.md"
@@ -17,22 +17,26 @@ doc = false
 name = "hoice"
 path = "src/hoice.rs"
 
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+panic = 'unwind'
+
 [features]
 bench = [ ]
 
 [dependencies]
 lazy_static = "*"
 clap = "*"
-regex = "*"
 hashconsing = "*"
 error-chain = "*"
-log = "0.3.9"
-env_logger = "*"
 ansi_term = "*"
-rsmt2 = "*"
+rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
-rayon = "*"
 either = "*"
 rand = "*"
 isatty = "*"

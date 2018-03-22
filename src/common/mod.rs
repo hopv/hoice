@@ -1,4 +1,4 @@
-  //! Base types and functions.
+//! Base types and functions.
 
 pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
@@ -10,7 +10,8 @@ pub use mylib::common::hash::* ;
 pub use hashconsing::HashConsign ;
 pub use hashconsing::coll::* ;
 
-pub use rsmt2::SmtRes ;
+pub use rsmt2::{ SmtRes, Solver } ;
+pub use rsmt2::actlit::Actlit ;
 
 pub use num::{ Zero, One, Signed } ;
 
@@ -23,7 +24,11 @@ pub use term::{
   TTermSet, TTerms,
   Val, Op, Typ, Quant,
 } ;
+pub use term::args::{
+  HTArgs, HTArgss
+} ;
 pub use instance::Instance ;
+pub use common::consts::keywords ;
 
 mod wrappers ;
 pub mod config ;
@@ -35,7 +40,9 @@ pub mod data ;
 pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
+pub mod smt ;
 
+pub use self::data::{ RArgs, Args, ArgsSet } ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -44,6 +51,11 @@ pub use self::wrappers::* ;
 lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
+  static ref version_string: String = format!(
+    "{}", crate_version!()
+  ) ;
+  /// Version with revision info.
+  pub static ref version: & 'static str = & version_string ;
 }
 
 
@@ -51,86 +63,98 @@ lazy_static!{
 
 // |===| Helpers.
 
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg(feature = "bench")]
+pub fn print_stats(_: & 'static str, _: Profiler) {}
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg( not(feature = "bench") )]
+pub fn print_stats(name: & str, profiler: Profiler) {
+  if conf.stats {
+    let others = profiler.drain_others() ;
+    println!("") ;
+    profiler.print( name, "", & [ "data" ] ) ;
+    println!("") ;
+    for (name, other) in others {
+      print_stats(& name, other)
+    }
+  }
+}
+
 /// Lock corrupted error.
 pub fn corrupted_err<T>(_: T) -> Error {
   "[bug] lock on learning data is corrupted...".into()
 }
 
 /// Notifies the user and reads a line from stdin.
-pub fn pause(s: & str) {
+pub fn pause(s: & str, _profiler: & Profiler) {
   let mut dummy = String::new() ;
   println!("") ;
-  println!( "; {}{}...", conf.emph("press return"), s ) ;
+  println!( "; {} {}...", conf.emph("press return"), s ) ;
+  let _ = profile!(
+    |_profiler| wrap {
+      ::std::io::stdin().read_line(& mut dummy)
+    } "waiting for user input"
+  ) ;
+}
+
+/// Notifies the user through a message and reads a line from stdin.
+pub fn pause_msg(core: & msg::MsgCore, s: & str) {
+  let mut dummy = String::new() ;
+  let _ = core.msg(
+    format!( "; {} {}...", conf.emph("press return"), s )
+  ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 
 /// Identity function.
 pub fn identity<T>(t: T) -> T { t }
 
+/// Creates a directory if it doesn't exist.
+pub fn mk_dir<P: AsRef<::std::path::Path>>(path: P) -> Res<()> {
+  use std::fs::DirBuilder ;
+  DirBuilder::new().recursive(true).create(path) ? ;
+  Ok(())
+}
+
 
 // |===| Type and traits aliases.
 
 /// Integers.
 pub type Int = ::num::BigInt ;
+/// Rationals.
+pub type Rat = ::num::BigRational ;
 
 /// A trivially hashed set of variable maps.
 pub type VarMapSet<T> = HashSet< VarMap<T> > ;
 
-/// Alias type for a map from arity to a map from terms to qualifier values.
-///
-/// The term to qualifier maps map the qualifier to their values. It sounds
-/// stupid to do this since `QualValues` already contains the qualifier.
-/// Ideally, it should be a set of values hashed by the qualifier. But we need
-/// to iterate on this collection with `iter_mut` to update the values,
-/// something `HashSet` does not admit as it is unsafe in general to do so.
-///
-/// Hence we have the qualifier twice, which is not that bad to check directly
-/// if a term is a known qualifier or not.
-///
-/// # TODO
-///
-/// - investigate whether it would be possible to remove the qualifier from
-///   `QualValues` entirely
-pub type Quals = ArityMap<
-  HConMap<Term, ::learning::ice::mining::QualValues>
-> ;
-/// Helpers for `Quals`.
-pub trait QualsExt {
-  /// Treats the `HConMap` as sets for inserting qualifiers.
-  ///
-  /// Returns true if the term was not there (think `is_new`).
-  fn insert(& mut self, arity: Arity, term: Term) ;
-}
-impl QualsExt for Quals {
-  fn insert(& mut self, arity: Arity, term: Term) {
-    self[arity].entry( term.clone() ).or_insert_with(
-      || ::learning::ice::mining::QualValues::new(term)
-    ) ;
-  }
-}
+/// A signature.
+pub type Sig = VarMap<Typ> ;
 
 /// A predicate application.
-pub type PredApp = (PrdIdx, VarMap<Term>) ;
+pub type PredApp = (PrdIdx, HTArgs) ;
+
+/// An initial candidate for the teacher to start with.
+pub type InitCandidates = ConjCandidates ;
 
 /// Some predicate applications.
-pub type PredApps = PrdHMap< Vec<VarMap<Term>>  > ;
+pub type PredApps = PrdHMap< HTArgss > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
-  fn insert_pred_app(& mut self, PrdIdx, VarMap<Term>) -> bool ;
+  fn insert_pred_app(& mut self, PrdIdx, HTArgs) -> bool ;
 }
 impl PredAppsExt for PredApps {
-  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarMap<Term>) -> bool {
-    let vec = self.entry(pred).or_insert_with(
-      || Vec::with_capacity(4)
-    ) ;
-    for a in vec.iter() {
-      if * a == args { return false }
-    }
-    vec.push(args) ;
-    true
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
+    self.entry(pred).or_insert_with(
+      || HTArgss::with_capacity(4)
+    ).insert(args)
   }
 }
+
+/// Predicate informations.
+pub type PrdInfos = PrdMap<::instance::info::PrdInfo> ;
+/// Variable informations.
+pub type VarInfos = VarMap<::instance::info::VarInfo> ;
 
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
@@ -141,30 +165,94 @@ pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
+///
+pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
+///
+pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = VarMap<Val> ;
+pub type Cex = RArgs ;
 /// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap<Cex> ;
+pub type Cexs = ClsHMap< Vec<Cex> > ;
 
-/// Mapping from variables to values, used for learning data.
-pub type Args = VarMap<Val> ;
-/// Mapping from variables to terms.
-pub type TArgs = VarMap<Term> ;
-/// Set of term arguments.
-pub type TArgss = HashSet< VarMap<Term> > ;
+/// Signature trait, for polymorphic term insertion.
+pub trait Signature {
+  /// Type of a variable.
+  fn get(& self, VarIdx) -> Typ ;
+  /// Length of the signature.
+  fn len(& self) -> usize ;
+}
+impl Signature for VarMap<
+  ::instance::info::VarInfo
+> {
+  fn len(& self) -> usize { VarMap::len(self) }
+  fn get(& self, var: VarIdx) -> Typ {
+    self[var].typ
+  }
+}
+impl Signature for VarMap<Typ> {
+  fn len(& self) -> usize { VarMap::len(self) }
+  fn get(& self, var: VarIdx) -> Typ {
+    self[var]
+  }
+}
 
-/// Alias trait for a solver with this module's parser.
-pub trait Solver<'kid, P: Copy>: ::rsmt2::Solver<'kid, P> {}
 
-impl<'kid, P, T> Solver<'kid, P> for T
-where P: Copy, T: ::rsmt2::Solver<'kid, P> {}
+/// Implemented by types lending themselves to evaluation.
+pub trait Evaluator {
+  /// Retrieves the value associated with a variable.
+  fn get(& self, var: VarIdx) -> & Val ;
+  /// Number of variables the evaluator supports.
+  fn len(& self) -> usize ;
+}
+impl Evaluator for VarMap<Val> {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    & self[var]
+  }
+  #[inline]
+  fn len(& self) -> usize { VarMap::len(self) }
+}
+impl Evaluator for () {
+  #[inline]
+  fn get(& self, _: VarIdx) -> & Val {
+    panic!("trying actual evaluation with unit")
+  }
+  #[inline]
+  fn len(& self) -> usize { 0 }
+}
+/// This implements a redirection `(map, vals)`, where a variable `var` from
+/// the term evaluated is evaluated to `vals[ map[var] ]`.
+impl<'a, E> Evaluator for (& 'a VarMap<(VarIdx, Typ)>, & 'a E)
+where E: Evaluator {
+  #[inline]
+  fn get(& self, var: VarIdx) -> & Val {
+    self.1.get( self.0[var].0 )
+  }
+  #[inline]
+  fn len(& self) -> usize { self.0.len() }
+}
+
+
+/// Something that can be evaluated to a boolean.
+pub trait CanBEvaled: ::std::fmt::Display {
+  /// Evaluates self.
+  fn evaluate<E>(& self, & E) -> Res< Option<bool> >
+  where E: Evaluator ;
+}
+impl CanBEvaled for Term {
+  fn evaluate<E>(& self, args: & E) -> Res< Option<bool> >
+  where E: Evaluator {
+    self.bool_eval(args)
+  }
+}
 
 
 /// Information returned by
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
 #[must_use]
+#[derive(Debug)]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -206,6 +294,21 @@ impl RedInfo {
     || self.clauses_rmed > 0
     || self.clauses_added > 0
     || self.args_rmed > 0
+  }
+
+  /// True if `clause_added > clause_rmed`.
+  pub fn added_clauses(& self) -> bool {
+    self.clauses_added > self.clauses_rmed
+  }
+  /// Clauses added minus clauses removed.
+  ///
+  /// Zero if clauses removed greater than clauses added.
+  pub fn clause_diff(& self) -> usize {
+    if self.clauses_added > self.clauses_rmed {
+      self.clauses_added - self.clauses_rmed
+    } else {
+      0
+    }
   }
 }
 impl From<(usize, usize, usize)> for RedInfo {
@@ -285,25 +388,50 @@ pub trait PebcakFmt<'a> {
 pub trait VarIndexed<T> {
   /// Gets the value associated with a variable.
   #[inline(always)]
-  fn var_get(& self, var: VarIdx) -> Option<& T> ;
+  fn var_get(& self, var: VarIdx) -> Option<T> ;
 }
-impl<Elem> VarIndexed<Elem> for VarMap<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if var < self.len() {
-      Some(& self[var])
+      Some( self[var].clone() )
     } else {
       None
     }
   }
 }
-impl<Elem> VarIndexed<Elem> for VarHMap<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
-    self.get(& var)
+impl VarIndexed<Term> for HTArgs {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    if var < self.len() {
+      Some( self[var].clone() )
+    } else {
+      None
+    }
+  }
+}
+impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
+    self.get(& var).map(|e| e.clone())
+  }
+}
+impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    if var < self.len() {
+      Some( term::var( self[var].0, self[var].1 ) )
+    } else {
+      None
+    }
+  }
+}
+impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    self.get(& var).map(
+      |& (v, t)| term::var(v, t)
+    )
   }
 }
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if let Some(res) = self.0.var_get(var) {
       debug_assert!( self.1.var_get(var).is_none() ) ;
       Some(res)
@@ -317,7 +445,7 @@ where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
 }
 impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
 where T: VarIndexed<Elem> {
-  fn var_get(& self, var: VarIdx) -> Option<& Elem> {
+  fn var_get(& self, var: VarIdx) -> Option<Elem> {
     (* self).var_get(var)
   }
 }
@@ -357,12 +485,12 @@ mod hash {
     }
   }
 
-  /// Trivial hasher for `usize`. **This hasher is only for hashing `usize`s**.
+  /// Trivial hasher for `u64`. **This hasher is only for hashing `u64`s**.
   pub struct HashU64 {
     buf: [u8 ; u64_bytes]
   }
   impl HashU64 {
-    /// Checks that a slice of bytes has the length of a `usize`. Only active
+    /// Checks that a slice of bytes has the length of a `u64`. Only active
     /// in debug.
     #[cfg(debug_assertions)]
     #[inline(always)]
@@ -375,7 +503,7 @@ mod hash {
         )
       }
     }
-    /// Checks that a slice of bytes has the length of a `usize`. Only active
+    /// Checks that a slice of bytes has the length of a `u64`. Only active
     /// in debug.
     #[cfg( not(debug_assertions) )]
     #[inline(always)]
@@ -398,11 +526,83 @@ mod hash {
 
 
 
-/// Prints some text and reads a line.
-pub fn read_line(blah: & str) -> String {
-  let mut line = String::new() ;
-  println!("") ;
-  println!( "; {} {}", conf.emph("press return"), blah ) ;
-  let _ = ::std::io::stdin().read_line(& mut line) ;
-  line
+
+/// Luby series.
+///
+/// # Examples
+///
+/// ```
+/// # use hoice::common::Luby ;
+/// let mut luby = Luby::new() ;
+/// let expected = vec![
+///   1,
+///   1, 2,
+///   1, 2, 4,
+///   1, 2, 4, 8,
+///   1, 2, 4, 8, 16,
+///   1, 2, 4, 8, 16, 32,
+///   1, 2, 4, 8, 16, 32, 64,
+///   1, 2, 4, 8, 16, 32, 64, 128,
+///   1, 2, 4, 8, 16, 32, 64, 128, 256,
+/// ] ;
+/// for value in expected {
+///   let luby = luby.next() ;
+/// # println!("{} == {} ?", value, luby) ;
+///   assert_eq! { luby, value.into() }
+/// }
+/// ```
+pub struct Luby {
+  /// Current max power of two.
+  max_pow: usize,
+  /// Current power of two, current values is `2^pow`.
+  pow: usize
+}
+impl Luby {
+  /// Constructor.
+  pub fn new() -> Self {
+    Luby { max_pow: 0, pow: 0 }
+  }
+  /// Next value in the series.
+  pub fn next(& mut self) -> Int {
+    if self.pow > self.max_pow {
+      self.pow = 0 ;
+      self.max_pow += 1
+    }
+    let mut res: Int = 2.into() ;
+    res = ::num::pow::pow(res, self.pow) ;
+    self.pow += 1 ;
+    res
+  }
+}
+
+/// Counts up to the current value of the Luby series, outputs true and moves
+/// on to the next value when it reaches it.
+pub struct LubyCount {
+  /// Luby series.
+  luby: Luby,
+  /// Current max value.
+  max: Int,
+  /// Counter.
+  count: Int,
+}
+impl LubyCount {
+  /// Constructor.
+  pub fn new() -> Self {
+    let mut luby = Luby::new() ;
+    let max = luby.next() ;
+    let count = 0.into() ;
+    LubyCount { luby, max, count }
+  }
+
+  /// Increments the counter, returns true when it reaches the current luby
+  /// value.
+  pub fn inc(& mut self) -> bool {
+    self.count = & self.count + 1 ;
+    let ping = self.count >= self.max ;
+    if ping {
+      self.max = self.luby.next() ;
+      self.count = 0.into()
+    }
+    ping
+  }
 }

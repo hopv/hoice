@@ -1,7 +1,6 @@
 //! Helper types and functions for preprocessing.
 
 use common::* ;
-use instance::info::* ;
 
 
 /// Result of extracting the terms for a predicate application in a clause.
@@ -55,7 +54,9 @@ macro_rules! add_vars {
         let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
         debug_assert_eq!( None, _prev ) ;
         log_debug! { "    adding fresh v_{} for {}", $fresh, $info[var] }
-        let _prev = $map.insert( var, term::var(* $fresh) ) ;
+        let _prev = $map.insert(
+          var, term::var(* $fresh, $info[var].typ)
+        ) ;
         debug_assert_eq!( None, _prev ) ;
         $fresh.inc()
       }
@@ -81,14 +82,14 @@ pub enum TExtractRes<T> {
 /// Returns `None` on failure. Failure happens when some quantifiers are
 /// needed but `quantifiers` is false.
 fn args_of_pred_app(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
-  args: & VarMap<Term>,
+  quantifiers: bool, var_info: & VarInfos,
+  args: & HTArgs,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes<VarMap<Term>> > {
+) -> Res< TExtractRes<HTArgs> > {
   log_debug! { "      args_of_pred_app ({})", quantifiers }
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
-  for arg in args {
+  for arg in args.iter() {
     add_vars! {
       if quantifiers: term::vars(arg) =>
         app_vars |> map, qvars, var_info, fresh
@@ -99,7 +100,7 @@ fn args_of_pred_app(
       bail!("unreachable, substitution was not total")
     }
   }
-  Ok( TExtractRes::Success( nu_args ) )
+  Ok( TExtractRes::Success( nu_args.into() ) )
 }
 
 
@@ -110,12 +111,12 @@ fn args_of_pred_app(
 /// The `pred` argument is a special predicate that will be skipped when
 /// handling `src`, but it's arguments will be returned.
 fn terms_of_pred_apps<'a>(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   src: & 'a PredApps, tgt: & mut TTermSet,
   pred: PrdIdx, app_vars: & mut VarSet,
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes< Option<& 'a Vec<VarMap<Term>> > > > {
+) -> Res< TExtractRes< Option<& 'a HTArgss > > > {
   log_debug! { "    terms_of_pred_apps" }
   let mut res = None ;
   for (prd, argss) in src {
@@ -153,7 +154,7 @@ fn terms_of_pred_apps<'a>(
 ///
 /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
 fn terms_of_terms<'a, TermIter, Terms, F>(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   src: Terms, tgt: & mut HConSet<Term>,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx,
@@ -262,8 +263,8 @@ F: Fn(Term) -> Term {
 ///
 /// - more doc with examples
 pub fn terms_of_app(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
-  instance: & Instance, pred: PrdIdx, args: & VarMap<Term>,
+  quantifiers: bool, var_info: & VarInfos,
+  instance: & Instance, pred: PrdIdx, args: & HTArgs,
   fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
 ) -> Res<
   Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
@@ -278,31 +279,31 @@ pub fn terms_of_app(
   for (index, arg) in args.index_iter() {
     if let Some(var) = arg.var_idx() {
       let _ = app_vars.insert(var) ;
-      if let Some(pre) = map.insert(var, term::var(index)) {
+      if let Some(pre) = map.insert(var, term::var(index, arg.typ())) {
         terms.insert(
-          term::eq( term::var(index), pre )
+          term::eq( term::var(index, arg.typ()), pre )
         ) ;
       }
-    } else if let Some(b) = arg.bool() {
-      let var = term::var(index) ;
-      terms.insert(
-        if b { var } else { term::not(var) }
-      ) ;
-    } else if let Some(i) = arg.int() {
-      terms.insert(
-        term::eq( term::var(index), term::int(i) )
-      ) ;
     } else {
-      postponed.push( (index, arg) ) ;
+      match arg.as_val().to_term() {
+        Some(trm) => {
+          debug_assert_eq! { trm.typ(), arg.typ() }
+          let var = term::var(index, trm.typ()) ;
+          terms.insert(
+            term::eq(var, trm)
+          ) ;
+        },
+        None => postponed.push( (index, arg) ),
+      }
     }
   }
 
   for (var, arg) in postponed {
     if let Some( (term, _) ) = arg.subst_total(& map) {
       terms.insert(
-        term::eq(term::var(var), term)
+        term::eq(term::var(var, arg.typ()), term)
       ) ;
-    } else if let Some((v, inverted)) = arg.invert(var) {
+    } else if let Some((v, inverted)) = arg.invert_var(var, arg.typ()) {
       let _prev = map.insert(v, inverted) ;
       debug_assert_eq!( _prev, None ) ;
       let is_new = app_vars.insert(v) ;
@@ -311,7 +312,7 @@ pub fn terms_of_app(
       if let TExtractRes::Failed = terms_of_terms(
         quantifiers, var_info, Some(arg), & mut terms,
         & mut app_vars, & mut map, qvars, fresh,
-        true, |term| term::eq( term::var(var), term )
+        true, |term| term::eq( term::var(var, term.typ()), term )
       ) ? {
         return Ok(None)
       }
@@ -331,10 +332,10 @@ pub fn terms_of_app(
 /// The result is `(pred_app, pred_apps, terms)` which semantics is `pred_app
 /// \/ (not /\ tterms) \/ (not /\ pred_apps)`.
 pub fn terms_of_lhs_app(
-  quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  rhs: Option<(PrdIdx, & VarMap<Term>)>,
-  pred: PrdIdx, args: & VarMap<Term>,
+  rhs: Option<(PrdIdx, & HTArgs)>,
+  pred: PrdIdx, args: & HTArgs,
 ) -> Res<
   ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
 > {
@@ -343,7 +344,7 @@ pub fn terms_of_lhs_app(
   }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let mut fresh = instance[pred].sig.next_index() ;
+  let mut fresh = instance.original_sig_of(pred).next_index() ;
   let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(
@@ -453,14 +454,14 @@ pub fn terms_of_lhs_app(
 /// The result is `(pred_apps, terms)` which semantics is `pred_app /\
 /// tterms`.
 pub fn terms_of_rhs_app(
-  quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  pred: PrdIdx, args: & VarMap<Term>,
+  pred: PrdIdx, args: & HTArgs,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let mut fresh = instance[pred].sig.next_index() ;
+  let mut fresh = instance.original_sig_of(pred).next_index() ;
   let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(

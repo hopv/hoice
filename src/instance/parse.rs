@@ -27,27 +27,59 @@ pub enum Parsed {
 
 lazy_static!{
   /// Set of legal special characters in identifiers.
-  static ref id_special_chars: HashSet<char> = {
+  static ref id_special_chars: HashSet<& 'static str> = {
     let mut set = HashSet::with_capacity(17) ;
-    set.insert('~') ;
-    set.insert('!') ;
-    set.insert('@') ;
-    set.insert('$') ;
-    set.insert('%') ;
-    set.insert('^') ;
-    set.insert('&') ;
-    set.insert('*') ;
-    set.insert('_') ;
-    set.insert('-') ;
-    set.insert('+') ;
-    set.insert('=') ;
-    set.insert('<') ;
-    set.insert('>') ;
-    set.insert('.') ;
-    set.insert('?') ;
-    set.insert('/') ;
+    set.insert("~") ;
+    set.insert("!") ;
+    set.insert("@") ;
+    set.insert("$") ;
+    set.insert("%") ;
+    set.insert("^") ;
+    set.insert("&") ;
+    set.insert("*") ;
+    set.insert("_") ;
+    set.insert("-") ;
+    set.insert("+") ;
+    set.insert("=") ;
+    set.insert("<") ;
+    set.insert(">") ;
+    set.insert(".") ;
+    set.insert("?") ;
+    set.insert("/") ;
     set
   } ;
+}
+
+
+
+/// String extensions, lift char functions.
+pub trait StringExt {
+  /// Lifts `char::is_alphanumeric`.
+  fn is_alphanumeric(& self) -> bool ;
+  /// Lifts `char::is_alphabetic`.
+  fn is_alphabetic(& self) -> bool ;
+  /// Lifts `char::is_numeric`.
+  fn is_numeric(& self) -> bool ;
+}
+impl StringExt for str {
+  fn is_alphanumeric(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_alphanumeric() { return false }
+    }
+    true
+  }
+  fn is_alphabetic(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_alphabetic() { return false }
+    }
+    true
+  }
+  fn is_numeric(& self) -> bool {
+    for char in self.chars() {
+      if ! char.is_numeric() { return false }
+    }
+    true
+  }
 }
 
 
@@ -89,8 +121,6 @@ impl<T: ::std::io::BufRead> ItemRead for T {
       }
 
       'inspect_chars: while let Some(c) = chars.next() {
-        debug_assert!( opn_parens >= cls_parens ) ;
-        
         match c {
           '(' => opn_parens += 1,
           ')' => cls_parens += 1,
@@ -109,6 +139,9 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 
       if opn_parens > 0 && opn_parens == cls_parens {
         break 'read_lines
+      } else if opn_parens < cls_parens {
+        // Something's wrong, let the parser handle it.
+        break 'read_lines
       }
 
       start = buf.len()
@@ -119,15 +152,25 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 }
 
 
+/// String cursor.
+pub type Cursor = usize ;
+/// Position in the text.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pos(usize) ;
+impl ::std::ops::Deref for Pos {
+  type Target = usize ;
+  fn deref(& self) -> & usize { & self.0 }
+}
+
 
 /// Parser context.
 pub struct ParserCxt {
   /// Term stack to avoid recursion.
-  term_stack: Vec< (Op, Vec<Term>, LetCount) >,
-  /// Buffer used when backtracking.
-  buff: Vec<(usize, char)>,
-  /// Memory when parsing tags.
-  mem: Vec<(usize, char)>,
+  term_stack: Vec<
+    (Op, Pos, Vec<Pos>, Vec<Term>, LetCount)
+  >,
+  /// Memory for backtracking.
+  mem: Vec<Cursor>,
   /// Map from predicate names to predicate indices.
   pred_name_map: HashMap<String, PrdIdx>,
 }
@@ -136,7 +179,6 @@ impl ParserCxt {
   pub fn new() -> Self {
     ParserCxt {
       term_stack: Vec::with_capacity(17),
-      buff: Vec::with_capacity(17),
       mem: Vec::with_capacity(17),
       pred_name_map: HashMap::with_capacity(42),
     }
@@ -145,10 +187,12 @@ impl ParserCxt {
   pub fn parser<'cxt, 's>(
     & 'cxt mut self, string: & 's str, line_off: usize
   ) -> Parser<'cxt, 's> {
+    debug_assert!( self.mem.is_empty() ) ;
     Parser {
       cxt: self,
-      chars: string.char_indices(),
-      string, line_off,
+      string,
+      cursor: 0,
+      line_off,
       bindings: Vec::with_capacity(7),
     }
   }
@@ -175,10 +219,10 @@ impl LetCount {
 pub struct Parser<'cxt, 's> {
   /// Parsing context.
   cxt: & 'cxt mut ParserCxt,
-  /// Characters being read.
-  chars: ::std::str::CharIndices<'s>,
   /// Text being read (for errors).
   string: & 's str,
+  /// Current position in the text.
+  cursor: Cursor,
   /// Line offset (for errors).
   line_off: usize,
   /// Stack of bindings.
@@ -190,17 +234,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Generates a parse error at the current position.
   fn error_here<S: Into<String>>(& mut self, msg: S) -> ErrorKind {
-    if let Some( (pos, _) ) = self.next() {
-      self.error(pos, msg)
-    } else {
-      self.error(self.string.len(), msg)
-    }
+    let pos = self.pos() ;
+    self.error(pos, msg)
   }
 
   /// Generates a parse error at the given position.
   fn error<S: Into<String>>(
-    & self, mut char_pos: usize, msg: S
+    & self, char_pos: Pos, msg: S
   ) -> ErrorKind {
+    let mut char_pos = * char_pos ;
     let msg = msg.into() ;
     let mut line_count = self.line_off ;
     let (mut pref, mut token, mut suff) = (
@@ -231,46 +273,90 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
   /// Returns `true` if there's still things to parse.
-  fn has_next(& mut self) -> bool {
-    if ! self.cxt.buff.is_empty() { true } else {
-      if let Some(next) = self.chars.next() {
-        self.cxt.buff.push(next) ;
-        true
-      } else {
-        false
+  #[inline]
+  fn has_next(& self) -> bool {
+    self.cursor < self.string.len()
+  }
+  /// The next character, does not move the cursor.
+  fn peek(& self) -> Option<& 's str> {
+    if self.has_next() {
+      Some(
+        & self.string[ self.cursor .. self.cursor + 1 ]
+      )
+    } else {
+      None
+    }
+  }
+
+
+  /// True if the current character is a legal unquoted identifier character.
+  fn legal_id_char(& self) -> bool {
+    if self.cursor >= self.string.len() {
+      false
+    } else {
+      let char = & self.string[ self.cursor .. self.cursor + 1 ] ;
+      char.is_alphanumeric()
+      || id_special_chars.contains(& char)
+    }
+  }
+
+  /// The next character.
+  fn next(& mut self) -> Option<& 's str> {
+    if self.has_next() {
+      self.cursor += 1 ;
+      Some(
+        & self.string[ self.cursor - 1 .. self.cursor ]
+      )
+    } else {
+      None
+    }
+  }
+  /// Moves the cursor back by `n` character.
+  ///
+  /// # Panic
+  ///
+  /// - if `self.cursor < n`
+  fn move_back(& mut self, n: usize) {
+    debug_assert! { self.cursor >= n }
+    self.cursor -= n
+  }
+
+  /// Backtracks to a precise position.
+  fn backtrack_to(& mut self, Pos(pos): Pos) {
+    self.cursor = pos
+  }
+
+  /// Returns the current position.
+  fn pos(& mut self) -> Pos {
+    Pos( self.cursor )
+  }
+
+  /// Consumes whitespaces and comments.
+  fn ws_cmt(& mut self) {
+    let mut done = false ;
+    while ! done {
+      // Eat spaces.
+      let rest = & self.string[ self.cursor .. ] ;
+      let trimmed = rest.trim_left() ;
+      let diff = rest.len() - trimmed.len() ;
+      done = diff == 0 ;
+      self.cursor += diff ;
+
+      // Eat comments.
+      match self.next() {
+        Some(";") => {
+          done = false ;
+          'eat_line: while let Some(char) = self.next() {
+            if char == "\n" || char == "\r" {
+              break 'eat_line
+            }
+          }
+        },
+        Some(_) => self.move_back(1),
+        None => (),
       }
     }
   }
-  /// The next character.
-  fn next(& mut self) -> Option<(usize, char)> {
-    if let Some(res) = self.cxt.buff.pop() {
-      Some(res)
-    } else {
-      self.chars.next()
-    }
-  }
-  /// Opposite of `next`, pushes a character back.
-  fn txen(& mut self, pos: usize, c: char) {
-    self.cxt.buff.push( (pos, c) )
-  }
-
-  /// Pushes something on the memory.
-  fn mem(& mut self, pos: usize, char: char) {
-    self.cxt.mem.push((pos, char))
-  }
-
-  /// Backtracks whatever's in the memory.
-  fn backtrack_mem(& mut self) {
-    self.cxt.mem.reverse() ;
-    for elem in self.cxt.mem.drain(0..) {
-      self.cxt.buff.push(elem)
-    }
-  }
-  /// Clears the memory.
-  fn clear_mem(& mut self) {
-    self.cxt.mem.clear()
-  }
-
 
   /// Parses a string or fails.
   fn tag(& mut self, tag: & str) -> Res<()> {
@@ -284,46 +370,41 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       )
     }
   }
+  /// Parses a string or fails with error customization.
+  fn tag_err<S>(& mut self, tag: & str, err: S) -> Res<()>
+  where S: Into<String> {
+    if self.tag_opt(tag) {
+      Ok(())
+    } else {
+      bail!(
+        self.error_here(
+          format!("{}", err.into())
+        )
+      )
+    }
+  }
   /// Tries parsing a string.
   fn tag_opt(& mut self, tag: & str) -> bool {
-    for c in tag.chars() {
-      if let Some( (pos, char) ) = self.next() {
-        self.mem(pos, char) ;
-        if char != c {
-          self.backtrack_mem() ;
-          return false
-        }
-      } else {
-        self.backtrack_mem() ;
-        return false
-      }
-    }
-    self.clear_mem() ;
-    true
+    self.tag_opt_pos(tag).is_some()
   }
-
-  /// Consumes whitespaces and comments.
-  fn ws_cmt(& mut self) {
-    'ws_cmt: while let Some( (pos, char) ) = self.next() {
-      if ! char.is_whitespace() {
-        if char == ';' {
-          'comment: while let Some( (_, char) ) = self.next() {
-            match char {
-              '\n' => break 'comment,
-              _ => (),
-            }
-          }
-        } else {
-          self.txen(pos, char) ;
-          break 'ws_cmt
-        }
-      }
+  /// Tries parsing a string. Returns the position of the start of the tag.
+  fn tag_opt_pos(& mut self, tag: & str) -> Option<Pos> {
+    if self.string.len() < self.cursor + tag.len() {
+      None
+    } else if & self.string[
+      self.cursor .. self.cursor + tag.len()
+    ] == tag {
+      let res = Some(self.pos()) ;
+      self.cursor = self.cursor + tag.len() ;
+      res
+    } else {
+      None
     }
   }
 
   /// Parses an ident of fails.
-  fn ident(& mut self) -> Res<(usize, & 's str)> {
-    if let Some(id) = self.ident_opt() {
+  fn ident(& mut self) -> Res< (Pos, & 's str) > {
+    if let Some(id) = self.ident_opt() ? {
       Ok(id)
     } else {
       bail!(
@@ -332,101 +413,107 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
   /// Tries to parse an ident.
-  fn ident_opt(& mut self) -> Option<(usize, & 's str)> {
-    if let Some( (start_pos, char) ) = self.next() {
-      if char == '|' {
+  fn ident_opt(& mut self) -> Res< Option< (Pos, & 's str) > > {
+    let ident_start_pos = self.pos() ;
+    if let Some(id) = self.unsafe_ident_opt() ? {
+      if keywords::is_keyword(id) {
+        bail!(
+          self.error(
+            ident_start_pos,
+            format!(
+              "illegal usage of keyword `{}`",
+              conf.bad(id)
+            )
+          )
+        )
+      } else {
+        Ok( Some((ident_start_pos, id)) )
+      }
+    } else {
+      Ok(None)
+    }
+  }
+  /// Tries to parse an ident, does not check anything about the ident.
+  fn unsafe_ident_opt(& mut self) -> Res< Option<& 's str> > {
+    let ident_start_pos = self.pos() ;
+    if let Some(char) = self.next() {
+      if char == "|" {
         let (mut legal_unquoted, mut is_first) = (true, true) ;
-        'quoted: while let Some((pos, char)) = self.next() {
-          if char == '|' {
-            let (start, end) = if legal_unquoted {
-              (start_pos + 1, pos)
-            } else {
-              (start_pos, pos + 1)
-            } ;
-            return Some( (start_pos, & self.string[start..end]) )
+        'quoted: while let Some(char) = self.next() {
+          if char == "|" {
+            return Ok(
+              Some(
+                if legal_unquoted {
+                  & self.string[ * ident_start_pos + 1 .. self.cursor - 1 ]
+                } else {
+                  & self.string[ * ident_start_pos .. self.cursor ]
+                }
+              )
+            )
           } else {
             legal_unquoted = legal_unquoted && (
-              (! is_first && char.is_alphanumeric()) ||
-              (is_first && char.is_alphabetic()) ||
-              id_special_chars.contains(& char)
+              ( ! is_first && char.is_alphanumeric() ) ||
+              (   is_first && char.is_alphabetic()   ) ||
+              id_special_chars.contains(char)
             ) ;
             is_first = false ;
           }
         }
-        panic!("expected '|', found eof")
+        bail!(
+          self.error(
+            ident_start_pos, format!(
+              "expected `|` closing this quoted identifier, found eof"
+            )
+          )
+        )
       } else if char.is_alphabetic() || id_special_chars.contains(& char) {
-        let mut end_pos = self.string.len() ;
-        'unquoted: while let Some((pos, char)) = self.next() {
-          if char.is_alphanumeric() || id_special_chars.contains(& char) {
-            ()
-          } else {
-            self.txen(pos, char) ;
-            end_pos = pos ;
+        'unquoted: while let Some(char) = self.next() {
+          if ! (
+            char.is_alphanumeric() || id_special_chars.contains(& char)
+          ) {
+            self.move_back(1) ;
             break
           }
         }
-        Some( (start_pos, & self.string[start_pos..end_pos]) )
-      } else {
-        self.txen(start_pos, char) ;
-        None
-      }
-    } else {
-      None
-    }
-  }
-
-  /// Tries to parse a character.
-  fn char_opt(& mut self, char: char) -> bool {
-    if let Some( (pos, c) ) = self.next() {
-      if c != char {
-        self.txen(pos, c) ;
-        false
-      } else {
-        true
-      }
-    } else {
-      false
-    }
-  }
-  /// Tries to parse a character, yielding its position.
-  fn char_opt_pos(& mut self, char: char) -> Option<usize> {
-    if let Some( (pos, c) ) = self.next() {
-      if c != char {
-        self.txen(pos, c) ;
-        None
-      } else {
-        Some(pos)
-      }
-    } else {
-      None
-    }
-  }
-  /// Parses a character or fails.
-  fn char(& mut self, char: char) -> Res<()> {
-    if self.char_opt(char) { Ok(()) } else {
-      bail!(
-        self.error_here(
-          format!("expected `{}`", conf.emph(& char.to_string()))
+        Ok(
+          Some(
+            & self.string[ * ident_start_pos .. self.cursor ]
+          )
         )
-      )
+      } else {
+        self.backtrack_to(ident_start_pos) ;
+        Ok(None)
+      }
+    } else {
+      Ok(None)
     }
   }
 
-  /// Consumes characters until some character.
-  fn eat_until(& mut self, char: char) {
-    while let Some((_, c)) = self.next() {
-      if c == char { break }
+  /// Consumes characters until and **including** some character.
+  ///
+  /// Returns `true` iff `char` was found. Hence, returns `false` iff `eof` was
+  /// reached.
+  fn eat_until(& mut self, char: char) -> bool {
+    for c in self.string[ self.cursor .. ].chars() {
+      self.cursor += 1 ;
+      if char == c {
+        return true
+      }
     }
+    false
   }
 
   /// Returns all the characters until some character.
-  fn get_until(& mut self, char: char) -> String {
-    let mut s = String::new() ;
-    while let Some((_, c)) = self.next() {
-      if c == char { break }
-      s.push(c)
+  ///
+  /// `None` iff `char` was not found, i.e. `eat_until` returns `false`.
+  fn get_until(& mut self, char: char) -> Option<& 's str> {
+    let start_pos = self.pos() ;
+    let found_id = self.eat_until(char) ;
+    if found_id {
+      Some( & self.string[ * start_pos .. self.cursor ] )
+    } else {
+      None
     }
-    s
   }
 
   /// Parses a set-info.
@@ -435,26 +522,38 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       return Ok(false)
     }
     self.ws_cmt() ;
-    self.char(':') ? ;
+    self.tag(":") ? ;
+    self.ws_cmt() ;
     let _ = self.ident() ? ;
     self.ws_cmt() ;
-    if self.char_opt('"') {
-      self.eat_until('"')
-    } else if self.ident_opt().is_some() {
+    if self.tag_opt("\"") {
+      let found_it = self.eat_until('"') ;
+      if ! found_it {
+        bail!(
+          self.error_here("expected closing `\"`, found <eof>")
+        )
+      }
+    } else if self.ident_opt()?.is_some() {
       ()
     }
     Ok(true)
   }
 
   /// Parses an echo.
-  fn echo(& mut self) -> Res< Option<String> > {
+  fn echo(& mut self) -> Res< Option<& 's str> > {
     if ! self.tag_opt("echo") {
       return Ok(None)
     }
     self.ws_cmt() ;
-    self.char('"') ? ;
+    self.tag("\"") ? ;
     let blah = self.get_until('"') ;
-    Ok( Some(blah) )
+    if let Some(blah) = blah {
+      Ok( Some(blah) )
+    } else {
+      bail!(
+        self.error_here("expected closing `\"`, found <eof>")
+      )
+    }
   }
 
   /// Parses a set-logic.
@@ -462,6 +561,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt("set-logic") {
       return Ok(false)
     }
+
     self.ws_cmt() ;
     if ! self.tag_opt("HORN") {
       bail!( self.error_here("unknown logic: ") )
@@ -479,10 +579,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
   /// Tries to parse a sort.
   fn sort_opt(& mut self) -> Option<Typ> {
+    let start_pos = self.pos() ;
     if self.tag_opt("Int") {
-      Some(Typ::Int)
+      if ! self.legal_id_char() {
+        Some(Typ::Int)
+      } else {
+        self.backtrack_to(start_pos) ;
+        None
+      }
+    } else if self.tag_opt("Real") {
+      if ! self.legal_id_char() {
+        Some(Typ::Real)
+      } else {
+        self.backtrack_to(start_pos) ;
+        None
+      }
     } else if self.tag_opt("Bool") {
-      Some(Typ::Bool)
+      if ! self.legal_id_char() {
+        Some(Typ::Bool)
+      } else {
+        self.backtrack_to(start_pos) ;
+        None
+      }
     } else {
       None
     }
@@ -493,20 +611,22 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt("declare-fun") {
       return Ok(false)
     }
+
     self.ws_cmt() ;
     let (pos, ident) = self.ident() ? ;
     self.ws_cmt() ;
-    self.char('(') ? ;
-    self.ws_cmt() ;
+    self.tag("(") ? ;
 
     let mut sorts = Vec::with_capacity(11) ;
+    self.ws_cmt() ;
     while let Some(ty) = self.sort_opt() {
+      self.ws_cmt() ;
       sorts.push(ty) ;
-      self.ws_cmt()
     }
     sorts.shrink_to_fit() ;
 
-    self.char(')') ? ;
+    self.ws_cmt() ;
+    self.tag(")") ? ;
     self.ws_cmt() ;
     if ! self.tag_opt("Bool") {
       bail!(
@@ -536,17 +656,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses some arguments `( (<id> <ty>) ... )`.
   fn args(
     & mut self,
-    var_map: & mut VarMap<VarInfo>, hash_map: & mut HashMap<& 's str, VarIdx>
+    var_map: & mut VarInfos, hash_map: & mut HashMap<& 's str, VarIdx>
   ) -> Res<()> {
-    self.char('(') ? ;
+    self.tag("(") ? ;
+
     self.ws_cmt() ;
-    while self.char_opt('(') {
+    while self.tag_opt("(") {
       self.ws_cmt() ;
       let (pos, ident) = self.ident() ? ;
       self.ws_cmt() ;
       let sort = self.sort() ? ;
       self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
       self.ws_cmt() ;
       let idx = var_map.next_index() ;
       let prev = hash_map.insert(ident, idx) ;
@@ -554,25 +675,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         bail!(
           self.error(
             pos, format!(
-              "found two qualifier variables named `{}`", conf.bad(ident)
+              "found two quantifier variables named `{}`", conf.bad(ident)
             )
           )
         )
       }
       var_map.push( VarInfo::new(ident.into(), sort, idx) )
     }
-    self.char(')') ? ;
+    self.tag(")") ? ;
     var_map.shrink_to_fit() ;
     hash_map.shrink_to_fit() ;
     Ok(())
   }
 
   /// Adds a binding to the current bindings.
-  fn insert_bind(& mut self, var: & 's str, term: PTTerms) {
+  fn insert_bind(
+    & mut self, var: & 's str, term: PTTerms
+  ) -> Res<()> {
     if let Some(bindings) = self.bindings.last_mut() {
       bindings.insert(var, term) ;
+      Ok(())
     } else {
-      panic!("bug, adding binding before pushing a binding scope")
+      bail!("bug, adding binding before pushing a binding scope")
     }
   }
   /// Pushes a binding scopes.
@@ -580,16 +704,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.bindings.push( HashMap::with_capacity(17) )
   }
   /// Pops a binding scope.
-  fn pop_bind(& mut self) {
+  fn pop_bind(& mut self) -> Res<()> {
     if self.bindings.pop().is_none() {
-      panic!("bug, popping binding scope but there's no scope")
+      bail!("bug, popping binding scope but there's no scope")
     }
+    Ok(())
   }
   /// Finds what a variable is mapped to.
-  fn get_bind(& self, var: & str) -> Option< & PTTerms > {
+  fn get_bind(& self, var: & str) -> Option<& PTTerms> {
     for bindings in & self.bindings {
       if let Some(tterms) = bindings.get(var) {
-        return Some( tterms )
+        return Some(tterms)
       }
     }
     None
@@ -601,25 +726,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn close_let_bindings(& mut self, count: LetCount) -> Res<()> {
     for _ in 0..count.n {
       self.ws_cmt() ;
-      self.char(')') ? ;
-      self.pop_bind()
+      self.tag(")") ? ;
+      self.pop_bind() ?
     }
     Ok(())
-  }
-
-
-  /// Line from a position.
-  pub fn line_from(& self, pos: usize) -> & str {
-    if pos >= self.string.len() {
-      panic!("illegal position {}, length is {}", pos, self.string.len())
-    }
-    let mut end = pos ;
-    for char in self.string[pos..].chars() {
-      if char == '\n' {
-        break
-      } else { end += 1 }
-    }
-    & self.string[pos .. end]
   }
 
 
@@ -635,71 +745,70 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// corresponding closing parens.
   #[inline]
   fn let_bindings(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
+    & mut self,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance
   ) -> Res<LetCount> {
     let mut n = 0 ;
+    
     'parse_lets: loop {
-      self.ws_cmt() ;
-      if let Some((pos, c)) = self.next() {
-        if c == '(' && {
-          self.ws_cmt() ; self.tag_opt("let")
-        } {
+      if let Some(pos) = self.tag_opt_pos("(") {
+
+        self.ws_cmt() ;
+        if self.tag_opt( keywords::let_ ) {
+          n += 1 ;
           self.push_bind() ;
           self.ws_cmt() ;
-          self.char('(') ? ;
-          while { self.ws_cmt() ; self.char_opt('(') } {
+          self.tag("(") ? ;
+          self.ws_cmt() ;
+          while self.tag_opt("(") {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
-            let tterms = self.parse_ptterms(map, instance) ? ;
-            self.insert_bind(id, tterms) ;
+            let tterms = self.parse_ptterms(
+              var_map, map, instance
+            ) ? ;
+            self.insert_bind(id, tterms) ? ;
             self.ws_cmt() ;
-            self.char(')') ?
+            self.tag(")") ? ;
+            self.ws_cmt() ;
           }
           self.ws_cmt() ;
-          self.char(')') ? ;
-          n += 1
+          self.tag_err(
+            ")", format!(
+              "expected binding or `{}` closing the list of bindings",
+              conf.emph(")")
+            )
+          ) ? ;
         } else {
+          self.backtrack_to(pos) ;
           break 'parse_lets
-          self.txen(pos, c)
         }
       } else {
         break 'parse_lets
       }
+      self.ws_cmt()
     }
+
     Ok( LetCount { n } )
   }
 
   /// Bool parser.
   fn bool(& mut self) -> Option<bool> {
+    let start_pos = self.pos() ;
     if self.tag_opt("true") {
-      Some(true)
-    } else if self.tag_opt("false") {
-      Some(false)
-    } else {
-      None
-    }
-  }
-
-  /// Integer parser.
-  fn int(& mut self) -> Option<Int> {
-    if let Some((start_pos, char)) = self.next() {
-      if char.is_numeric() {
-        let mut end_pos = self.string.len() ;
-        while let Some((pos, char)) = self.next() {
-          if ! char.is_numeric() {
-            self.txen(pos, char) ;
-            end_pos = pos ;
-            break
-          }
-        }
-        Some(
-          Int::parse_bytes(
-            self.string[start_pos..end_pos].as_bytes(), 10
-          ).expect("[bug] in integer parsing")
-        )
+      if ! self.legal_id_char() {
+        Some(true)
       } else {
-        self.txen(start_pos, char) ;
+        self.backtrack_to(start_pos) ;
+        None
+      }
+    } else if self.tag_opt("false") {
+      if ! self.legal_id_char() {
+        Some(false)
+      } else {
+        self.backtrack_to(start_pos) ;
         None
       }
     } else {
@@ -707,246 +816,769 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Numeral parser.
+  fn numeral(& mut self) -> Option<Int> {
+    let start_pos = self.pos() ;
+
+    if let Some(char) = self.next() {
+      if char.is_numeric() {
+        // If there's more numbers after this one, then the first one cannot be
+        // zero.
+        let mut cannot_be_zero = false ;
+        while let Some(char) = self.next() {
+          if ! char.is_numeric() {
+            self.move_back(1) ;
+            break
+          }
+          cannot_be_zero = true ;
+        }
+        if cannot_be_zero && char == "0" {
+          self.backtrack_to(start_pos) ;
+          None
+        } else {
+          Some(
+            Int::parse_bytes(
+              self.string[
+                * start_pos .. self.cursor
+              ].as_bytes(), 10
+            ).expect("[bug] in integer parsing")
+          )
+        }
+      } else {
+        self.backtrack_to(start_pos) ;
+        None
+      }
+    } else {
+      None
+    }
+  }
+
+  /// Decimal parser.
+  #[allow(dead_code)]
+  fn decimal(& mut self) -> Option<Rat> {
+    let start_pos = self.pos() ;
+    macro_rules! if_not_give_up {
+      (( $($cond:tt)* ) => $thing:expr) => (
+        if $($cond)* {
+          $thing
+        } else {
+          self.backtrack_to(start_pos) ;
+          return None
+        }
+      )
+    }
+    let num = if_not_give_up! {
+      (let Some(num) = self.numeral()) => num
+    } ;
+    if_not_give_up! {
+      ( self.tag_opt(".") ) => ()
+    }
+    let mut den: Int = 1.into() ;
+    let ten = || consts::ten.clone() ;
+    while self.tag_opt("0") { den = den * ten() }
+    let dec_start_pos = self.pos() ;
+    if let Some(dec) = self.numeral() {
+      for _ in * dec_start_pos .. * self.pos() {
+        den = den * ten()
+      }
+      Some( Rat::new( num * den.clone() + dec, den ) )
+    } else if den != 1.into() {
+      Some( Rat::new(num, 1.into()) )
+    } else {
+      self.backtrack_to(start_pos) ;
+      None
+    }
+  }
+
+  /// Integer parser (numeral not followed by a `.`).
+  fn int(& mut self) -> Option<Int> {
+    let start_pos = self.pos() ;
+    let num = self.numeral() ;
+    if num.is_some() {
+      if self.peek() == Some(".") {
+        self.backtrack_to(start_pos) ;
+        return None
+      }
+    }
+    num
+  }
+
+  /// Type checks an operator application.
+  fn build_app(
+    & self, op: Op, op_pos: Pos, args: Vec<Term>, pos: Vec<Pos>
+  ) -> Res<Term> {
+    debug_assert_eq! { args.len(), pos.len() }
+    match term::try_app(op, args) {
+      Ok(typ) => Ok(typ),
+      Err(Either::Left((Some(exp), (found, index)))) => err_chain! {
+        self.error(
+          pos[index], format!(
+            "expected an expression of sort {}, found {}", exp, found
+          )
+        )
+        => self.error(op_pos, "in this operator application")
+      },
+      Err(Either::Left((None, (found, index)))) => err_chain! {
+        self.error(
+          pos[index], format!(
+            "expected the expression starting here has sort {} \
+            which is illegal here", found
+          )
+        )
+        => self.error(op_pos, "in this operator application")
+      },
+      Err(Either::Right(blah)) => bail!(
+        self.error(
+          op_pos, blah
+        )
+      ),
+    }
+  }
+
+  /// Real parser.
+  ///
+  /// Decimal or fraction.
+  fn real(& mut self) -> Res< Option<Rat> > {
+    let start_pos = self.pos() ;
+
+    if let Some(res) = self.decimal() {
+      return Ok( Some(res) )
+    }
+
+    if self.tag_opt("(") {
+      self.ws_cmt() ;
+      if self.tag_opt("/") {
+        self.ws_cmt() ;
+        if let Some(num) = self.numeral() {
+          self.tag_opt(".0") ;
+          self.ws_cmt() ;
+          let den_pos = self.pos() ;
+          if let Some(den) = self.numeral() {
+            self.tag_opt(".0") ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              if den.is_zero() {
+                bail!(
+                  self.error(
+                    den_pos, "division by zero is not supported"
+                  )
+                )
+              }
+              return Ok(
+                Some( Rat::new(num, den) )
+              )
+            } else {
+              bail!(
+                self.error(
+                  start_pos, "division applied to more than two operands"
+                )
+              )
+            }
+          }
+        }
+      }
+    }
+
+    self.backtrack_to(start_pos) ;
+    Ok(None)
+  }
+
   /// Parses an operator or fails.
   fn op(& mut self) -> Res<Op> {
-    if let Some(op) = self.op_opt() {
+    if let Some(op) = self.op_opt() ? {
       Ok(op)
     } else {
       bail!( self.error_here("expected operator") )
     }
   }
   /// Tries to parse an operator.
-  fn op_opt(& mut self) -> Option<Op> {
-    match self.next() {
-      Some( (pos_1, 'a') ) => if self.tag_opt("nd") {
-        Some(Op::And)
+  fn op_opt(& mut self) -> Res< Option<Op> > {
+    macro_rules! none_if_ident_char_else {
+      ($e:expr) => (
+        if self.legal_id_char() {
+          None
+        } else { Some($e) }
+      )
+    }
+    let start_pos = self.pos() ;
+    let res = match self.next() {
+      Some("a") => if self.tag_opt("nd") {
+        none_if_ident_char_else!(Op::And)
       } else {
-        self.txen(pos_1, 'a') ;
         None
       },
-      Some( (pos_1, 'o') ) => if self.char_opt('r') {
-        Some(Op::Or)
+      Some("o") => if self.tag_opt("r") {
+        none_if_ident_char_else!(Op::Or)
       } else {
-        self.txen(pos_1, 'o') ;
         None
       },
-      Some( (pos_1, 'n') ) => if self.tag_opt("ot") {
-        Some(Op::Not)
+      Some("n") => if self.tag_opt("ot") {
+        none_if_ident_char_else!(Op::Not)
       } else {
-        self.txen(pos_1, 'n') ;
         None
       },
-      Some( (pos_1, 'i') ) => if self.tag_opt("te") {
-        Some(Op::Ite)
+      Some("i") => if self.tag_opt("te") {
+        none_if_ident_char_else!(Op::Ite)
       } else {
-        self.txen(pos_1, 'i') ;
         None
       },
-      Some( (_, '=') ) => if self.char_opt('>') {
+      Some("m") => if self.tag_opt("od") {
+        none_if_ident_char_else!(Op::Mod)
+      } else {
+        None
+      },
+      Some("r") => if self.tag_opt("em") {
+        none_if_ident_char_else!(Op::Rem)
+      } else {
+        None
+      },
+      Some("d") => if self.tag_opt("iv") {
+        none_if_ident_char_else!(Op::IDiv)
+      } else {
+        None
+      },
+      Some("t") => if self.tag_opt("o_int") {
+        none_if_ident_char_else!(Op::ToInt)
+      } else if self.tag_opt("o_real") {
+        none_if_ident_char_else!(Op::ToReal)
+      } else {
+        None
+      },
+      Some("=") => if self.tag_opt(">") {
         Some(Op::Impl)
       } else {
         Some(Op::Eql)
       },
-      Some( (_, '>') ) => if self.char_opt('=') {
+      Some(">") => if self.tag_opt("=") {
         Some(Op::Ge)
       } else {
         Some(Op::Gt)
       },
-      Some( (_, '<') ) => if self.char_opt('=') {
+      Some("<") => if self.tag_opt("=") {
         Some(Op::Le)
       } else {
         Some(Op::Lt)
       },
-      Some( (pos_1, 'm') ) => if self.tag_opt("od") {
-        Some(Op::Mod)
-      } else {
-        self.txen(pos_1, 'm') ;
-        None
-      },
-      Some( (pos_1, 'd') ) => if self.tag_opt("iv") {
-        Some(Op::Div)
-      } else {
-        self.txen(pos_1, 'd') ;
-        None
-      },
-      Some( (_, '+') ) => Some(Op::Add),
-      Some( (_, '-') ) => Some(Op::Sub),
-      Some( (_, '*') ) => Some(Op::Mul),
-      // Some( (_, '/') ) => Some(Op::Div),
-      Some( (pos, char) ) => {
-        self.txen(pos, char) ;
-        None
-      },
+      Some("+") => Some(Op::Add),
+      Some("-") => Some(Op::Sub),
+      Some("*") => Some(Op::Mul),
+      Some("/") => Some(Op::Div),
+      Some(_) => None,
       None => None,
+    } ;
+
+    if res.is_none() {
+      self.backtrack_to(start_pos)
     }
+
+    Ok( res )
   }
 
-  /// Parses a sequence of terms.
-  fn term_seq(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
-  ) -> Res< Vec<Term> > {
-    debug_assert!( self.cxt.term_stack.is_empty() ) ;
-    let mut seq = Vec::with_capacity(11) ;
+  /// Parses a single term.
+  pub fn term_opt(
+    & mut self,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance
+  ) -> Res< Option<Term> > {
+    debug_assert! { self.cxt.term_stack.is_empty() }
+    let start_pos = self.pos() ;
 
-    'read_kids: loop {
+    // The correct (non-error) way to exit this loop is
+    //
+    // `break 'read_kids <val>`
+    //
+    // If `<val> == None`, the code below will automatically backtrack to
+    // `start_pos` and clear the `term_stack`, so there's no need to do it in
+    // the loop.
+    let res = 'read_kids: loop {
+
+      let bind_count = self.let_bindings(var_map, map, instance) ? ;
+
       self.ws_cmt() ;
-      let bind_count = self.let_bindings(map, instance) ? ;
-      self.ws_cmt() ;
-      let mut term = if self.char_opt('(') {
-        self.ws_cmt() ;
-        let op = self.op() ? ;
-        let kids = Vec::with_capacity(11) ;
-        self.cxt.term_stack.push( (op, kids, bind_count) ) ;
-        continue 'read_kids
-      } else if let Some(int) = self.int() {
+      let mut term_pos = self.pos() ;
+      let mut term = if let Some(int) = self.int() {
         term::int(int)
+      } else if let Some(real) = self.real() ? {
+        term::real(real)
       } else if let Some(b) = self.bool() {
         term::bool(b)
-      } else if let Some((pos, id)) = self.ident_opt() {
+      } else if let Some((pos, id)) = self.ident_opt()? {
+
         if let Some(idx) = map.get(id) {
-          term::var(* idx)
+          term::var(* idx, var_map[* idx].typ)
         } else if let Some(ptterms) = self.get_bind(id) {
-          ptterms.to_term() ?
+          if let Some(term) = ptterms.to_term().chain_err(
+            || format!("while retrieving binding for {}", conf.emph(id))
+          ) ? {
+            term
+          } else {
+            // Not in a legal term.
+            break 'read_kids None
+          }
+        } else if self.cxt.pred_name_map.get(id).is_some() {
+          // Identifier is a predicate, we're not in a legal term.
+          break 'read_kids None
         } else {
           bail!(
             self.error(
-              pos, format!("unknown variable `{}`", conf.bad(id))
+              pos, format!("unknown identifier `{}`", conf.bad(id))
             )
           )
         }
-      } else {
-        if self.cxt.term_stack.is_empty() {
-          self.close_let_bindings(bind_count) ? ;
-          break 'read_kids
+
+      } else if self.tag_opt("(") {
+
+        self.ws_cmt() ;
+        let op_pos = self.pos() ;
+        if let Some(op) = self.op_opt() ? {
+          let kid_pos = Vec::with_capacity(11) ;
+          let kids = Vec::with_capacity(11) ;
+          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
+          continue 'read_kids
+        } else if self.cxt.term_stack.is_empty() {
+          break 'read_kids None
         } else {
-          bail!( self.error_here("expected term") )
+          self.op() ? ;
+          unreachable!()
         }
+
+      } else {
+
+        break 'read_kids None
+
       } ;
 
       'go_up: while let Some(
-        (op, mut kids, bind_count)
+        (op, op_pos, mut kid_pos, mut kids, bind_count)
       ) = self.cxt.term_stack.pop() {
+        debug_assert_eq! { kid_pos.len(), kids.len() }
+        kid_pos.push( term_pos ) ;
         kids.push(term) ;
         self.ws_cmt() ;
-        if self.char_opt(')') {
-          term = term::app(op, kids) ;
+        if self.tag_opt(")") {
+          if kids.is_empty() {
+            bail!(
+              self.error(
+                op_pos, format!(
+                  "Illegal nullary application of operator `{}`",
+                  conf.bad(op.as_str())
+                )
+              )
+            )
+          }
+          term = self.build_app(op, op_pos, kids, kid_pos) ? ;
+          term_pos = op_pos ;
+          self.ws_cmt() ;
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
         } else {
-          self.cxt.term_stack.push( (op, kids, bind_count) ) ;
+          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
           continue 'read_kids
         }
       }
 
-      seq.push(term)
-    }
-    debug_assert!( self.cxt.term_stack.is_empty() ) ;
+      // Stack is empty, done.
+      debug_assert!( self.cxt.term_stack.is_empty() ) ;
+      break 'read_kids Some(term)
+    } ;
 
-    seq.shrink_to_fit() ;
-    Ok(seq)
+    if res.is_none() {
+      self.cxt.term_stack.clear() ;
+      self.backtrack_to(start_pos) ;
+    }
+
+    Ok(res)
+  }
+
+  /// Parses arguments for a predicate application and type-checks it.
+  fn pred_args(
+    & mut self,
+    pred: PrdIdx,
+    pred_pos: Pos,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance
+  ) -> Res< Option<PTTerms> > {
+    let mut args = VarMap::with_capacity(11) ;
+    let mut kid_pos = Vec::with_capacity(11) ;
+
+    let mut backtrack_pos = self.pos() ;
+    let mut term_pos = self.pos() ;
+
+    while let Some(term) = self.term_opt(
+      var_map, map, instance
+    ) ? {
+      kid_pos.push(term_pos) ;
+      args.push(term) ;
+      backtrack_pos = self.pos() ;
+      self.ws_cmt() ;
+      term_pos = self.pos()
+    }
+
+    self.backtrack_to(backtrack_pos) ;
+
+    args.shrink_to_fit() ;
+
+    let sig = & instance[pred].sig ;
+
+    if sig.len() != kid_pos.len() {
+      bail!(
+        self.error(
+          pred_pos, format!(
+            "predicate {} takes {} arguments, but is applied to {}",
+            conf.emph(& instance[pred].name), sig.len(), kid_pos.len()
+          )
+        )
+      )
+    } else {
+      for ((index, exp), pos) in sig.index_iter().zip( kid_pos.into_iter() ) {
+        let found = args[index].typ() ;
+        if exp != & found {
+          err_chain! {
+            self.error(
+              pos, format!(
+                "expected an expression of sort {}, found {} ({})",
+                exp, & args[index], found
+              )
+            )
+            => self.error(
+              pred_pos, format!(
+                "in this application of {}, parameter #{}",
+                conf.emph(& instance[pred].name), index
+              )
+            )
+          }
+        }
+      }
+    }
+
+    Ok(
+      Some(
+        PTTerms::tterm( TTerm::P { pred, args: args.into() } )
+      )
+    )
   }
 
 
   /// Parses a top term or fails.
+  #[allow(dead_code)]
   fn top_term(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
+    & mut self,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance,
   ) -> Res<PTTerms> {
-    if let Some(term) = self.top_term_opt(map, instance) ? {
-      Ok(term)
+    if let Some(res) = self.top_term_opt(var_map, map, instance) ? {
+      Ok(res)
     } else {
       bail!( self.error_here("expected term") )
     }
   }
   /// Tries to parse a top term.
   fn top_term_opt(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
+    & mut self,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance,
   ) -> Res< Option< PTTerms > > {
-    let bind_count = self.let_bindings(map, instance) ? ;
-    let res = if self.char_opt('(') {
-      self.ws_cmt() ;
-      if let Some(op) = self.op_opt() {
-        self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
-        self.ws_cmt() ;
-        self.char(')') ? ;
-        Ok( Some(
-          PTTerms::tterm( TTerm::T( term::app(op, args) ) )
-        ) )
-      } else if let Some((pos,ident)) = self.ident_opt() {
-        if ident == "forall" || ident == "exists" {
-          bail!(
-            self.error(
-              pos, format!("unable to work on clauses that are not ground")
+    let bind_count = self.let_bindings(var_map, map, instance) ? ;
+
+    self.ws_cmt() ;
+    let start_pos = self.pos() ;
+
+    let res = if let Some(term) = self.term_opt(
+      var_map, map, instance
+    ) ? {
+      Ok( Some(
+        PTTerms::tterm( TTerm::T( term ) )
+      ) )
+    } else if let Some((pos, id)) = self.ident_opt() ? {
+      if let Some(idx) = self.cxt.pred_name_map.get(id) {
+        let idx = * idx ;
+        if instance[idx].sig.is_empty() {
+          Ok( Some(
+            PTTerms::TTerm(
+              TTerm::P { pred: idx, args: VarMap::with_capacity(0).into() }
             )
-          )
-        }
-        self.ws_cmt() ;
-        let args = self.term_seq(map, instance) ? ;
-        self.ws_cmt() ;
-        self.char(')') ? ;
-        let pred = if let Some(idx) = self.cxt.pred_name_map.get(ident) {
-          * idx
+          ) )
         } else {
           bail!(
             self.error(
-              pos,
-              format!("unknown predicate `{}`", conf.bad(ident))
-            )
-          )
-        } ;
-        if instance[pred].sig.len() != args.len() {
-          bail!(
-            self.error(
               pos, format!(
-                "illegal application of predicate `{}` to {} arguments, \
-                expected {} arguments",
-                conf.bad(ident),
-                conf.emph(& format!("{}", args.len())),
-                conf.emph(& format!("{}", instance[pred].sig.len())),
+                "illegal nullary application of predicate `{}`, \
+                this predicate takes {} arguments",
+                conf.bad(& instance[idx].name), instance[idx].sig.len()
               )
             )
           )
         }
-        Ok( Some(
-          PTTerms::tterm( TTerm::P { pred, args: args.into() } )
-        ) )
-      } else {
-        bail!(
-          self.error_here("expected operator or predicate")
-        )
-      }
-    } else if let Some(b) = self.bool() {
-      Ok( Some( PTTerms::tterm( TTerm::T( term::bool(b) ) ) ) )
-    } else if let Some(int) = self.int() {
-      Ok( Some( PTTerms::tterm( TTerm::T( term::int(int) ) ) ) )
-    } else if let Some((pos,id)) = self.ident_opt() {
-      if let Some(idx) = map.get(id) {
-        Ok( Some( PTTerms::tterm( TTerm::T( term::var(* idx) ) ) ) )
-      } else if let Some(tterms) = self.get_bind(id) {
-        Ok( Some( tterms.clone() ) )
-      } else if let Some(idx) = self.cxt.pred_name_map.get(id) {
-        Ok(
-          Some(
-            PTTerms::tterm(
-              TTerm::P { pred: * idx, args: VarMap::with_capacity(0) }
-            )
-          )
-        )
+      } else if let Some(ptterms) = self.get_bind(id) {
+        Ok( Some( ptterms.clone() ) )
       } else {
         bail!(
           self.error(
-            pos, format!("unknown variable `{}`", conf.bad(id))
+            pos, format!(
+              "unknown ident `{}`", conf.bad(id)
+            )
           )
         )
       }
+    } else if self.tag_opt("(") {
+      self.ws_cmt() ;
+
+      if self.tag_opt(keywords::forall) {
+        bail!(
+          self.error(
+            start_pos,
+            format!("unable to work on clauses that are not ground")
+          )
+        )
+      } else if self.tag_opt(keywords::exists) {
+        bail!(
+          self.error(
+            start_pos,
+            format!("unable to work on clauses that are not ground")
+          )
+        )
+      } else if let Some((pred_pos,ident)) = self.ident_opt()? {
+        if let Some(idx) = self.cxt.pred_name_map.get(ident).map(|i| * i) {
+          let res = self.pred_args(idx, pred_pos, var_map, map, instance) ? ;
+          self.ws_cmt() ;
+          self.tag(")") ? ;
+          Ok(res.map(|res| res))
+        } else {
+          bail!(
+            self.error(
+              pred_pos,
+              format!("unknown predicate `{}`", conf.bad(ident))
+            )
+          )
+        }
+      } else {
+        bail!(
+          self.error_here("expected operator, let binding or predicate")
+        )
+      }
+
     } else {
       // In theory, we should check if the top term is an ident that's either a
       // quantified or bound variable. In practice, this is done at the level
       // above this one, in `parse_ptterms`.
       Ok(None)
     } ;
+
+    self.ws_cmt() ;
     self.close_let_bindings(bind_count) ? ;
+
     res
+  }
+
+
+  /// Parses some top terms (parsing variant, for simplifications).
+  fn parse_ptterms(
+    & mut self,
+    var_map: & VarInfos,
+    map: & HashMap<& 's str, VarIdx>,
+    instance: & Instance,
+  ) -> Res<PTTerms> {
+    enum Frame {
+      And(Vec<PTTerms>), Or(Vec<PTTerms>), Impl(Vec<PTTerms>),
+      Not, Let(LetCount)
+    }
+    let mut stack: Vec<Frame> = vec![] ;
+
+    'go_down: loop {
+      self.ws_cmt() ;
+
+      let bind_count = self.let_bindings(var_map, & map, instance) ? ;
+      if ! bind_count.is_zero() {
+        stack.push( Frame::Let(bind_count) ) ;
+      }
+
+      self.ws_cmt() ;
+
+      let start_pos = self.pos() ;
+      let mut ptterm = if let Some(pos) = self.tag_opt_pos("(") {
+
+        self.ws_cmt() ;
+
+        if self.tag_opt("and") {
+          stack.push( Frame::And(vec![]) ) ;
+          continue 'go_down
+        } else if self.tag_opt("or") {
+          stack.push( Frame::Or(vec![]) ) ;
+          continue 'go_down
+        } else if self.tag_opt("not") {
+          stack.push( Frame::Not ) ;
+          continue 'go_down
+        } else if self.tag_opt("=>") {
+          stack.push( Frame::Impl(vec![]) ) ;
+          continue 'go_down
+        } else {
+          self.backtrack_to(pos) ;
+          if let Some(top) = self.top_term_opt(
+            var_map, & map, instance
+          ) ? {
+            if top.typ().is_bool() {
+              top
+            } else
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
+            if stack.is_empty() {
+              return Ok(top)
+            } else {
+              err_chain! {
+                "while parsing top term"
+                => self.error(
+                  start_pos, format!(
+                    "expected expression of type Bool, found {}", top.typ()
+                  )
+                )
+              }
+            }
+          } else if let Some(top) = self.term_opt(
+            var_map, & map, instance
+          ) ? {
+            if top.typ().is_bool() {
+              PTTerms::TTerm( TTerm::T(top) )
+            } else
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
+            if stack.is_empty() {
+              return Ok(
+                PTTerms::TTerm( TTerm::T(top) )
+              )
+            } else {
+              err_chain! {
+                "while parsing subterm"
+                => self.error(
+                  start_pos, format!(
+                    "expected expression of type Bool, found {}", top.typ()
+                  )
+                )
+              }
+            }
+          } else {
+            bail!(
+              self.error(
+                start_pos, "failed to parse expression top term"
+              )
+            )
+          }
+        }
+      } else {
+        if let Some(top) = self.top_term_opt(
+          var_map, & map, instance
+        ) ? {
+          if top.typ().is_bool() {
+            top
+          } else
+          // If we get here, it means what we're parsing does not have type
+          // bool. Which means we're not inside a top-term (we're most likely
+          // parsing a let-binding).
+          if stack.is_empty() {
+            return Ok(top)
+          } else {
+            err_chain! {
+              "while parsing top term"
+              => self.error(
+                start_pos, format!(
+                  "expected expression of type Bool, found {}", top.typ()
+                )
+              )
+            }
+          }
+        } else if let Some(top) = self.term_opt(
+          var_map, & map, instance
+        ) ? {
+          if top.typ().is_bool() {
+            PTTerms::TTerm( TTerm::T(top) )
+          } else
+          // If we get here, it means what we're parsing does not have type
+          // bool. Which means we're not inside a top-term (we're most likely
+          // parsing a let-binding).
+          if stack.is_empty() {
+            return Ok(
+              PTTerms::TTerm( TTerm::T(top) )
+            )
+          } else {
+            err_chain! {
+              "while parsing subterm (ident or constant)"
+              => self.error(
+                start_pos, format!(
+                  "expected expression of type Bool, found {}", top.typ()
+                )
+              )
+            }
+          }
+        } else {
+          bail!(
+            self.error(
+              start_pos, "failed to parse top expression"
+            )
+          )
+        }
+      } ;
+
+      'go_up: loop {
+        match stack.pop() {
+          Some( Frame::And(mut args) ) => {
+            args.push(ptterm) ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              ptterm = PTTerms::and(args) ;
+              continue 'go_up
+            } else {
+              stack.push( Frame::And(args) ) ;
+              continue 'go_down
+            }
+          },
+          Some( Frame::Or(mut args) ) => {
+            args.push(ptterm) ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              ptterm = PTTerms::or(args) ;
+              continue 'go_up
+            } else {
+              stack.push( Frame::Or(args) ) ;
+              continue 'go_down
+            }
+          },
+          Some( Frame::Impl(mut args) ) => {
+            args.push(ptterm) ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              if args.len() != 2 {
+                bail!(
+                  "unexpected implication over {} (!= 2) arguments", args.len()
+                )
+              }
+              let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
+              ptterm = PTTerms::or( vec![ PTTerms::not(lhs) ?, rhs ] ) ;
+              continue 'go_up
+            } else {
+              stack.push( Frame::Impl(args) ) ;
+              continue 'go_down
+            }
+          },
+          Some( Frame::Not ) => {
+            self.ws_cmt() ;
+            ptterm = PTTerms::not(ptterm) ? ;
+            self.tag(")") ? ;
+            continue 'go_up
+          },
+          Some( Frame::Let(bind_count) ) => {
+            self.close_let_bindings(bind_count) ? ;
+            continue 'go_up
+          },
+          None => break 'go_down Ok(ptterm),
+        }
+      }
+
+    }
   }
 
 
@@ -954,92 +1586,153 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn forall(
     & mut self, instance: & mut Instance
   ) -> Res<bool> {
-    if ! self.tag_opt("forall") {
+    if ! self.tag_opt(keywords::forall) {
       return Ok(false)
     }
+
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
       VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
     ) ;
+
     while parse_args {
       self.ws_cmt() ;
       self.args(& mut var_map, & mut hash_map) ? ;
+
       self.ws_cmt() ;
-      parse_args = if let Some(pos) = self.char_opt_pos('(') {
+      parse_args = if let Some(pos) = self.tag_opt_pos("(") {
         self.ws_cmt() ;
-        if self.tag_opt("forall") {
+        if self.tag_opt(keywords::forall) {
           closing_parens += 1 ;
           true
         } else {
-          self.txen(pos, '(') ;
+          self.backtrack_to(pos) ;
           false
         }
       } else {
         false
       }
     }
+
     self.ws_cmt() ;
-    let outter_bind_count = self.let_bindings(& hash_map, instance) ? ;
+    let outter_bind_count = self.let_bindings(
+      & var_map, & hash_map, instance
+    ) ? ;
+
     self.ws_cmt() ;
-    self.parse_clause(var_map, hash_map, instance, false) ? ;
+    self.parse_clause(
+      var_map, hash_map, instance, false
+    ) ? ;
+
     self.ws_cmt() ;
     self.close_let_bindings(outter_bind_count) ? ;
+
     for _ in 0..closing_parens {
       self.ws_cmt() ;
-      self.char(')') ?
+      self.tag(")") ?
     }
+
     Ok(true)
   }
 
 
   /// Parses a negated exists.
-  fn exists(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("not") {
+  fn nexists(& mut self, instance: & mut Instance) -> Res<bool> {
+    if ! self.tag_opt(keywords::op::not_) {
       return Ok(false)
     }
     self.ws_cmt() ;
-    let outter_bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
+    let outter_bind_count = self.let_bindings(
+      & VarMap::new(), & HashMap::new(), instance
+    ) ? ;
+
     self.ws_cmt() ;
-    self.char('(') ? ;
+    self.tag("(") ? ;
+
     self.ws_cmt() ;
-    self.tag("exists") ? ;
-    self.ws_cmt() ;
+    self.tag(keywords::exists) ? ;
+
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
       VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
     ) ;
+
     while parse_args {
       self.ws_cmt() ;
       self.args(& mut var_map, & mut hash_map) ? ;
+
       self.ws_cmt() ;
-      parse_args = if let Some(pos) = self.char_opt_pos('(') {
+      parse_args = if let Some(pos) = self.tag_opt_pos("(") {
         self.ws_cmt() ;
-        if self.tag_opt("exists") {
+        if self.tag_opt(keywords::exists) {
           closing_parens += 1 ;
           true
         } else {
-          self.txen(pos, '(') ;
+          self.backtrack_to(pos) ;
           false
         }
       } else {
         false
       }
     }
+
     self.ws_cmt() ;
     self.parse_clause(var_map, hash_map, instance, true) ? ;
+
     self.ws_cmt() ;
-    self.char(')') ? ;
+    self.tag(")") ? ;
+
     self.ws_cmt() ;
     self.close_let_bindings(outter_bind_count) ? ;
+
     for _ in 0..closing_parens {
       self.ws_cmt() ;
-      self.char(')') ?
+      self.tag(")") ?
     }
+
     Ok(true)
+  }
+
+
+  fn parse_clause(
+    & mut self,
+    var_map: VarInfos,
+    map: HashMap<& 's str, VarIdx>,
+    instance: & mut Instance,
+    negated: bool,
+  ) -> Res<()> {
+    self.ws_cmt() ;
+
+    let start_pos = self.pos() ;
+    let mut ptterms = self.parse_ptterms(
+      & var_map, & map, instance
+    ) ? ;
+    if ! ptterms.typ().is_bool() {
+      err_chain! {
+        "while parsing clause terms"
+        => self.error(
+          start_pos, format!(
+            "expected expression of type Bool, got {}", ptterms.typ()
+          )
+        )
+      }
+    }
+    if negated {
+      ptterms = PTTerms::not(ptterms) ?
+    }
+
+    let mut clauses = ptterms.to_clauses()?.into_iter() ;
+    if let Some((last_lhs, last_rhs)) = clauses.next() {
+      for (lhs, rhs) in clauses {
+        self.add_clause(instance, var_map.clone(), lhs, rhs) ?
+      }
+      self.add_clause(instance, var_map, last_lhs, last_rhs) ?
+    }
+    Ok(())
   }
 
   /// Adds a clause to an instance.
   fn add_clause(
     & self, instance: & mut Instance,
-    var_map: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: TTerm
+    var_map: VarInfos, lhs: Vec<TTerm>, rhs: TTerm
   ) -> Res<()> {
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     let mut lhs_is_false = false ;
@@ -1064,8 +1757,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     } ;
     if ! lhs_is_false {
       instance.push_clause(
-        Clause::new(var_map.clone(), nu_lhs, rhs)
-      ) ?
+        Clause::new(var_map.clone(), nu_lhs, rhs, "parsing")
+      ) ? ;
+      ()
     }
     Ok(())
   }
@@ -1073,27 +1767,29 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an assert.
   fn assert(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("assert") {
+    if ! self.tag_opt(keywords::cmd::assert) {
       return Ok(false)
     }
-    self.ws_cmt() ;
-    let bind_count = self.let_bindings(& HashMap::new(), instance) ? ;
-    self.ws_cmt() ;
 
-    if self.char_opt('(') {
+    self.ws_cmt() ;
+    let bind_count = self.let_bindings(
+      & VarMap::new(), & HashMap::new(), instance) ? ;
+
+    if self.tag_opt("(") {
       self.ws_cmt() ;
 
       if self.forall(instance) ? {
         ()
-      } else if self.exists(instance) ? {
+      } else if self.nexists(instance) ? {
         ()
       } else {
         bail!(
           self.error_here("expected forall or negated exists")
         )
       } ;
+
       self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
     } else if self.tag_opt("true") {
       ()
     } else if self.tag_opt("false") {
@@ -1112,7 +1808,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a check-sat.
   fn check_sat(& mut self) -> bool {
-    if self.tag_opt("check-sat") {
+    if self.tag_opt(keywords::cmd::check_sat) {
       true
     } else {
       false
@@ -1121,7 +1817,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a get-model.
   fn get_model(& mut self) -> bool {
-    if self.tag_opt("get-model") {
+    if self.tag_opt(keywords::cmd::get_model) {
       true
     } else {
       false
@@ -1130,7 +1826,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an exit command.
   fn exit(& mut self) -> bool {
-    if self.tag_opt("exit") {
+    if self.tag_opt(keywords::cmd::exit) {
       true
     } else {
       false
@@ -1139,7 +1835,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an reset command.
   fn reset(& mut self) -> bool {
-    if self.tag_opt("reset") {
+    if self.tag_opt(keywords::cmd::reset) {
       true
     } else {
       false
@@ -1155,7 +1851,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.cxt.term_stack.clear() ;
 
     while self.has_next() {
-      self.char('(') ? ;
+      self.ws_cmt() ;
+      self.tag_err(
+        "(", format!(
+          "expected `{}` opening top-level item",
+          conf.emph("(")
+        )
+      ) ? ;
       self.ws_cmt() ;
 
       res = if self.set_info() ? {
@@ -1184,13 +1886,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } ;
 
       self.ws_cmt() ;
-      self.char(')') ? ;
+      self.tag(")") ? ;
       self.ws_cmt() ;
 
       debug_assert!( self.cxt.term_stack.is_empty() ) ;
-      debug_assert!( self.cxt.buff.is_empty() ) ;
       debug_assert!( self.cxt.mem.is_empty() ) ;
-      debug_assert!( self.chars.next().is_none() ) ;
 
       if res != Parsed::Items {
         return Ok(res)
@@ -1198,134 +1898,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     debug_assert!( self.cxt.term_stack.is_empty() ) ;
-    debug_assert!( self.cxt.buff.is_empty() ) ;
     debug_assert!( self.cxt.mem.is_empty() ) ;
-    debug_assert!( self.chars.next().is_none() ) ;
 
     Ok(res)
-  }
-
-
-  fn parse_clause(
-    & mut self,
-    var_map: VarMap<VarInfo>,
-    map: HashMap<& 's str, VarIdx>,
-    instance: & mut Instance,
-    negated: bool,
-  ) -> Res<()> {
-    let mut ptterms = self.parse_ptterms(& map, instance) ? ;
-    if negated {
-      ptterms = PTTerms::not(ptterms) ?
-    }
-    // ptterms.print("> ") ;
-    let mut clauses = ptterms.to_clauses()?.into_iter() ;
-    if let Some((last_lhs, last_rhs)) = clauses.next() {
-      for (lhs, rhs) in clauses {
-        self.add_clause(instance, var_map.clone(), lhs, rhs) ?
-      }
-      self.add_clause(instance, var_map, last_lhs, last_rhs) ?
-    }
-    Ok(())
-  }
-
-
-  fn parse_ptterms(
-    & mut self, map: & HashMap<& 's str, VarIdx>, instance: & Instance
-  ) -> Res<PTTerms> {
-    enum Frame {
-      And(Vec<PTTerms>), Or(Vec<PTTerms>), Impl(Vec<PTTerms>),
-      Not, Let(LetCount)
-    }
-    let mut stack: Vec<Frame> = vec![] ;
-
-    'go_down: loop {
-      self.ws_cmt() ;
-
-      let bind_count = self.let_bindings(& map, instance) ? ;
-      if ! bind_count.is_zero() {
-        stack.push( Frame::Let(bind_count) ) ;
-        self.ws_cmt()
-      }
-
-      let mut ptterm = if let Some(pos) = self.char_opt_pos('(') {
-        self.ws_cmt() ;
-
-        if self.tag_opt("and") {
-          self.ws_cmt() ;
-          stack.push( Frame::And(vec![]) ) ;
-          continue 'go_down
-        } else if self.tag_opt("or") {
-          self.ws_cmt() ;
-          stack.push( Frame::Or(vec![]) ) ;
-          continue 'go_down
-        } else if self.tag_opt("not") {
-          stack.push( Frame::Not ) ;
-          continue 'go_down
-        } else if self.tag_opt("=>") {
-          stack.push( Frame::Impl(vec![]) ) ;
-          continue 'go_down
-        } else {
-          self.txen(pos, '(') ;
-          self.top_term(& map, instance) ?
-        }
-
-      } else {
-        self.top_term(& map, instance) ?
-      } ;
-
-      'go_up: loop {
-        self.ws_cmt() ;
-        match stack.pop() {
-          Some( Frame::And(mut args) ) => {
-            args.push(ptterm) ;
-            if self.char_opt(')') {
-              ptterm = PTTerms::and(args) ;
-              continue 'go_up
-            } else {
-              stack.push( Frame::And(args) ) ;
-              continue 'go_down
-            }
-          },
-          Some( Frame::Or(mut args) ) => {
-            args.push(ptterm) ;
-            if self.char_opt(')') {
-              ptterm = PTTerms::or(args) ;
-              continue 'go_up
-            } else {
-              stack.push( Frame::Or(args) ) ;
-              continue 'go_down
-            }
-          },
-          Some( Frame::Impl(mut args) ) => {
-            args.push(ptterm) ;
-            if self.char_opt(')') {
-              if args.len() != 2 {
-                bail!(
-                  "unexpected implication over {} (!= 2) arguments", args.len()
-                )
-              }
-              let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
-              ptterm = PTTerms::or( vec![ PTTerms::not(lhs) ?, rhs ] ) ;
-              continue 'go_up
-            } else {
-              stack.push( Frame::Impl(args) ) ;
-              continue 'go_down
-            }
-          },
-          Some( Frame::Not ) => {
-            ptterm = PTTerms::not(ptterm) ? ;
-            self.char(')') ? ;
-            continue 'go_up
-          },
-          Some( Frame::Let(bind_count) ) => {
-            self.close_let_bindings(bind_count) ? ;
-            continue 'go_up
-          },
-          None => break 'go_down Ok(ptterm),
-        }
-      }
-
-    }
   }
 }
 
@@ -1342,6 +1917,14 @@ pub enum PTTerms {
   TTerm( TTerm ),
 }
 impl PTTerms {
+  pub fn typ(& self) -> Typ {
+    match * self {
+      PTTerms::And(_) |
+      PTTerms::Or(_) |
+      PTTerms::NTTerm(_) => Typ::Bool,
+      PTTerms::TTerm(ref tterm) => tterm.typ(),
+    }
+  }
   pub fn and(mut tterms: Vec<PTTerms>) -> Self {
     use std::iter::Extend ;
     debug_assert!( ! tterms.is_empty() ) ;
@@ -1527,7 +2110,7 @@ impl PTTerms {
                       positive_preds.push( tterm )
                     },
                   },
-                  ptt => if let Ok(term) = ptt.to_term() {
+                  ptt => if let Some(term) = ptt.to_term() ? {
                     tts.push( TTerm::T( term::not(term) ) )
                   } else {
                     bail!("ill-formed horn clause (or, 2)")
@@ -1634,7 +2217,7 @@ impl PTTerms {
   }
 
   /// Transforms a parser's combination of top terms into a term, if possible.
-  pub fn to_term(& self) -> Res<Term> {
+  pub fn to_term(& self) -> Res<Option<Term>> {
     let mut stack = Vec::with_capacity(17) ;
 
     let mut ptterm = self ;
@@ -1665,17 +2248,18 @@ impl PTTerms {
         PTTerms::TTerm(ref tterm) => if let Some(term) = tterm.term() {
           term.clone()
         } else {
-          bail!("failed to convert `PTTerms` to `Term` (1)")
+          return Ok(None)
         },
         PTTerms::NTTerm(ref tterm) => if let Some(term) = tterm.term() {
           term::not( term.clone() )
         } else {
-          bail!("failed to convert `PTTerms` to `Term` (2)")
+          return Ok(None)
         },
       } ;
 
       'go_up: loop {
-        if let Some((op, mut to_do, done)) = stack.pop() {
+        if let Some((op, mut to_do, mut done)) = stack.pop() {
+          done.push(term) ;
           if let Some(next) = to_do.next() {
             stack.push( (op, to_do, done) ) ;
             ptterm = next ;
@@ -1685,7 +2269,7 @@ impl PTTerms {
             continue 'go_up
           }
         } else {
-          break 'go_down Ok(term)
+          break 'go_down Ok( Some(term) )
         }
       }
 

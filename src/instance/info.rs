@@ -1,8 +1,10 @@
 //! Types to store information about variables and predicates.
 
-use common::* ;
-use super::Typ ;
+use rsmt2::to_smt::Sym2Smt ;
 
+use common::* ;
+
+use super::Typ ;
 
 /// Variable info.
 #[derive(Clone)]
@@ -26,7 +28,7 @@ impl VarInfo {
     self.name.as_bytes()
   }
 }
-impl ::rsmt2::to_smt::Sym2Smt<()> for VarInfo {
+impl Sym2Smt<()> for VarInfo {
   fn sym_to_smt2<Writer>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> where Writer: Write {
@@ -42,6 +44,7 @@ impl_fmt!{
 
 
 /// Predicate info.
+#[derive(Clone)]
 pub struct PrdInfo {
   /// Predicate's name.
   pub name: String,
@@ -61,7 +64,7 @@ impl_fmt!{
     fmt.write_str(& self.name)
   }
 }
-impl ::rsmt2::to_smt::Sym2Smt<()> for PrdInfo {
+impl Sym2Smt<()> for PrdInfo {
   fn sym_to_smt2<Writer: Write>(
     &self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
