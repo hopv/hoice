@@ -47,9 +47,6 @@ use instance::Instance ;
 /// Parses command-line arguments and works.
 pub fn work() -> Res<()> {
 
-  // Creates smt log directory if needed.
-  conf.init() ? ;
-
   // Reading from file?
   if let Some(file_path) = conf.in_file() {
     use std::fs::{ OpenOptions } ;

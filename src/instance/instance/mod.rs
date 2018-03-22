@@ -70,6 +70,12 @@ pub struct Instance {
   imp_clauses: ClsSet,
   /// True if finalized already ran.
   is_finalized: bool,
+  /// If this instance is the result of a split, contains the index of the
+  /// clause of the original instance that the split was on.
+  ///
+  /// The constructor sets this to `None`. Function `clone_with_one_neg`
+  /// automatically sets it to the clause kept.
+  split: Option<ClsIdx>,
 }
 impl Instance {
   /// Instance constructor.
@@ -92,6 +98,7 @@ impl Instance {
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
+      split: None,
     }
   }
 
@@ -163,6 +170,7 @@ impl Instance {
     & self, to_keep: ClsIdx
   ) -> Self {
     let mut res = self.clone_without_clauses() ;
+    res.split = Some(to_keep) ;
     for (idx, clause) in self.clauses.index_iter() {
       if ! clause.rhs().is_none() || idx == to_keep {
         let is_new = res.push_clause_raw(clause.clone()) ;
@@ -172,7 +180,13 @@ impl Instance {
     res
   }
 
-
+  /// If this instance is the result of a split, returns the index of the
+  /// clause of the original instance that the split was on.
+  ///
+  /// Used mainly to create different folders for log files when splitting.
+  pub fn split(& self) -> Option<ClsIdx> {
+    self.split.clone()
+  }
 
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
@@ -1557,6 +1571,11 @@ impl ::std::ops::Index<ClsIdx> for Instance {
 impl ::std::ops::IndexMut<ClsIdx> for Instance {
   fn index_mut(& mut self, index: ClsIdx) -> & mut Clause {
     & mut self.clauses[index]
+  }
+}
+impl AsRef<Instance> for Instance {
+  fn as_ref(& self) -> & Self {
+    self
   }
 }
 

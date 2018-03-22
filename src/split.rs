@@ -42,9 +42,15 @@ pub fn work(
   let mut splitter = Splitter::new(& real_instance) ;
 
   'neg_loop: while let Some(preproc_res) = {
-    if let Some((current, left)) = splitter.info() {
+    if let Some((clause, handled, total)) = splitter.info() {
       log! { @info
-        "\nSplitting on negative clause {} of {}", current, left
+        "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
+        conf.emph("|"),
+        conf.happy("="),
+        conf.sad("="),
+        conf.happy("="),
+        conf.emph("|"),
+        clause, handled + 1, total
       }
     }
     splitter.next_instance(& _profiler)
@@ -57,17 +63,17 @@ pub fn work(
     let mut instance = match preproc_res {
       Either::Left(instance) => instance,
       Either::Right(None) => {
-        log! { @info "unsat by preproc" }
+        log! { @info "unsat by preproc\n\n" }
         return Ok(None)
       },
       Either::Right(Some(this_model)) => {
-        log! { @info "sat by preproc" }
+        log! { @info "sat by preproc\n\n" }
         model! { add this_model }
         continue 'neg_loop
       },
     } ;
 
-    if conf.teacher.step && splitter.info().is_some() {
+    if conf.split_step {
       pause("to start solving") ;
     }
 
@@ -78,14 +84,14 @@ pub fn work(
     ) ? ;
 
     if let Some(candidates) = res {
-      log! { @info "sat\n" }
+      log! { @info "sat\n\n" }
       let mut this_model = instance.model_of(candidates) ? ;
       if let Some(instance) = Arc::get_mut(& mut instance) {
         instance.simplify_pred_defs(& mut this_model) ?
       }
       model!(add this_model)
     } else {
-      log! { @info "unsat\n" }
+      log! { @info "unsat\n\n" }
       return Ok(None)
     }
 
@@ -115,7 +121,9 @@ pub fn run_teacher(
 pub struct Splitter {
   /// The instance we're working on.
   instance: Arc<Instance>,
-  /// Clauses to look at separately. Indices refer to `self.instance`.
+  /// Clauses to look at separately.
+  ///
+  /// Indices refer to `self.instance`.
   ///
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
   /// will return `self.instance` if `! once` and `None` otherwise.
@@ -129,9 +137,13 @@ impl Splitter {
   pub fn new(instance: & Arc<Instance>) -> Self {
     let clauses = if conf.split
     && instance.neg_clauses().len() > 1 {
-      Either::Left(
-        instance.neg_clauses().iter().map(|c| * c).collect()
-      )
+      let mut clauses: Vec<_> = instance.neg_clauses().iter().map(
+        |c| * c
+      ).collect() ;
+      clauses.sort_unstable_by(
+        |c_1, c_2| c_2.cmp(c_1)
+      ) ;
+      Either::Left(clauses)
     } else {
       Either::Right(false)
     } ;
@@ -149,16 +161,17 @@ impl Splitter {
     res
   }
 
-  /// Returns the number of clauses already treated and the total number of
-  /// clauses to handle if active.
-  pub fn info(& self) -> Option<(usize, usize)> {
+  /// Returns the next clause to split on, the number of clauses already
+  /// treated and the total number of clauses to handle if active.
+  pub fn info(& self) -> Option<(ClsIdx, usize, usize)> {
     match self.clauses {
       Either::Left(ref clauses) => {
-        let total = self.instance.neg_clauses().len() ;
-        if clauses.is_empty() {
-          None
+        if let Some(clause) = clauses.last() {
+          let total = self.instance.neg_clauses().len() ;
+          let count = total - clauses.len() ;
+          Some((* clause, count, total))
         } else {
-          Some( (total + 1 - clauses.len(), total) )
+          None
         }
       },
       Either::Right(_) => None,
@@ -208,15 +221,15 @@ impl Splitter {
 /// Generates the instance obtained by removing all positive (if `pos`,
 /// negative otherwise) clauses but `clause`. Preprocesses it and returns the
 /// result.
+///
+/// Fails in debug if the clause is not negative.
 fn preproc(
   instance: & Instance, clause: ClsIdx, profiler: & Profiler
 ) -> Res< Either<Instance, Option<Model>>> {
 
   debug_assert! {
-    instance[clause].lhs_preds().is_empty()
+    instance[clause].rhs().is_none()
   }
-
-  log! { @info "keeping #{}", clause }
 
   let mut instance = instance.clone_with_one_neg(clause) ;
 

@@ -140,7 +140,7 @@ impl Graph {
   ) -> Res<()> {
     if let Some(
       (mut pred_dep_file, path)
-    ) = conf.preproc.pred_dep_file(file) ? {
+    ) = conf.preproc.pred_dep_file(file, instance) ? {
       use std::process::Command ;
       self.dot_write(& mut pred_dep_file, instance, hi_lite) ? ;
       let mut pdf_path = path.clone() ;

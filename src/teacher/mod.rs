@@ -213,7 +213,9 @@ impl<'a> Teacher<'a> {
   pub fn new(
     instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("teacher", Parser ) ? ;
+    let solver = conf.solver.spawn(
+      "teacher", Parser, & instance
+    ) ? ;
 
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = Msg::channel() ;

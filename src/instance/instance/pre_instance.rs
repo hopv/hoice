@@ -25,7 +25,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let mut solver = conf.solver.spawn("preproc", ()) ? ;
+    let mut solver = conf.solver.spawn("preproc", (), &* instance) ? ;
     solver.free_resets() ? ;
 
     let simplifier = ClauseSimplifier::new() ;

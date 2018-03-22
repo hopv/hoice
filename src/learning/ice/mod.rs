@@ -110,7 +110,9 @@ impl<'core> IceLearner<'core> {
     core: & 'core MsgCore, instance: Arc<Instance>, data: Data,
     mine: bool// synth_solver: Slver
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("ice_learner", ()) ? ;
+    let solver = conf.solver.spawn(
+      "ice_learner", (), & instance
+    ) ? ;
 
     profile!{ |core._profiler| tick "mining" }
     let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(

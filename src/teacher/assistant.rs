@@ -28,7 +28,9 @@ impl Assistant {
   pub fn new(
     instance: Arc<Instance>, // core: & 'a MsgCore
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("assistant", ()) ? ;
+    let solver = conf.solver.spawn(
+      "assistant", (), & instance
+    ) ? ;
     let _profiler = Profiler::new() ;
 
     let mut pos = PrdHMap::with_capacity( instance.preds().len() ) ;

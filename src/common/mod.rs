@@ -101,6 +101,13 @@ pub fn pause_msg(core: & msg::MsgCore, s: & str) {
 /// Identity function.
 pub fn identity<T>(t: T) -> T { t }
 
+/// Creates a directory if it doesn't exist.
+pub fn mk_dir<P: AsRef<::std::path::Path>>(path: P) -> Res<()> {
+  use std::fs::DirBuilder ;
+  DirBuilder::new().recursive(true).create(path) ? ;
+  Ok(())
+}
+
 
 // |===| Type and traits aliases.
 

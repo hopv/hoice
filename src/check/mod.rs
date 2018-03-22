@@ -282,7 +282,9 @@ impl Data {
 pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   let data = Data::of_files(input_file, output_file) ? ;
 
-  let mut solver = conf.solver.spawn("check", Parser) ? ;
+  let mut solver = conf.solver.spawn(
+    "check", Parser, & ::instance::Instance::new()
+  ) ? ;
 
   let res = data.check(& mut solver) ;
   if res.is_ok() {
@@ -317,7 +319,9 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
     ) ?
   ) ? ;
 
-  let mut solver = conf.solver.spawn("check", Parser) ? ;
+  let mut solver = conf.solver.spawn(
+    "check", Parser, & ::instance::Instance::new()
+  ) ? ;
   let res = data.check(& mut solver) ;
   let end_res = solver.kill().chain_err(
     || "While killing solver"
