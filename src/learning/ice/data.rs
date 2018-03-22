@@ -1,27 +1,25 @@
 //! Contains stuff related to ICE's projected data representation.
 
 use common::* ;
-use common::data::{ DataCore, Sample, HSample, HSamples } ;
-
-use super::quals::{ Qual } ;
+use common::data::{ Data, Sample } ;
 
 
 /// Projected data to classify.
 #[derive(Clone)]
 pub struct CData {
   /// Positive samples.
-  pos: HSamples,
+  pos: Vec<Args>,
   /// Negative samples.
-  neg: HSamples,
+  neg: Vec<Args>,
   /// Unclassified samples.
-  unc: HSamples,
+  unc: Vec<Args>,
   /// Total number of samples.
   len: f64,
 }
 impl CData {
   /// Constructor.
   #[inline]
-  pub fn new(pos: HSamples, neg: HSamples, unc: HSamples) -> Self {
+  pub fn new(pos: Vec<Args>, neg: Vec<Args>, unc: Vec<Args>) -> Self {
     let len = (
       pos.len() + neg.len() + unc.len()
     ) as f64 ;
@@ -40,43 +38,43 @@ impl CData {
 
   /// Destroys the data.
   #[inline]
-  pub fn destroy(self) -> (HSamples, HSamples, HSamples) {
+  pub fn destroy(self) -> (Vec<Args>, Vec<Args>, Vec<Args>) {
     (self.pos, self.neg, self.unc)
   }
 
   /// Adds a positive sample.
   #[inline]
-  pub fn add_pos(& mut self, pos: HSample) {
+  pub fn add_pos(& mut self, pos: Args) {
     self.len += 1. ;
     self.pos.push(pos)
   }
   /// Positive samples.
   #[inline]
-  pub fn pos(& self) -> & HSamples {
+  pub fn pos(& self) -> & Vec<Args> {
     & self.pos
   }
 
   /// Adds a negative sample.
   #[inline]
-  pub fn add_neg(& mut self, neg: HSample) {
+  pub fn add_neg(& mut self, neg: Args) {
     self.len += 1. ;
     self.neg.push(neg)
   }
   /// Negative samples.
   #[inline]
-  pub fn neg(& self) -> & HSamples {
+  pub fn neg(& self) -> & Vec<Args> {
     & self.neg
   }
 
   /// Adds a unclassified sample.
   #[inline]
-  pub fn add_unc(& mut self, unc: HSample) {
+  pub fn add_unc(& mut self, unc: Args) {
     self.len += 1. ;
     self.unc.push(unc)
   }
   /// Unclassified samples.
   #[inline]
-  pub fn unc(& self) -> & HSamples {
+  pub fn unc(& self) -> & Vec<Args> {
     & self.unc
   }
 
@@ -89,7 +87,7 @@ impl CData {
   /// - nowhere if `f(e).is_some()`.
   #[inline]
   pub fn classify<F>(& mut self, mut f: F)
-  where F: FnMut(& HSample) -> Option<bool> {
+  where F: FnMut(& Args) -> Option<bool> {
     let mut cnt = 0 ;
     while cnt < self.unc.len() {
       if let Some(pos) = f(& self.unc[cnt]) {
@@ -119,7 +117,9 @@ impl CData {
 
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
-  pub fn simple_gain(& self, qual: & mut Qual) -> Res< Option<f64> > {
+  pub fn simple_gain<Trm: CanBEvaled>(
+    & self, qual: & Trm
+  ) -> Res< Option<f64> > {
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
     ) ;
@@ -129,8 +129,8 @@ impl CData {
     ) = (0., 0., 0., 0.) ;
     let mut none = 0. ;
     for pos in & self.pos {
-      match qual.bool_eval( pos.get() ).chain_err(
-        || format!("while evaluating qualifier {} on {}", qual.qual, pos)
+      match qual.evaluate( pos.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, pos)
       ) ? {
         Some(true) => q_pos += 1.,
         Some(false) => nq_pos += 1.,
@@ -138,8 +138,8 @@ impl CData {
       }
     }
     for neg in & self.neg {
-      match qual.bool_eval( neg.get() ).chain_err(
-        || format!("while evaluating qualifier {} on {}", qual.qual, neg)
+      match qual.evaluate( neg.get() ).chain_err(
+        || format!("while evaluating qualifier {} on {}", qual, neg)
       ) ? {
         Some(true) => q_neg += 1.,
         Some(false) => nq_neg += 1.,
@@ -201,7 +201,7 @@ impl CData {
   ///
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
-  pub fn entropy(& self, pred: PrdIdx, data: & DataCore) -> Res<f64> {
+  pub fn entropy(& self, pred: PrdIdx, data: & Data) -> Res<f64> {
     let mut proba = EntropyBuilder::new() ;
     proba.set_pos_count( self.pos.len() ) ;
     proba.set_neg_count( self.neg.len() ) ;
@@ -216,7 +216,7 @@ impl CData {
   /// Only takes into account unclassified data when `conf.ice.simple_gain`
   /// is false.
   pub fn gain<Trm: CanBEvaled>(
-    & self, pred: PrdIdx, data: & DataCore, qual: & Trm, _profiler: & Profiler,
+    & self, pred: PrdIdx, data: & Data, qual: & Trm, _profiler: & Profiler,
     verb: bool
   ) -> Res< Option<f64> > {
     let my_entropy = self.entropy(pred, data) ? ;
@@ -257,6 +257,16 @@ impl CData {
     q_ent.set_neg_count(q_neg) ;
     nq_ent.set_neg_count(nq_neg) ;
     profile! { |_profiler| mark "learning", "qual", "gain", "neg eval" }
+
+    if (
+      q_pos == 0 && nq_pos  > 0 &&
+      q_neg  > 0 && nq_neg == 0
+    ) || (
+      q_pos  > 0 && nq_pos == 0 &&
+      q_neg == 0 && nq_neg  > 0
+    ) {
+      return Ok( Some(1.0) )
+    }
 
     profile! { |_profiler| tick "learning", "qual", "gain", "unc eval" }
     for unc in & self.unc {
@@ -417,29 +427,33 @@ impl CData {
   }
 
   /// Iterator over some data.
-  pub fn iter<'a>(& 'a self) -> CDataIter<'a> {
+  pub fn iter<'a>(& 'a self, include_unc: bool) -> CDataIter<'a> {
     CDataIter {
       pos: self.pos.iter(),
       neg: self.neg.iter(),
-      unc: self.unc.iter(),
+      unc: if include_unc { Some(self.unc.iter()) } else { None },
     }
   }
 }
 
 /// Iterator over CData.
 pub struct CDataIter<'a> {
-  pos: ::std::slice::Iter<'a, HSample>,
-  neg: ::std::slice::Iter<'a, HSample>,
-  unc: ::std::slice::Iter<'a, HSample>,
+  pos: ::std::slice::Iter<'a, Args>,
+  neg: ::std::slice::Iter<'a, Args>,
+  unc: Option<::std::slice::Iter<'a, Args>>,
 }
 impl<'a> ::std::iter::Iterator for CDataIter<'a> {
-  type Item = & 'a HSample ;
+  type Item = & 'a Args ;
   fn next(& mut self) -> Option<Self::Item> {
     let next = self.pos.next() ;
     if next.is_some() { return next }
     let next = self.neg.next() ;
     if next.is_some() { return next }
-    self.unc.next()
+    if let Some(unc) = self.unc.as_mut() {
+      unc.next()
+    } else {
+      None
+    }
   }
 }
 
@@ -469,7 +483,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & DataCore, prd: PrdIdx, sample: & HSample
+    & mut self, data: & Data, prd: PrdIdx, sample: & Args
   ) -> Res<()> {
     let degree = Self::degree(data, prd, sample) ? ;
     self.den += 1 ;
@@ -513,7 +527,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & DataCore, prd: PrdIdx, sample: & HSample
+    data: & Data, prd: PrdIdx, sample: & Args
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,
@@ -521,19 +535,29 @@ impl EntropyBuilder {
       mut sum_neg,
     ) = (0., 0., 0.) ;
 
-    if let Some(constraints) = data.map[prd].get(& sample) {
+    if let Some(constraints) = data.map()[prd].get(& sample) {
       for constraint in constraints {
         let constraint = & data.constraints[* constraint] ;
-        match constraint.rhs {
-          None => sum_neg = sum_neg + 1. / (constraint.lhs.len() as f64),
-          Some( Sample { pred, ref args } )
+
+        let lhs = if let Some(lhs) = constraint.lhs() {
+          lhs
+        } else {
+          bail!("computing degree of trivial clause")
+        } ;
+
+        let lhs_len = constraint.lhs_len() ;
+        debug_assert! { lhs_len > 0 }
+
+        match constraint.rhs() {
+          None => sum_neg = sum_neg + 1. / (lhs_len as f64),
+          Some( & Sample { pred, ref args } )
           if pred == prd
           && args == sample => sum_imp_rhs = sum_imp_rhs + 1. / (
-            1. + (constraint.lhs.len() as f64)
+            1. + (lhs_len as f64)
           ),
           _ => {
             debug_assert! {
-              constraint.lhs.iter().fold(
+              lhs.iter().fold(
                 false,
                 |b, (pred, samples)| b || samples.iter().fold(
                   b, |b, s| b || (
@@ -543,7 +567,7 @@ impl EntropyBuilder {
               )
             }
             sum_imp_lhs = sum_imp_lhs + 1. / (
-              1. + (constraint.lhs.len() as f64)
+              1. + (lhs_len as f64)
             )
           },
         }

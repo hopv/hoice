@@ -1,7 +1,6 @@
 //! Qualifier synthesis in the theory of integers.
 
 use common::* ;
-use common::data::HSample ;
 
 use super::{ TermVals, TheoSynth } ;
 
@@ -26,7 +25,7 @@ impl TheoSynth for IntSynth {
   fn typ(& self) -> & Typ { & self.typ }
 
   fn is_done(& self) -> bool {
-    self.expressivity > 1
+    self.expressivity > 2
   }
 
   fn restart(& mut self) {
@@ -38,23 +37,33 @@ impl TheoSynth for IntSynth {
   }
 
   fn synth<F>(
-    & mut self, mut f: F, sample: & HSample, others: & mut TermVals
+    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
-      0 => simple_int_synth(sample, others, f),
-      1 => {
-        let res = int_synth_1(sample, others, & mut f) ? ;
-        let res = int_synth_2(sample, others, f) ? || res ;
-        Ok(res)
-      },
+      0 => profile!(
+        |_profiler| wrap {
+          simple_int_synth(sample, others, f)
+        } "learning", "qual", "synthesis", "int", "level 0"
+      ),
+      1 => profile!(
+        |_profiler| wrap {
+          int_synth_1(sample, others, f)
+        } "learning", "qual", "synthesis", "int", "level 1"
+      ),
+      2 => profile!(
+        |_profiler| wrap {
+          int_synth_2(sample, others, f)
+        } "learning", "qual", "synthesis", "int", "level 2"
+      ),
       _ => Ok(false),
     }
   }
 
   /// Only generates reals for now (using `to_real`).
   fn project(
-    & self, sample: & HSample, typ: & Typ, map: & mut TermVals
+    & self, sample: & Args, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
     match * typ {
       Typ::Real => for (var, val) in sample.index_iter() {
@@ -85,7 +94,7 @@ impl TheoSynth for IntSynth {
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_int_synth<F>(
-  sample: & HSample, others: & mut TermVals, mut f: F
+  sample: & Args, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -121,7 +130,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 1 for int synthesis.
 pub fn int_synth_1<F>(
-  sample: & HSample, others: & mut TermVals, mut f: F
+  sample: & Args, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -161,7 +170,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 2 for int synthesis.
 pub fn int_synth_2<F>(
-  sample: & HSample, others: & mut TermVals, mut f: F
+  sample: & Args, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -195,5 +204,7 @@ where F: FnMut(Term) -> Res<bool> {
     }
   }
 
-Ok(false)
+  Ok(false)
 }
+
+

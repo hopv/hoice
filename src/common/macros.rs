@@ -2,7 +2,7 @@
 
 
 /// If the input is an error, prints it and panics.
-macro_rules! catch_unwrap {
+macro_rules! expect {
   ($e:expr => |$err:pat| $($action:tt)*) => (
     match $e {
       Ok(res) => res,
@@ -10,19 +10,36 @@ macro_rules! catch_unwrap {
         $crate::errors::print_err(
           { $($action)* }.into()
         ) ;
-        ::std::process::exit(2)
+        panic!("Fatal internal error, please contact the developper")
       }
     }
   ) ;
   ($e:expr) => (
-    catch_unwrap! {
-      $e => |e|
-      $crate::errors::print_err(
-        e.chain_err(|| "Fatal internal error")
-      ) ;
-      ::std::process::exit(2)
+    expect! {
+      $e => |e| e
     }
   ) ;
+}
+/// Fails with some message.
+macro_rules! fail_with {
+  ( $($head:expr),* $(,)* $( ; $($blah:expr),* $(,)* )* $(;)* ) => ({
+    let err: Res<()> = Err(
+      format!($($head),*).into()
+    ) ;
+    $(
+      let err = err.chain_err(
+        || format!( $($blah),* )
+      ) ;
+    )*
+    expect!(err) ;
+    unreachable!()
+  }) ;
+}
+
+
+/// Bails with unsat.
+macro_rules! unsat {
+  () => (bail!($crate::errors::ErrorKind::Unsat)) ;
 }
 
 
@@ -46,31 +63,76 @@ macro_rules! err_chain {
 }
 
 
+/// Logging macro.
+macro_rules! log {
+
+  (|pref_of| debug) => (";     ") ;
+  (|pref_of| verb)  => (";   ") ;
+  (|pref_of| info)  => ("; ") ;
+  (|pref_of| $int:expr) => (
+    format!(
+      "; {:width$}", "", width = if $int > 0 {
+        ($int - 1) * 2
+      } else {
+        0
+      }
+    )
+  ) ;
+
+  (|cond_of| debug) => (conf.debug()) ;
+  (|cond_of| verb) => (conf.verbose()) ;
+  (|cond_of| info) => (conf.minimal()) ;
+  (|cond_of| $int:expr) => (conf.verb >= $int) ;
+
+  ( $cond:expr, $op:tt @$flag:tt $($tail:tt)* ) => (
+    if $cond $op log!(|cond_of| $flag) {
+      log! { log!(|pref_of| $flag) => $($tail)* }
+    }
+  ) ;
+  ( @$flag:tt $($tail:tt)* ) => (
+    if log!(|cond_of| $flag) {
+      log! { log!(|pref_of| $flag) => $($tail)* }
+    }
+  ) ;
+
+  ( $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+      for line in format!($str $(, $args)*).lines() {
+        if line != "" {
+          println!("{}{}", $pref, line)
+        } else {
+          println!("")
+        }
+      }
+    )*
+    ()
+  }) ;
+  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+      for line in format!($str $(, $args)*).lines() {
+        if line != "" {
+          println!("; {}", line)
+        } else {
+          println!("")
+        }
+      }
+    )*
+    ()
+  }) ;
+}
+
+
 /// In verbose mode, same as `println` but with a "; " prefix.
 macro_rules! info {
-  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb.verbose() {
-      $(
-        for line in format!($str $(, $args)*).lines() {
-          println!("; {}", line)
-        }
-      )*
-      ()
-    }
+  ( $($stuff:tt)* ) => (
+    log! { @verb $($stuff)* }
   ) ;
 }
 /// In debug mode, same as `println` but with a "; " prefix.
 #[allow(unused_macros)]
 macro_rules! debug {
-  ( $( $str:expr $(, $args:expr)* $(,)* );* ) => (
-    if ::common::conf.verb.debug() {
-      $(
-        for line in format!($str $(, $args)*).lines() {
-          println!("; {}", line)
-        }
-      )*
-      ()
-    }
+  ( $($stuff:tt)* ) => (
+    log! { @debug $($stuff)* }
   ) ;
 }
 /// Formats a warning.
@@ -312,7 +374,9 @@ macro_rules! try_val {
 /// Dumps an instance if the `PreprocConf` flag says so.
 macro_rules! preproc_dump {
   ($instance:expr => $file:expr, $blah:expr) => (
-    if let Some(mut file) = conf.preproc.log_file($file) ? {
+    if let Some(mut file) = conf.preproc.instance_log_file(
+      $file, & $instance
+    ) ? {
       $instance.dump_as_smt2(& mut file, $blah)
     } else { Ok(()) }
   ) ;

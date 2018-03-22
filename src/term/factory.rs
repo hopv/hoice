@@ -210,7 +210,7 @@ pub fn and(terms: Vec<Term>) -> Term {
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline(always)]
 pub fn app(op: Op, args: Vec<Term>) -> Term {
-  let typ = catch_unwrap!(
+  let typ = expect!(
     op.type_check(& args) => |e|
       let res: Res<()> = Err(
         "Fatal internal type checking error, \
@@ -514,7 +514,7 @@ enum NormRes {
 
 
 /// Normalizes an operation application.
-fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
+fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
   use num::Zero ;
 
   // println!("{} ({})", op, typ) ;
@@ -691,6 +691,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     },
 
     Op::Eql => {
+      // println!("(= {} {})", args[0], args[1]) ;
       if args.len() == 2 {
         if args[0] == args[1] {
           return NormRes::Term( tru() )
@@ -728,16 +729,62 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           return NormRes::Term( term::bool( i_1 == i_2 ) )
         } else
 
-        if let Some((var, term)) = args[0].invert( args[1].clone() ) {
-          args = vec![ term::var(var, term.typ()), term ]
-        } else
+        // if let Some((var, term)) = args[0].invert( args[1].clone() ) {
+        //   args = vec![ term::var(var, term.typ()), term ]
+        // } else
 
-        if let Some((var, term)) = args[1].invert( args[0].clone() ) {
-          args = vec![ term::var(var, term.typ()), term ]
+        // if let Some((var, term)) = args[1].invert( args[0].clone() ) {
+        //   args = vec![ term::var(var, term.typ()), term ]
+        // } else
+
+        if args[0].typ().is_arith() {
+          // println!("  (= {} {})", args[0], args[1]) ;
+          if ! args[1].is_zero() {
+            let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
+            let typ = rhs.typ() ;
+            let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
+              NormRes::App(
+                typ, Op::Sub, vec![
+                  NormRes::Term(lhs), NormRes::Term(rhs)
+                ]
+              )
+            } ;
+            return NormRes::App(
+              Typ::Bool, Op::Eql, vec![
+                lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
+              ]
+            )
+          } else {
+            (op, args)
+          }
+        } else {
+          args.sort_unstable() ;
+          (op, args)
         }
+      } else {
+        args.sort_unstable() ;
+        let len = args.len() ;
+        let mut args = args.into_iter() ;
+        let mut conj = vec![] ;
+        if let Some(first) = args.next() {
+          for arg in args {
+            conj.push(
+              NormRes::App(
+                Typ::Bool, Op::Eql, vec![
+                  NormRes::Term( first.clone() ),
+                  NormRes::Term(arg)
+                ]
+              )
+            )
+          }
+          if ! conj.is_empty() {
+            return NormRes::App(Typ::Bool, Op::And, conj)
+          }
+        }
+        panic!(
+          "illegal application of {} to {} (< 2) argument", op, len
+        )
       }
-      args.sort_unstable() ;
-      (op, args)
     },
 
     Op::Sub => {
@@ -1186,7 +1233,7 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           )
         }
 
-        let (rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
+        let (mut rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
 
         // Is lhs a sum with a constant in it?.
         let mut correction = None ;
@@ -1211,6 +1258,17 @@ fn normalize_app(op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             ]
           )
         } else {
+          // Normalize gt to ge for integers.
+          if op == Op::Gt {
+            match rhs_val {
+              Val::I(ref i) => {
+                rhs = term::int(i + 1) ;
+                op = Op::Ge
+              },
+              _ => (),
+            }
+          }
+
           // No correction, let's dodis.
           args.push(lhs) ;
           args.push(rhs)

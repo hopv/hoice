@@ -5,7 +5,8 @@ use std::fmt ;
 
 use rsmt2::to_smt::* ;
 
-use common::SmtRes ;
+use common::{ SmtRes, VarIndexed } ;
+use term::Term ;
 
 wrap_usize!{
   #[doc = "Predicate indices."]
@@ -53,7 +54,7 @@ impl Into< ::common::HTArgs > for VarMap<::term::Term> {
   }
 }
 
-impl VarMap< ::term::Term > {
+impl VarMap< Term > {
   /// Removes the arguments of indices **not** in the set. Preserves the order.
   ///
   /// This is used when useless arguments are detected, to slice predicate
@@ -76,6 +77,16 @@ impl VarMap< ::term::Term > {
       }
     }
     nu_args.into()
+  }
+
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    let mut var_map = VarMap::with_capacity( self.len() ) ;
+    for term in self.iter() {
+      let (term, _) = term.subst(map) ;
+      var_map.push(term)
+    }
+    var_map
   }
 }
 

@@ -9,52 +9,57 @@
 //! (Teacher's teach function)
 
 use common::* ;
-use common::data::* ;
+use common::data::Data ;
 use common::msg::* ;
 use common::smt::SmtTerm ;
 
 use self::smt::Parser ;
 
 pub mod assistant ;
-
+use self::assistant::Assistant ;
 
 /// Starts the teaching process.
 pub fn start_class(
-  instance: & Arc<Instance>, profiler: & Profiler
+  instance: & Arc<Instance>,
+  initial_candidates: & InitCandidates,
+  profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   let instance = instance.clone() ;
   log_debug!{ "starting the learning process\n  launching solver kid..." }
   let mut teacher = Teacher::new(instance, profiler) ? ;
-  let res = teach( & mut teacher ) ;
+  let res = teach( & mut teacher, initial_candidates ) ;
   teacher.finalize() ? ;
   res
 }
 
 
 /// Teaching to the learners.
-pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
+pub fn teach(
+  teacher: & mut Teacher, initial_candidates: & InitCandidates
+) -> Res< Option<Candidates> > {
 
   // if conf.smt_learn {
   //   log_debug!{ "  spawning smt learner..." }
   //   teacher.add_learner( ::learning::smt::Launcher ) ?
   // }
-  log_debug!{ "  spawning ice learner..." }
+  log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
     teacher.add_learner( ::learning::ice::Launcher, false ) ? ;
   }
   teacher.add_learner( ::learning::ice::Launcher, true ) ? ;
 
-  log_debug!{ "  performing initial check..." }
-  let (cexs, cands) = teacher.initial_check() ? ;
+  log_debug!{ "performing initial check..." }
+  let (cexs, cands) = teacher.initial_check(initial_candidates) ? ;
   if cexs.is_empty() {
+    log_debug!{ "solved by initial cex..." }
     return Ok( Some(cands) )
   }
-  log_debug!{ "  generating data from initial cex..." }
+  log_debug!{ "generating data from initial cex..." }
   let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
   if ! nu_stuff {
     bail! { "translation of initial cexs to data generated no new data" }
   }
-  teacher.run_assistant() ;
+  teacher.run_assistant() ? ;
 
   // Index of the learner the teacher is currently working for.
   //
@@ -72,18 +77,21 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
 
     if let Some(idx) = learner {
       if conf.teacher.step {
-        read_line(
+        pause(
           & format!(
             "to send data to {} (--step on)...",
             & conf.emph(& teacher.learners[idx].1)
-          )
+          ), & teacher._profiler
         ) ;
       }
       let _ = teacher.send(idx) ? ;
       ()
     } else {
       if conf.teacher.step {
-        read_line("to broadcast data (--step on)...") ;
+        pause(
+          "to broadcast data (--step on)...",
+          & teacher._profiler
+        ) ;
       }
       let one_alive = teacher.broadcast() ;
       if ! one_alive {
@@ -100,17 +108,19 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       Some( ( idx, candidates) ) => {
         learner = Some(idx) ;
         if_verb!{
-          log_info!(
+          log! { conf.teacher.step, || @info
             "\nCurrent candidates from {} learner:",
             conf.emph( & teacher.learners[idx].1 )
-          ) ;
+          }
           for _pred in teacher.instance.preds() {
             if let Some(term) = candidates[_pred.idx].as_ref() {
-              log_info!("{}:", conf.emph(& _pred.name)) ;
-              log_info!("  {}", term)
+              log!( @info
+                "{}:", conf.emph(& _pred.name) ;
+                "  {}", term
+              )
             }
           }
-          log_info!( "" )
+          log!(@info "" )
         }
         profile!{ teacher tick "cexs" }
         let cexs = teacher.get_cexs(& candidates) ? ;
@@ -127,7 +137,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         ) ;
         profile!{ teacher mark "data", "registration" }
         profile!{ teacher mark "data" }
-        teacher.run_assistant() ;
+        teacher.run_assistant() ? ;
         match res {
           Ok(true) => {
             // New data.
@@ -195,8 +205,8 @@ pub struct Teacher<'a> {
   /// Assistant for implication constraint breaking.
   ///
   /// The boolean flag indicates whether the assistant was sent some stuff.
-  pub assistant: Option< (Sender<FromTeacher>, bool) >,
-
+  // pub assistant: Option< (Sender<FromTeacher>, bool) >,
+  pub assistant: Option<Assistant>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
   /// Number of guesses.
@@ -208,28 +218,20 @@ impl<'a> Teacher<'a> {
   pub fn new(
     instance: Arc<Instance>, profiler: & 'a Profiler
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("teacher", Parser ) ? ;
+    let solver = conf.solver.spawn(
+      "teacher", Parser, & instance
+    ) ? ;
 
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = Msg::channel() ;
     let data = Data::new( instance.clone() ) ;
 
     let assistant = if conf.teacher.assistant {
-      let (to_assistant_send, to_assistant_recv) = FromTeacher::channel() ;
-      let instance = instance.clone() ;
-      let to_teacher = to_teacher.clone() ;
-
-      ::std::thread::Builder::new().name( "assistant".into() ).spawn(
-        move || assistant::launch(
-          instance, MsgCore::new_assistant(
-            to_teacher, to_assistant_recv
-          )
-        )
-      ).chain_err(
-        || format!("while spawning assistant")
-      ) ? ;
-
-      Some( (to_assistant_send, false) )
+      Some(
+        Assistant::new(instance.clone()).chain_err(
+          || format!("while spawning assistant")
+        ) ?
+      )
     } else {
       None
     } ;
@@ -244,29 +246,18 @@ impl<'a> Teacher<'a> {
   }
 
   /// Runs the assistant (if any) on the current data.
-  pub fn run_assistant(& mut self) -> () {
-    let mut res = Ok(()) ;
-    if let Some(
-      & mut (ref mut sender, ref mut running)
-    ) = self.assistant.as_mut() {
-      // profile! { self tick "assistant" }
-      if ! * running {
-        * running = true ;
-        if let Some(data) = self.data.clone_new_constraints() {
-          res = sender.send( FromTeacher::Data(data) )
-          // assistant.break_implications(& mut data) ? ;
-          // let (_nu_pos, _nu_neg) = self.data.merge_samples(data) ? ;
-          // profile! { self "assistant pos useful" => add _nu_pos }
-          // profile! { self "assistant neg useful" => add _nu_neg }
-        }
+  pub fn run_assistant(& mut self) -> Res<()> {
+    if let Some(assistant) = self.assistant.as_mut() {
+      profile! { self tick "assistant" }
+      if let Some(mut data) = self.data.clone_new_constraints() ? {
+        assistant.break_implications(& mut data) ? ;
+        let (_nu_pos, _nu_neg) = self.data.merge_samples(data) ? ;
+        profile! { self "assistant pos useful" => add _nu_pos }
+        profile! { self "assistant neg useful" => add _nu_neg }
       }
-      // profile! { self mark "assistant" }
+      profile! { self mark "assistant" }
     }
-    if res.is_err() {
-      warn! { "assistant is dead" }
-      self.assistant = None
-    }
-    ()
+    Ok(())
   }
 
   /// Finalizes the run.
@@ -295,17 +286,18 @@ impl<'a> Teacher<'a> {
       }
       * sender = None
     }
-    if let Some( & (ref sender, _) ) = self.assistant.as_ref() {
-      let _ = sender.send( FromTeacher::Exit ) ;
-      ()
+
+    if let Some(assistant) = self.assistant {
+      let profiler = assistant.finalize() ? ;
+      self._profiler.add_sub("assistant", profiler)
     }
     self.assistant = None ;
     log_debug! { "draining messages" }
     while let Ok(_) = self.get_candidates(true) {}
-    // if let Some(assistant) = self.assistant {
-    //   let profiler = assistant.finalize() ? ;
-    //   self._profiler.add_sub("assistant", profiler)
-    // }
+
+    if conf.stats {
+      self._profiler.add_sub("data", self.data.destroy())
+    }
     Ok(())
   }
 
@@ -396,6 +388,16 @@ impl<'a> Teacher<'a> {
     }
 
     'recv: loop {
+
+      if ! drain {
+        if self.learners.iter().all(
+          |& (ref channel, _, _)| {
+            channel.is_none()
+          }
+        ) {
+          all_dead!()
+        }
+      }
 
       profile!{ self tick "waiting" }
       let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
@@ -490,7 +492,7 @@ impl<'a> Teacher<'a> {
           print_err( err.unwrap_err() )
         },
 
-        MsgKind::Stats(profiler) => if conf.stats {
+        MsgKind::Stats(profiler) => {
           let id = match id {
             Id::Learner(idx) => {
               self.learners[idx].0 = None ;
@@ -498,7 +500,9 @@ impl<'a> Teacher<'a> {
             },
             Id::Assistant => "assistant".into(),
           } ;
-          self._profiler.add_sub(id, profiler)
+          if conf.stats {
+            self._profiler.add_other(id, profiler)
+          }
         },
 
         MsgKind::Unsat => return Ok(None),
@@ -513,18 +517,52 @@ impl<'a> Teacher<'a> {
   /// Drops the copy of the `Sender` end of the channel used to communicate
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
-  pub fn initial_check(& mut self) -> Res< (Cexs, Candidates) > {
+  pub fn initial_check(
+    & mut self, _initial_candidates: & InitCandidates,
+  ) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    for pred in self.instance.pred_indices() {
+    'all_preds: for pred in self.instance.pred_indices() {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
+
+      // } else if let Some(dnf) = initial_candidates.get(& pred) {
+      //   let mut cand_dnf = vec![] ;
+      //   for conj in dnf {
+      //     let mut cand_conj = vec![] ;
+      //     for tterms in conj {
+      //       if let Some(term) = tterms.to_term() {
+      //         term.subst()
+      //         cand_conj.push(term)
+      //       } else {
+      //         cand_conj.clear() ;
+      //         cand_dnf.clear() ;
+      //         cands.push( Some(term::tru()) ) ;
+      //         continue 'all_preds
+      //       }
+      //     }
+      //     cand_dnf.push( term::and(cand_conj) )
+      //   }
+      //   cands.push( Some( term::or(cand_dnf) ) )
+
       } else {
         cands.push( Some(term::tru()) )
       }
     }
+
+    if_verb! {
+      log! { @info "  initial candidates:" }
+      for (pred, cand) in cands.index_iter() {
+        if let Some(cand) = cand.as_ref() {
+          log! { @info
+            "    {}: {}", self.instance[pred], cand
+          }
+        }
+      }
+    }
+
     self.get_cexs(& cands).map(|res| (res, cands))
   }
 
@@ -532,13 +570,18 @@ impl<'a> Teacher<'a> {
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
     use std::iter::Extend ;
     self.count += 1 ;
-    self.solver.reset() ? ;
 
     // These will be passed to clause printing to inline trivial predicates.
     let (mut true_preds, mut false_preds) = ( PrdSet::new(), PrdSet::new() ) ;
     // Clauses to ignore, because they are trivially true. (lhs is false or
     // rhs is true).
     let mut clauses_to_ignore = ClsSet::new() ;
+
+    if self.count % 50 == 0 {
+      self.solver.reset() ?
+    }
+
+    self.solver.push(1) ? ;
 
     // Define non-forced predicates that are not trivially true or false.
     'define_non_forced: for (pred, cand) in cands.index_iter() {
@@ -591,18 +634,32 @@ impl<'a> Teacher<'a> {
       ) ;
     }
 
-    info! {
-      "looking for counterexamples in positive clauses..."
+    log! { @verb
+      "looking for counterexamples in positive clauses ({})...",
+      instance.pos_clauses().len()
     }
     for clause in instance.pos_clauses() {
       run!(clause, false)
     }
 
-    info! {
-      "looking for counterexamples in negative clauses..."
+    log! { @verb
+      "looking for counterexamples in strict negative clauses ({})...",
+      instance.strict_neg_clauses().len()
     }
-    for clause in instance.neg_clauses() {
+    for clause in instance.strict_neg_clauses() {
       run!(clause, false)
+    }
+
+    if map.is_empty() {
+      log! { @verb
+        "looking for counterexamples in negative clauses ({})...",
+        instance.neg_clauses().len()
+      }
+      for clause in instance.neg_clauses() {
+        if ! instance.strict_neg_clauses().contains(clause) {
+          run!(clause, true)
+        }
+      }
     }
 
     if map.is_empty() {
@@ -613,6 +670,8 @@ impl<'a> Teacher<'a> {
         run!(clause, true)
       }
     }
+
+    self.solver.pop(1) ? ;
 
     Ok(map)
   }
@@ -625,7 +684,7 @@ impl<'a> Teacher<'a> {
   ) -> Res< Vec<Cex> > {
     let partial = conf.teacher.partial && (
       self.instance.pos_clauses().contains(& clause_idx) ||
-      self.instance.neg_clauses().contains(& clause_idx)
+      self.instance.strict_neg_clauses().contains(& clause_idx)
     ) ;
 
     self.solver.push(1) ? ;
@@ -660,9 +719,9 @@ impl<'a> Teacher<'a> {
           log_debug! { "  getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
-          let cex = Args::of_model(
+          let cex = RArgs::of_model(
             clause!().vars(), model, partial
-          ) ;
+          ) ? ;
           profile!{ self mark "cexs", "model" }
           cexs.push(cex) ;
           $($stuff)*
@@ -872,7 +931,6 @@ mod smt {
         }
       ) ? {
         let mut val = Val::R(val) ;
-        val.normalize() ;
         Ok(val)
       } else {
         input.fail_with("unexpected value")

@@ -124,7 +124,10 @@ pub mod keywords {
 
       keys {
         dec_fun ("declare-fun", doc = "Predicate declaration keyword.")
-        def_fun ("define-fun", doc = "Predicate declaration keyword.")
+        def_fun ("define-fun", doc = "Predicate definition keyword.")
+        def_funs (
+          "define-funs-rec", doc = "Multiple predicate declaration keyword."
+        )
 
         assert ("assert", doc = "Assertion keyword.")
 

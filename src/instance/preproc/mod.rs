@@ -14,22 +14,63 @@ pub mod args ;
 use self::graph::Graph ;
 
 
-/// Runs pre-processing
+/// Runs pre-processing.
+///
+/// The boolean indicates wether a first pass of simplification runs on the
+/// whole system before the rest. Should be true for top-level preproc, and
+/// false for subsystems.
+///
+/// Finalizes the instance.
 pub fn work(
-  instance: & mut Instance, profiler: & Profiler
+  instance: & mut Instance, profiler: & Profiler,
 ) -> Res<()> {
-  log_info!{ "starting pre-processing" }
+  let res = if conf.preproc.active {
+    let instance = PreInstance::new(instance) ? ;
 
+    run(instance, profiler, true)
+  } else {
+    Ok(())
+  } ;
+  finalize(res, instance, profiler)
+}
+
+/// Runs pre-processing from a pre-instance.
+fn run(
+  instance: PreInstance, profiler: & Profiler, simplify_first: bool
+) -> Res<()> {
   profile! { |profiler| tick "preproc" }
 
-  let res = {
-    let mut reductor = Reductor::new(instance) ? ;
-    reductor.run(profiler).and_then(
-      |_| reductor.destroy()
-    )
-  } ;
+  let mut reductor = Reductor::new(instance) ? ;
+  let res = reductor.run(profiler, simplify_first).and_then(
+    |_| reductor.destroy()
+  ) ;
 
   profile! { |profiler| mark "preproc" }
+  res
+}
+
+/// Finalizes pre-processing
+fn finalize(
+  res: Res<()>, instance: & mut Instance, _profiler: & Profiler
+) -> Res<()> {
+  profile!(
+    |_profiler| wrap {
+      instance.finalize()
+    } "finalizing"
+  ) ? ;
+
+  profile! {
+    |_profiler|
+    "positive          clauses" => add instance.pos_clauses().len()
+  }
+  profile! {
+    |_profiler|
+    "negative          clauses" => add instance.neg_clauses().len()
+  }
+  profile! {
+    |_profiler|
+    "negative (strict) clauses" => add instance.strict_neg_clauses().len()
+  }
 
   match res {
     Err(ref e) if e.is_unsat() => {
@@ -40,6 +81,139 @@ pub fn work(
   }
 
   Ok(())
+}
+
+
+/// Runs pre-processing on a split version of the input instance.
+///
+/// Fails if `to_keep` is not a negative clause in `instance`.
+pub fn work_on_split(
+  instance: & Instance, to_keep: ClsIdx, profiler: & Profiler
+) -> Res<Instance> {
+
+  profile! { |profiler| tick "splitting" }
+
+  let mut split_instance = instance.clone_with_clauses(to_keep) ;
+
+  let mut to_forget: Vec<_> = instance.neg_clauses().iter().filter_map(
+    |c| if * c != to_keep { Some(* c) } else { None }
+  ).collect() ;
+
+  let mut neg_clauses = Vec::with_capacity(instance.neg_clauses().len()) ;
+  // We're going to forget clauses (swap-remove), going in descending order.
+  to_forget.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1)) ;
+  for clause_idx in to_forget {
+    if clause_idx != to_keep {
+      let clause = split_instance.forget_clause(clause_idx) ? ;
+      if instance.strict_neg_clauses().contains(& clause_idx) {
+        neg_clauses.push(clause)
+      }
+    }
+  }
+
+  profile! { |profiler| mark "splitting" }
+
+  profile! { |profiler| tick "strengthening" }
+
+  log! { @debug "strengthening using {} clauses", neg_clauses.len() }
+
+  let res = {
+
+    let mut pre_instance = PreInstance::new(& mut split_instance) ? ;
+    let mut info = RedInfo::new() ;
+
+    // Maps predicates to strengthening terms.
+    let mut strength_map = PrdHMap::new() ;
+
+    'strengthen: for clause in neg_clauses {
+      macro_rules! inconsistent {
+        () => ({
+          instance.check("work_on_split (instance)") ? ;
+          instance.check("work_on_split (split)") ? ;
+          bail!("inconsistent instance state")
+        }) ;
+      }
+
+      let (pred, args) = {
+        let mut pred_apps = clause.lhs_preds().iter() ;
+
+        if let Some((pred, argss)) = pred_apps.next() {
+          debug_assert! { pred_apps.next().is_none() }
+
+          let mut argss = argss.iter() ;
+          if let Some(args) = argss.next() {
+            debug_assert! { argss.next().is_none() }
+            (* pred, args)
+          } else {
+            inconsistent!()
+          }
+        } else {
+          inconsistent!()
+        }
+      } ;
+
+      use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
+
+      match terms_of_lhs_app(
+        true, & instance, & clause.vars,
+        clause.lhs_terms(), clause.lhs_preds(), None,
+        pred, args
+      ) ? {
+        ExtractRes::Trivial => bail!(
+          "trivial clause during work_on_split"
+        ),
+        ExtractRes::Failed => bail!(
+          "extraction failure during work_on_split"
+        ),
+        ExtractRes::SuccessTrue => bail!(
+          "extracted true during work_on_split"
+        ),
+        ExtractRes::SuccessFalse => bail!(
+          "extracted false during work_on_split"
+        ),
+        ExtractRes::Success((qvars, is_none, only_terms)) => {
+          debug_assert! { is_none.is_none() } ;
+          let (terms, preds) = only_terms.destroy() ;
+          debug_assert! { preds.is_empty() } ;
+          let entry = strength_map.entry(pred).or_insert_with(
+            || (HConSet::<Term>::new(), Vec::new())
+          ) ;
+          if qvars.is_empty() {
+            entry.0.extend( terms )
+          } else {
+            entry.1.push((qvars, terms))
+          }
+        },
+      }
+    }
+
+    for (pred, (terms, quantified)) in strength_map {
+      log! {
+        @info "extending {} with {} terms in {} clauses ({} quantifiers)",
+        instance[pred],
+        terms.len() + quantified.iter().fold(
+          0, |acc, & (_, ref terms)| acc + terms.len()
+        ),
+        instance.clauses_of(pred).0.len(),
+        quantified.len()
+      }
+      info += pre_instance.extend_pred_left(
+        pred, terms, quantified
+      ) ? ;
+    }
+
+    profile! { |profiler| mark "strengthening" }
+
+    if conf.preproc.active {
+      run(pre_instance, profiler, false)
+    } else {
+      Ok(())
+    }
+  } ;
+
+  finalize(res, & mut split_instance, profiler) ? ;
+
+  Ok(split_instance)
 }
 
 
@@ -72,8 +246,7 @@ impl<'a> Reductor<'a> {
   /// Constructor.
   ///
   /// Checks the configuration to initialize the pre-processors.
-  pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let instance = PreInstance::new(instance) ? ;
+  pub fn new(instance: PreInstance<'a>) -> Res<Self> {
 
     macro_rules! some_new {
       ($red:ident if $flag:ident $(and $flags:ident )*) => (
@@ -125,7 +298,9 @@ impl<'a> Reductor<'a> {
   }
 
   /// Runs the full pre-processing.
-  pub fn run(& mut self, _profiler: & Profiler) -> Res<()> {
+  pub fn run(
+    & mut self, _profiler: & Profiler, simplify_first: bool
+  ) -> Res<()> {
     // Counter for preproc dumping.
     //
     // Starts at `1`, `0` is reserved for the fixed point.
@@ -228,20 +403,32 @@ impl<'a> Reductor<'a> {
     }
     profile!{
       |_profiler|
-        "pred count original" => add self.instance.preds().len()
+        "pred count original" => add {
+          let mut count = 0 ;
+          for pred in self.instance.pred_indices() {
+            if ! self.instance.is_known(pred) {
+              count += 1
+            }
+          }
+          count
+        }
     }
     profile!{
       |_profiler|
         "arg count original" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
-            args += info.sig.len()
+            if ! self.instance.is_known(info.idx) {
+              args += info.sig.len()
+            }
           }
           args
         }
     }
 
-    run! { simplify } ;
+    if simplify_first {
+      run! { simplify } ;
+    }
 
     // Used to avoid running cfg reduction if nothing has changed since the
     // last run.
@@ -291,11 +478,12 @@ impl<'a> Reductor<'a> {
 
     let max_clause_add = if conf.preproc.mult_unroll
     && ! self.instance.clauses().is_empty() {
-      (
-        50. * (
-          self.instance.clauses().len() as f64
-        ).log(10.)
-      ).round() as usize
+      let clause_count = self.instance.clauses().len() ;
+      ::std::cmp::min(
+        clause_count, (
+          50. * ( clause_count as f64 ).log(2.)
+        ).round() as usize
+      )
     } else {
       0
     } ;
@@ -373,7 +561,9 @@ impl<'a> Reductor<'a> {
         "arg count    final" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
-            args += info.sig.len()
+            if ! self.instance.is_known(info.idx) {
+              args += info.sig.len()
+            }
           }
           args
         }
@@ -1139,15 +1329,14 @@ impl RedStrat for CfgRed {
       upper_bound
     } else {
       let clause_count = instance.clauses().len() ;
-      let upper_bound = if clause_count <= 10 {
-        clause_count * 25
-      } else if clause_count <= 100 {
-        clause_count * 15
-      } else if clause_count <= 500 {
-        clause_count * 10
-      } else {
-        clause_count * 5
-      } ;
+      let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
+      // println!("adjusted: {}", adjusted) ;
+      let upper_bound = ::std::cmp::min(
+        clause_count, (
+          adjusted
+        ).round() as usize
+      ) ;
+
       self.upper_bound = Some(upper_bound) ;
       upper_bound
     } ;
@@ -1178,7 +1367,7 @@ impl RedStrat for CfgRed {
         instance, & mut to_keep, upper_bound
       ) ? ;
 
-      if pred_defs.len() == 0 { return Ok(info) }
+      if pred_defs.len() == 0 { break }
 
       info.preds += pred_defs.len() ;
 
@@ -1191,7 +1380,8 @@ impl RedStrat for CfgRed {
         if ! is_sat {
           bail!( ErrorKind::Unsat )
         } else {
-          return Ok(info)
+          total_info += info ;
+          break
         }
       }
 
@@ -1397,7 +1587,7 @@ impl RedStrat for RUnroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'neg_clauses: for clause in instance.neg_clauses() {
+      'neg_clauses: for clause in instance.strict_neg_clauses() {
         let clause = & instance[* clause] ;
         debug_assert! { clause.rhs().is_none() }
         conf.check_timeout() ? ;

@@ -5,7 +5,6 @@
 //! - document the workflow
 
 use common::* ;
-use common::data::HSample ;
 
 #[macro_use]
 pub mod helpers ;
@@ -34,7 +33,7 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & HSample, & mut TermVals) -> Res<bool>
+  fn synth<F>(& mut self, F, & Args, & mut TermVals, & Profiler) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
@@ -42,7 +41,7 @@ pub trait TheoSynth {
   ///
   /// [term val]: struct.TermVal.html
   /// (TermVal struct)
-  fn project(& self, & HSample, & Typ, & mut TermVals) -> Res<()> ;
+  fn project(& self, & Args, & Typ, & mut TermVals) -> Res<()> ;
 }
 
 use self::int::IntSynth ;
@@ -92,7 +91,7 @@ impl SynthSys {
   ///
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(
-    & mut self, sample: & HSample, mut f: F, _profiler: & Profiler
+    & mut self, sample: & Args, mut f: F, _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
 
@@ -113,7 +112,7 @@ impl SynthSys {
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "int" }
         let done = int_synth.synth(
-          & mut f, sample, & mut self.cross_synth
+          & mut f, sample, & mut self.cross_synth, _profiler
         ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "int" }
         if done ? { return Ok(true) }
@@ -134,7 +133,7 @@ impl SynthSys {
         }
         profile!{ |_profiler| tick "learning", "qual", "synthesis", "real" }
         let done = real_synth.synth(
-          & mut f, sample, & mut self.cross_synth
+          & mut f, sample, & mut self.cross_synth, _profiler
         ) ;
         profile!{ |_profiler| mark "learning", "qual", "synthesis", "real" }
         if done ? { return Ok(true) }

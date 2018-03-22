@@ -1,7 +1,6 @@
 //! Helper types and functions for preprocessing.
 
 use common::* ;
-use instance::info::* ;
 
 
 /// Result of extracting the terms for a predicate application in a clause.
@@ -83,7 +82,7 @@ pub enum TExtractRes<T> {
 /// Returns `None` on failure. Failure happens when some quantifiers are
 /// needed but `quantifiers` is false.
 fn args_of_pred_app(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   args: & HTArgs,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
@@ -112,7 +111,7 @@ fn args_of_pred_app(
 /// The `pred` argument is a special predicate that will be skipped when
 /// handling `src`, but it's arguments will be returned.
 fn terms_of_pred_apps<'a>(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   src: & 'a PredApps, tgt: & mut TTermSet,
   pred: PrdIdx, app_vars: & mut VarSet,
   map: & mut VarHMap<Term>,
@@ -155,7 +154,7 @@ fn terms_of_pred_apps<'a>(
 ///
 /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
 fn terms_of_terms<'a, TermIter, Terms, F>(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   src: Terms, tgt: & mut HConSet<Term>,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx,
@@ -264,7 +263,7 @@ F: Fn(Term) -> Term {
 ///
 /// - more doc with examples
 pub fn terms_of_app(
-  quantifiers: bool, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, var_info: & VarInfos,
   instance: & Instance, pred: PrdIdx, args: & HTArgs,
   fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
 ) -> Res<
@@ -333,7 +332,7 @@ pub fn terms_of_app(
 /// The result is `(pred_app, pred_apps, terms)` which semantics is `pred_app
 /// \/ (not /\ tterms) \/ (not /\ pred_apps)`.
 pub fn terms_of_lhs_app(
-  quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
   rhs: Option<(PrdIdx, & HTArgs)>,
   pred: PrdIdx, args: & HTArgs,
@@ -345,7 +344,7 @@ pub fn terms_of_lhs_app(
   }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let mut fresh = instance[pred].sig.next_index() ;
+  let mut fresh = instance.original_sig_of(pred).next_index() ;
   let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(
@@ -455,14 +454,14 @@ pub fn terms_of_lhs_app(
 /// The result is `(pred_apps, terms)` which semantics is `pred_app /\
 /// tterms`.
 pub fn terms_of_rhs_app(
-  quantifiers: bool, instance: & Instance, var_info: & VarMap<VarInfo>,
+  quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
   pred: PrdIdx, args: & HTArgs,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
-  let mut fresh = instance[pred].sig.next_index() ;
+  let mut fresh = instance.original_sig_of(pred).next_index() ;
   let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(

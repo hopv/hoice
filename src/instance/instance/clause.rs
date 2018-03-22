@@ -1,7 +1,7 @@
 //! Contains the clause structure for encapsulation.
 
 use common::* ;
-use instance::info::* ;
+use instance::info::VarInfo ;
 
 /// A clause.
 ///
@@ -14,7 +14,7 @@ use instance::info::* ;
 #[derive(Clone)]
 pub struct Clause {
   /// Variables of the clause.
-  pub vars: VarMap<VarInfo>,
+  pub vars: VarInfos,
   /// Terms of the left-hand side.
   lhs_terms: HConSet<Term>,
   /// Predicate applications of the left-hand side.
@@ -39,7 +39,7 @@ pub struct Clause {
 impl Clause {
   /// Creates a clause.
   pub fn new(
-    vars: VarMap<VarInfo>, lhs: Vec<TTerm>, rhs: Option<PredApp>,
+    vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
     info: & 'static str
   ) -> Self {
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
@@ -224,7 +224,7 @@ impl Clause {
     use std::cmp::Ordering::* ;
     let mut redundant = false ;
     let mut rmed_stuff = false ;
-    println!("is redundant {}", term) ;
+    // println!("is redundant {}", term) ;
     set.retain(
       |t| match t.atom_implies(term) {
         // `t` is more generic, `term` is redundant, keep `t`.
@@ -235,7 +235,7 @@ impl Clause {
         // `term` is more generic, discard.
         Some(Less) => {
           rmed_stuff = true ;
-          println!("  removing {}", t) ;
+          // println!("  removing {}", t) ;
           false
         },
         // No relation, keep `t`.
@@ -249,7 +249,7 @@ impl Clause {
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
   fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
-    println!("inserting {}", term) ;
+    // println!("inserting {}", term) ;
     let mut new_stuff = false ;
     let mut stack = vec![term] ;
 
@@ -313,6 +313,14 @@ impl Clause {
   #[inline]
   pub fn lhs_preds(& self) -> & PredApps {
     & self.lhs_preds
+  }
+
+  /// Drains all LHS applications.
+  #[inline]
+  pub fn drain_lhs_preds(
+    & mut self
+  ) -> ::std::collections::hash_map::Drain<PrdIdx, HTArgss> {
+    self.lhs_preds.drain()
   }
 
   /// LHS accessor for a predicate, mutable.
@@ -430,7 +438,7 @@ impl Clause {
 
   /// Variables accessor.
   #[inline]
-  pub fn vars(& self) -> & VarMap<VarInfo> {
+  pub fn vars(& self) -> & VarInfos {
     & self.vars
   }
 
@@ -696,7 +704,7 @@ impl ::std::ops::Index<VarIdx> for Clause {
   }
 }
 impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
-  & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>)
+  & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
 > for Clause {
   /// Writes the clause in SMT-LIB format.
   ///
@@ -704,7 +712,7 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
   /// asserted positively (when `true`) or negatively (when `false`).
   fn expr_to_smt2<Writer: Write>(
     & self, writer: & mut Writer, info: & 'b (
-      bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<PrdInfo>
+      bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdInfos
     )
   ) -> SmtRes<()> {
     let (

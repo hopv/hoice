@@ -41,8 +41,8 @@ pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
-mod revision ;
 
+pub use self::data::{ RArgs, Args, ArgsSet } ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -52,12 +52,7 @@ lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
   static ref version_string: String = format!(
-    "{}#{}", crate_version!(),
-    if let Some(rev) = ::common::revision::REVISION {
-      rev
-    } else {
-      "unknown"
-    }
+    "{}", crate_version!()
   ) ;
   /// Version with revision info.
   pub static ref version: & 'static str = & version_string ;
@@ -68,21 +63,58 @@ lazy_static!{
 
 // |===| Helpers.
 
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg(feature = "bench")]
+pub fn print_stats(_: & 'static str, _: Profiler) {}
+/// Prints the stats if asked. Does nothing in bench mode.
+#[cfg( not(feature = "bench") )]
+pub fn print_stats(name: & str, profiler: Profiler) {
+  if conf.stats {
+    let others = profiler.drain_others() ;
+    println!("") ;
+    profiler.print( name, "", & [ "data" ] ) ;
+    println!("") ;
+    for (name, other) in others {
+      print_stats(& name, other)
+    }
+  }
+}
+
 /// Lock corrupted error.
 pub fn corrupted_err<T>(_: T) -> Error {
   "[bug] lock on learning data is corrupted...".into()
 }
 
 /// Notifies the user and reads a line from stdin.
-pub fn pause(s: & str) {
+pub fn pause(s: & str, _profiler: & Profiler) {
   let mut dummy = String::new() ;
   println!("") ;
-  println!( "; {}{}...", conf.emph("press return"), s ) ;
+  println!( "; {} {}...", conf.emph("press return"), s ) ;
+  let _ = profile!(
+    |_profiler| wrap {
+      ::std::io::stdin().read_line(& mut dummy)
+    } "waiting for user input"
+  ) ;
+}
+
+/// Notifies the user through a message and reads a line from stdin.
+pub fn pause_msg(core: & msg::MsgCore, s: & str) {
+  let mut dummy = String::new() ;
+  let _ = core.msg(
+    format!( "; {} {}...", conf.emph("press return"), s )
+  ) ;
   let _ = ::std::io::stdin().read_line(& mut dummy) ;
 }
 
 /// Identity function.
 pub fn identity<T>(t: T) -> T { t }
+
+/// Creates a directory if it doesn't exist.
+pub fn mk_dir<P: AsRef<::std::path::Path>>(path: P) -> Res<()> {
+  use std::fs::DirBuilder ;
+  DirBuilder::new().recursive(true).create(path) ? ;
+  Ok(())
+}
 
 
 // |===| Type and traits aliases.
@@ -101,6 +133,9 @@ pub type Sig = VarMap<Typ> ;
 /// A predicate application.
 pub type PredApp = (PrdIdx, HTArgs) ;
 
+/// An initial candidate for the teacher to start with.
+pub type InitCandidates = ConjCandidates ;
+
 /// Some predicate applications.
 pub type PredApps = PrdHMap< HTArgss > ;
 /// Predicate application alias type extension.
@@ -116,6 +151,11 @@ impl PredAppsExt for PredApps {
   }
 }
 
+/// Predicate informations.
+pub type PrdInfos = PrdMap<::instance::info::PrdInfo> ;
+/// Variable informations.
+pub type VarInfos = VarMap<::instance::info::VarInfo> ;
+
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
@@ -125,121 +165,15 @@ pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
+///
+pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
+///
+pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = Args ;
+pub type Cex = RArgs ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap< Vec<Cex> > ;
-
-/// Mapping from variables to values, used for learning data.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub struct Args {
-  /// Internal map.
-  map: VarMap<Val>,
-}
-impl From< VarMap<Val> > for Args {
-  fn from(map: VarMap<Val>) -> Self {
-    Args::new(map)
-  }
-}
-impl_fmt! {
-  Args(self, fmt) {
-    write!(fmt, "{}", self.map)
-  }
-}
-impl Args {
-  /// Constructor.
-  pub fn new(mut map: VarMap<Val>) -> Self {
-    for val in map.iter_mut() {
-      val.normalize()
-    }
-    Args { map }
-  }
-  /// Pushes a value.
-  pub fn push(& mut self, val: Val) {
-    self.map.push(val)
-  }
-  /// Constructor with some capacity.
-  pub fn with_capacity(capa: usize) -> Self {
-    Self::new( VarMap::with_capacity(capa) )
-  }
-
-  /// True if at least one value is `Val::N`.
-  pub fn is_partial(& self) -> bool {
-    self.map.iter().any(|v| ! v.is_known())
-  }
-
-  /// True if the two args are the same.
-  pub fn same_as(& self, other: & Self) -> bool {
-    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
-      if ! v_1.same_as(v_2) { return false }
-    }
-    true
-  }
-
-  /// True if for all values in `self`, it is the same as `other` or is
-  /// `Val::N`, and at least one is `Val::N`.
-  ///
-  /// Both must have the same length.
-  pub fn sub(& self, other: & Self) -> bool {
-    debug_assert_eq! { self.map.len(), other.map.len() }
-    let mut same = true ;
-    for (v_1, v_2) in self.map.iter().zip( other.map.iter() ) {
-      if ! v_1.same_as(v_2) {
-        if v_1.is_known() {
-          return false
-        } else {
-          same = false
-        }
-      }
-    }
-    ! same
-  }
-
-  /// True if `s.sub(self) || s.same_as(self)` is true for some `s` in `set`.
-  pub fn is_subbed(& self, set: & HConSet<::common::data::HSample>) -> bool {
-    set.iter().any(|s| s.sub(self) || s.same_as(self))
-  }
-
-  /// Constructor from a model.
-  pub fn of_model<T>(
-    info: & VarMap<::instance::info::VarInfo>,
-    model: Vec<(VarIdx, T, Val)>,
-    partial: bool,
-  ) -> Self {
-    let mut slf = Args::new(
-      info.iter().map(
-        |info| if partial {
-          Val::N
-        } else {
-          info.typ.default_val()
-        }
-      ).collect()
-    ) ;
-    for (var, _, val) in model {
-      slf[var] = val
-    }
-    slf
-  }
-
-  /// Evaluates some arguments and yields the resulting `VarMap`.
-  pub fn apply_to(
-    & self, args: & VarMap<::term::Term>
-  ) -> ::errors::Res<Self> {
-    let mut res = Self::with_capacity( args.len() ) ;
-    for arg in args {
-      res.push( arg.eval(self) ? )
-    }
-    Ok(res)
-  }
-}
-impl ::std::ops::Deref for Args {
-  type Target = VarMap<Val> ;
-  fn deref(& self) -> & VarMap<Val> { & self.map }
-}
-impl ::std::ops::DerefMut for Args {
-  fn deref_mut(& mut self) -> & mut VarMap<Val> { & mut self.map }
-}
 
 /// Signature trait, for polymorphic term insertion.
 pub trait Signature {
@@ -278,14 +212,6 @@ impl Evaluator for VarMap<Val> {
   }
   #[inline]
   fn len(& self) -> usize { VarMap::len(self) }
-}
-impl Evaluator for Args {
-  #[inline]
-  fn get(& self, var: VarIdx) -> & Val {
-    & self.map[var]
-  }
-  #[inline]
-  fn len(& self) -> usize { VarMap::len(& self.map) }
 }
 impl Evaluator for () {
   #[inline]
@@ -326,6 +252,7 @@ impl CanBEvaled for Term {
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
 #[must_use]
+#[derive(Debug)]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -597,16 +524,6 @@ mod hash {
   }
 }
 
-
-
-/// Prints some text and reads a line.
-pub fn read_line(blah: & str) -> String {
-  let mut line = String::new() ;
-  println!("") ;
-  println!( "; {} {}", conf.emph("press return"), blah ) ;
-  let _ = ::std::io::stdin().read_line(& mut line) ;
-  line
-}
 
 
 

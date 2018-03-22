@@ -50,7 +50,7 @@
 //!   RTerm::App { typ, op: Op::Eql, ref args } => {
 //!     assert_eq!( typ, Typ::Bool ) ;
 //!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( format!("{}", some_term), "(= 11 (* 2 v_5))" )
+//!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
 //!   },
 //!   _ => panic!("not an equality"),
 //! }
@@ -119,7 +119,8 @@ impl Typ {
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
-      Typ::Real | Typ::Int => Val::I( Int::zero() ),
+      Typ::Real => Val::R( Rat::zero() ),
+      Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
     }
   }
@@ -197,6 +198,13 @@ impl RTerm {
   pub fn add_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
       RTerm::App { op: Op::Add, ref args, .. } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of subtractions.
+  pub fn sub_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Sub, ref args, .. } => Some(args),
       _ => None,
     }
   }
@@ -710,6 +718,89 @@ impl RTerm {
   }
 
 
+  /// Tries to turn a term into a substitution.
+  ///
+  /// Works only on equalities.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use hoice::term ;
+  ///
+  /// let bv0 = term::bool_var(0) ;
+  /// let bv1 = term::bool_var(1) ;
+  /// let bv2 = term::bool_var(2) ;
+  /// let rhs = term::or(vec![bv1, bv2]) ;
+  /// let term = term::eq(bv0, rhs.clone()) ;
+  /// debug_assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
+  /// ```
+  pub fn as_subst(& self) -> Option<(VarIdx, Term)> {
+    if let Some(kids) = self.eq_inspect() {
+      debug_assert_eq! { kids.len(), 2 }
+      let (lhs, rhs) = (& kids[0], & kids[1]) ;
+
+      if let Some(var_idx) = lhs.var_idx() {
+        return Some((var_idx, rhs.clone()))
+      } else if let Some(var_idx) = rhs.var_idx() {
+        return Some((var_idx, lhs.clone()))
+      }
+
+      if lhs.typ().is_arith() {
+        debug_assert! { rhs.is_zero() }
+
+        let lhs = if let Some((_, term)) = lhs.cmul_inspect() {
+          term
+        } else { lhs } ;
+
+        let mut add = vec![] ;
+        let mut var = None ;
+        let mut negated = false ;
+
+        if let Some(kids) = lhs.add_inspect() {
+          for kid in kids {
+            if var.is_some() {
+              add.push(kid.clone()) ;
+              continue
+            }
+            if let Some(var_index) = kid.var_idx() {
+              debug_assert! { var.is_none() }
+              var = Some(var_index) ;
+              continue
+            } else if let Some((val, term)) = kid.cmul_inspect() {
+              if let Some(var_index) = term.var_idx() {
+                if val.is_one() {
+                  var = Some(var_index) ;
+                  continue
+                } else if val.is_minus_one() {
+                  var = Some(var_index) ;
+                  negated = true ;
+                  continue
+                }
+              }
+            }
+            add.push(kid.clone())
+          }
+
+          if let Some(var) = var {
+            let mut sum = term::add(add) ;
+            if ! negated { sum = term::u_minus(sum) }
+            Some((var, sum))
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+
+    } else {
+      None
+    }
+  }
+
+
 
   /// Attempts to invert a term from a variable.
   pub fn invert_var(& self, var: VarIdx, typ: Typ) -> Option<(VarIdx, Term)> {
@@ -1193,6 +1284,27 @@ impl TTermSet {
     true
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    let mut terms = HConSet::<Term>::with_capacity(self.terms.len()) ;
+    for term in self.terms() {
+      let (term, _) = term.subst(map) ;
+      terms.insert(term) ;
+    }
+
+    let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
+    for (pred, argss) in self.preds.iter() {
+      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      for args in argss {
+        let args = term::args::new( args.subst(map) ) ;
+        nu_argss.insert(args) ;
+      }
+      preds.insert(* pred, nu_argss) ;
+    }
+
+    TTermSet { terms, preds }
+  }
+
   /// Inserts a predicate application.
   #[inline]
   pub fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
@@ -1394,7 +1506,7 @@ fn remove_vars_from_pred_apps(
 
 
 /// A formula composed of top terms.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
   True,
@@ -1450,6 +1562,46 @@ impl TTerms {
     if b { Self::tru() } else { Self::fls() }
   }
 
+  /// Attempts to transform some terms in a term.
+  pub fn to_term(& self) -> Option<Term> {
+    match * self {
+      TTerms::True => Some( term::tru() ),
+      TTerms::False => Some( term::fls() ),
+
+      TTerms::Conj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
+      TTerms::Conj { ref tterms, .. } => Some(
+        term::and(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Disj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Disj {
+        ref tterms, ref neg_preds, ..
+      } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
+      TTerms::Disj { ref tterms, .. } => Some(
+        term::or(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Dnf { ref disj } => {
+        let mut disj_terms = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref conj) in disj {
+          if quant.is_some()
+          || ! conj.preds.is_empty() { return None }
+          disj_terms.push(
+            term::and(
+              conj.terms().iter().map(|term| term.clone()).collect()
+            )
+          )
+        }
+        Some( term::or(disj_terms) )
+      },
+    }
+  }
+
   /// Boolean value of some top terms.
   #[inline]
   pub fn bool(& self) -> Option<bool> {
@@ -1477,6 +1629,74 @@ impl TTerms {
     }
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    match * self {
+      TTerms::True => TTerms::True,
+      TTerms::False => TTerms::False,
+
+      TTerms::Conj { ref quant, ref tterms } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+        TTerms::Conj { quant: quant.clone(), tterms: tterms.subst(map) }
+      },
+
+      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+
+        let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
+        for (pred, argss) in neg_preds.iter() {
+          let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+          for args in argss {
+            let args = term::args::new( args.subst(map) ) ;
+            nu_argss.insert(args) ;
+          }
+          preds.insert(* pred, nu_argss) ;
+        }
+
+        TTerms::Disj {
+          quant: quant.clone(),
+          tterms: tterms.subst(map),
+          neg_preds: preds,
+        }
+      },
+
+      TTerms::Dnf { ref disj } => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref tterms) in disj {
+          debug_assert! {
+            if let Some(quant) = quant.as_ref() {
+              quant.vars().keys().all(
+                |v| map.var_get(* v).is_none()
+              )
+            } else {
+              true
+            }
+          }
+          nu_disj.push(
+            (quant.clone(), tterms.subst(map))
+          )
+        }
+        TTerms::Dnf { disj: nu_disj }
+      },
+    }
+  }
+
   /// Constructor for a single term.
   pub fn of_term(quant: Option<Quant>, term: Term) -> Self {
     Self::conj( quant, TTermSet::of_term(term) )
@@ -1484,14 +1704,14 @@ impl TTerms {
 
   /// Constructs a conjuction.
   pub fn conj(quant: Option<Quant>, tterms: TTermSet) -> Self {
-    TTerms::Conj{ quant, tterms }.simplify()
+    TTerms::Conj { quant, tterms }.simplify()
   }
 
   /// Constructs a disjuction.
   pub fn disj(
     quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<HTArgss>
   ) -> Self {
-    TTerms::Disj{ quant, tterms, neg_preds }.simplify()
+    TTerms::Disj { quant, tterms, neg_preds }.simplify()
   }
   /// Constructs a disjunction from a positive application and some negated top
   /// terms.

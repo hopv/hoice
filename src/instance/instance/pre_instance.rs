@@ -3,8 +3,6 @@
 
 use common::* ;
 use common::smt::{ SmtConj, SmtImpl } ;
-
-use instance::info::* ;
 use instance::Clause ;
 
 
@@ -27,7 +25,8 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let solver = conf.solver.spawn("preproc", ()) ? ;
+    let mut solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
+    solver.free_resets() ? ;
 
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_check = ClsSet::with_capacity(7) ;
@@ -132,7 +131,7 @@ impl<'a> PreInstance<'a> {
     macro_rules! rm_return {
       ($clause:ident if $should_remove:expr => $blah:expr) => (
         if $should_remove {
-          info! {
+          log! { @debug
             "  removing clause #{} by {}", clause, $blah
           }
           self.instance.forget_clause(clause) ? ;
@@ -141,7 +140,7 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    log_debug! { "simplifying clause #{}", clause }
+    log! { @debug "simplifying clause #{}", clause }
 
     if self.instance[clause].is_unsat() {
       bail!( ErrorKind::Unsat )
@@ -155,9 +154,16 @@ impl<'a> PreInstance<'a> {
     if self.instance[clause].terms_changed() {
       // Propagate.
       rm_return! {
-        clause if self.simplifier.clause_propagate(
-          & mut self.instance[clause]
-        ) ? => "propagation"
+        clause if {
+          // println!("clause before:") ;
+          // println!("{}", self.instance[clause].to_string_info(self.preds()).unwrap()) ;
+          let res = self.simplifier.clause_propagate(
+            & mut self.instance[clause]
+          ) ? ;
+          // println!("clause after:") ;
+          // println!("{}", self.instance[clause].to_string_info(self.preds()).unwrap()) ;
+          res
+        } => "propagation"
       }
 
       // Check for triviality.
@@ -290,6 +296,7 @@ impl<'a> PreInstance<'a> {
     self.solver.comment("Done pruning atoms...") ? ;
 
     self.solver.pop(1) ? ;
+    // self.solver.reset() ? ;
 
     Ok(())
   }
@@ -728,6 +735,136 @@ impl<'a> PreInstance<'a> {
   }
 
 
+  /// Extends the lhs occurences of a predicate with some a term.
+  ///
+  /// If `pred` appears in `pred /\ apps /\ trms => rhs`, the clause will
+  /// become `pred /\ apps /\ trms /\ term => rhs`.
+  ///
+  /// # Consequences
+  ///
+  /// - simplifies all clauses impacted
+  ///
+  /// # Used by
+  ///
+  /// - sub instance generation, when splitting on one clause
+  pub fn extend_pred_left(
+    & mut self, pred: PrdIdx,
+    terms: HConSet<Term>, quantified: Vec<(Quantfed, HConSet<Term>)>
+  ) -> Res<RedInfo> {
+    self.check("before `extend_pred_left`") ? ;
+
+    // let mut tterm_set = TTermSet::new() ;
+    // tterm_set.insert_terms(terms) ;
+    // for (pred, args) in pred_apps {
+    //   tterm_set.insert_pred_app(pred, args) ;
+    // }
+
+    let mut info = RedInfo::new() ;
+
+    // match term.bool() {
+    //   Some(true) => return Ok(info),
+    //   Some(false) => {
+    //     let mut to_forget: Vec<_> = self.pred_to_clauses[
+    //       pred
+    //     ].0.iter().map(|c| * c).collect() ;
+    //     info.clauses_rmed += to_forget.len() ;
+    //     self.instance.forget_clauses(& mut to_forget) ? ;
+    //     // pred only appears in some rhs-s now, force true
+    //     info += self.force_true(pred) ? ;
+    //     return Ok(info)
+    //   },
+    //   None => (),
+    // }
+
+    // log! { @3
+    //   "extend pred left on {} with {}...",
+    //   conf.emph(& self[pred].name),
+    //   term
+    // }
+
+    // Update lhs clauses.
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.clauses_to_simplify = self.pred_to_clauses[pred].0.iter().map(
+      |c| * c
+    ).collect() ;
+
+    'clause_iter: for clause in & self.clauses_to_simplify {
+      let clause = * clause ;
+      log! { @4
+        "  - working on lhs of clause {}",
+        self[clause].to_string_info(
+          self.preds()
+        ).unwrap()
+      }
+
+      let argss = if let Some(
+        argss
+      ) = self.clauses[clause].lhs_preds().get(& pred) {
+        argss.clone()
+      } else {
+        bail!(
+          "inconsistent instance state, \
+          `pred_to_clauses` and clauses out of sync"
+        )
+      } ;
+
+      // Reusable set of terms to build the disjunction.
+      let mut term_set = HConSet::<Term>::new() ;
+
+      for args in argss {
+
+        for term in & terms {
+          if let Some((term, _)) = term.subst_total(& args) {
+            term_set.insert(term) ;
+          } else {
+            bail!("error during total substitution in `extend_pred_left`")
+          }
+        }
+
+        for & (ref qvars, ref terms) in & quantified {
+          // Generate fresh variables for the clause if needed.
+          let qual_map = self.instance.clauses[
+            clause
+          ].fresh_vars_for(qvars) ;
+
+          for term in terms {
+            if let Some((term, _)) = term.subst_total(
+              & (& args, & qual_map)
+            ) {
+              term_set.insert(term) ;
+            } else {
+              bail!("error during total substitution in `extend_pred_left`")
+            }
+          }
+        }
+
+        let term = term::or(
+          term_set.drain().map(|term| term::not(term)).collect()
+        ) ;
+
+        self.instance.clause_add_lhs_term(clause, term)
+      }
+
+      log! { @4
+        "  done with clause: {}",
+        self[clause].to_string_info(
+          self.preds()
+        ).unwrap()
+      }
+
+    }
+
+    // Simplify the clauses we just updated.
+    info += self.simplify_clauses() ? ;
+
+    self.check("after `extend_pred_left`") ? ;
+
+    info += self.force_trivial() ? ;
+
+    Ok(info)
+  }
+
+
 
 
   /// Forces all lhs occurrences of a predicate to be replaced by a DNF.
@@ -1008,8 +1145,6 @@ impl<'a> PreInstance<'a> {
             }
           }
 
-          log_debug! { "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap() }
-
           // Explicitely continueing, otherwise the factored error message
           // below will fire.
           continue 'clause_iter
@@ -1131,7 +1266,11 @@ impl<'a> PreInstance<'a> {
           nu_clause.to_string_info(& self.preds).unwrap()
         }
 
+        // println!("clause before:") ;
+        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
+        // println!("clause after:") ;
+        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
@@ -1208,7 +1347,11 @@ impl<'a> PreInstance<'a> {
           }
         }
 
+        // println!("clause before:") ;
+        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
+        // println!("clause after:") ;
+        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
@@ -1415,8 +1558,6 @@ impl<'a> PreInstance<'a> {
       )
     }
 
-    self.solver.reset() ? ;
-
     let set = PrdSet::new() ;
     self.instance.finalize() ? ;
     for pred in self.instance.sorted_forced_terms() {
@@ -1458,6 +1599,8 @@ impl<'a> PreInstance<'a> {
       self.solver.pop(1) ? ;
       return Ok(! sat)
     }
+
+    self.solver.reset() ? ;
 
     Ok(true)
     
@@ -1585,7 +1728,7 @@ impl ClauseSimplifier {
 
   /// Checks internal consistency.
   #[cfg(debug_assertions)]
-  fn check(& self, vars: & VarMap<VarInfo>) -> Res<()> {
+  fn check(& self, vars: & VarInfos) -> Res<()> {
     // Representatives can only be mapped to themselves.
     for (var, rep) in & self.var_to_rep {
       if var != rep {
@@ -1627,7 +1770,7 @@ impl ClauseSimplifier {
   }
   #[cfg( not(debug_assertions) )]
   #[inline(always)]
-  fn check(& self, _: & VarMap<VarInfo>) -> Res<()> {
+  fn check(& self, _: & VarInfos) -> Res<()> {
     Ok(())
   }
 
@@ -1673,85 +1816,95 @@ impl ClauseSimplifier {
           )
         }
 
-        match (args[0].var_idx(), args[1].var_idx()) {
+        // println!("as_subst {}", eq) ;
+        let res = eq.as_subst() ;
 
-          (Some(v_1), Some(v_2)) if v_1 == v_2 => (),
+        // if let Some(& (ref v, ref t)) = res.as_ref() {
+        //   println!("  v_{} = {}", v, t)
+        // } else {
+        //   println!("  none")
+        // }
 
-          (Some(v_1), Some(v_2)) => match (
-            self.var_to_rep.get(& v_1).map(|rep| * rep),
-            self.var_to_rep.get(& v_2).map(|rep| * rep)
-          ) {
+        match res {
 
-            // Both already have same rep.
-            (Some(rep_1), Some(rep_2)) if rep_1 == rep_2 => (),
-            // Different rep.
-            (Some(rep_1), Some(rep_2)) => {
-              // We keep `rep_1`.
-              let set_2 = if let Some(set) = self.rep_to_vars.remove(& rep_2) {
-                set
-              } else { bail!("simplification error (1)") } ;
-              let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
-                set
-              } else { bail!("simplification error (2)") } ;
-              // Drain `set_2`: update `var_to_rep` and `set_1`.
-              use mylib::coll::* ;
-              for var in set_2.into_iter().chain_one(rep_2) {
-                let _prev = self.var_to_rep.insert(var, rep_1) ;
-                debug_assert_eq!( _prev, Some(rep_2) ) ;
-                let _is_new = set_1.insert(var) ;
-                debug_assert!( _is_new )
-              }
-              // Re-route `rep_to_term`.
-              if let Some(term) = self.rep_to_term.remove(& rep_2) {
-                let prev = self.rep_to_term.insert(rep_1, term.clone()) ;
-                if let Some(other_term) = prev {
-                  self.terms_to_add.push( term::eq(term, other_term) )
+          Some((var, term)) => if let Some(v_2) = term.var_idx() {
+            let v_1 = var ;
+
+            match (
+              self.var_to_rep.get(& v_1).map(|rep| * rep),
+              self.var_to_rep.get(& v_2).map(|rep| * rep)
+            ) {
+
+              // Both already have same rep.
+              (Some(rep_1), Some(rep_2)) if rep_1 == rep_2 => (),
+              // Different rep.
+              (Some(rep_1), Some(rep_2)) => {
+                // We keep `rep_1`.
+                let set_2 = if let Some(set) = self.rep_to_vars.remove(& rep_2) {
+                  set
+                } else { bail!("simplification error (1)") } ;
+                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                  set
+                } else { bail!("simplification error (2)") } ;
+                // Drain `set_2`: update `var_to_rep` and `set_1`.
+                use mylib::coll::* ;
+                for var in set_2.into_iter().chain_one(rep_2) {
+                  let _prev = self.var_to_rep.insert(var, rep_1) ;
+                  debug_assert_eq!( _prev, Some(rep_2) ) ;
+                  let _is_new = set_1.insert(var) ;
+                  debug_assert!( _is_new )
                 }
-              }
-            },
-            // Only `v_1` has a rep.
-            (Some(rep_1), None) => {
-              let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
-                set
-              } else { panic!("simplification error (3)") } ;
-              let _is_new = set_1.insert(v_2) ;
-              debug_assert!( _is_new ) ;
-              let _prev = self.var_to_rep.insert(v_2, rep_1) ;
-              debug_assert!( _prev.is_none() )
-            },
-            // Only `v_2` has a rep.
-            (None, Some(rep_2)) => {
-              let set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
-                set
-              } else { bail!("simplification error (4)") } ;
-              let _is_new = set_2.insert(v_1) ;
-              debug_assert!( _is_new ) ;
-              let _prev = self.var_to_rep.insert(v_1, rep_2) ;
-              debug_assert!( _prev.is_none() )
-            },
-            // No rep, we use `v_1` as the rep.
-            (None, None) => {
-              let mut set = VarSet::with_capacity(4) ;
-              set.insert(v_2) ;
-              let _prev = self.rep_to_vars.insert(v_1, set) ;
-              debug_assert!( _prev.is_none() ) ;
-              let _prev = self.var_to_rep.insert(v_1, v_1) ;
-              debug_assert!( _prev.is_none() ) ;
-              let _prev = self.var_to_rep.insert(v_2, v_1) ;
-              debug_assert!( _prev.is_none() ) ;
-            },
+                // Re-route `rep_to_term`.
+                if let Some(term) = self.rep_to_term.remove(& rep_2) {
+                  let prev = self.rep_to_term.insert(rep_1, term.clone()) ;
+                  if let Some(other_term) = prev {
+                    self.terms_to_add.push( term::eq(term, other_term) )
+                  }
+                }
+              },
+              // Only `v_1` has a rep.
+              (Some(rep_1), None) => {
+                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                  set
+                } else { panic!("simplification error (3)") } ;
+                let _is_new = set_1.insert(v_2) ;
+                debug_assert!( _is_new ) ;
+                let _prev = self.var_to_rep.insert(v_2, rep_1) ;
+                debug_assert!( _prev.is_none() )
+              },
+              // Only `v_2` has a rep.
+              (None, Some(rep_2)) => {
+                let set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
+                  set
+                } else { bail!("simplification error (4)") } ;
+                let _is_new = set_2.insert(v_1) ;
+                debug_assert!( _is_new ) ;
+                let _prev = self.var_to_rep.insert(v_1, rep_2) ;
+                debug_assert!( _prev.is_none() )
+              },
+              // No rep, we use `v_1` as the rep.
+              (None, None) => {
+                let mut set = VarSet::with_capacity(4) ;
+                set.insert(v_2) ;
+                let _prev = self.rep_to_vars.insert(v_1, set) ;
+                debug_assert!( _prev.is_none() ) ;
+                let _prev = self.var_to_rep.insert(v_1, v_1) ;
+                debug_assert!( _prev.is_none() ) ;
+                let _prev = self.var_to_rep.insert(v_2, v_1) ;
+                debug_assert!( _prev.is_none() ) ;
+              },
 
-          },
+            }
 
-          // A variable and a term.
-          (Some(var), None) | (None, Some(var)) => {
-            let term = if args[0].var_idx().is_some() {
-              args[1].clone()
-            } else { args[0].clone() } ;
+          } else {
 
             let rep = if let Some(rep) = self.var_to_rep.get(& var).map(
               |rep| * rep
-            ) { rep } else {
+            ) {
+              // println!("  has a rep ({})", rep.default_str()) ;
+              rep
+            } else {
+              // println!("  has no rep") ;
               let _prev = self.var_to_rep.insert(var, var) ;
               debug_assert!( _prev.is_none() ) ;
               let _prev = self.rep_to_vars.insert(
@@ -1773,6 +1926,8 @@ impl ClauseSimplifier {
               }
             }
 
+            // println!("  cycle: {}", skip) ;
+
             if skip {
               remove = false
             } else {
@@ -1790,7 +1945,7 @@ impl ClauseSimplifier {
           },
 
           // Two terms.
-          (None, None) => {
+          None => {
             debug_assert_eq! { args[1].typ(), args[0].typ() }
             let inline = if args[0].typ() == Typ::Bool {
               if clause.lhs_terms().contains(& args[0]) {
@@ -1814,8 +1969,6 @@ impl ClauseSimplifier {
             } ;
             if let Some(term) = inline {
               inlined = true ;
-              println!("inserting {}", term) ;
-              println!("from {}", eq) ;
               let is_new = clause.insert_term( term.clone() ) ;
               remove = is_new ;
               if term.is_eq() && is_new {
@@ -1849,7 +2002,7 @@ impl ClauseSimplifier {
 
     self.check( clause.vars() ) ? ;
 
-    // log_debug!{ "  generating `var_to_rep_term`" }
+    // println!{ "  generating `var_to_rep_term`" }
     self.var_to_rep_term = VarHMap::with_capacity( self.var_to_rep.len() ) ;
     for (rep, set) in & self.rep_to_vars {
       for var in set {
@@ -1861,22 +2014,20 @@ impl ClauseSimplifier {
         }
       }
     }
-    // if_debug!{
-    //   for (var, rep) in & self.var_to_rep {
-    //     log_debug!{ "    {} -> {}", var.default_str(), rep.default_str() }
-    //   }
+    // for (var, rep) in & self.var_to_rep {
+    //   println! { "    {} -> {}", var.default_str(), rep.default_str() }
     // }
 
-    // log_debug!{ "  stabilizing `rep_to_term` (first step)" }
+    // println!{ "  stabilizing `rep_to_term` (first step)" }
     for (_, term) in & mut self.rep_to_term {
       let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
       if changed { * term = nu_term }
     }
     let mut to_rm = vec![] ;
     for (rep, term) in & self.rep_to_term {
-      // log_debug!{ "    {} -> {}", rep.default_str(), term }
+      // println!{ "    {} -> {}", rep.default_str(), term }
       if term::vars(term).contains(rep) {
-        // log_debug!{ "      -> recursive, putting equality back." }
+        // println!{ "      -> recursive, putting equality back." }
         to_rm.push(* rep)
       }
     }
@@ -1889,15 +2040,15 @@ impl ClauseSimplifier {
       )
     }
 
-    // log_debug!{
+    // println!{
     //   "  stabilizing `rep_to_term` (second step, {})",
     //   self.rep_to_term.len()
     // }
     self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
-      // log_debug! { "    pre subst: {}", term }
+      // println! { "    pre subst: {}", term }
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
-      // log_debug! { "    post subst" }
+      // println! { "    post subst" }
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
       debug_assert!( _prev.is_none() )
     }

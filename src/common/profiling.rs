@@ -239,8 +239,11 @@ pub struct Profiler {
   stats: RefCell<Stats>,
   /// Sub-profilers.
   subs: RefCell< Vec<(String, Profiler)> >,
+  /// Other profilers.
+  others: RefCell< Vec<(String, Profiler)> >,
 }
 #[cfg(feature = "bench")]
+#[derive(Clone)]
 pub struct Profiler ;
 impl Profiler {
   /// Constructor.
@@ -248,14 +251,39 @@ impl Profiler {
   pub fn new() -> Self {
     use std::cell::RefCell ;
     Profiler {
-      map: RefCell::new( HashMap::new() ),
+      map: RefCell::new( InstantMap::new() ),
       start: Instant::now(),
-      stats: RefCell::new( HashMap::new() ),
+      stats: RefCell::new( Stats::new() ),
       subs: RefCell::new( Vec::new() ),
+      others: RefCell::new( Vec::new() ),
     }
   }
   #[cfg(feature = "bench")]
   pub fn new() -> Self { Profiler }
+
+  /// Merges two profilers.
+  #[cfg(feature = "bench")]
+  pub fn merge(& mut self, _: Self) {}
+  /// Merges two profilers.
+  #[cfg(not(feature = "bench"))]
+  pub fn merge(& mut self, other: Self) {
+    let map = other.map.into_inner() ;
+    let stats = other.stats.into_inner() ;
+    let subs = other.subs.into_inner() ;
+    for sub in subs {
+      self.subs.get_mut().push(sub)
+    }
+    for (scope, (_, duration)) in map {
+      self.map.get_mut().entry(scope).or_insert_with(
+        || (None, Duration::new(0, 0))
+      ).1 += duration
+    }
+    for (scope, val) in stats {
+      * self.stats.get_mut().entry(scope).or_insert_with(
+        || 0
+      ) += val
+    }
+  }
 
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]
@@ -300,7 +328,10 @@ impl Profiler {
         * tick = None
       }
     } else {
-      panic!("profiling: trying to mark the time without ticking first")
+      panic!(
+        "profiling: trying to mark the time for {:?} without ticking first",
+        scope
+      )
     }
   }
 
@@ -335,6 +366,30 @@ impl Profiler {
   pub fn add_sub< S: Into<String> >(
     & self, _: S, _: Self
   ) {}
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
+  pub fn add_other<S: Into<String>>(
+    & self, name: S, other: Self
+  ) -> () {
+    self.others.borrow_mut().push((name.into(), other))
+  }
+  #[cfg(feature = "bench")]
+  pub fn add_other<S>(
+    & self, _: S, _: Self
+  ) -> () {}
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
+  pub fn drain_others(
+    & self,
+  ) -> Vec<(String, Profiler)> {
+    let mut res = vec![] ;
+    ::std::mem::swap(
+      & mut res, & mut * self.others.borrow_mut()
+    ) ;
+    res
+  }
 
 
   /// Consumes and prints a profiler.

@@ -140,7 +140,7 @@ impl Graph {
   ) -> Res<()> {
     if let Some(
       (mut pred_dep_file, path)
-    ) = conf.preproc.pred_dep_file(file) ? {
+    ) = conf.preproc.pred_dep_file(file, instance) ? {
       use std::process::Command ;
       self.dot_write(& mut pred_dep_file, instance, hi_lite) ? ;
       let mut pdf_path = path.clone() ;
@@ -444,7 +444,9 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log_debug! { "from clause {}", clause.to_string_info(& instance.preds()) ? }
+            log_debug! {
+              "from clause {}", clause.to_string_info(& instance.preds()) ?
+            }
             if ! forced_inlining && ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }

@@ -8,6 +8,8 @@ use clap::Arg ;
 use ansi::{ Colour, Style } ;
 
 use errors::* ;
+use common::mk_dir ;
+use instance::Instance ;
 
 /// Clap `App` with static lifetimes.
 pub type App = ::clap::App<'static, 'static> ;
@@ -21,8 +23,6 @@ pub type Matches = ::clap::ArgMatches<'static> ;
 pub trait SubConf {
   /// True if the options of the subconf need the output directory.
   fn need_out_dir(& self) -> bool ;
-  /// Initializes stuff (creates directory, typically).
-  fn init(& self) -> Res<()> ;
 }
 
 
@@ -41,7 +41,6 @@ pub struct InstanceConf {
 }
 impl SubConf for InstanceConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl InstanceConf {
   /// Adds clap options to a clap App.
@@ -74,19 +73,6 @@ pub struct SmtConf {
 }
 impl SubConf for SmtConf {
   fn need_out_dir(& self) -> bool { self.log }
-  fn init(& self) -> Res<()> {
-    if let Some(path) = self.log_dir() {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        path
-      ).chain_err(
-        || format!(
-          "while creating smt output directory in `{}`", ::common::conf.out_dir
-        )
-      )
-    } else {
-      Ok(())
-    }
-  }
 }
 impl SmtConf {
   /// Actual, `rsmt2` solver configuration.
@@ -97,11 +83,12 @@ impl SmtConf {
   /// Spawns a solver.
   ///
   /// If logging is active, will log to `<name>.smt2`.
-  pub fn spawn<Parser>(
-    & self, name: & 'static str, parser: Parser
-  ) -> Res< ::rsmt2::Solver<Parser> > {
+  pub fn spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
     let mut solver = ::rsmt2::Solver::new(self.conf(), parser) ? ;
-    if let Some(log) = self.log_file(name).chain_err(
+    if let Some(log) = self.log_file(name, instance.as_ref()).chain_err(
       || format!(
         "While opening log file for {}", ::common::conf.emph(name)
       )
@@ -112,27 +99,31 @@ impl SmtConf {
   }
 
   /// Smt log dir, if any.
-  pub fn log_dir(& self) -> Option<PathBuf> {
+  fn log_dir(& self, instance: & Instance) -> Res< Option<PathBuf> > {
     if self.log {
-      let mut path = ::common::conf.out_dir() ;
+      let mut path = ::common::conf.out_dir(instance) ;
       path.push("solvers") ;
-      Some(path)
+      mk_dir(& path) ? ;
+      Ok(Some(path))
     } else {
-      None
+      Ok(None)
     }
   }
 
   /// Smt log file, if any.
-  pub fn log_file<S: AsRef<str >>(
-    & self, name: S
-  ) -> ::common::IoRes< Option<::std::fs::File> > {
+  fn log_file<S: AsRef<str >>(
+    & self, name: S, instance: & Instance
+  ) -> Res< Option<::std::fs::File> > {
     use std::fs::OpenOptions ;
-    if let Some(mut path) = self.log_dir() {
+    if let Some(mut path) = self.log_dir(instance) ? {
       path.push(name.as_ref()) ;
       path.set_extension("smt2") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some(f))
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!("while creating smt log file {}", path.to_string_lossy())
+      ) ? ;
+      Ok( Some(file) )
     } else {
       Ok(None)
     }
@@ -295,54 +286,35 @@ impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
     self.dump && self.active || self.dump_pred_dep
   }
-
-  fn init(& self) -> Res<()> {
-    let mut path = self.log_dir() ;
-    if self.dump && self.active {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & path
-      ).chain_err(
-        || format!(
-          "while creating preproc output directory in `{}`",
-          ::common::conf.out_dir
-        )
-      ) ?
-    }
-    if self.dump_pred_dep {
-      path.push("pred_dep") ;
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & path
-      ).chain_err(
-        || format!(
-          "while creating preproc output directory in `{}`",
-          ::common::conf.out_dir
-        )
-      ) ? ;
-      path.pop() ;
-    }
-    Ok(())
-  }
 }
 impl PreprocConf {
   /// Instance dump dir.
-  pub fn log_dir(& self) -> PathBuf {
-    let mut path = ::common::conf.out_dir() ;
+  fn log_dir<Path>(& self, sub: Path, instance: & Instance) -> Res<PathBuf>
+  where Path: AsRef<::std::path::Path> {
+    let mut path = ::common::conf.out_dir(instance) ;
     path.push("preproc") ;
-    path
+    path.push(sub) ;
+    mk_dir(& path) ? ;
+    Ok(path)
   }
 
   /// Instance dump file.
-  pub fn log_file<S: AsRef<str>>(
-    & self, name: S
-  ) -> ::common::IoRes< Option<::std::fs::File> > {
+  pub fn instance_log_file<S: AsRef<str>>(
+    & self, name: S, instance: & Instance
+  ) -> Res< Option<::std::fs::File> > {
     use std::fs::OpenOptions ;
     if self.dump && self.active {
-      let mut path = self.log_dir() ;
+      let mut path = self.log_dir("instances", instance) ? ;
       path.push(name.as_ref()) ;
       path.set_extension("smt2") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some(f))
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!(
+          "while creating instance dump file {}", path.to_string_lossy()
+        )
+      ) ? ;
+      Ok(Some(file))
     } else {
       Ok(None)
     }
@@ -350,19 +322,24 @@ impl PreprocConf {
 
   /// Predicate dependency file.
   pub fn pred_dep_file<S: AsRef<str>>(
-    & self, name: S
-  ) -> ::common::IoRes<
+    & self, name: S, instance: & Instance
+  ) -> Res<
     Option< (::std::fs::File, ::std::path::PathBuf) >
   > {
     use std::fs::OpenOptions ;
     if self.dump_pred_dep {
-      let mut path = self.log_dir() ;
-      path.push("pred_dep") ;
+      let mut path = self.log_dir("pred_dep", instance) ? ;
       path.push(name.as_ref()) ;
       path.set_extension("gv") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some((f, path)))
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!(
+          "while creating predicade dependency graph file {}",
+          path.to_string_lossy()
+        )
+      ) ? ;
+      Ok(Some((file, path)))
     } else {
       Ok(None)
     }
@@ -594,10 +571,11 @@ pub struct IceConf {
   pub mine_conjs: bool,
   /// Add synthesized qualifiers.
   pub add_synth: bool,
+  /// Lockstep for qualifiers.
+  pub qual_step: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl IceConf {
   /// Adds clap options to a clap App.
@@ -689,7 +667,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("5").takes_value(
+      ).default_value("1").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -749,7 +727,19 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("qual_step").long("--qual_step").help(
+        "lockstep qualifier selection"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -814,12 +804,13 @@ impl IceConf {
     let add_synth = bool_of_matches(matches, "add_synth") ;
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
+    let qual_step = bool_of_matches(matches, "qual_step") ;
 
     IceConf {
       simple_gain_ratio, sort_preds, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
-      pure_synth, mine_conjs, add_synth
+      pure_synth, mine_conjs, add_synth, qual_step
     }
   }
 }
@@ -842,7 +833,6 @@ pub struct TeacherConf {
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl TeacherConf {
   /// Adds clap options to a clap App.
@@ -854,7 +844,7 @@ impl TeacherConf {
 
     app.arg(
 
-      Arg::with_name("step").long("--step").short("-s").help(
+      Arg::with_name("teach_step").long("--teach_step").help(
         "forces the teacher to progress incrementally"
       ).validator(
         bool_validator
@@ -905,7 +895,7 @@ impl TeacherConf {
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let step = bool_of_matches(matches, "step") ;
+    let step = bool_of_matches(matches, "teach_step") ;
     let assistant = bool_of_matches(matches, "assistant") ;
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
     let partial = bool_of_matches(matches, "partial") ;
@@ -925,11 +915,15 @@ use std::time::{ Instant, Duration } ;
 pub struct Config {
   file: Option<String>,
   /// Verbosity.
-  pub verb: Verb,
+  pub verb: usize,
   /// Statistics flag.
   pub stats: bool,
   /// Inference flag.
   pub infer: bool,
+  /// Reason on each negative clause separately.
+  pub split: bool,
+  /// Pause between negative clauses when in split mode.
+  pub split_step: bool,
   /// Instant at which we'll timeout.
   timeout: Option<Instant>,
   /// Output directory.
@@ -959,18 +953,30 @@ impl ColorExt for Config {
 impl Config {
   /// Output directory as a `PathBuf`.
   #[inline]
-  pub fn out_dir(& self) -> PathBuf {
-    PathBuf::from(& self.out_dir)
+  pub fn out_dir(& self, instance: & Instance) -> PathBuf {
+    let mut path = PathBuf::from(& self.out_dir) ;
+    if let Some(clause) = instance.split() {
+      path.push( format!("split_on_clause_{}", clause) )
+    }
+    path
   }
-  /// True iff verbose or debug.
+
+
+
+  /// True if minimal mode.
+  #[inline]
+  pub fn minimal(& self) -> bool {
+    self.verb >= 1
+  }
+  /// True if verbose mode.
   #[inline]
   pub fn verbose(& self) -> bool {
-    self.verb.verbose()
+    self.verb >= 2
   }
-  /// True iff debug.
+  /// True if debug mode.
   #[inline]
   pub fn debug(& self) -> bool {
-    self.verb.debug()
+    self.verb >= 3
   }
   /// Input file.
   #[inline]
@@ -1025,12 +1031,14 @@ impl Config {
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity
-    let mut verb = Verb::default() ;
+    let mut verb = 0 ;
     for _ in 0..matches.occurrences_of("verb") {
-      verb.inc()
+      verb += 1
     }
     for _ in 0..matches.occurrences_of("quiet") {
-      verb.dec()
+      if verb > 0 {
+        verb -= 1
+      }
     }
 
     // Colors.
@@ -1050,6 +1058,9 @@ impl Config {
     // Inference flag.
     let infer = bool_of_matches(& matches, "infer") ;
 
+    // Inference flag.
+    let split_step = bool_of_matches(& matches, "split_step") ;
+
     // Timeout.
     let timeout = match int_of_matches(& matches, "timeout") {
       0 => None,
@@ -1057,6 +1068,8 @@ impl Config {
         Instant::now() + Duration::new(n as u64, 0)
       ),
     } ;
+
+    let split = bool_of_matches(& matches, "split") ;
 
     // Result checking.
     let check = matches.value_of("check").map(
@@ -1075,9 +1088,10 @@ impl Config {
     let teacher = TeacherConf::new(& matches) ;
 
     Config {
-      file, verb, stats, infer, timeout, out_dir, styles,
+      file, verb, stats, infer, split, split_step,
+      timeout, out_dir, styles,
       check, check_eld,
-      instance, preproc, solver, ice, teacher
+      instance, preproc, solver, ice, teacher,
     }
   }
 
@@ -1101,13 +1115,13 @@ impl Config {
     ).arg(
 
       Arg::with_name("verb").short("-v").help(
-        "verbose output"
+        "increases verbosity"
       ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
 
       Arg::with_name("quiet").short("-q").help(
-        "quiet output"
+        "decreases verbosity"
       ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
@@ -1134,7 +1148,7 @@ impl Config {
 
     ).arg(
 
-      Arg::with_name("stats").long("--stats").help(
+      Arg::with_name("stats").long("--stats").short("-s").help(
         "reports some statistics at the end of the run"
       ).validator(
         bool_validator
@@ -1146,7 +1160,7 @@ impl Config {
 
     ).arg(
 
-      Arg::with_name("infer").long("--infer").help(
+      Arg::with_name("infer").long("--infer").short("-i").help(
         "if `off`, ignore `check-sat` and `get-model` queries"
       ).validator(
         bool_validator
@@ -1166,6 +1180,30 @@ impl Config {
         "int"
       ).default_value(
         "0"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split").long("--split").help(
+        "reason on each negative clause separately"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split_step").long("--split_step").help(
+        "pause between negative clauses in split mode"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
@@ -1200,106 +1238,12 @@ impl Config {
 
     )
   }
-
-  /// Initializes stuff.
-  pub fn init(& self) -> Res<()> {
-    // Are we gonna use the output directory?
-    if self.solver.need_out_dir()
-    || self.preproc.need_out_dir()
-    || self.instance.need_out_dir()
-    || self.ice.need_out_dir()
-    || self.teacher.need_out_dir() {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & self.out_dir
-      ).chain_err(
-        || format!("while creating output directory `{}`", self.out_dir)
-      ) ?
-    }
-    self.solver.init() ? ;
-    self.preproc.init() ? ;
-    self.instance.init() ? ;
-    self.ice.init() ? ;
-    self.teacher.init() ? ;
-    Ok(())
-  }
 }
 
 
 
 
 
-
-
-
-
-
-
-/// Verbose level.
-///
-/// # Examples
-///
-/// ```rust
-/// # use hoice::common::Verb ;
-/// let mut verb = Verb::Quiet ;
-/// assert!( ! verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.inc() ;
-/// assert_eq!( verb, Verb::Verb ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.inc() ;
-/// assert_eq!( verb, Verb::Debug ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( verb.debug() ) ;
-/// verb.dec() ;
-/// assert_eq!( verb, Verb::Verb ) ;
-/// assert!( verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// verb.dec() ;
-/// assert_eq!( verb, Verb::Quiet ) ;
-/// assert!( ! verb.verbose() ) ;
-/// assert!( ! verb.debug() ) ;
-/// ```
-#[derive(PartialEq, Eq, Debug)]
-pub enum Verb {
-  /// Quiet.
-  Quiet,
-  /// Verbose.
-  Verb,
-  /// Debug.
-  Debug,
-}
-impl Verb {
-  /// Default verbosity.
-  pub fn default() -> Self {
-    Verb::Quiet
-  }
-  /// Increments verbosity.
-  pub fn inc(& mut self) {
-    match * self {
-      Verb::Quiet => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Debug,
-      _ => ()
-    }
-  }
-  /// Decrements verbosity.
-  pub fn dec(& mut self) {
-    match * self {
-      Verb::Debug => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Quiet,
-      _ => ()
-    }
-  }
-
-  /// True iff verbose or debug.
-  pub fn verbose(& self) -> bool {
-    * self != Verb::Quiet
-  }
-  /// True iff debug.
-  pub fn debug(& self) -> bool {
-    * self == Verb::Debug
-  }
-}
 
 
 

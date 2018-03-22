@@ -20,7 +20,6 @@ extern crate error_chain ;
 #[macro_use]
 extern crate clap ;
 extern crate ansi_term as ansi ;
-extern crate regex ;
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;
@@ -36,8 +35,9 @@ pub mod instance ;
 pub mod teacher ;
 pub mod learning ;
 pub mod check ;
+pub mod split ;
 
-#[cfg(test)]
+#[cfg( all(test, not(windows)) )]
 mod tests ;
 
 use common::* ;
@@ -45,9 +45,6 @@ use instance::Instance ;
 
 /// Parses command-line arguments and works.
 pub fn work() -> Res<()> {
-
-  // Creates smt log directory if needed.
-  conf.init() ? ;
 
   // Reading from file?
   if let Some(file_path) = conf.in_file() {
@@ -93,7 +90,7 @@ pub fn work() -> Res<()> {
 /// - `stop_on_err`: forces to stop at the first error. Only used in tests.
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
-) -> Res< (Option<Model>, Instance) > {
+) -> Res< (Option<ConjModel>, Instance) > {
   use instance::parse::ItemRead ;
 
   let profiler = Profiler::new() ;
@@ -150,93 +147,77 @@ pub fn read_and_work<R: ::std::io::Read>(
 
       // Check-sat, start class.
       Parsed::CheckSat => {
-        if conf.preproc.active {
-          match instance::preproc::work(& mut instance, & profiler) {
-            Ok(()) => (),
-            Err(e) => if e.is_timeout() {
-              if e.is_timeout() {
-                println!("unknown") ;
-                print_stats(profiler) ;
-                ::std::process::exit(0)
-              }
+        log! { @info "Running top pre-processing" }
+
+        let preproc_profiler = Profiler::new() ;
+        match profile! {
+          |profiler| wrap {
+            instance::preproc::work(& mut instance, & preproc_profiler)
+          } "top preproc"
+        } {
+          Ok(()) => (),
+          Err(e) => if e.is_timeout() {
+            if e.is_timeout() {
+              println!("unknown") ;
+              print_stats("top", profiler) ;
+              ::std::process::exit(0)
+            }
+          } else {
+            bail!(e)
+          },
+        }
+        print_stats("top preproc", preproc_profiler) ;
+
+        model = if let Some(maybe_model) = instance.is_trivial_conj() ? {
+          // Pre-processing already decided satisfiability.
+          log! { @info "solved by pre-processing" }
+          if maybe_model.is_some() {
+            println!("sat")
+          } else {
+            println!("unsat")
+          }
+          maybe_model
+        } else {
+
+          let arc_instance = Arc::new(instance) ;
+          let solve_res = split::work(arc_instance.clone(), & profiler) ;
+
+          while Arc::strong_count(& arc_instance) != 1 {}
+          instance = if let Ok(
+            instance
+          ) = Arc::try_unwrap( arc_instance ) { instance } else {
+            bail!("\
+              [bug] finalized teacher but there are still \
+              strong references to the instance\
+            ")
+          } ;
+
+          match solve_res {
+            Ok(Some(res)) => {
+              println!("sat") ;
+              Some(
+                instance.extend_model(res) ?
+              )
+            },
+            Ok(None) => {
+              println!("unknown") ;
+              None
+            },
+            Err(e) => if e.is_unsat() {
+              println!("unsat") ;
+              None
+            } else if e.is_timeout() {
+              println!("unknown") ;
+              print_stats("top", profiler) ;
+              ::std::process::exit(0)
             } else {
               bail!(e)
             },
           }
-        }
-        instance.finalize() ? ;
-
-        if conf.stats {
-          if instance.is_solved() {
-            println!("; solved by pre-processing")
-          }
-        }
-
-        if ! conf.infer { continue 'parse_work }
-
-        model = if let Some(maybe_model) = instance.is_trivial() ? {
-          // Pre-processing already decided satisfiability.
-          log_info!(
-            "answering satisfiability query by pre-processing only"
-          ) ;
-          maybe_model
-        } else {
-          let arc_instance = Arc::new(instance) ;
-
-          let teacher_profiler = Profiler::new() ;
-          profile! { |profiler| tick "solving" }
-          let solve_res = teacher::start_class(
-            & arc_instance, & teacher_profiler
-          ) ;
-          profile! { |profiler| mark "solving" }
-          profiler.add_sub("solving", teacher_profiler) ;
-
-          match solve_res {
-            Ok(partial_model) => {
-              while Arc::strong_count(& arc_instance) != 1 {}
-              instance = if let Ok(
-                instance
-              ) = Arc::try_unwrap( arc_instance ) { instance } else {
-                bail!("\
-                  [bug] finalized teacher but there are still \
-                  strong references to the instance\
-                ")
-              } ;
-              if let Some(partial_model) = partial_model {
-                Some( instance.model_of(partial_model) ? )
-              } else {
-                None
-              }
-            },
-            Err(e) => {
-              while Arc::strong_count(& arc_instance) != 1 {}
-              instance = if let Ok(
-                instance
-              ) = Arc::try_unwrap( arc_instance ) { instance } else {
-                bail!("\
-                  [bug] finalized teacher but there are still \
-                  strong references to the instance\
-                ")
-              } ;
-              if e.is_unsat() {
-                None
-              } else if e.is_timeout() {
-                println!("unknown") ;
-                print_stats(profiler) ;
-                ::std::process::exit(0)
-              } else {
-                bail!(e)
-              }
-            },
-          }
         } ;
+
         if stop_on_check {
           return Ok( (model, instance) )
-        }
-        if model.is_some() {
-          println!("sat")
-        } else {
-          println!("unsat")
         }
 
       },
@@ -246,7 +227,7 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Print model if available.
       Parsed::GetModel => if let Some(model) = model.as_mut() {
         // Simplify model before writing it.
-        instance.simplify_pred_defs(model) ? ;
+        // instance.simplify_pred_defs(model) ? ;
         let stdout = & mut ::std::io::stdout() ;
         instance.write_model(& model, stdout) ?
       } else {
@@ -271,27 +252,8 @@ pub fn read_and_work<R: ::std::io::Read>(
     }
   }
 
-  print_stats(profiler) ;
+  print_stats("top", profiler) ;
 
   Ok( (model, instance) )
 }
 
-
-
-
-
-
-
-
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg(feature = "bench")]
-fn print_stats(_: Profiler) {}
-/// Prints the stats if asked. Does nothing in bench mode.
-#[cfg( not(feature = "bench") )]
-fn print_stats(profiler: Profiler) {
-  if conf.stats {
-    println!("") ;
-    profiler.print( "all stats", "", & [ "data" ] ) ;
-    println!("") ;
-  }
-}

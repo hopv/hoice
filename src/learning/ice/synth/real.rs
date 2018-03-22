@@ -1,7 +1,6 @@
 //! Qualifier synthesis in the theory of reals.
 
 use common::* ;
-use common::data::HSample ;
 
 use super::{ TermVals, TheoSynth } ;
 
@@ -38,19 +37,28 @@ impl TheoSynth for RealSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & HSample, others: & mut TermVals
+    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
     match self.expressivity {
-      0 => simple_real_synth(sample, others, f),
-      1 => real_synth_1(sample, others, f),
+      0 => profile!(
+        |_profiler| wrap {
+          simple_real_synth(sample, others, f)
+        } "learning", "qual", "synthesis", "real", "level 0"
+      ),
+      1 => profile!(
+        |_profiler| wrap {
+          real_synth_1(sample, others, f)
+        } "learning", "qual", "synthesis", "real", "level 1"
+      ),
       _ => Ok(false),
     }
   }
 
   /// Only generates ints for now (using `to_int`).
   fn project(
-    & self, sample: & HSample, typ: & Typ, map: & mut TermVals
+    & self, sample: & Args, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
     match * typ {
       Typ::Int => for (var, val) in sample.index_iter() {
@@ -81,7 +89,7 @@ impl TheoSynth for RealSynth {
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_real_synth<F>(
-  sample: & HSample, others: & mut TermVals, mut f: F
+  sample: & Args, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
@@ -117,7 +125,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 1 for real synthesis.
 pub fn real_synth_1<F>(
-  sample: & HSample, others: & mut TermVals, mut f: F
+  sample: & Args, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
@@ -153,3 +161,4 @@ where F: FnMut(Term) -> Res<bool> {
 
   Ok(false)
 }
+

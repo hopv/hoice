@@ -2,7 +2,6 @@
 name = "hoice"
 version = "1.5.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
-build = "build.rs"
 
 readme = "README.md"
 categories = ["science"]
@@ -24,7 +23,6 @@ debug = false
 rpath = false
 lto = false
 debug-assertions = false
-codegen-units = 1
 panic = 'unwind'
 
 [features]
@@ -33,7 +31,6 @@ bench = [ ]
 [dependencies]
 lazy_static = "*"
 clap = "*"
-regex = "*"
 hashconsing = "*"
 error-chain = "*"
 ansi_term = "*"

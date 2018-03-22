@@ -1,6 +1,7 @@
 //! Actual instance structure.
 
 use common::* ;
+use common::data::RArgs ;
 use instance::info::* ;
 use learning::ice::quals::Qualifiers ;
 
@@ -23,15 +24,17 @@ pub use self::pre_instance::PreInstance ;
 /// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
 /// do this is to never access an instance's fields directly from the outside.
 pub struct Instance {
-  /// Constants constructed so far.
-  consts: HConSet<Term>,
   /// Predicates.
-  preds: PrdMap<PrdInfo>,
+  preds: PrdInfos,
   /// Original predicates, for reconstruction.
   ///
   /// Stores the original signature of the predicates, and a map from the
   /// variables of `preds` to the original signature.
-  old_preds: PrdMap< (VarMap<Typ>, VarMap<VarIdx>) >,
+  old_preds: PrdMap< (Sig, VarMap<VarIdx>) >,
+  /// Maps new variables to the new ones.
+  ///
+  /// Only available after finalize.
+  old_var_maps: PrdMap<VarMap<Term>>,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
@@ -51,9 +54,15 @@ pub struct Instance {
   ///
   /// Only available after finalize.
   pos_clauses: ClsSet,
-  /// Set of negative clauses.
+  /// Set of strictly negative clauses.
   ///
-  /// Only available after finalize.
+  /// A clause is strictly negative if it has strictly one predicate
+  /// application, and it's in the clause's body. Only available after
+  /// finalize.
+  strict_neg_clauses: ClsSet,
+  /// Set of (non-strictly) negative clauses.
+  ///
+  /// Super set of strictly negative clauses. Only available after finalize.
   neg_clauses: ClsSet,
   /// Set of implication clauses.
   ///
@@ -61,6 +70,12 @@ pub struct Instance {
   imp_clauses: ClsSet,
   /// True if finalized already ran.
   is_finalized: bool,
+  /// If this instance is the result of a split, contains the index of the
+  /// clause of the original instance that the split was on.
+  ///
+  /// The constructor sets this to `None`. Function `clone_with_clauses`
+  /// automatically sets it to the clause kept.
+  split: Option<ClsIdx>,
 }
 impl Instance {
   /// Instance constructor.
@@ -68,9 +83,9 @@ impl Instance {
     let pred_capa = conf.instance.pred_capa ;
     let clause_capa = conf.instance.clause_capa ;
     Instance {
-      consts: HConSet::with_capacity(103),
       preds: PrdMap::with_capacity(pred_capa),
       old_preds: PrdMap::with_capacity(pred_capa),
+      old_var_maps: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       max_pred_arity: 0.into(),
@@ -79,9 +94,41 @@ impl Instance {
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
       is_unsat: false,
       pos_clauses: ClsSet::new(),
+      strict_neg_clauses: ClsSet::new(),
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
+      split: None,
+    }
+  }
+
+  /// Clones itself.
+  ///
+  /// This is only used when splitting. `clause` will be remembered as the
+  /// clause the split is on.
+  ///
+  /// Fails (in debug) if `clause` is not a negative clause of `self` or if
+  /// `self` is not finalized.
+  pub fn clone_with_clauses(& self, clause: ClsIdx) -> Self {
+    debug_assert! { self.neg_clauses.contains(& clause) }
+    debug_assert! { self.is_finalized }
+
+    Instance {
+      preds: self.preds.clone(),
+      old_preds: self.old_preds.clone(),
+      old_var_maps: self.old_var_maps.clone(),
+      pred_terms: self.pred_terms.clone(),
+      sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
+      max_pred_arity: self.max_pred_arity.clone(),
+      clauses: self.clauses.clone(),
+      pred_to_clauses: self.pred_to_clauses.clone(),
+      is_unsat: false,
+      pos_clauses: ClsSet::new(),
+      strict_neg_clauses: ClsSet::new(),
+      neg_clauses: ClsSet::new(),
+      imp_clauses: ClsSet::new(),
+      is_finalized: false,
+      split: Some(clause),
     }
   }
 
@@ -92,6 +139,12 @@ impl Instance {
     & self.pos_clauses
   }
   /// Set of negative clauses with exactly one predicate application.
+  ///
+  /// Only available after finalize.
+  pub fn strict_neg_clauses(& self) -> & ClsSet {
+    & self.strict_neg_clauses
+  }
+  /// Set of negative clauses.
   ///
   /// Only available after finalize.
   pub fn neg_clauses(& self) -> & ClsSet {
@@ -122,6 +175,19 @@ impl Instance {
     true
   }
 
+  /// Original signature of a predicate.
+  pub fn original_sig_of(& self, pred: PrdIdx) -> & Sig {
+    & self.old_preds[pred].0
+  }
+
+  /// If this instance is the result of a split, returns the index of the
+  /// clause of the original instance that the split was on.
+  ///
+  /// Used mainly to create different folders for log files when splitting.
+  pub fn split(& self) -> Option<ClsIdx> {
+    self.split.clone()
+  }
+
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
     self.is_unsat = true
@@ -139,19 +205,86 @@ impl Instance {
   /// The model is sorted in topological order.
   pub fn model_of(& self, candidates: Candidates) -> Res<Model> {
     use std::iter::Extend ;
+
     let mut model = Model::with_capacity( self.preds.len() ) ;
     model.extend(
       candidates.into_index_iter().filter_map(
         |(pred, tterms_opt)| tterms_opt.map(
-          |term| (pred, TTerms::of_term(None, term))
+          |term| {
+            let (term, _) = term.subst(& self.old_var_maps[pred]) ;
+            (pred, TTerms::of_term(None, term))
+          }
         )
       )
     ) ;
+
     for pred in & self.sorted_pred_terms {
       let pred = * pred ;
       if let Some(ref tterms) = self.pred_terms[pred] {
         model.push(
-          (pred, tterms.clone())
+          (pred, tterms.subst(& self.old_var_maps[pred]))
+        )
+      } else {
+        bail!("inconsistency in sorted forced predicates")
+      }
+    }
+
+    Ok( model )
+  }
+
+  /// Returns the model corresponding to the input predicates and the forced
+  /// predicates.
+  ///
+  /// The model is sorted in topological order.
+  pub fn extend_model(& self, candidates: ConjCandidates) -> Res<ConjModel> {
+    use std::iter::Extend ;
+    let mut model = ConjModel::with_capacity( self.preds.len() ) ;
+    let mut known_preds = PrdSet::new() ;
+    let mut tmp: Vec<_> = candidates.into_iter().map(
+      |(pred, conj)| {
+        let mut preds = PrdSet::new() ;
+        for tterms in & conj {
+          preds.extend( tterms.preds() )
+        }
+        (pred, preds, conj)
+      }
+    ).collect() ;
+    let mut cnt ;
+    let mut changed ;
+    while ! tmp.is_empty() {
+      cnt = 0 ;
+      changed = false ;
+      while cnt < tmp.len() {
+        if tmp[cnt].1.iter().all(
+          |pred| known_preds.contains(pred)
+        ) {
+          changed = true ;
+          let (pred, _, dnf) = tmp.swap_remove(cnt) ;
+          let is_new = known_preds.insert(pred) ;
+          debug_assert! { is_new }
+          model.push( vec![ (pred, dnf) ] )
+        } else {
+          cnt += 1
+        }
+      }
+      if ! changed {
+        break
+      }
+    }
+    if ! tmp.is_empty() {
+      model.push(
+        tmp.into_iter().map(
+          |(pred, _, dnf)| (pred, dnf)
+        ).collect()
+      )
+    }
+
+    for pred in & self.sorted_pred_terms {
+      let pred = * pred ;
+      if let Some(ref tterms) = self.pred_terms[pred] {
+        let tterms = tterms.subst(& self.old_var_maps[pred]) ;
+        model.push(
+          vec![ (pred, vec![ tterms ]) ]
         )
       } else {
         bail!("inconsistency in sorted forced predicates")
@@ -160,17 +293,38 @@ impl Instance {
     Ok( model )
   }
 
+  /// True if the instance is sat, false if unsat.
+  fn is_trivial(& self) -> Option<bool> {
+    if self.is_unsat {
+      Some(false)
+    } else if self.pred_terms.iter().all(|term| term.is_some()) {
+      Some(true)
+    } else {
+      None
+    }
+  }
+
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial(& self) -> Res< Option< Option<Model> > > {
-    if self.is_unsat { Ok( Some(None) ) } else {
-      for pred in self.pred_indices() {
-        if self.pred_terms[pred].is_none() {
-          return Ok(None)
-        }
-      }
-      // Only reachable if all elements of `self.pred_terms` are `Some(_)`.
-      self.model_of( vec![].into() ).map(|res| Some(Some(res)))
+  pub fn is_trivial_conj(& self) -> Res< Option< Option<ConjModel> > > {
+    match self.is_trivial() {
+      None => Ok(None),
+      Some(false) => Ok( Some(None) ),
+      Some(true) => self.extend_model(
+        PrdHMap::new()
+      ).map(|res| Some(Some(res))),
+    }
+  }
+
+  /// Returns a model for the instance when all the predicates have terms
+  /// assigned to them.
+  pub fn is_trivial_model(& self) -> Res< Option<Option<Model>> > {
+    match self.is_trivial() {
+      None => Ok(None),
+      Some(false) => Ok( Some(None) ),
+      Some(true) => self.model_of(
+        PrdMap::new()
+      ).map(|res| Some(Some(res))),
     }
   }
 
@@ -232,7 +386,6 @@ impl Instance {
     self.is_finalized = true ;
 
     self.sorted_pred_terms.clear() ;
-    self.consts.shrink_to_fit() ;
     self.preds.shrink_to_fit() ;
     self.old_preds.shrink_to_fit() ;
     self.pred_terms.shrink_to_fit() ;
@@ -243,7 +396,11 @@ impl Instance {
     ) ;
 
     for (idx, clause) in self.clauses.index_iter() {
-      if clause.rhs().is_none() && clause.lhs_pred_apps_len() == 1 {
+      if clause.rhs().is_none() {
+        if clause.lhs_pred_apps_len() == 1 {
+          let is_new = self.strict_neg_clauses.insert(idx) ;
+          debug_assert! { is_new }
+        }
         let is_new = self.neg_clauses.insert(idx) ;
         debug_assert! { is_new }
       } else if clause.lhs_preds().is_empty() {
@@ -294,6 +451,16 @@ impl Instance {
         known_preds.insert(pred) ;
         () // No `cnt` increment after swap remove.
       }
+    }
+
+    for (pred, info) in self.preds.index_iter() {
+      let mut map = VarMap::with_capacity( info.sig.len() ) ;
+      for (var, typ) in info.sig.index_iter() {
+        map.push(
+          term::var(self.old_preds[pred].1[var], * typ)
+        )
+      }
+      self.old_var_maps.push(map)
     }
 
     self.sorted_pred_terms.shrink_to_fit() ;
@@ -421,7 +588,7 @@ impl Instance {
   }
 
   /// Predicate accessor.
-  pub fn preds(& self) -> & PrdMap<PrdInfo> {
+  pub fn preds(& self) -> & PrdInfos {
     & self.preds
   }
   /// Clause accessor.
@@ -540,7 +707,7 @@ impl Instance {
 
   /// Pushes a new predicate and returns its index.
   pub fn push_pred(
-    & mut self, name: String, sig: VarMap<Typ>
+    & mut self, name: String, sig: Sig
   ) -> PrdIdx {
     self.max_pred_arity = ::std::cmp::max(
       self.max_pred_arity, (sig.len() + 1).into()
@@ -685,7 +852,7 @@ impl Instance {
     false
   }
 
-  /// Pushes a new clause, does not sanity-check.
+  /// Pushes a new clause, does not sanity-check but redundancy-checks.
   fn push_clause_unchecked(& mut self, clause: Clause) -> bool {
     let clause_index = self.clauses.next_index() ;
     self.clauses.push(clause) ;
@@ -706,6 +873,23 @@ impl Instance {
     }
     true
   }
+
+  // /// Pushes a new clause and links, no redundancy check.
+  // fn push_clause_raw(& mut self, clause: Clause) -> bool {
+  //   let clause_index = self.clauses.next_index() ;
+  //   self.clauses.push(clause) ;
+
+  //   for pred in self.clauses[clause_index].lhs_preds().keys() {
+  //     let pred = * pred ;
+  //     let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
+  //     debug_assert!(is_new)
+  //   }
+  //   if let Some((pred, _)) = self.clauses[clause_index].rhs() {
+  //     let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
+  //     debug_assert!(is_new)
+  //   }
+  //   true
+  // }
 
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
@@ -955,7 +1139,7 @@ impl Instance {
 
               let modded_cex = fix_cex!(clause, cex, args) ;
 
-              let mut values = Args::with_capacity( args.len() ) ;
+              let mut values = RArgs::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 values.push(
                   arg.eval(& modded_cex).chain_err(
@@ -977,7 +1161,7 @@ impl Instance {
         // debug! { "    working on rhs..." }
         let consequent = if let Some((pred, args)) = clause.rhs() {
           // debug! { "        ({} {})", self[pred], args }
-          let mut values = Args::with_capacity( args.len() ) ;
+          let mut values = RArgs::with_capacity( args.len() ) ;
           let modded_cex = fix_cex!(clause, cex, args) ;
           'pred_args: for arg in args.iter() {
             values.push(
@@ -998,11 +1182,11 @@ impl Instance {
           ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            let new = data.stage_raw_neg(pred, args) ;
+            let new = data.add_raw_neg(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (0, Some( (pred, args) )) => {
-            let new = data.stage_raw_pos(pred, args) ;
+            let new = data.add_raw_pos(pred, args) ;
             nu_stuff = nu_stuff || new
           },
           (_, consequent) => {
@@ -1295,38 +1479,78 @@ impl Instance {
   }
 
 
+  /// Writes a conjunction of top terms.
+  pub fn write_tterms_conj<W: Write>(
+    & self, w: & mut W, conj: & Vec<TTerms>
+  ) -> Res<()> {
+    if conj.is_empty() {
+      write!(w, "true") ?
+    } else if conj.len() == 1 {
+      self.print_tterms_as_model(w, & conj[0]) ?
+    } else {
+      write!(w, "(and") ? ;
+      for tterms in conj {
+        write!(w, " ") ? ;
+        self.print_tterms_as_model(w, tterms) ?
+      }
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
+
+
+  /// Writes a predicate signature.
+  ///
+  /// Does not write the name of the predicate.
+  pub fn write_pred_sig<W: Write>(
+    & self, w: & mut W, pred: PrdIdx
+  ) -> Res<()> {
+    let (ref old_sig, _) = self.old_preds[pred] ;
+    write!(w, "(")  ?;
+    for (var, typ) in old_sig.index_iter() {
+      write!(w, " ({} {})", var.default_str(), typ) ?
+    }
+    write!(w, " ) {}", Typ::Bool) ? ;
+    Ok(())
+  }
+
+
   /// Writes a model.
-  pub fn write_model<W: Write>(& self, model: & Model, w: & mut W) -> Res<()> {
+  pub fn write_model<W: Write>(
+    & self, model: & ConjModel, w: & mut W
+  ) -> Res<()> {
     writeln!(w, "(model") ? ;
-    for & (pred, ref tterms) in model {
-      let pred_info = & self[pred] ;
-      let (ref old_sig, ref var_map) = self.old_preds[pred] ;
-      // Reverse `var_map` so that it maps old vars to new ones.
-      let mut pam_rav = VarHMap::with_capacity( var_map.len() ) ;
-      for (new, old) in var_map.index_iter() {
-        let prev = pam_rav.insert( * old, new ) ;
-        debug_assert!( prev.is_none() )
-      }
+    for defs in model {
 
-      writeln!(
-        w, "  ({} {}", keywords::cmd::def_fun, pred_info.name
-      ) ? ;
-      write!(w, "    (")  ?;
+      if defs.is_empty() {
+        ()
+      } else if defs.len() == 1 {
+        let (pred, ref tterms) = defs[0] ;
 
-      for (var, typ) in old_sig.index_iter() {
-        write!(w, " (") ? ;
-        if let Some(var) = pam_rav.remove(& var) {
-          write!(w, "{}", var.default_str()) ?
-        } else {
-          write!(w, "unused_{}", var) ?
+        writeln!(
+          w, "  ({} {}", keywords::cmd::def_fun, self[pred].name
+        ) ? ;
+        write!(w, "    ")  ?;
+        self.write_pred_sig(w, pred) ? ;
+        write!(w, "\n    ") ? ;
+        self.write_tterms_conj(w, tterms) ? ;
+        writeln!(w, "\n  )") ?
+
+      } else {
+        write!(
+          w, "  ({} (", keywords::cmd::def_funs
+        ) ? ;
+        for & (pred, _) in defs {
+          write!(w, "\n    {} ", self[pred].name) ? ;
+          self.write_pred_sig(w, pred) ? ;
         }
-        write!(w, " {})", typ) ?
+        write!(w, "\n  ) (") ? ;
+        for & (_, ref tterms) in defs {
+          write!(w, "\n    ") ? ;
+          self.write_tterms_conj(w, tterms) ? ;
+        }
+        writeln!(w, "\n  ) )") ? ;
       }
-
-      writeln!(w, " ) {}", Typ::Bool) ? ;
-      write!(w, "    ") ? ;
-      self.print_tterms_as_model(w, tterms) ? ;
-      writeln!(w, "\n  )") ?
     }
     writeln!(w, ")") ? ;
     Ok(())
@@ -1349,38 +1573,39 @@ impl ::std::ops::IndexMut<ClsIdx> for Instance {
     & mut self.clauses[index]
   }
 }
-
-
-
-
-
-
-
-
-// impl<'a> PebcakFmt<'a> for TTerm {
-//   type Info = (& 'a VarMap<VarInfo>, & 'a PrdMap<PrdInfo>) ;
-//   fn pebcak_err(& self) -> ErrorKind {
-//     "during top term pebcak formatting".into()
+impl AsRef<Instance> for Instance {
+  fn as_ref(& self) -> & Self {
+    self
+  }
+}
+impl AsMut<Instance> for Instance {
+  fn as_mut(& mut self) -> & mut Self {
+    self
+  }
+}
+// impl ::std::ops::Deref for Instance {
+//   type Target = Self ;
+//   fn deref(& self) -> & Self {
+//     self
 //   }
-//   fn pebcak_io_fmt<W: Write>(
-//     & self, w: & mut W,
-//     (vars, prds): (& 'a VarMap<VarInfo>, & 'a PrdMap<PrdInfo>)
-//   ) -> IoRes<()> {
-//     self.write(
-//       w,
-//       |w, var| w.write_all( vars[var].as_bytes() ),
-//       |w, prd| w.write_all( prds[prd].as_bytes() )
-//     )
+// }
+// impl ::std::ops::DerefMut for Instance {
+//   fn deref_mut(& mut self) -> & mut Self {
+//     self
 //   }
 // }
 
+
+
+
+
 impl<'a> PebcakFmt<'a> for Clause {
-  type Info = & 'a PrdMap<PrdInfo> ;
+  type Info = & 'a PrdInfos ;
   fn pebcak_err(& self) -> ErrorKind {
     "during clause pebcak formatting".into()
   }
   fn pebcak_io_fmt<W: Write>(
-    & self, w: & mut W, prds: & 'a PrdMap<PrdInfo>
+    & self, w: & mut W, prds: & 'a PrdInfos
   ) -> IoRes<()> {
     self.write(
       w, |w, prd, args| {

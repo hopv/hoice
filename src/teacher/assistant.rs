@@ -3,52 +3,13 @@
 use rsmt2::to_smt::Expr2Smt ;
 
 use common::* ;
-use common::data::{
-  Data, Sample, HSample
-} ;
-use common::msg::MsgCore ;
+use common::data::{ Data, Sample } ;
 
-/// Launches the assistant.
-pub fn launch(
-  instance: Arc<Instance>,
-  core: MsgCore,
-) {
-  let mut error = None ;
-
-  match Assistant::new(instance, & core) {
-    Ok(mut assistant) => {
-      while error.is_none() {
-        if let Err(e) = profile!(
-          |assistant.core._profiler| wrap {
-            assistant.core.recv()
-          } "waiting"
-        ).and_then(
-          |mut data| assistant.break_implications(& mut data).map(
-            |()| assistant.core.send_samples(data)
-          )
-        ) {
-          error = Some(e) ;
-          break
-        }
-      }
-      if let Err(e) = assistant.finalize() {
-        if error.is_none() {
-          error = Some(e) ;
-        }
-      }
-    },
-    Err(e) => error = Some(e),
-  } ;
-
-  if let Some(error) = error {
-    core.err(error)
-  }
-}
 
 /// Propagates examples, tries to break implication constraints.
-pub struct Assistant<'a> {
+pub struct Assistant {
   /// Core, to communicate with the teacher.
-  core: & 'a MsgCore,
+  // core: & 'a MsgCore,
   /// Solver.
   solver: Solver<()>,
   /// Instance.
@@ -61,13 +22,15 @@ pub struct Assistant<'a> {
   _profiler: Profiler,
 }
 
-impl<'a> Assistant<'a> {
+impl Assistant {
 
   /// Constructor.
   pub fn new(
-    instance: Arc<Instance>, core: & 'a MsgCore
+    instance: Arc<Instance>, // core: & 'a MsgCore
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("assistant", ()) ? ;
+    let solver = conf.solver.spawn(
+      "assistant", (), & instance
+    ) ? ;
     let _profiler = Profiler::new() ;
 
     let mut pos = PrdHMap::with_capacity( instance.preds().len() ) ;
@@ -119,7 +82,8 @@ impl<'a> Assistant<'a> {
 
     Ok(
       Assistant {
-        core, solver, instance, pos, neg, _profiler
+        // core,
+        solver, instance, pos, neg, _profiler
       }
     )
   }
@@ -139,7 +103,7 @@ impl<'a> Assistant<'a> {
     if data.constraints.is_empty() { return Ok(()) }
 
     let (mut pos, mut neg) = ( Vec::new(), Vec::new() ) ;
-    msg! { debug self.core => "breaking implications..." }
+    // msg! { debug self.core => "breaking implications..." }
     profile! { self "constraints received" => add data.constraints.len() }
 
     'all_constraints: for cstr in CstrRange::zero_to(
@@ -173,12 +137,12 @@ impl<'a> Assistant<'a> {
           }
           // Discard the constraint, regardless of what will happen.
           profile! { self tick "data" }
-          data.tautologize(cstr) ;
+          data.tautologize(cstr) ? ;
           for Sample { pred, args } in pos.drain(0..) {
-            data.stage_pos(pred, args) ;
+            data.add_pos(pred, args) ;
           }
           for Sample { pred, args } in neg.drain(0..) {
-            data.stage_neg(pred, args) ;
+            data.add_neg(pred, args) ;
           }
           data.propagate() ? ;
           profile! { self mark "data" }
@@ -188,7 +152,7 @@ impl<'a> Assistant<'a> {
 
       if let Some(
         & Sample { pred, ref args }
-      ) = data.constraints[cstr].rhs.as_ref() {
+      ) = data.constraints[cstr].rhs() {
         match self.try_force(data, pred, args) ? {
           None => (),
           Some( Either::Left(pos_sample) ) => {
@@ -205,24 +169,28 @@ impl<'a> Assistant<'a> {
 
       // move_on!(if trivial) ;
 
-      'lhs: for (pred, samples) in & data.constraints[cstr].lhs {
-        let mut lhs_trivial = true ;
-        for sample in samples {
-          match self.try_force(data, * pred, sample) ? {
-            None => {
-              lhs_unknown += 1 ;
-              lhs_trivial = false
-            },
-            Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
-            Some( Either::Right(neg_sample) ) => {
-              neg.push(neg_sample) ;
-              trivial = true ;
-              // Constraint is trivial, move on.
-              // break 'lhs
-            },
+      if let Some(lhs) = data.constraints[cstr].lhs() {
+        'lhs: for (pred, samples) in lhs {
+          let mut lhs_trivial = true ;
+          for sample in samples {
+            match self.try_force(data, * pred, sample) ? {
+              None => {
+                lhs_unknown += 1 ;
+                lhs_trivial = false
+              },
+              Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
+              Some( Either::Right(neg_sample) ) => {
+                neg.push(neg_sample) ;
+                trivial = true ;
+                // Constraint is trivial, move on.
+                // break 'lhs
+              },
+            }
           }
+          trivial = trivial || lhs_trivial
         }
-        trivial = trivial || lhs_trivial
+      } else {
+        bail!("Illegal constraint")
       }
 
       move_on!()
@@ -249,7 +217,7 @@ impl<'a> Assistant<'a> {
   /// - `Right` of a sample which, when forced negative, will force the input
   ///   sample to be classified negative.
   pub fn try_force(
-    & mut self, _data: & Data, pred: PrdIdx, vals: & HSample
+    & mut self, _data: & Data, pred: PrdIdx, vals: & Args
   ) -> Res< Option< Either<Sample, Sample> > > {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
@@ -386,11 +354,11 @@ pub struct ArgValEq<'a> {
   /// Arguments.
   args: & 'a HTArgs,
   /// Values.
-  vals: & 'a HSample,
+  vals: & 'a Args,
 }
 impl<'a> ArgValEq<'a> {
   /// Constructor.
-  pub fn new(args: & 'a HTArgs, vals: & 'a HSample) -> Self {
+  pub fn new(args: & 'a HTArgs, vals: & 'a Args) -> Self {
     debug_assert_eq! { args.len(), vals.len() }
     ArgValEq { args, vals }
   }

@@ -1,7 +1,7 @@
 //! ICE learner.
 
 use common::* ;
-use common::data::* ;
+use common::data::Data ;
 use common::msg::* ;
 use common::smt::{
   SmtSample, SmtConstraint, SmtActSamples
@@ -76,7 +76,7 @@ pub struct IceLearner<'core> {
   /// Branches to construct later, used when constructing a decision tree.
   unfinished: Vec< (Branch, CData) >,
   /// Classifier for constraint data.
-  classifier: HConMap<HSample, bool>,
+  classifier: HConMap<Args, bool>,
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,
@@ -85,7 +85,13 @@ pub struct IceLearner<'core> {
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
-  rng: ::rand::StdRng,
+  sort_rng_1: ::rand::StdRng,
+  /// Rng actually doing the predicate sorting.
+  sort_rng_2: ::rand::StdRng,
+  /// Rng to decide when to use simple gain.
+  simple_rng: ::rand::StdRng,
+  /// Rng to decide when skip preliminary.
+  pre_skip_rng: ::rand::StdRng,
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
@@ -94,7 +100,7 @@ pub struct IceLearner<'core> {
   gain_pivot: f64,
   /// Gain pivot synth.
   gain_pivot_synth: Option<f64>,
-  /// Counter to 10 before incrementing gain pivots.
+  /// Learn step counter.
   count: usize,
 }
 impl<'core> IceLearner<'core> {
@@ -104,7 +110,9 @@ impl<'core> IceLearner<'core> {
     core: & 'core MsgCore, instance: Arc<Instance>, data: Data,
     mine: bool// synth_solver: Slver
   ) -> Res<Self> {
-    let solver = conf.solver.spawn("ice_learner", ()) ? ;
+    let solver = conf.solver.spawn(
+      "ice_learner", (), & instance
+    ) ? ;
 
     profile!{ |core._profiler| tick "mining" }
     let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
@@ -133,9 +141,21 @@ impl<'core> IceLearner<'core> {
         unfinished: Vec::with_capacity(103),
         classifier: HConMap::with_capacity(1003),
         dec_mem, candidate, predicates,
-        rng: {
+        sort_rng_1: {
           use rand::SeedableRng ;
           ::rand::StdRng::from_seed(& [ 42 ])
+        },
+        sort_rng_2: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 79 ])
+        },
+        simple_rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 107 ])
+        },
+        pre_skip_rng: {
+          use rand::SeedableRng ;
+          ::rand::StdRng::from_seed(& [ 666 ])
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
@@ -168,10 +188,17 @@ impl<'core> IceLearner<'core> {
         |self.core._profiler| wrap { self.recv() } "waiting"
       ) {
         Ok(data) => {
+          self.count += 1 ;
+          if self.count % 50 == 0 {
+            self.solver.reset() ?
+          }
           profile! { self "learn steps" => add 1 }
           if let Some(candidates) = profile!(
             |self.core._profiler| wrap {
-              self.learn(data)
+              self.solver.push(1) ? ;
+              let res = self.learn(data) ;
+              self.solver.pop(1) ? ;
+              res
             } "learning"
           ) ? {
             self.send_cands(candidates).chain_err(
@@ -220,10 +247,10 @@ impl<'core> IceLearner<'core> {
         )
       } "sending"
     ) ? ;
-    // Reset and clear declaration memory.
-    self.solver.reset().chain_err(
-      || "during solver reset"
-    ) ? ;
+    // // Reset and clear declaration memory.
+    // self.solver.reset().chain_err(
+    //   || "during solver reset"
+    // ) ? ;
     for set in self.dec_mem.iter_mut() {
       set.clear()
     } ;
@@ -234,12 +261,14 @@ impl<'core> IceLearner<'core> {
   ///
   /// Returns `None` if asked to exit.
   pub fn learn(
-    & mut self, data: Data
+    & mut self, mut data: Data
   ) -> Res< Option<Candidates> > {
-    self.data = data ;
+    use rand::Rng ;
 
-    self.count = (self.count + 1) % conf.ice.gain_pivot_mod ;
-    if self.count == 0 {
+    ::std::mem::swap(& mut data, & mut self.data) ;
+    self.core.merge_prof( "data", data.destroy() ) ;
+
+    if self.count % conf.ice.gain_pivot_mod == 0 {
       self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
       if self.gain_pivot > 1.0 {
         self.gain_pivot = 1.0
@@ -250,6 +279,10 @@ impl<'core> IceLearner<'core> {
           * gain_pivot_synth = 1.0
         }
       }
+    }
+
+    if conf.ice.qual_print {
+      self.qualifiers.log()
     }
 
     let contradiction = profile!(
@@ -274,6 +307,23 @@ impl<'core> IceLearner<'core> {
         okay
       }
     }
+
+    // Decide whether to use simple gain.
+    let simple = self.simple_rng.next_f64() <= conf.ice.simple_gain_ratio ;
+    // Sort the predicates 80% of the time.
+    let sorted = conf.ice.sort_preds && self.sort_rng_1.next_f64() <= 0.80 ;
+    // Skip preliminary decision 20% of the time.
+    let skip_prelim = self.pre_skip_rng.next_f64() <= 0.20 ;
+
+    msg! {
+      self =>
+      "starting learning\n  \
+      simple:      {},\n  \
+      sorted:      {},\n  \
+      skip_prelim: {},",
+      simple, sorted, skip_prelim
+    }
+
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     debug_assert! { self.predicates.is_empty() }
 
@@ -282,55 +332,61 @@ impl<'core> IceLearner<'core> {
       if self.instance.is_known(pred) {
         continue
       }
+
       let pos_len = self.data.pos[pred].len() ;
       let neg_len = self.data.neg[pred].len() ;
-      let unc_len = self.data.map[pred].len() ;
-      if pos_len == 0 && neg_len > 0 {
-        msg! { debug self => "legal_pred (1)" }
-        // Maybe we can assert everything as negative right away?
-        if self.is_legal_pred(pred, false) ? {
-          msg! {
-            debug self =>
-            "{} only has negative ({}) and unclassified ({}) data\n\
-            legal check ok, assuming everything negative",
-            self.instance[pred], neg_len, unc_len
-          }
-          self.candidate[pred] = Some( term::fls() ) ;
-          profile!(
-            |self.core._profiler| wrap {
-              self.data.pred_all_false(pred).chain_err(
-                || format!(
-                  "while setting all false for {}", pred
-                )
-              )
-            } "learning", "data"
-          ) ? ;
-          continue
-        }
-      }
+      let unc_len = self.data.map()[pred].len() ;
 
-      if neg_len == 0 && pos_len > 0 {
-        msg! { debug self => "legal_pred (2)" }
-        // Maybe we can assert everything as positive right away?
-        if self.is_legal_pred(pred, true) ? {
-          msg! {
-            debug self =>
-            "{} only has positive ({}) and unclassified ({}) data\n\
-            legal check ok, assuming everything positive",
-            self.instance[pred], pos_len, unc_len
-          }
-          self.candidate[pred] = Some( term::tru() ) ;
-          profile!(
-            |self.core._profiler| wrap {
-              self.data.pred_all_true(pred).chain_err(
-                || format!(
-                  "while setting all true for {}", pred
+      if ! skip_prelim {
+
+        if pos_len == 0 && neg_len > 0 {
+          msg! { debug self => "legal_pred (1)" }
+          // Maybe we can assert everything as negative right away?
+          if self.is_legal_pred(pred, false) ? {
+            msg! {
+              debug self =>
+              "{} only has negative ({}) and unclassified ({}) data\n\
+              legal check ok, assuming everything negative",
+              self.instance[pred], neg_len, unc_len
+            }
+            self.candidate[pred] = Some( term::fls() ) ;
+            profile!(
+              |self.core._profiler| wrap {
+                self.data.force_pred(pred, false).chain_err(
+                  || format!(
+                    "while setting all false for {}", self.instance[pred]
+                  )
                 )
-              )
-            } "learning", "data"
-          ) ? ;
-          continue
+              } "learning", "data"
+            ) ? ;
+            continue
+          }
         }
+
+        if neg_len == 0 && pos_len > 0 {
+          msg! { debug self => "legal_pred (2)" }
+          // Maybe we can assert everything as positive right away?
+          if self.is_legal_pred(pred, true) ? {
+            msg! {
+              debug self =>
+              "{} only has positive ({}) and unclassified ({}) data\n\
+              legal check ok, assuming everything positive",
+              self.instance[pred], pos_len, unc_len
+            }
+            self.candidate[pred] = Some( term::tru() ) ;
+            profile!(
+              |self.core._profiler| wrap {
+                self.data.force_pred(pred, true).chain_err(
+                  || format!(
+                    "while setting all true for {}", self.instance[pred]
+                  )
+                )
+              } "learning", "data"
+            ) ? ;
+            continue
+          }
+        }
+
       }
 
       self.predicates.push((
@@ -340,18 +396,8 @@ impl<'core> IceLearner<'core> {
 
     self.check_exit() ? ;
 
-    use rand::Rng ;
-
-    let simple = self.rng.next_f64() <= conf.ice.simple_gain_ratio ;
     if simple {
       profile! { self "simple" => add 1 }
-    }
-
-    // Sort the predicates 80% of the time.    
-    let sorted = conf.ice.sort_preds  && self.rng.next_f64() <= 0.80 ;
-    msg! {
-      self =>
-      "looking for qualifier (simple: {}, sorted: {})...", simple, sorted
     }
 
     if sorted {
@@ -384,11 +430,11 @@ impl<'core> IceLearner<'core> {
 
       // Not sorting, forcing random order.
       profile!{ self tick "learning", "predicate sorting" }
-      let mut rng = self.rng.clone() ;
+      let mut sort_rng = self.sort_rng_2 ;
       self.predicates.sort_unstable_by(
         |_, _| {
           use std::cmp::Ordering::* ;
-          let rand = rng.next_f64() ;
+          let rand = sort_rng.next_f64() ;
           if rand <= 0.33 {
             Less
           } else if rand <= 0.66 {
@@ -504,7 +550,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_pos(pred, unc) ;
+              self.data.add_pos(pred, unc) ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -550,10 +596,9 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.stage_neg(pred, unc) ;
+              self.data.add_neg(pred, unc) ;
             }
             self.data.propagate()
-
           } "learning", "data"
         ) ? ;
 
@@ -633,10 +678,9 @@ impl<'core> IceLearner<'core> {
   pub fn get_qualifier(
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
-
-    if conf.ice.qual_print {
-      self.qualifiers.log()
-    }
+    let simple = data.unc().is_empty() || (
+      simple && ! data.pos().is_empty() && ! data.neg().is_empty()
+    )  ;
 
     if_debug! {
       let mut s = format!("data:") ;
@@ -665,6 +709,16 @@ impl<'core> IceLearner<'core> {
         let res = self.qualifiers.maximize(
           pred, |qual| {
             let res = data.simple_gain(qual) ? ;
+            if conf.ice.qual_step {
+              let _ = core.msg(
+                format!(
+                  "{}: {}", qual,
+                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                )
+              ) ;
+              pause_msg(core, "to continue (--qual_step on)") ;
+              ()
+            }
             core.check_exit() ? ;
             Ok(res)
           }, false
@@ -683,6 +737,16 @@ impl<'core> IceLearner<'core> {
             let res = data.gain(
               pred, all_data, qual, & self_core._profiler, false
             ) ? ;
+            if conf.ice.qual_step {
+              let _ = self_core.msg(
+                format!(
+                  "; {}: {}", qual,
+                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                )
+              ) ;
+              pause_msg(self_core, "to continue (--qual_step on)") ;
+              ()
+            }
             core.check_exit() ? ;
             Ok(res)
           }, false
@@ -746,7 +810,7 @@ impl<'core> IceLearner<'core> {
     let mut best_synth_qual = None ;
     msg! { self => "synthesizing" }
     profile!{ self tick "learning", "qual", "synthesis" } ;
-    let res = self.synthesize(pred, & data, & mut best_synth_qual) ;
+    let res = self.synthesize(pred, & data, & mut best_synth_qual, simple) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;
     if let None = res ? {
       return Ok(None)
@@ -818,7 +882,8 @@ impl<'core> IceLearner<'core> {
   ///
   /// Returns `None` if it received `Exit`.
   pub fn synthesize(
-    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>
+    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>,
+    simple: bool
   ) -> Res< Option<()> > {
 
     scoped! {
@@ -834,16 +899,34 @@ impl<'core> IceLearner<'core> {
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        let is_new = known_quals.insert( term.clone() ) ;
-        // println!("  {}", term) ;
-        // println!("  - {}", is_new) ;
+        let is_new = ! quals.all_quals[pred].contains(
+          & term
+        ) && known_quals.insert(
+          term.clone()
+        ) ;
+
         if ! is_new {
           // Term already known, skip.
           Ok(false)
-        } else if let Some(gain) = data.gain(
-          pred, self_data, & term, & self_core._profiler, false
-        ) ? {
+        } else if let Some(gain) = {
+          if simple {
+            data.simple_gain(& term) ?
+          } else {
+            data.gain(
+              pred, self_data, & term, & self_core._profiler, false
+            ) ?
+          }
+        } {
           // println!("  - {}", gain) ;
+          if conf.ice.qual_step {
+            let _ = self_core.msg(
+              format!(
+                "{}: {} (synthesis)", term, gain
+              )
+            ) ;
+            pause_msg(self_core, "to continue (--qual_step on)") ;
+            ()
+          }
           if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
             quals.insert(& term, pred) ? ;
@@ -867,7 +950,7 @@ impl<'core> IceLearner<'core> {
             }
             Ok( gain >= pivot )
           } else {
-            Ok(false)
+            Ok( gain >= 1.0 )
           }
         } else {
           Ok(false)
@@ -879,7 +962,7 @@ impl<'core> IceLearner<'core> {
 
       'synth: loop {
 
-        for sample in data.iter() {
+        for sample in data.iter(! simple) {
           self_core.check_exit() ? ;
           let done = synth_sys.sample_synth(
             sample, & mut treatment, & self_core._profiler
@@ -906,7 +989,7 @@ impl<'core> IceLearner<'core> {
   /// the data will be forced to be positive / negative in the solver
   /// automatically. Otherwise, the actlit is deactivated.
   pub fn is_legal(
-    & mut self, pred: PrdIdx, unc: & HSamples, pos: bool
+    & mut self, pred: PrdIdx, unc: & Vec<Args>, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
     profile!{ self tick "learning", "smt", "legal" }
@@ -943,7 +1026,7 @@ impl<'core> IceLearner<'core> {
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
     profile!{ self tick "learning", "smt", "all legal" }
-    let unc = & self.data.map[pred] ;
+    let unc = & self.data.map()[pred] ;
     if unc.is_empty() {
       profile!{ self mark "learning", "smt", "all legal" }
       return Ok(true)
@@ -1014,7 +1097,7 @@ impl<'core> IceLearner<'core> {
 
     self.solver.comment("Sample declarations for constraints:") ? ;
     // Declare all samples used in constraints.
-    for (pred, map) in self.data.map.index_iter() {
+    for (pred, map) in self.data.map().index_iter() {
       // if let Some(term) = self.instance.term_of(pred) {
       //   if term.is_true() {
       //     self.solver.comment(
