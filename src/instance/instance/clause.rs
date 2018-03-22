@@ -315,6 +315,14 @@ impl Clause {
     & self.lhs_preds
   }
 
+  /// Drains all LHS applications.
+  #[inline]
+  pub fn drain_lhs_preds(
+    & mut self
+  ) -> ::std::collections::hash_map::Drain<PrdIdx, HTArgss> {
+    self.lhs_preds.drain()
+  }
+
   /// LHS accessor for a predicate, mutable.
   #[inline]
   pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut HTArgss > {

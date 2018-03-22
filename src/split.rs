@@ -10,6 +10,12 @@ use common::* ;
 
 /// Splits the instance if asked to do so, and solves it.
 ///
+/// Returns
+///
+/// - a partial model if the instance is sat
+/// - `None` if not in `infer` mode
+/// - an error of `Unsat` if unsat
+///
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
   real_instance: Arc<Instance>, _profiler: & Profiler
@@ -67,7 +73,7 @@ pub fn work(
       Either::Left(instance) => instance,
       Either::Right(None) => {
         log! { @info "unsat by preproc\n\n" }
-        return Ok(None)
+        bail!(ErrorKind::Unsat)
       },
       Either::Right(Some(this_model)) => {
         log! { @info "sat by preproc\n\n" }
@@ -100,12 +106,16 @@ pub fn work(
       model!(add this_model)
     } else {
       log! { @info "unsat\n\n" }
-      return Ok(None)
+      bail!(ErrorKind::Unsat)
     }
 
   }
 
-  Ok( Some(model) )
+  if conf.infer {
+    Ok( Some(model) )
+  } else {
+    Ok(None)
+  }
 }
 
 
@@ -239,13 +249,9 @@ fn preproc(
     instance[clause].rhs().is_none()
   }
 
-  let mut instance = instance.clone_with_one_neg(clause) ;
-
-  // log! { @info "{}", instance.to_string_info(()).unwrap() }
-
-  if conf.preproc.active {
-    ::instance::preproc::work(& mut instance, profiler, false) ?
-  }
+  let instance = ::instance::preproc::work_on_split(
+    instance, clause, profiler
+  ) ? ;
 
   if let Some(maybe_model) = instance.is_trivial_model() ? {
     Ok( Either::Right(maybe_model) )

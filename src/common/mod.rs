@@ -252,6 +252,7 @@ impl CanBEvaled for Term {
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
 #[must_use]
+#[derive(Debug)]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,

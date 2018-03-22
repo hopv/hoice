@@ -20,7 +20,6 @@ extern crate error_chain ;
 #[macro_use]
 extern crate clap ;
 extern crate ansi_term as ansi ;
-extern crate regex ;
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;
@@ -150,30 +149,33 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::CheckSat => {
         log! { @info "Running top pre-processing" }
 
-        if conf.preproc.active {
-          let preproc_profiler = Profiler::new() ;
-          match profile! {
-            |profiler| wrap {
-              instance::preproc::work(& mut instance, & preproc_profiler, true)
-            } "top preproc"
-          } {
-            Ok(()) => (),
-            Err(e) => if e.is_timeout() {
-              if e.is_timeout() {
-                println!("unknown") ;
-                print_stats("top", profiler) ;
-                ::std::process::exit(0)
-              }
-            } else {
-              bail!(e)
-            },
-          }
-          print_stats("top preproc", preproc_profiler)
+        let preproc_profiler = Profiler::new() ;
+        match profile! {
+          |profiler| wrap {
+            instance::preproc::work(& mut instance, & preproc_profiler)
+          } "top preproc"
+        } {
+          Ok(()) => (),
+          Err(e) => if e.is_timeout() {
+            if e.is_timeout() {
+              println!("unknown") ;
+              print_stats("top", profiler) ;
+              ::std::process::exit(0)
+            }
+          } else {
+            bail!(e)
+          },
         }
+        print_stats("top preproc", preproc_profiler) ;
 
         model = if let Some(maybe_model) = instance.is_trivial_conj() ? {
           // Pre-processing already decided satisfiability.
           log! { @info "solved by pre-processing" }
+          if maybe_model.is_some() {
+            println!("sat")
+          } else {
+            println!("unsat")
+          }
           maybe_model
         } else {
 
@@ -191,30 +193,31 @@ pub fn read_and_work<R: ::std::io::Read>(
           } ;
 
           match solve_res {
-            Ok(Some(res)) => Some(
-              instance.extend_model(res) ?
-            ),
-            Ok(None) => None,
-            Err(e) => {
-              if e.is_unsat() {
-                None
-              } else if e.is_timeout() {
-                println!("unknown") ;
-                print_stats("top", profiler) ;
-                ::std::process::exit(0)
-              } else {
-                bail!(e)
-              }
+            Ok(Some(res)) => {
+              println!("sat") ;
+              Some(
+                instance.extend_model(res) ?
+              )
+            },
+            Ok(None) => {
+              println!("unknown") ;
+              None
+            },
+            Err(e) => if e.is_unsat() {
+              println!("unsat") ;
+              None
+            } else if e.is_timeout() {
+              println!("unknown") ;
+              print_stats("top", profiler) ;
+              ::std::process::exit(0)
+            } else {
+              bail!(e)
             },
           }
         } ;
+
         if stop_on_check {
           return Ok( (model, instance) )
-        }
-        if model.is_some() {
-          println!("sat")
-        } else {
-          println!("unsat")
         }
 
       },

@@ -73,7 +73,7 @@ pub struct Instance {
   /// If this instance is the result of a split, contains the index of the
   /// clause of the original instance that the split was on.
   ///
-  /// The constructor sets this to `None`. Function `clone_with_one_neg`
+  /// The constructor sets this to `None`. Function `clone_with_clauses`
   /// automatically sets it to the clause kept.
   split: Option<ClsIdx>,
 }
@@ -99,6 +99,36 @@ impl Instance {
       imp_clauses: ClsSet::new(),
       is_finalized: false,
       split: None,
+    }
+  }
+
+  /// Clones itself.
+  ///
+  /// This is only used when splitting. `clause` will be remembered as the
+  /// clause the split is on.
+  ///
+  /// Fails (in debug) if `clause` is not a negative clause of `self` or if
+  /// `self` is not finalized.
+  pub fn clone_with_clauses(& self, clause: ClsIdx) -> Self {
+    debug_assert! { self.neg_clauses.contains(& clause) }
+    debug_assert! { self.is_finalized }
+
+    Instance {
+      preds: self.preds.clone(),
+      old_preds: self.old_preds.clone(),
+      old_var_maps: self.old_var_maps.clone(),
+      pred_terms: self.pred_terms.clone(),
+      sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
+      max_pred_arity: self.max_pred_arity.clone(),
+      clauses: self.clauses.clone(),
+      pred_to_clauses: self.pred_to_clauses.clone(),
+      is_unsat: false,
+      pos_clauses: ClsSet::new(),
+      strict_neg_clauses: ClsSet::new(),
+      neg_clauses: ClsSet::new(),
+      imp_clauses: ClsSet::new(),
+      is_finalized: false,
+      split: Some(clause),
     }
   }
 
@@ -148,36 +178,6 @@ impl Instance {
   /// Original signature of a predicate.
   pub fn original_sig_of(& self, pred: PrdIdx) -> & Sig {
     & self.old_preds[pred].0
-  }
-
-  /// Clones itself without the clauses.
-  fn clone_without_clauses(& self) -> Self {
-    let mut res = Instance::new() ;
-    res.preds = self.preds.clone() ;
-    res.old_preds = self.old_preds.clone() ;
-    res.pred_terms = self.pred_terms.clone() ;
-    res.pred_to_clauses = vec![
-      (ClsSet::new(), ClsSet::new()) ; self.preds.len()
-    ].into() ;
-    res
-  }
-
-
-  /// Clones itself dropping all negative clauses but `to_keep`.
-  ///
-  /// The resulting instance is *not* finalized.
-  pub fn clone_with_one_neg(
-    & self, to_keep: ClsIdx
-  ) -> Self {
-    let mut res = self.clone_without_clauses() ;
-    res.split = Some(to_keep) ;
-    for (idx, clause) in self.clauses.index_iter() {
-      if ! clause.rhs().is_none() || idx == to_keep {
-        let is_new = res.push_clause_raw(clause.clone()) ;
-        debug_assert! { is_new }
-      }
-    }
-    res
   }
 
   /// If this instance is the result of a split, returns the index of the
@@ -874,22 +874,22 @@ impl Instance {
     true
   }
 
-  /// Pushes a new clause and links, no redundancy check.
-  fn push_clause_raw(& mut self, clause: Clause) -> bool {
-    let clause_index = self.clauses.next_index() ;
-    self.clauses.push(clause) ;
+  // /// Pushes a new clause and links, no redundancy check.
+  // fn push_clause_raw(& mut self, clause: Clause) -> bool {
+  //   let clause_index = self.clauses.next_index() ;
+  //   self.clauses.push(clause) ;
 
-    for pred in self.clauses[clause_index].lhs_preds().keys() {
-      let pred = * pred ;
-      let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
-      debug_assert!(is_new)
-    }
-    if let Some((pred, _)) = self.clauses[clause_index].rhs() {
-      let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
-      debug_assert!(is_new)
-    }
-    true
-  }
+  //   for pred in self.clauses[clause_index].lhs_preds().keys() {
+  //     let pred = * pred ;
+  //     let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
+  //     debug_assert!(is_new)
+  //   }
+  //   if let Some((pred, _)) = self.clauses[clause_index].rhs() {
+  //     let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
+  //     debug_assert!(is_new)
+  //   }
+  //   true
+  // }
 
   /// Extracts some qualifiers from all clauses.
   pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
@@ -1578,6 +1578,22 @@ impl AsRef<Instance> for Instance {
     self
   }
 }
+impl AsMut<Instance> for Instance {
+  fn as_mut(& mut self) -> & mut Self {
+    self
+  }
+}
+// impl ::std::ops::Deref for Instance {
+//   type Target = Self ;
+//   fn deref(& self) -> & Self {
+//     self
+//   }
+// }
+// impl ::std::ops::DerefMut for Instance {
+//   fn deref_mut(& mut self) -> & mut Self {
+//     self
+//   }
+// }
 
 
 

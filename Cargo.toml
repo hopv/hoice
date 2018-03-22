@@ -31,7 +31,6 @@ bench = [ ]
 [dependencies]
 lazy_static = "*"
 clap = "*"
-regex = "*"
 hashconsing = "*"
 error-chain = "*"
 ansi_term = "*"

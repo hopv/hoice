@@ -23,20 +23,36 @@ use self::graph::Graph ;
 /// Finalizes the instance.
 pub fn work(
   instance: & mut Instance, profiler: & Profiler,
-  simplify_first: bool
 ) -> Res<()> {
+  let res = if conf.preproc.active {
+    let instance = PreInstance::new(instance) ? ;
 
+    run(instance, profiler, true)
+  } else {
+    Ok(())
+  } ;
+  finalize(res, instance, profiler)
+}
+
+/// Runs pre-processing from a pre-instance.
+fn run(
+  instance: PreInstance, profiler: & Profiler, simplify_first: bool
+) -> Res<()> {
   profile! { |profiler| tick "preproc" }
 
-  let res = {
-    let mut reductor = Reductor::new(instance) ? ;
-    reductor.run(profiler, simplify_first).and_then(
-      |_| reductor.destroy()
-    )
-  } ;
+  let mut reductor = Reductor::new(instance) ? ;
+  let res = reductor.run(profiler, simplify_first).and_then(
+    |_| reductor.destroy()
+  ) ;
 
   profile! { |profiler| mark "preproc" }
+  res
+}
 
+/// Finalizes pre-processing
+fn finalize(
+  res: Res<()>, instance: & mut Instance, profiler: & Profiler
+) -> Res<()> {
   profile!(
     |profiler| wrap {
       instance.finalize()
@@ -44,13 +60,16 @@ pub fn work(
   ) ? ;
 
   profile! {
-    |profiler| "positive          clauses" => add instance.pos_clauses().len()
+    |profiler|
+    "positive          clauses" => add instance.pos_clauses().len()
   }
   profile! {
-    |profiler| "negative          clauses" => add instance.neg_clauses().len()
+    |profiler|
+    "negative          clauses" => add instance.neg_clauses().len()
   }
   profile! {
-    |profiler| "negative (strict) clauses" => add instance.neg_clauses().len()
+    |profiler|
+    "negative (strict) clauses" => add instance.strict_neg_clauses().len()
   }
 
   match res {
@@ -62,6 +81,124 @@ pub fn work(
   }
 
   Ok(())
+}
+
+
+/// Runs pre-processing on a split version of the input instance.
+///
+/// Fails if `to_keep` is not a negative clause in `instance`.
+pub fn work_on_split(
+  instance: & Instance, to_keep: ClsIdx, profiler: & Profiler
+) -> Res<Instance> {
+
+  profile! { |profiler| tick "splitting" }
+
+  let mut split_instance = instance.clone_with_clauses(to_keep) ;
+
+  let mut to_forget: Vec<_> = instance.neg_clauses().iter().filter_map(
+    |c| if * c != to_keep { Some(* c) } else { None }
+  ).collect() ;
+
+  let mut neg_clauses = Vec::with_capacity(instance.neg_clauses().len()) ;
+  // We're going to forget clauses (swap-remove), going in descending order.
+  to_forget.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1)) ;
+  for clause_idx in to_forget {
+    if clause_idx != to_keep {
+      let clause = split_instance.forget_clause(clause_idx) ? ;
+      if instance.strict_neg_clauses().contains(& clause_idx) {
+        neg_clauses.push(clause)
+      }
+    }
+  }
+
+  profile! { |profiler| mark "splitting" }
+
+  profile! { |profiler| tick "strengthening" }
+
+  log! { @debug "strengthening using {} clauses", neg_clauses.len() }
+
+  let res = {
+
+    let mut pre_instance = PreInstance::new(& mut split_instance) ? ;
+    let mut info = RedInfo::new() ;
+
+    'strengthen: for clause in neg_clauses {
+      macro_rules! inconsistent {
+        () => ({
+          instance.check("work_on_split (instance)") ? ;
+          instance.check("work_on_split (split)") ? ;
+          bail!("inconsistent instance state")
+        }) ;
+      }
+
+      let (pred, args) = {
+        let mut pred_apps = clause.lhs_preds().iter() ;
+
+        if let Some((pred, argss)) = pred_apps.next() {
+          if pred_apps.next().is_some() {
+            continue 'strengthen
+          }
+
+          let mut argss = argss.iter() ;
+          if let Some(args) = argss.next() {
+            if argss.next().is_some() {
+              continue 'strengthen
+            }
+            (* pred, args)
+          } else {
+            inconsistent!()
+          }
+        } else {
+          inconsistent!()
+        }
+      } ;
+
+      use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
+
+      match terms_of_lhs_app(
+        true, & instance, & clause.vars,
+        clause.lhs_terms(), clause.lhs_preds(), None,
+        pred, args
+      ) ? {
+        ExtractRes::Trivial => bail!(
+          "trivial clause during work_on_split"
+        ),
+        ExtractRes::Failed => bail!(
+          "extraction failure during work_on_split"
+        ),
+        ExtractRes::SuccessTrue => bail!(
+          "extracted true during work_on_split"
+        ),
+        ExtractRes::SuccessFalse => bail!(
+          "extracted false during work_on_split"
+        ),
+        ExtractRes::Success((qvars, is_none, only_terms)) => {
+          debug_assert! { is_none.is_none() } ;
+          let (terms, preds) = only_terms.destroy() ;
+          debug_assert! { preds.is_empty() } ;
+          let term = term::not(
+            term::and( terms.into_iter().collect() )
+          ) ;
+          log! { @info "extending {} with {}", instance[pred], term }
+          info += pre_instance.extend_pred_left(
+            pred, qvars, term
+          ) ? ;
+        },
+      }
+    }
+
+    profile! { |profiler| mark "strengthening" }
+
+    if conf.preproc.active {
+      run(pre_instance, profiler, false)
+    } else {
+      Ok(())
+    }
+  } ;
+
+  finalize(res, & mut split_instance, profiler) ? ;
+
+  Ok(split_instance)
 }
 
 
@@ -94,8 +231,7 @@ impl<'a> Reductor<'a> {
   /// Constructor.
   ///
   /// Checks the configuration to initialize the pre-processors.
-  pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let instance = PreInstance::new(instance) ? ;
+  pub fn new(instance: PreInstance<'a>) -> Res<Self> {
 
     macro_rules! some_new {
       ($red:ident if $flag:ident $(and $flags:ident )*) => (
@@ -267,7 +403,9 @@ impl<'a> Reductor<'a> {
         "arg count original" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
-            args += info.sig.len()
+            if ! self.instance.is_known(info.idx) {
+              args += info.sig.len()
+            }
           }
           args
         }
@@ -408,7 +546,9 @@ impl<'a> Reductor<'a> {
         "arg count    final" => add {
           let mut args = 0 ;
           for info in self.instance.preds() {
-            args += info.sig.len()
+            if ! self.instance.is_known(info.idx) {
+              args += info.sig.len()
+            }
           }
           args
         }

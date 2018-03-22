@@ -25,7 +25,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let mut solver = conf.solver.spawn("preproc", (), &* instance) ? ;
+    let mut solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
     solver.free_resets() ? ;
 
     let simplifier = ClauseSimplifier::new() ;
@@ -131,7 +131,7 @@ impl<'a> PreInstance<'a> {
     macro_rules! rm_return {
       ($clause:ident if $should_remove:expr => $blah:expr) => (
         if $should_remove {
-          info! {
+          log! { @debug
             "  removing clause #{} by {}", clause, $blah
           }
           self.instance.forget_clause(clause) ? ;
@@ -140,7 +140,7 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    log_debug! { "simplifying clause #{}", clause }
+    log! { @debug "simplifying clause #{}", clause }
 
     if self.instance[clause].is_unsat() {
       bail!( ErrorKind::Unsat )
@@ -728,6 +728,109 @@ impl<'a> PreInstance<'a> {
     self.instance.forget_clause(clause_to_rm) ? ;
 
     self.check("after `force_pred_left`") ? ;
+
+    info += self.force_trivial() ? ;
+
+    Ok(info)
+  }
+
+
+  /// Extends the lhs occurences of a predicate with some a term.
+  ///
+  /// If `pred` appears in `pred /\ apps /\ trms => rhs`, the clause will
+  /// become `pred /\ apps /\ trms /\ term => rhs`.
+  ///
+  /// # Consequences
+  ///
+  /// - simplifies all clauses impacted
+  ///
+  /// # Used by
+  ///
+  /// - sub instance generation, when splitting on one clause
+  pub fn extend_pred_left(
+    & mut self, pred: PrdIdx, qvars: Quantfed, term: Term
+  ) -> Res<RedInfo> {
+    self.check("before `extend_pred_left`") ? ;
+
+    // let mut tterm_set = TTermSet::new() ;
+    // tterm_set.insert_terms(terms) ;
+    // for (pred, args) in pred_apps {
+    //   tterm_set.insert_pred_app(pred, args) ;
+    // }
+
+    let mut info = RedInfo::new() ;
+
+    match term.bool() {
+      Some(true) => return Ok(info),
+      Some(false) => {
+        let mut to_forget: Vec<_> = self.pred_to_clauses[
+          pred
+        ].0.iter().map(|c| * c).collect() ;
+        info.clauses_rmed += to_forget.len() ;
+        self.instance.forget_clauses(& mut to_forget) ? ;
+        // pred only appears in some rhs-s now, force true
+        info += self.force_true(pred) ? ;
+        return Ok(info)
+      },
+      None => (),
+    }
+
+    log! { @3
+      "extend pred left on {} with {}...",
+      conf.emph(& self[pred].name),
+      term
+    }
+
+    // Update lhs clauses.
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.clauses_to_simplify = self.pred_to_clauses[pred].0.iter().map(
+      |c| * c
+    ).collect() ;
+
+    'clause_iter: for clause in & self.clauses_to_simplify {
+      let clause = * clause ;
+      log! { @4
+        "  - working on lhs of clause {}",
+        self[clause].to_string_info(
+          self.preds()
+        ).unwrap()
+      }
+
+      let argss = if let Some(
+        argss
+      ) = self.clauses[clause].lhs_preds().get(& pred) {
+        argss.clone()
+      } else {
+        bail!(
+          "inconsistent instance state, \
+          `pred_to_clauses` and clauses out of sync"
+        )
+      } ;
+
+      for args in argss {
+        // Generate fresh variables for the clause if needed.
+        let qual_map = self.instance.clauses[clause].fresh_vars_for(& qvars) ;
+
+        if let Some((term, _)) = term.subst_total( & (& args, & qual_map) ) {
+          self.instance.clause_add_lhs_term(clause, term)
+        } else {
+          bail!("error during total substitution in `extend_pred_left`")
+        }
+      }
+
+      log! { @4
+        "  done with clause: {}",
+        self[clause].to_string_info(
+          self.preds()
+        ).unwrap()
+      }
+
+    }
+
+    // Simplify the clauses we just updated.
+    info += self.simplify_clauses() ? ;
+
+    self.check("after `extend_pred_left`") ? ;
 
     info += self.force_trivial() ? ;
 
