@@ -243,6 +243,7 @@ impl<'a> PreInstance<'a> {
 
         for kid in kids {
           let mut clause = clause.clone() ;
+          clause.info = "split_disj" ;
           clause.insert_term(kid) ;
           if let Some(this_clause_idx) = self.instance.push_clause(clause) ? {
             info.clauses_added += 1 ;
@@ -737,8 +738,9 @@ impl<'a> PreInstance<'a> {
 
   /// Extends the lhs occurences of a predicate with some a term.
   ///
-  /// If `pred` appears in `pred /\ apps /\ trms => rhs`, the clause will
-  /// become `pred /\ apps /\ trms /\ term => rhs`.
+  /// If `pred` appears in `pred /\ apps /\ trms => rhs` **where `rhs` is a
+  /// predicate application, the clause will become `pred /\ apps /\ trms /\
+  /// term => rhs`.
   ///
   /// # Consequences
   ///
@@ -790,6 +792,11 @@ impl<'a> PreInstance<'a> {
 
     'clause_iter: for clause in & self.clauses_to_simplify {
       let clause = * clause ;
+
+      if self.clauses[clause].rhs().is_none() {
+        continue 'clause_iter
+      }
+
       log! { @4
         "  - working on lhs of clause {}",
         self[clause].to_string_info(

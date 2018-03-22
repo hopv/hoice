@@ -105,7 +105,8 @@ pub fn work_on_split(
   for clause_idx in to_forget {
     if clause_idx != to_keep {
       let clause = split_instance.forget_clause(clause_idx) ? ;
-      if instance.strict_neg_clauses().contains(& clause_idx) {
+      if conf.preproc.split_strengthen
+      && instance.strict_neg_clauses().contains(& clause_idx) {
         neg_clauses.push(clause)
       }
     }
@@ -113,96 +114,109 @@ pub fn work_on_split(
 
   profile! { |profiler| mark "splitting" }
 
-  profile! { |profiler| tick "strengthening" }
-
-  log! { @debug "strengthening using {} clauses", neg_clauses.len() }
-
   let res = {
 
     let mut pre_instance = PreInstance::new(& mut split_instance) ? ;
-    let mut info = RedInfo::new() ;
 
-    // Maps predicates to strengthening terms.
-    let mut strength_map = PrdHMap::new() ;
+    if conf.preproc.split_strengthen {
 
-    'strengthen: for clause in neg_clauses {
-      macro_rules! inconsistent {
-        () => ({
-          instance.check("work_on_split (instance)") ? ;
-          instance.check("work_on_split (split)") ? ;
-          bail!("inconsistent instance state")
-        }) ;
-      }
+      profile! { |profiler| tick "strengthening" }
 
-      let (pred, args) = {
-        let mut pred_apps = clause.lhs_preds().iter() ;
+      log! { @debug "strengthening using {} clauses", neg_clauses.len() }
 
-        if let Some((pred, argss)) = pred_apps.next() {
-          debug_assert! { pred_apps.next().is_none() }
+      let mut info = RedInfo::new() ;
 
-          let mut argss = argss.iter() ;
-          if let Some(args) = argss.next() {
-            debug_assert! { argss.next().is_none() }
-            (* pred, args)
+      // Maps predicates to strengthening terms.
+      let mut strength_map = PrdHMap::new() ;
+
+      'strengthen: for clause in neg_clauses {
+        macro_rules! inconsistent {
+          () => ({
+            instance.check("work_on_split (instance)") ? ;
+            instance.check("work_on_split (split)") ? ;
+            bail!("inconsistent instance state")
+          }) ;
+        }
+
+        let (pred, args) = {
+          let mut pred_apps = clause.lhs_preds().iter() ;
+
+          if let Some((pred, argss)) = pred_apps.next() {
+            debug_assert! { pred_apps.next().is_none() }
+
+            let mut argss = argss.iter() ;
+            if let Some(args) = argss.next() {
+              debug_assert! { argss.next().is_none() }
+              (* pred, args)
+            } else {
+              inconsistent!()
+            }
           } else {
             inconsistent!()
           }
-        } else {
-          inconsistent!()
+        } ;
+
+        use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
+
+        match terms_of_lhs_app(
+          true, & instance, & clause.vars,
+          clause.lhs_terms(), clause.lhs_preds(), None,
+          pred, args
+        ) ? {
+          ExtractRes::Trivial => bail!(
+            "trivial clause during work_on_split"
+          ),
+          ExtractRes::Failed => bail!(
+            "extraction failure during work_on_split"
+          ),
+          ExtractRes::SuccessTrue => bail!(
+            "extracted true during work_on_split"
+          ),
+          ExtractRes::SuccessFalse => bail!(
+            "extracted false during work_on_split"
+          ),
+          ExtractRes::Success((qvars, is_none, only_terms)) => {
+            debug_assert! { is_none.is_none() } ;
+            let (terms, preds) = only_terms.destroy() ;
+            debug_assert! { preds.is_empty() } ;
+            let entry = strength_map.entry(pred).or_insert_with(
+              || (HConSet::<Term>::new(), Vec::new())
+            ) ;
+            if qvars.is_empty() {
+              entry.0.extend( terms )
+            } else {
+              entry.1.push((qvars, terms))
+            }
+          },
         }
-      } ;
-
-      use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
-
-      match terms_of_lhs_app(
-        true, & instance, & clause.vars,
-        clause.lhs_terms(), clause.lhs_preds(), None,
-        pred, args
-      ) ? {
-        ExtractRes::Trivial => bail!(
-          "trivial clause during work_on_split"
-        ),
-        ExtractRes::Failed => bail!(
-          "extraction failure during work_on_split"
-        ),
-        ExtractRes::SuccessTrue => bail!(
-          "extracted true during work_on_split"
-        ),
-        ExtractRes::SuccessFalse => bail!(
-          "extracted false during work_on_split"
-        ),
-        ExtractRes::Success((qvars, is_none, only_terms)) => {
-          debug_assert! { is_none.is_none() } ;
-          let (terms, preds) = only_terms.destroy() ;
-          debug_assert! { preds.is_empty() } ;
-          let entry = strength_map.entry(pred).or_insert_with(
-            || (HConSet::<Term>::new(), Vec::new())
-          ) ;
-          if qvars.is_empty() {
-            entry.0.extend( terms )
-          } else {
-            entry.1.push((qvars, terms))
-          }
-        },
       }
-    }
 
-    for (pred, (terms, quantified)) in strength_map {
-      log! {
-        @info "extending {} with {} terms in {} clauses ({} quantifiers)",
-        instance[pred],
-        terms.len() + quantified.iter().fold(
-          0, |acc, & (_, ref terms)| acc + terms.len()
-        ),
-        instance.clauses_of(pred).0.len(),
-        quantified.len()
+      for (pred, (terms, quantified)) in strength_map {
+        log! {
+          @debug "extending {} with {} terms in {} clauses ({} quantifiers)",
+          instance[pred],
+          terms.len() + quantified.iter().fold(
+            0, |acc, & (_, ref terms)| acc + terms.len()
+          ),
+          instance.clauses_of(pred).0.len(),
+          quantified.len()
+        }
+        info += pre_instance.extend_pred_left(
+          pred, terms, quantified
+        ) ? ;
       }
-      info += pre_instance.extend_pred_left(
-        pred, terms, quantified
-      ) ? ;
-    }
 
-    profile! { |profiler| mark "strengthening" }
+      profile! {
+        |profiler| "strengthening   pred red" => add info.preds
+      }
+      profile! {
+        |profiler| "strengthening clause red" => add info.clauses_rmed
+      }
+      profile! {
+        |profiler| "strengthening clause add" => add info.clauses_added
+      }
+      profile! { |profiler| mark "strengthening" }
+    }
 
     if conf.preproc.active {
       run(pre_instance, profiler, false)

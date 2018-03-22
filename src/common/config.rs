@@ -281,6 +281,9 @@ pub struct PreprocConf {
   /// [simpl]: ../../instance/preproc/struct.Simplify.html
   /// (Simplify reduction strategy)
   pub prune_terms: bool,
+
+  /// Allows strengthening when splitting.
+  pub split_strengthen: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -495,7 +498,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(
+      ).default_value("off").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -507,7 +510,19 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(
+      ).default_value("off").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split_strengthen").long("--split_strengthen").help(
+        "(de)activates strengthening when splitting is active"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -529,11 +544,12 @@ impl PreprocConf {
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
     let unroll = bool_of_matches(matches, "unroll") ;
     let mult_unroll = bool_of_matches(matches, "mult_unroll") ;
+    let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms, unroll, mult_unroll
+      arg_red, prune_terms, unroll, mult_unroll, split_strengthen
     }
   }
 }
