@@ -51,24 +51,24 @@ fn run(
 
 /// Finalizes pre-processing
 fn finalize(
-  res: Res<()>, instance: & mut Instance, profiler: & Profiler
+  res: Res<()>, instance: & mut Instance, _profiler: & Profiler
 ) -> Res<()> {
   profile!(
-    |profiler| wrap {
+    |_profiler| wrap {
       instance.finalize()
     } "finalizing"
   ) ? ;
 
   profile! {
-    |profiler|
+    |_profiler|
     "positive          clauses" => add instance.pos_clauses().len()
   }
   profile! {
-    |profiler|
+    |_profiler|
     "negative          clauses" => add instance.neg_clauses().len()
   }
   profile! {
-    |profiler|
+    |_profiler|
     "negative (strict) clauses" => add instance.strict_neg_clauses().len()
   }
 

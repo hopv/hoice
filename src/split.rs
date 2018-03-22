@@ -197,18 +197,18 @@ impl Splitter {
   }
 
   /// Returns the next instance to work on.
-  pub fn next_instance(& mut self, prof: & Profiler) -> Res<
+  pub fn next_instance(& mut self, _prof: & Profiler) -> Res<
     Option< Either<Arc<Instance>, Option<Model>> >
   > {
     match self.clauses {
       Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
         let profiler = Profiler::new() ;
         let preproc_res = profile! (
-          |prof| wrap {
+          |_prof| wrap {
             preproc(
               self.instance.as_ref(), clause, & profiler
             )
-          } "negative sub-preproc"
+          } "sub-preproc"
         ) ? ;
         self._profiler = Some(profiler) ;
         Ok(

@@ -377,7 +377,7 @@ impl Profiler {
   #[cfg(feature = "bench")]
   pub fn add_other<S>(
     & self, _: S, _: Self
-  ) -> Option<Profiler> {}
+  ) -> () {}
 
   /// Adds an other (not a sub) profiler to this profiler.
   #[cfg( not(feature = "bench") )]
@@ -390,10 +390,6 @@ impl Profiler {
     ) ;
     res
   }
-  #[cfg(feature = "bench")]
-  pub fn drain_others< S: Into<String> >(
-    & self,
-  ) -> Option<Profiler> {}
 
 
   /// Consumes and prints a profiler.
