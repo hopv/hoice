@@ -53,7 +53,7 @@ macro_rules! add_vars {
         }
         let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
         debug_assert_eq!( None, _prev ) ;
-        log_debug! { "    adding fresh v_{} for {}", $fresh, $info[var] }
+        log! { @6 "adding fresh v_{} for {}", $fresh, $info[var] }
         let _prev = $map.insert(
           var, term::var(* $fresh, $info[var].typ)
         ) ;
@@ -87,7 +87,7 @@ fn args_of_pred_app(
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
 ) -> Res< TExtractRes<HTArgs> > {
-  log_debug! { "      args_of_pred_app ({})", quantifiers }
+  log! { @6 "args_of_pred_app ({})", quantifiers }
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
   for arg in args.iter() {
     add_vars! {
@@ -117,7 +117,7 @@ fn terms_of_pred_apps<'a>(
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
 ) -> Res< TExtractRes< Option<& 'a HTArgss > > > {
-  log_debug! { "    terms_of_pred_apps" }
+  log! { @6 "terms_of_pred_apps" }
   let mut res = None ;
   for (prd, argss) in src {
 
@@ -136,7 +136,7 @@ fn terms_of_pred_apps<'a>(
           ()
         },
         TExtractRes::Failed => {
-          log_debug! { "    failed to extract argument {}", args }
+          log! { @6 "failed to extract argument {}", args }
           return Ok(TExtractRes::Failed)
         },
       }
@@ -164,7 +164,7 @@ where
 TermIter: Iterator<Item = & 'a Term> + ExactSizeIterator,
 Terms: IntoIterator<IntoIter = TermIter, Item = & 'a Term>,
 F: Fn(Term) -> Term {
-  log_debug! { "    terms_of_terms" }
+  log! { @4 "terms_of_terms" }
 
   // Finds terms which variables are related to the ones from the predicate
   // applications.
@@ -189,19 +189,19 @@ F: Fn(Term) -> Term {
   loop {
     let mut fixed_point = true ;
 
-    if_not_bench! {
-      log_debug! { "      app vars:" }
+    if_log! { @5
+      log! { @5 "app vars:" }
       for var in app_vars.iter() {
-        log_debug! { "      - {}", var_info[* var] }
+        log! { @5 "- {}", var_info[* var] }
       }
-      log_debug! { "      map:" }
+      log! { @5 "map:" }
       for (var, term) in map.iter() {
-        log_debug! { "      - v_{} -> {}", var, term }
+        log! { @5 "- v_{} -> {}", var, term }
       }
     }
 
     for term in lhs_terms_vec.drain(0..) {
-      log_debug! { "      {}", term.to_string_info(var_info) ? }
+      log! { @6 "{}", term.to_string_info(var_info) ? }
       let vars = term::vars(term) ;
 
       if app_vars.len() == var_info.len()
@@ -211,11 +211,11 @@ F: Fn(Term) -> Term {
         } else {
           bail!("[unreachable] failure during total substitution (1)")
         } ;
-        log_debug! { "      sub {}", term }
+        log! { @6 "      sub {}", term }
         tgt.insert( f(term) ) ;
 
       } else if ! even_if_disjoint && vars.is_disjoint(& app_vars) {
-        log_debug! { "      disjoint" }
+        log! { @6 "      disjoint" }
         postponed.push(term)
 
       } else {
@@ -339,8 +339,8 @@ pub fn terms_of_lhs_app(
 ) -> Res<
   ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
 > {
-  log_debug!{
-    "    terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
+  log!{ @4
+    "terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
   }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
@@ -351,8 +351,8 @@ pub fn terms_of_lhs_app(
     if quantifiers { var_info.len() } else { 0 }
   ) ;
 
-  log_debug!{
-    "    extracting application's terms"
+  log!{ @5
+    "extracting application's terms"
   }
 
   let (
@@ -362,23 +362,23 @@ pub fn terms_of_lhs_app(
   ) ? {
     res
   } else {
-    log_debug!{ "    failed to extract terms of application" }
+    log! { @5 "failed to extract terms of application" }
     return Ok(ExtractRes::Failed)
   } ;
 
-  if_not_bench! {
-    log_debug! { "    terms:" }
+  if_log! { @5
+    log! { @5 "terms:" }
     for term in & terms {
-      log_debug!{ "    - {}", term }
+      log!{ @5 "- {}", term }
     }
-    log_debug! { "    map:" }
+    log! { @5 "map:" }
     for (var, term) in & map {
-      log_debug! { "    - v_{} -> {}", var, term }
+      log! { @5 "- v_{} -> {}", var, term }
     }
   }
 
-  log_debug! {
-    "    working on lhs predicate applications ({})", lhs_preds.len()
+  log! { @5
+    "working on lhs predicate applications ({})", lhs_preds.len()
   }
 
   let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
@@ -399,14 +399,14 @@ pub fn terms_of_lhs_app(
     },
     TExtractRes::Success(None) => (),
     TExtractRes::Failed => {
-      log_debug!{ "    qualifiers required for lhs pred apps" }
+      log!{ @5 "qualifiers required for lhs pred apps, failing" }
       return Ok( ExtractRes::Failed )
     },
   }
 
   let pred_app = if let Some((pred, args)) = rhs {
-    log_debug! {
-      "    working on rhs predicate application"
+    log! { @5
+      "working on rhs predicate application"
     }
     if let TExtractRes::Success(nu_args) = args_of_pred_app(
       quantifiers, var_info, args, & mut app_vars,
@@ -414,16 +414,16 @@ pub fn terms_of_lhs_app(
     ) ? {
       Some((pred, nu_args))
     } else {
-      log_debug!{ "    qualifiers required for rhs pred app" }
+      log! { @5 "qualifiers required for rhs pred app, failing" }
       return Ok( ExtractRes::Failed )
     }
   } else {
-    log_debug! { "    no rhs predicate application" }
+    log! { @5 "no rhs predicate application" }
     None
   } ;
 
-  log_debug! {
-    "    working on lhs terms ({})", lhs_terms.len()
+  log! { @5
+    "working on lhs terms ({})", lhs_terms.len()
   }
 
   if let TExtractRes::Success(trivial) = terms_of_terms(
@@ -432,7 +432,7 @@ pub fn terms_of_lhs_app(
   ) ? {
     if trivial { return Ok( ExtractRes::Trivial ) }
   } else {
-    log_debug!{ "    qualifiers required for lhs terms" }
+    log!{ @5 "qualifiers required for lhs terms, failing" }
     return Ok( ExtractRes::Failed )
   }
 
@@ -458,19 +458,18 @@ pub fn terms_of_rhs_app(
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
   pred: PrdIdx, args: & HTArgs,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
-  log_debug!{ "  terms of rhs app on {} {}", instance[pred], args }
+  log! { @4 "terms of rhs app on {} {}", instance[pred], args }
 
   // Index of the first quantified variable: fresh for `pred`'s variables.
   let mut fresh = instance.original_sig_of(pred).next_index() ;
+  log! { @5 "first fresh: {}", fresh.default_str() }
   let fresh = & mut fresh ;
 
   let mut qvars = VarHMap::with_capacity(
     if quantifiers { var_info.len() } else { 0 }
   ) ;
 
-  log_debug!{
-    "    extracting application's terms"
-  }
+  log!{ @5 "extracting application's terms" }
 
   let (
     terms, mut map, mut app_vars
@@ -479,23 +478,23 @@ pub fn terms_of_rhs_app(
   ) ? {
     res
   } else {
-    log_debug! { "  could not extract terms of app" }
+    log! { @5 "could not extract terms of app" }
     return Ok(ExtractRes::Failed)
   } ;
 
-  if_not_bench! {
-    log_debug! { "    terms:" }
+  if_log! { @5
+    log! { @5 "terms:" }
     for term in & terms {
-      log_debug! { "    - {}", term }
+      log! { @5 "- {}", term }
     }
-    log_debug! { "    map:" }
+    log! { @5 "map:" }
     for (var, term) in & map {
-      log_debug! { "    - v_{} -> {}", var, term }
+      log! { @5 "- v_{} -> {}", var, term }
     }
   }
 
-  log_debug! {
-    "    working on lhs predicate applications ({})", lhs_preds.len()
+  log! { @5
+    "working on lhs predicate applications ({})", lhs_preds.len()
   }
 
   let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
@@ -515,15 +514,15 @@ pub fn terms_of_rhs_app(
     },
     TExtractRes::Success(None) => (),
     TExtractRes::Failed => {
-      log_debug! {
-        "  could not extract terms of predicate app ({})", instance[pred]
+      log! { @5
+        "could not extract terms of predicate app ({})", instance[pred]
       }
       return Ok( ExtractRes::Failed )
     },
   }
 
-  log_debug! {
-    "    working on lhs terms ({})", lhs_terms.len()
+  log! { @5
+    "working on lhs terms ({})", lhs_terms.len()
   }
 
   if let TExtractRes::Success(trivial) = terms_of_terms(

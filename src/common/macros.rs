@@ -63,6 +63,16 @@ macro_rules! err_chain {
 }
 
 
+/// Guards something by the log level.
+macro_rules! if_log {
+  (@$flag:tt $($stuff:tt)*) => (
+    if log!(|cond_of| $flag) {
+      $($stuff)*
+    }
+  ) ;
+}
+
+
 /// Logging macro.
 macro_rules! log {
 

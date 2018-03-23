@@ -297,7 +297,7 @@ impl Graph {
     rgt: & Vec<(Quantfed, TTermSet)>
   ) -> Res< Vec<(Quantfed, TTermSet)> > {
     log_debug! { "    merging..." }
-    let first_index = instance[pred].sig.next_index() ;
+    let first_index = instance.original_sig_of(pred).next_index() ;
     log_debug! { "    first index: {}", first_index }
 
     let mut result = Vec::with_capacity( lft.len() * rgt.len() ) ;
@@ -414,10 +414,10 @@ impl Graph {
       }
 
       let pred = if let Some(p) = pred { p } else {
-        log_debug! { "  no predicate illeligible for inlining" }
+        log! { @debug "  no predicate illeligible for inlining" }
         break 'construct
       } ;
-      log_debug! { "  inlining {}", instance[pred] }
+      log! { @debug "  inlining {}", instance[pred] }
 
       // read_line("to continue...") ;
 
@@ -444,7 +444,7 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log_debug! {
+            log! { @debug
               "from clause {}", clause.to_string_info(& instance.preds()) ?
             }
             if ! forced_inlining && ! tterms.preds().is_empty() {

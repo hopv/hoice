@@ -1402,7 +1402,7 @@ impl RedStrat for CfgRed {
         conf.check_timeout() ? ;
         info += instance.rm_rhs_clauses_of(pred) ? ;
 
-        if_verb! {
+        if_log! { @debug
           let mut s = format!("{}(", instance[pred]) ;
           let mut is_first = true ;
           for (var, typ) in instance[pred].sig.index_iter() {
@@ -1414,7 +1414,7 @@ impl RedStrat for CfgRed {
             s.push_str( & var.default_str() ) ;
             s.push_str(& format!(": {}", typ)) ;
           }
-          log_debug! { "{}) = (or", s }
+          log! { @debug "{}) = (or", s }
           for & (ref qvars, ref conj) in & def {
             let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
               let mut s = format!("  (exists") ;
@@ -1423,24 +1423,24 @@ impl RedStrat for CfgRed {
                 s.push_str( & var.default_str() ) ;
                 s.push_str( & format!(" {})", typ) )
               }
-              log_debug! { "{}", s }
+              log! { @debug "{}", s }
               (Some("  )"), "    ")
             } ;
-            log_debug! { "{}(and", pref }
+            log! { @debug "{}(and", pref }
             for term in conj.terms() {
-              log_debug! { "{}  {}", pref, term }
+              log! { @debug "{}  {}", pref, term }
             }
             for (pred, argss) in conj.preds() {
               for args in argss {
-                log_debug! { "{}  ({} {})", pref, instance[* pred], args }
+                log! { @debug "{}  ({} {})", pref, instance[* pred], args }
               }
             }
-            log_debug! { "{})", pref }
+            log! { @debug "{})", pref }
             if let Some(suff) = suff {
-              log_debug! { "{}", suff }
+              log! { @debug "{}", suff }
             }
           }
-          log_debug! { ")" }
+          log! { @debug ")" }
         }
 
         info += instance.force_dnf_left(pred, def) ? ;
