@@ -48,8 +48,14 @@ impl<'a> PreInstance<'a> {
     Ok(())
   }
 
-  /// Forces to false (true) all the predicates that only appear in clauses'
-  /// lhs (rhs).
+  /// Performs cheap triviality checks.
+  /// 
+  /// - forces to false (true) all the predicates that only appear in clauses'
+  ///   lhs (rhs)
+  /// - forces to true all predicates appearing in `true => (p vars)` where
+  ///   `vars` are all distinct
+  /// - forces to false all predicates appearing in `(p vars) => false` where
+  ///   `vars` are all distinct
   pub fn force_trivial(& mut self) -> Res< RedInfo > {
     let mut info: RedInfo = (0, 0, 0).into() ;
     let mut fixed_point = false ;
@@ -65,6 +71,46 @@ impl<'a> PreInstance<'a> {
             info.preds += 1 ;
             fixed_point = false ;
             info += self.force_true(pred) ?
+          }
+        }
+
+        let mut force = None ;
+
+        for neg_clause in self.instance.clauses_of(pred).0 {
+          let clause = & self.instance.clauses[* neg_clause] ;
+
+          if clause.lhs_terms().is_empty() // No lhs terms.
+          && ! clause.rhs().is_some()      // No rhs (=> false).
+          && clause.lhs_pred_apps_len() == 1 // Only one application...
+          && clause.lhs_preds().iter().all(  // ...with all arguments different
+            |(_, argss)| argss.iter().all(|args| args.are_diff_vars())
+          ) {
+            force = Some(false) ;
+            break
+          }
+        }
+
+        for pos_clause in self.instance.clauses_of(pred).1 {
+          if force.is_some() { break }
+          let clause = & self.instance.clauses[* pos_clause] ;
+
+          if clause.lhs_terms().is_empty() // No lhs terms.
+          && clause.lhs_preds().is_empty() // No lhs preds.
+          && clause.rhs().map(
+            |(_, args)| args.are_diff_vars() // All vars are different.
+          ).unwrap_or(true) {
+            force = Some(true) ;
+            break
+          }
+        }
+
+        if let Some(pos) = force {
+          info.preds += 1 ;
+          fixed_point = false ;
+          if pos {
+            info += self.force_true(pred) ?
+          } else {
+            info += self.force_false(pred) ?
           }
         }
       }
@@ -191,8 +237,8 @@ impl<'a> PreInstance<'a> {
 
   /// Splits disjunctions.
   ///
-  /// Splits a clause if it contains exactly one disjunction, if its rhs
-  /// predicate appear in the rhs of other clauses too.
+  /// If the clause contains a single disjunction, generates a clause for each
+  /// arithmetic equality in the disjunction.
   ///
   /// Returns the number of clauses created.
   fn split_disj(& mut self, clause_idx: ClsIdx) -> Res< RedInfo > {
@@ -222,38 +268,74 @@ impl<'a> PreInstance<'a> {
 
     // Skip if clause contains more than 2 disjunctions.
     let mut disj = None ;
+    let mut equalities = HConSet::<Term>::new() ;
     for term in clause!(clause_idx).lhs_terms() {
       if let Some(args) = term.disj_inspect() {
-        // More than one disjunction, skipping.
-        if disj.is_some() {
-          return Ok(info)
+        for maybe_eq in args {
+          if let Some(args) = maybe_eq.eq_inspect() {
+            if args[0].typ().is_arith() {
+              equalities.insert(maybe_eq.clone()) ;
+              ()
+            }
+          }
         }
-        disj = Some((term.clone(), args.clone()))
+        if ! equalities.is_empty() {
+          disj = Some( (term.clone(), equalities) ) ;
+          break
+        }
       }
     }
 
-    if let Some((disj, mut kids)) = disj {
+    if let Some((disj, equalities)) = disj {
+
       let was_there = clause!(clause_idx).rm_term(& disj) ;
       debug_assert!(was_there) ;
-      if let Some(kid) = kids.pop() {
-        let clause = clause!(clause_idx).clone() ;
+      debug_assert!(! equalities.is_empty()) ;
 
-        clause!(clause_idx).insert_term(kid) ;
-        info += self.simplify_clause( clause_idx ) ? ;
+      let mut nu_disj = vec![] ;
+      for arg in disj.disj_inspect().unwrap() {
+        if ! equalities.contains(arg) {
+          nu_disj.push( arg.clone() )
+        }
+      }
 
-        for kid in kids {
-          let mut clause = clause.clone() ;
+      let template_clause = clause!(clause_idx).clone() ;
+
+      let mut target_clause = if nu_disj.is_empty() {
+        Some(clause_idx)
+      } else {
+        let nu_disj = term::or(nu_disj) ;
+        match nu_disj.bool() {
+          Some(true) => bail!(
+            "formed true disjunction while splitting disjunctions"
+          ),
+          Some(false) => Some(clause_idx),
+          None => {
+            clause!(clause_idx).insert_term(nu_disj) ;
+            info += self.simplify_clause(clause_idx) ? ;
+            None
+          },
+        }
+      } ;
+
+      for eq in equalities {
+        if let Some(clause_idx) = target_clause {
+          target_clause = None ;
+          self.instance.clause_add_lhs_term(clause_idx, eq) ;
+          info += self.simplify_clause(clause_idx) ?
+        } else {
+          let mut clause = template_clause.clone() ;
           clause.info = "split_disj" ;
-          clause.insert_term(kid) ;
+          clause.insert_term(eq) ;
           if let Some(this_clause_idx) = self.instance.push_clause(clause) ? {
             info.clauses_added += 1 ;
-            info += self.simplify_clause( this_clause_idx ) ?
+            let this_info = self.simplify_clause( this_clause_idx ) ? ;
+            info += this_info
           }
         }
-        Ok(info)
-      } else {
-        Ok(info)
       }
+
+      Ok(info)
     } else {
       Ok(info)
     }

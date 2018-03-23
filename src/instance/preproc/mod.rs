@@ -156,6 +156,11 @@ pub fn work_on_split(
           }
         } ;
 
+        log!{ @debug
+          "Strengthening using {}",
+          clause.to_string_info( instance.preds() ) ?
+        }
+
         use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
 
         match terms_of_lhs_app(
@@ -345,7 +350,7 @@ impl<'a> Reductor<'a> {
           profile! {
             |_profiler| tick "preproc", preproc.name()
           }
-          log_info! { "running {}", conf.emph( preproc.name() ) }
+          log! { @verb "running {}", conf.emph( preproc.name() ) }
           let red_info = preproc.apply( & mut self.instance ) ? ;
           profile! {
             |_profiler| mark "preproc", preproc.name()
@@ -377,12 +382,12 @@ impl<'a> Reductor<'a> {
                 "{:>10}    arg red", preproc.name()
               ) => add red_info.args_rmed
             }
-            log_info! { "{}: {}", conf.emph( preproc.name() ), red_info }
+            log! { @verb "{}: {}", conf.emph( preproc.name() ), red_info }
             conf.check_timeout() ? ;
             check_solved!() ;
             run! { @ $($tail)* Some(red_info) }
           } else {
-            log_info! { "{}: did nothing", conf.emph( preproc.name() ) }
+            log! { @verb "{}: did nothing", conf.emph( preproc.name() ) }
             run! { @ $($tail)* Some(red_info) }
           }
         } else {
@@ -707,17 +712,15 @@ impl RedStrat for SimpleOneRhs {
       conf.check_timeout() ? ;
 
       if instance.clauses_of(pred).1.len() == 1 {
-        log_debug! {
-          "  looking at {} ({}, {})",
-          instance[pred],
-          instance.clauses_of(pred).0.len(),
-          instance.clauses_of(pred).1.len(),
-        }
 
         let clause = * instance.clauses_of(
           pred
         ).1.iter().next().unwrap() ;
-        log_debug! {
+        log! { @debug
+          "looking at {} ({}, {})",
+          instance[pred],
+          instance.clauses_of(pred).0.len(),
+          instance.clauses_of(pred).1.len() ;
           "trying to unfold {}", instance[pred]
         }
 
@@ -740,13 +743,15 @@ impl RedStrat for SimpleOneRhs {
         } ;
 
         if res.is_failed() { continue }
-        
-        log_debug!{
+
+        log! { @debug
           "from {}",
           instance.clauses()[clause].to_string_info( instance.preds() ) ?
         }
 
-        log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
+        log! { @verb
+          "  unfolding {}", conf.emph(& instance[pred].name)
+        }
         use self::ExtractRes::* ;
         match res {
           Trivial => {

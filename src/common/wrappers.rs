@@ -88,6 +88,24 @@ impl VarMap< Term > {
     }
     var_map
   }
+
+  /// True if all terms are different variables.
+  pub fn are_diff_vars(& self) -> bool {
+    let mut iter = self.iter() ;
+    while let Some(term) = iter.next() {
+      if let Some(_) = term.var_idx() {
+        for other in iter.clone() {
+          if term == other {
+            return false
+          }
+        }
+      } else {
+        // Not a var.
+        return false
+      }
+    }
+    true
+  }
 }
 
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
