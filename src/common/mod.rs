@@ -133,9 +133,6 @@ pub type Sig = VarMap<Typ> ;
 /// A predicate application.
 pub type PredApp = (PrdIdx, HTArgs) ;
 
-/// An initial candidate for the teacher to start with.
-pub type InitCandidates = ConjCandidates ;
-
 /// Some predicate applications.
 pub type PredApps = PrdHMap< HTArgss > ;
 /// Predicate application alias type extension.

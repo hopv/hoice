@@ -19,29 +19,29 @@ pub mod assistant ;
 use self::assistant::Assistant ;
 
 /// Starts the teaching process.
+///
+/// The partial model stores conjunction of top terms for some of the top
+/// terms, and is expressed in terms of the predicates' original signatures.
 pub fn start_class(
   instance: & Arc<Instance>,
-  initial_candidates: & InitCandidates,
+  partial_model: & ConjCandidates,
   profiler: & Profiler
 ) -> Res< Option<Candidates> > {
   let instance = instance.clone() ;
-  log_debug!{ "starting the learning process\n  launching solver kid..." }
-  let mut teacher = Teacher::new(instance, profiler) ? ;
-  let res = teach( & mut teacher, initial_candidates ) ;
+  log! { @debug
+    "starting the learning process" ;
+    "  launching solver kid..."
+  }
+  let mut teacher = Teacher::new(instance, profiler, partial_model) ? ;
+  let res = teach(& mut teacher) ;
   teacher.finalize() ? ;
   res
 }
 
 
 /// Teaching to the learners.
-pub fn teach(
-  teacher: & mut Teacher, initial_candidates: & InitCandidates
-) -> Res< Option<Candidates> > {
+pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
 
-  // if conf.smt_learn {
-  //   log_debug!{ "  spawning smt learner..." }
-  //   teacher.add_learner( ::learning::smt::Launcher ) ?
-  // }
   log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
     teacher.add_learner( ::learning::ice::Launcher, false ) ? ;
@@ -49,7 +49,7 @@ pub fn teach(
   teacher.add_learner( ::learning::ice::Launcher, true ) ? ;
 
   log_debug!{ "performing initial check..." }
-  let (cexs, cands) = teacher.initial_check(initial_candidates) ? ;
+  let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
     log_debug!{ "solved by initial cex..." }
     return Ok( Some(cands) )
@@ -209,6 +209,12 @@ pub struct Teacher<'a> {
   pub assistant: Option<Assistant>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
+  /// Partial candidate, only really contains stuff when in split mode.
+  ///
+  /// Used to further constrain the learner's candidates using previous
+  /// results, when in split mode.
+  partial_model: PrdHMap<Term>,
+  /// Map from 
   /// Number of guesses.
   count: usize,
 }
@@ -216,11 +222,40 @@ pub struct Teacher<'a> {
 impl<'a> Teacher<'a> {
   /// Constructor.
   pub fn new(
-    instance: Arc<Instance>, profiler: & 'a Profiler
+    instance: Arc<Instance>, profiler: & 'a Profiler,
+    _partial_model: & 'a ConjCandidates
   ) -> Res<Self> {
     let solver = conf.solver.spawn(
       "teacher", Parser, & instance
     ) ? ;
+
+    // let mut subst = VarMap::new() ;
+
+    let partial_model = PrdHMap::new() ;
+    // let partial_model = partial_model.iter().filter_map(
+    //   |(pred, tterms_vec)| {
+    //     let conj: Vec<_> = tterms_vec.iter().filter_map(
+    //       |tterms| if let Some(term) = tterms.to_term() {
+    //         subst.clear() ;
+    //         for typ in instance.original_sig_of(* pred) {
+    //           subst.push( typ.default_term() )
+    //         }
+    //         let (term, _) = term.subst_total(& subst).unwrap() ;
+    //         Some(term)
+    //       } else {
+    //         None
+    //       }
+    //     ).collect() ;
+    //     if conj.is_empty() {
+    //       None
+    //     } else {
+    //       profile! {
+    //         |profiler| "partial model reuse" => add 1
+    //       }
+    //       Some( (* pred, term::and(conj)) )
+    //     }
+    //   }
+    // ).collect() ;
 
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = Msg::channel() ;
@@ -240,7 +275,7 @@ impl<'a> Teacher<'a> {
       Teacher {
         solver, instance, data, from_learners,
         to_teacher: Some(to_teacher), learners, assistant,
-        _profiler: profiler, count: 0,
+        _profiler: profiler, partial_model, count: 0,
       }
     )
   }
@@ -518,7 +553,7 @@ impl<'a> Teacher<'a> {
   /// with the teacher (`self.to_teacher`). This entails that attempting to
   /// receive messages will automatically fail if all learners are dead.
   pub fn initial_check(
-    & mut self, _initial_candidates: & InitCandidates,
+    & mut self
   ) -> Res< (Cexs, Candidates) > {
     // Drop `to_teacher` sender so that we know when all kids are dead.
     self.to_teacher = None ;
@@ -528,7 +563,7 @@ impl<'a> Teacher<'a> {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
 
-      // } else if let Some(dnf) = initial_candidates.get(& pred) {
+      // } else if let Some(dnf) = partial_candidate.get(& pred) {
       //   let mut cand_dnf = vec![] ;
       //   for conj in dnf {
       //     let mut cand_conj = vec![] ;
@@ -586,6 +621,11 @@ impl<'a> Teacher<'a> {
     // Define non-forced predicates that are not trivially true or false.
     'define_non_forced: for (pred, cand) in cands.index_iter() {
       if let Some(ref term) = * cand {
+        let term = if let Some(other) = self.partial_model.get(& pred) {
+          term::and( vec![term.clone(), other.clone()] )
+        } else {
+          term.clone()
+        } ;
         match term.bool() {
           Some(true) => {
             let _ = true_preds.insert(pred) ;
@@ -605,7 +645,7 @@ impl<'a> Teacher<'a> {
               |(var, typ)| (var, * typ)
             ).collect() ;
             self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & SmtTerm::new(term)
+              & pred.name, & sig, & Typ::Bool, & SmtTerm::new(& term)
             ) ?
           },
         }
@@ -771,6 +811,7 @@ impl<'a> Teacher<'a> {
       if cexs.is_empty() {
         cexs.push(unbiased_cex)
       }
+
     }
 
     self.solver.pop(1) ? ;

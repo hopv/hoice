@@ -124,6 +124,15 @@ impl Typ {
       Typ::Bool => Val::B( true ),
     }
   }
+
+  /// Default term of a type.
+  pub fn default_term(& self) -> Term {
+    match * self {
+      Typ::Real => term::real( Rat::zero() ),
+      Typ::Int => term::int( Int::zero() ),
+      Typ::Bool => term::bool( true ),
+    }
+  }
 }
 impl ::rsmt2::to_smt::Sort2Smt for Typ {
   fn sort_to_smt2<Writer>(
@@ -1514,13 +1523,14 @@ pub enum TTerms {
   False,
   /// Conjunction.
   Conj {
-    quant: Option<Quant>, tterms: TTermSet
+    quant: Option<Quant>,
+    tterms: TTermSet,
   },
   /// Disjunction.
   Disj {
     quant: Option<Quant>,
     tterms: TTermSet,
-    neg_preds: PrdHMap< HTArgss >
+    neg_preds: PrdHMap< HTArgss >,
   },
   /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
   Dnf {

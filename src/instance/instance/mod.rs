@@ -179,6 +179,10 @@ impl Instance {
   pub fn original_sig_of(& self, pred: PrdIdx) -> & Sig {
     & self.old_preds[pred].0
   }
+  /// Map to the original signature of a predicate.
+  pub fn map_to_original_sig_of(& self, pred: PrdIdx) -> & VarMap<VarIdx> {
+    & self.old_preds[pred].1
+  }
 
   /// If this instance is the result of a split, returns the index of the
   /// clause of the original instance that the split was on.

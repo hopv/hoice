@@ -126,7 +126,7 @@ pub fn work(
 /// Runs the teacher on an instance.
 pub fn run_teacher(
   instance: Arc<Instance>,
-  model: & InitCandidates,
+  model: & ConjCandidates,
 ) -> Res< Option<Candidates> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
