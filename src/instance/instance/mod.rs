@@ -116,7 +116,7 @@ impl Instance {
     Instance {
       preds: self.preds.clone(),
       old_preds: self.old_preds.clone(),
-      old_var_maps: self.old_var_maps.clone(),
+      old_var_maps: PrdMap::with_capacity(self.old_preds.len()),
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
       max_pred_arity: self.max_pred_arity.clone(),
