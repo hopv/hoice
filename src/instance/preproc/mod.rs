@@ -99,7 +99,9 @@ pub fn work_on_split(
     |c| if * c != to_keep { Some(* c) } else { None }
   ).collect() ;
 
-  let mut neg_clauses = Vec::with_capacity(instance.neg_clauses().len()) ;
+  let mut strict_neg_clauses = Vec::with_capacity(
+    instance.neg_clauses().len()
+  ) ;
   // We're going to forget clauses (swap-remove), going in descending order.
   to_forget.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1)) ;
   for clause_idx in to_forget {
@@ -107,7 +109,7 @@ pub fn work_on_split(
       let clause = split_instance.forget_clause(clause_idx) ? ;
       if conf.preproc.split_strengthen
       && instance.strict_neg_clauses().contains(& clause_idx) {
-        neg_clauses.push(clause)
+        strict_neg_clauses.push(clause)
       }
     }
   }
@@ -122,14 +124,16 @@ pub fn work_on_split(
 
       profile! { |profiler| tick "strengthening" }
 
-      log! { @debug "strengthening using {} clauses", neg_clauses.len() }
+      log! { @debug
+        "strengthening using {} clauses", strict_neg_clauses.len()
+      }
 
       let mut info = RedInfo::new() ;
 
       // Maps predicates to strengthening terms.
       let mut strength_map = PrdHMap::new() ;
 
-      'strengthen: for clause in neg_clauses {
+      'strengthen: for clause in strict_neg_clauses {
         macro_rules! inconsistent {
           () => ({
             instance.check("work_on_split (instance)") ? ;
@@ -163,10 +167,14 @@ pub fn work_on_split(
 
         use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
 
-        match terms_of_lhs_app(
-          true, & instance, & clause.vars,
-          clause.lhs_terms(), clause.lhs_preds(), None,
-          pred, args
+        match profile!(
+          |profiler| wrap {
+            terms_of_lhs_app(
+              true, & instance, & clause.vars,
+              clause.lhs_terms(), clause.lhs_preds(), None,
+              pred, args
+            )
+          } "strengthening", "extraction"
         ) ? {
           ExtractRes::Trivial => bail!(
             "trivial clause during work_on_split"
@@ -196,20 +204,13 @@ pub fn work_on_split(
         }
       }
 
-      for (pred, (terms, quantified)) in strength_map {
-        log! {
-          @debug "extending {} with {} terms in {} clauses ({} quantifiers)",
-          instance[pred],
-          terms.len() + quantified.iter().fold(
-            0, |acc, & (_, ref terms)| acc + terms.len()
-          ),
-          instance.clauses_of(pred).0.len(),
-          quantified.len()
-        }
-        info += pre_instance.extend_pred_left(
-          pred, terms, quantified
-        ) ? ;
-      }
+      info += profile! {
+        |profiler| wrap {
+          pre_instance.extend_pred_left(strength_map) ?
+        } "strengthening", "extend"
+      } ;
+
+      profile! { |profiler| mark "strengthening" }
 
       profile! {
         |profiler| "strengthening   pred red" => add info.preds
@@ -220,7 +221,6 @@ pub fn work_on_split(
       profile! {
         |profiler| "strengthening clause add" => add info.clauses_added
       }
-      profile! { |profiler| mark "strengthening" }
     }
 
     if conf.preproc.active {

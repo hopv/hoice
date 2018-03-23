@@ -743,7 +743,7 @@ impl IceConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(
+      ).default_value("on").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 

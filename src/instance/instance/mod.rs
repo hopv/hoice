@@ -926,7 +926,7 @@ impl Instance {
   ) -> Res<()> {
     // if clause.from_unrolling { return Ok(()) }
 
-    let build_conj = conf.ice.mine_conjs ; // && self.clauses.len() < 200 ;
+    let build_conj = self.clauses.len() < 666 && conf.ice.mine_conjs ;
 
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;

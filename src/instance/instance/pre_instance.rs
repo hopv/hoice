@@ -832,8 +832,9 @@ impl<'a> PreInstance<'a> {
   ///
   /// - sub instance generation, when splitting on one clause
   pub fn extend_pred_left(
-    & mut self, pred: PrdIdx,
-    terms: HConSet<Term>, quantified: Vec<(Quantfed, HConSet<Term>)>
+    & mut self, preds: PrdHMap<
+      (HConSet<Term>, Vec<(Quantfed, HConSet<Term>)>)
+    >
   ) -> Res<RedInfo> {
     self.check("before `extend_pred_left`") ? ;
 
@@ -844,6 +845,10 @@ impl<'a> PreInstance<'a> {
     // }
 
     let mut info = RedInfo::new() ;
+
+    if preds.is_empty() {
+      return Ok(info)
+    }
 
     // match term.bool() {
     //   Some(true) => return Ok(info),
@@ -868,11 +873,20 @@ impl<'a> PreInstance<'a> {
 
     // Update lhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.clauses_to_simplify = self.pred_to_clauses[pred].0.iter().map(
-      |c| * c
-    ).collect() ;
 
-    'clause_iter: for clause in & self.clauses_to_simplify {
+    let mut to_simplify = ClsSet::new() ;
+    for pred in preds.keys() {
+      to_simplify.extend(
+        self.clauses_of(* pred).0.iter().map(
+          |c| * c
+        )
+      ) ;
+    }
+
+    // Reusable set of terms to build the disjunction.
+    let mut disj_set = HConSet::<Term>::new() ;
+
+    'clause_iter: for clause in & to_simplify {
       let clause = * clause ;
 
       if self.clauses[clause].rhs().is_none() {
@@ -886,60 +900,63 @@ impl<'a> PreInstance<'a> {
         ).unwrap()
       }
 
-      let argss = if let Some(
-        argss
-      ) = self.clauses[clause].lhs_preds().get(& pred) {
-        argss.clone()
-      } else {
-        bail!(
-          "inconsistent instance state, \
-          `pred_to_clauses` and clauses out of sync"
-        )
-      } ;
+      for (pred, & (ref terms, ref quantified)) in & preds {
+        let pred = * pred ;
 
-      // Reusable set of terms to build the disjunction.
-      let mut term_set = HConSet::<Term>::new() ;
+        let argss = if let Some(
+          argss
+        ) = self.clauses[clause].lhs_preds().get(& pred) {
+          argss.clone()
+        } else {
+          continue
+        } ;
 
-      for args in argss {
+        for args in argss {
 
-        for term in & terms {
-          if let Some((term, _)) = term.subst_total(& args) {
-            term_set.insert(term) ;
-          } else {
-            bail!("error during total substitution in `extend_pred_left`")
-          }
-        }
-
-        for & (ref qvars, ref terms) in & quantified {
-          // Generate fresh variables for the clause if needed.
-          let qual_map = self.instance.clauses[
-            clause
-          ].fresh_vars_for(qvars) ;
+          debug_assert! { disj_set.is_empty() }
 
           for term in terms {
-            if let Some((term, _)) = term.subst_total(
-              & (& args, & qual_map)
-            ) {
-              term_set.insert(term) ;
+            if let Some((term, _)) = term.subst_total(& args) {
+              disj_set.insert(term) ;
             } else {
               bail!("error during total substitution in `extend_pred_left`")
             }
           }
+
+          for & (ref qvars, ref terms) in quantified {
+            // Generate fresh variables for the clause if needed.
+            let qual_map = self.instance.clauses[
+              clause
+            ].fresh_vars_for(qvars) ;
+
+            for term in terms {
+              if let Some((term, _)) = term.subst_total(
+                & (& args, & qual_map)
+              ) {
+                disj_set.insert(term) ;
+              } else {
+                bail!("error during total substitution in `extend_pred_left`")
+              }
+            }
+          }
+
+          let term = term::or(
+            disj_set.drain().map(|term| term::not(term)).collect()
+          ) ;
+
+          self.instance.clause_add_lhs_term(clause, term)
         }
 
-        let term = term::or(
-          term_set.drain().map(|term| term::not(term)).collect()
-        ) ;
-
-        self.instance.clause_add_lhs_term(clause, term)
       }
 
       log! { @4
-        "  done with clause: {}",
+        "done with clause: {}",
         self[clause].to_string_info(
           self.preds()
         ).unwrap()
       }
+
+      self.clauses_to_simplify.push(clause) ;
 
     }
 
