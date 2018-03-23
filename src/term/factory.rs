@@ -836,7 +836,11 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       panic!("trying to construct an empty sum")
     } else {
 
-      let mut sum: Val = 0.into() ;
+      let mut sum: Val = if args[0].typ() == Typ::Int {
+        0.into()
+      } else {
+        (0,1).into()
+      } ;
 
       let mut c_args = HConMap::<Term, Val>::new() ;
       let mut changed = false ;
@@ -1047,7 +1051,11 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     } else {
 
       let mut cnt = 0 ;
-      let mut coef: Val = 1.into() ;
+      let mut coef: Val = if args[0].typ() == Typ::Int {
+        1.into()
+      } else {
+        (1,1).into()
+      } ;
 
       while cnt < args.len() {
         if let Some(kids) = args[cnt].mul_inspect().map(|kids| kids.clone()) {

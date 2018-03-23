@@ -272,11 +272,9 @@ impl<'a> PreInstance<'a> {
     for term in clause!(clause_idx).lhs_terms() {
       if let Some(args) = term.disj_inspect() {
         for maybe_eq in args {
-          if let Some(args) = maybe_eq.eq_inspect() {
-            if args[0].typ().is_arith() {
-              equalities.insert(maybe_eq.clone()) ;
-              ()
-            }
+          if let Some(_) = maybe_eq.eq_inspect() {
+            equalities.insert(maybe_eq.clone()) ;
+            ()
           }
         }
         if ! equalities.is_empty() {

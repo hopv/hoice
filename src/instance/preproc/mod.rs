@@ -1322,7 +1322,7 @@ pub struct CfgRed {
   cnt: usize,
   /// Upper bound computed once at the beginning to avoid a progressive
   /// blow-up.
-  upper_bound: Option<usize>,
+  upper_bound: usize,
   /// Graph, factored to avoid reallocation.
   graph: Graph,
 }
@@ -1333,7 +1333,16 @@ impl RedStrat for CfgRed {
   fn new(instance: & Instance) -> Self {
     CfgRed {
       cnt: 0,
-      upper_bound: None,
+      upper_bound: {
+        let clause_count = instance.clauses().len() ;
+        let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
+        // println!("adjusted: {}", adjusted) ;
+        ::std::cmp::min(
+          clause_count, (
+            adjusted
+          ).round() as usize
+        )
+      },
       graph: Graph::new(instance),
     }
   }
@@ -1343,22 +1352,6 @@ impl RedStrat for CfgRed {
   ) -> Res<RedInfo> {
     // use std::time::Instant ;
     // use common::profiling::DurationExt ;
-
-    let upper_bound = if let Some(upper_bound) = self.upper_bound {
-      upper_bound
-    } else {
-      let clause_count = instance.clauses().len() ;
-      let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
-      // println!("adjusted: {}", adjusted) ;
-      let upper_bound = ::std::cmp::min(
-        clause_count, (
-          adjusted
-        ).round() as usize
-      ) ;
-
-      self.upper_bound = Some(upper_bound) ;
-      upper_bound
-    } ;
 
     let mut total_info = RedInfo::new() ;
 
@@ -1383,7 +1376,7 @@ impl RedStrat for CfgRed {
       ) ? ;
 
       let pred_defs = self.graph.inline(
-        instance, & mut to_keep, upper_bound
+        instance, & mut to_keep, self.upper_bound
       ) ? ;
 
       if pred_defs.len() == 0 { break }

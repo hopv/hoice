@@ -148,7 +148,7 @@ impl Op {
           }
           while let Some((index, next)) = args_iter.next() {
             if typ != next.typ() {
-              err!(lft (Some(next.typ()), (typ, index)) )
+              err!(lft (Some(typ), (next.typ(), index)) )
             }
           }
           typ

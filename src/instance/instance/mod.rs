@@ -926,7 +926,7 @@ impl Instance {
   ) -> Res<()> {
     // if clause.from_unrolling { return Ok(()) }
 
-    let build_conj = self.clauses.len() < 666 && conf.ice.mine_conjs ;
+    let build_conj = self.clauses.len() < 2000 && conf.ice.mine_conjs ;
 
     // Variable to term maps, based on the way the predicates are used.
     let mut maps = vec![] ;
@@ -1040,6 +1040,54 @@ impl Instance {
       for term in clause.lhs_terms().iter() {
 
         if let Some( (term, true) ) = term.subst_total(& map) {
+          for other in & conj {
+            match (term.app_inspect(), other.app_inspect()) {
+              ( Some((Op::Ge, term_args)), Some((Op::Ge, other_args)) ) => {
+                if term_args[0].typ().is_arith()
+                && term_args[0].typ() == other_args[1].typ() {
+                  let nu_term = term::ge(
+                    term::add(
+                      vec![ term_args[0].clone(), other_args[0].clone() ]
+                    ),
+                    term::add(
+                      vec![ term_args[1].clone(), other_args[1].clone() ]
+                    )
+                  ) ;
+                  // log! { @info
+                  //   "from {}", term ;
+                  //   "     {}", other ;
+                  //   "  -> {}", nu_term
+                  // }
+                  quals.insert(& nu_term, pred) ? ;
+                }
+              },
+              ( Some((Op::Ge, term_args)), Some((Op::Gt, other_args)) ) |
+              ( Some((Op::Gt, term_args)), Some((Op::Ge, other_args)) ) |
+              ( Some((Op::Gt, term_args)), Some((Op::Gt, other_args)) ) => {
+                if term_args[0].typ().is_arith()
+                && term_args[0].typ() == other_args[0].typ() {
+                  // log! { @info
+                  //   "from {}", term ;
+                  //   "     {}", other
+                  // }
+                  let nu_term = term::gt(
+                    term::add(
+                      vec![ term_args[0].clone(), other_args[0].clone() ]
+                    ),
+                    term::add(
+                      vec![ term_args[1].clone(), other_args[1].clone() ]
+                    )
+                  ) ;
+                  // log! { @info
+                  //   "  -> {}", nu_term
+                  // }
+                  quals.insert(& nu_term, pred) ? ;
+                }
+              },
+              _ => (),
+            }
+          }
+
           conj.insert( term.clone() ) ;
           let term = if let Some(term) = term.rm_neg() {
             term
