@@ -227,7 +227,7 @@ impl Data {
 
       solver.assert( & format!("(not {})", body) ) ? ;
 
-      let res = solver.check_sat_or_unknown() ? ;
+      let res = solver.check_sat_or_unk() ? ;
 
       if let & Some(true) = & res {
         okay = false ;

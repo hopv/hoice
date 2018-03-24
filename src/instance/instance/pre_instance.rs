@@ -25,8 +25,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let mut solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
-    solver.free_resets() ? ;
+    let solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
 
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_check = ClsSet::with_capacity(7) ;
@@ -377,7 +376,6 @@ impl<'a> PreInstance<'a> {
     self.solver.comment("Done pruning atoms...") ? ;
 
     self.solver.pop(1) ? ;
-    // self.solver.reset() ? ;
 
     Ok(())
   }

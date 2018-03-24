@@ -79,19 +79,15 @@ macro_rules! log {
   (|pref_of| debug) => (";     ") ;
   (|pref_of| verb)  => (";   ") ;
   (|pref_of| info)  => ("; ") ;
+  (|pref_of| 0) => ( format!("; ") ) ;
   (|pref_of| $int:expr) => (
-    format!(
-      "; {:width$}", "", width = if $int > 0 {
-        ($int - 1) * 2
-      } else {
-        0
-      }
-    )
+    format!("; {:width$}", "", width = ($int - 1) * 2)
   ) ;
 
   (|cond_of| debug) => (conf.debug()) ;
   (|cond_of| verb) => (conf.verbose()) ;
   (|cond_of| info) => (conf.minimal()) ;
+  (|cond_of| 0) => (true) ;
   (|cond_of| $int:expr) => (conf.verb >= $int) ;
 
   ( $cond:expr, $op:tt @$flag:tt $($tail:tt)* ) => (
