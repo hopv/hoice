@@ -3,7 +3,7 @@
 use std::io::Write ;
 use std::fmt ;
 
-use rsmt2::to_smt::* ;
+use rsmt2::print::* ;
 
 use common::{ SmtRes, VarIndexed } ;
 use term::Term ;

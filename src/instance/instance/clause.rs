@@ -703,7 +703,7 @@ impl ::std::ops::Index<VarIdx> for Clause {
     & self.vars[index]
   }
 }
-impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+impl<'a, 'b> ::rsmt2::print::Expr2Smt<
   & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
 > for Clause {
   /// Writes the clause in SMT-LIB format.

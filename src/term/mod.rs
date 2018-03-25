@@ -134,7 +134,7 @@ impl Typ {
     }
   }
 }
-impl ::rsmt2::to_smt::Sort2Smt for Typ {
+impl ::rsmt2::print::Sort2Smt for Typ {
   fn sort_to_smt2<Writer>(
     & self, w: &mut Writer
   ) -> SmtRes<()> where Writer: Write {
@@ -2288,7 +2288,7 @@ impl TTerms {
   }
 }
 
-impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+impl<'a, 'b> ::rsmt2::print::Expr2Smt<
   & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
 > for TTerms {
   fn expr_to_smt2<Writer: Write>(

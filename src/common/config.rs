@@ -2,7 +2,7 @@
 
 use std::path::PathBuf ;
 
-use rsmt2::conf::SolverConf ;
+use rsmt2::SmtConf as SolverConf ;
 
 use clap::Arg ;
 use ansi::{ Colour, Style } ;
@@ -164,7 +164,8 @@ impl SmtConf {
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
     ).to_string() ;
-    let conf = SolverConf::z3().cmd( z3_cmd ) ;
+    let mut conf = SolverConf::z3() ;
+    conf.cmd( z3_cmd ) ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 

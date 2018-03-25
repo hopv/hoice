@@ -1,6 +1,6 @@
 //! SMT-related zero-cost wrappers.
 
-use rsmt2::to_smt::* ;
+use rsmt2::print::* ;
 
 use common::* ;
 use common::data::Constraint ;

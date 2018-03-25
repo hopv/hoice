@@ -1,6 +1,6 @@
 //! Types to store information about variables and predicates.
 
-use rsmt2::to_smt::Sym2Smt ;
+use rsmt2::print::Sym2Smt ;
 
 use common::* ;
 

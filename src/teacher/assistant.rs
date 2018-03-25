@@ -1,6 +1,6 @@
 //! Handles example propagation.
 
-use rsmt2::to_smt::Expr2Smt ;
+use rsmt2::print::Expr2Smt ;
 
 use common::* ;
 use common::data::{ Data, Sample } ;
@@ -328,7 +328,7 @@ impl<'a> ConjWrap<'a> {
     ConjWrap { terms }
   }
 }
-impl<'a> ::rsmt2::to_smt::Expr2Smt<()> for ConjWrap<'a> {
+impl<'a> ::rsmt2::print::Expr2Smt<()> for ConjWrap<'a> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {

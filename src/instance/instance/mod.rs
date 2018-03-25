@@ -1709,7 +1709,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
     }
 
-    use rsmt2::to_smt::Expr2Smt ;
+    use rsmt2::print::Expr2Smt ;
     let empty_prd_set = PrdSet::new() ;
     if self.sorted_pred_terms.is_empty() {
       // Either there's no forced predicate, or we are printing before
