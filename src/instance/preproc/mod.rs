@@ -195,8 +195,11 @@ pub fn work_on_split(
             let entry = strength_map.entry(pred).or_insert_with(
               || (HConSet::<Term>::new(), Vec::new())
             ) ;
+            let terms = term::or(
+              terms.into_iter().map(|t| term::not(t)).collect()
+            ) ;
             if qvars.is_empty() {
-              entry.0.extend( terms )
+              entry.0.insert( terms ) ;
             } else {
               entry.1.push((qvars, terms))
             }
@@ -750,20 +753,20 @@ impl RedStrat for SimpleOneRhs {
         }
 
         log! { @verb
-          "  unfolding {}", conf.emph(& instance[pred].name)
+          "unfolding {}", conf.emph(& instance[pred].name)
         }
         use self::ExtractRes::* ;
         match res {
           Trivial => {
-            log_info!("  => trivial") ;
+            log! { @ 4 "=> trivial" }
             red_info += instance.force_false(pred) ?
           },
           SuccessTrue => {
-            log_info!("  => true") ;
+            log! { @ 4 "=> true" }
             red_info += instance.force_true(pred) ?
           },
           SuccessFalse => {
-            log_info!("  => false") ;
+            log! { @ 4 "=> false" }
             red_info += instance.force_false(pred) ?
           },
           Success( (qvars, tterms) ) => {
@@ -771,11 +774,13 @@ impl RedStrat for SimpleOneRhs {
             if_not_bench! {
               for (pred, argss) in tterms.preds() {
                 for args in argss {
-                  log_debug! { "  => ({} {})", instance[* pred], args }
+                  log! { @4
+                    "=> ({} {})", instance[* pred], args
+                  }
                 }
               }
               for term in tterms.terms() {
-                log_debug!("  => {}", term ) ;
+                log! { @4 "  => {}", term }
               }
             }
             red_info += instance.force_pred_left(
@@ -867,8 +872,8 @@ impl RedStrat for SimpleOneLhs {
         }
       } ;
 
-      log_debug! {
-        "  looking at {} ({}, {})",
+      log! { @debug
+        "looking at {} ({}, {})",
         instance[pred],
         instance.clauses_of(pred).0.len(),
         instance.clauses_of(pred).1.len(),
@@ -879,7 +884,7 @@ impl RedStrat for SimpleOneLhs {
         if argss.len() > 1 { continue }
       }
 
-      log_debug!{
+      log! { @debug
         "trying to unfold {}", instance[pred]
       }
 
@@ -913,7 +918,7 @@ impl RedStrat for SimpleOneLhs {
 
       if res.is_failed() { continue }
 
-      log_debug!{
+      log! { @debug
         "from {}",
         instance.clauses()[clause_idx].to_string_info( instance.preds() ) ?
       }
@@ -923,45 +928,51 @@ impl RedStrat for SimpleOneLhs {
 
       // log_info!{ "  instance:\n{}", instance.to_string_info( () ) ? }
 
-      log_info!{ "  unfolding {}", conf.emph(& instance[pred].name) }
+      log! { @verb "unfolding {}", conf.emph(& instance[pred].name) }
       use self::ExtractRes::* ;
       match res {
         SuccessTrue => {
-          log_info!("  => true") ;
+          log! { @4 "=> true" }
           red_info += instance.force_true(pred) ?
         },
         SuccessFalse => {
-          log_info!("  => false") ;
+          log! { @4 "=> false" }
           red_info += instance.force_false(pred) ?
         },
         Trivial => {
-          log_info! { "  => trivial" }
+          log! { @4 "=> trivial" }
           red_info += instance.force_true(pred) ?
         },
         Success((qualfed, pred_app, tterms)) => {
           debug_assert! { qualfed.is_empty() }
           if pred_app.is_none() && tterms.is_empty() {
-            log_info!("  => false") ;
+            log! { @4 "=> false" }
             red_info += instance.force_false(pred) ?
           } else {
             if_not_bench!{
-              log_debug!{ "  => (or" }
+              log!{ @4"  => (or" }
               if let Some((pred, ref args)) = pred_app {
                 let mut s = format!("({}", instance[pred]) ;
                 for arg in args.iter() {
                   s = format!("{} {}", s, arg)
                 }
-                log_debug!{ "    {})", s }
+                log! { @4 "    {})", s }
               }
-              log_debug!{ "    (not" }
-              log_debug!{ "      (and" }
+              log! { @4
+                "    (not" ;
+                "      (and"
+              }
               for (pred, argss) in tterms.preds() {
                 for args in argss {
-                  log_debug!{ "        ({} {})", instance[* pred], args}
+                  log! { @4
+                    "        ({} {})", instance[* pred], args
+                  }
                 }
               }
               for term in tterms.terms() {
-                log_debug!{ "        {}", term }
+                log!{ @4
+                  "        {}", term
+                }
               }
             }
             red_info += instance.force_pred_right(

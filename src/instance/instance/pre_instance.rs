@@ -829,7 +829,7 @@ impl<'a> PreInstance<'a> {
   /// - sub instance generation, when splitting on one clause
   pub fn extend_pred_left(
     & mut self, preds: PrdHMap<
-      (HConSet<Term>, Vec<(Quantfed, HConSet<Term>)>)
+      (HConSet<Term>, Vec<(Quantfed, Term)>)
     >
   ) -> Res<RedInfo> {
     self.check("before `extend_pred_left`") ? ;
@@ -879,9 +879,6 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    // Reusable set of terms to build the disjunction.
-    let mut disj_set = HConSet::<Term>::new() ;
-
     'clause_iter: for clause in & to_simplify {
       let clause = * clause ;
 
@@ -909,38 +906,28 @@ impl<'a> PreInstance<'a> {
 
         for args in argss {
 
-          debug_assert! { disj_set.is_empty() }
-
           for term in terms {
             if let Some((term, _)) = term.subst_total(& args) {
-              disj_set.insert(term) ;
+              self.instance.clause_add_lhs_term(clause, term)
             } else {
               bail!("error during total substitution in `extend_pred_left`")
             }
           }
 
-          for & (ref qvars, ref terms) in quantified {
+          for & (ref qvars, ref term) in quantified {
             // Generate fresh variables for the clause if needed.
             let qual_map = self.instance.clauses[
               clause
             ].fresh_vars_for(qvars) ;
 
-            for term in terms {
-              if let Some((term, _)) = term.subst_total(
-                & (& args, & qual_map)
-              ) {
-                disj_set.insert(term) ;
-              } else {
-                bail!("error during total substitution in `extend_pred_left`")
-              }
+            if let Some((term, _)) = term.subst_total(
+              & (& args, & qual_map)
+            ) {
+              self.instance.clause_add_lhs_term(clause, term)
+            } else {
+              bail!("error during total substitution in `extend_pred_left`")
             }
           }
-
-          let term = term::or(
-            disj_set.drain().map(|term| term::not(term)).collect()
-          ) ;
-
-          self.instance.clause_add_lhs_term(clause, term)
         }
 
       }
