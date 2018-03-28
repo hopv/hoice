@@ -231,7 +231,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   }
 
   match res {
-    SimplRes::Yields(_) if conf.term_simpl > 1 => SimplRes::None,
+    SimplRes::Yields(_) if conf.term_simpl <= 1 => SimplRes::None,
     res => res,
   }
 }
