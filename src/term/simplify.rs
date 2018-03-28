@@ -52,7 +52,7 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
       use self::SimplRes::* ;
       use std::cmp::Ordering::* ;
 
-      match conj_simpl(& terms[cnt], & terms[cnt]) {
+      match conj_simpl(& term, & res[cnt]) {
         None => cnt += 1,
 
         Cmp(Less) |
@@ -73,6 +73,8 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
     res.push(term)
 
   }
+
+  res.shrink_to_fit() ;
 
   res
 }
@@ -144,7 +146,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     for lhs in args {
       let mut greater_count = 0 ;
       let mut yields = vec![] ;
-      match int_conj_simpl(lhs, rhs) {
+      match int_conj_simpl(lhs, rhs, true) {
         SimplRes::Cmp(Equal) |
         SimplRes::Cmp(Less) => return SimplRes::Cmp(Less),
         SimplRes::Cmp(Greater) => greater_count += 1,
@@ -162,7 +164,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     for rhs in args {
       let mut less_count = 0 ;
       let mut yields = vec![] ;
-      match int_conj_simpl(lhs, rhs) {
+      match int_conj_simpl(lhs, rhs, true) {
         SimplRes::Cmp(Equal) |
         SimplRes::Cmp(Greater) => return SimplRes::Cmp(Greater),
         SimplRes::Cmp(Less) => less_count += 1,
@@ -178,7 +180,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     }
   }
 
-  let res = int_conj_simpl(lhs,rhs) ;
+  let res = int_conj_simpl(lhs, rhs, true) ;
   // if res.is_some() {
   //   log! { @0
   //     "\n\n{}", lhs.deref() ;
@@ -190,7 +192,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
 }
 
 
-fn int_conj_simpl<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
+fn int_conj_simpl<T1, T2>(lhs: & T1, rhs: & T2, conj: bool) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   use std::cmp::Ordering::* ;
   // Input boolean is true (false) for `lhs` => `rhs` (reversed).
