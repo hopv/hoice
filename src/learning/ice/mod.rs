@@ -176,9 +176,8 @@ impl<'core> IceLearner<'core> {
   /// Runs the learner.
   pub fn run(& mut self) -> Res<()> {
     profile!{ self "quals synthesized" => add 0 }
-    profile!{ self "quals initially" => add self.qualifiers.qual_count() }
     profile!{
-      self "qual count initially" =>
+      self "qual initially" =>
         add self.qualifiers.real_qual_count()
     }
 
@@ -223,10 +222,7 @@ impl<'core> IceLearner<'core> {
   pub fn finalize(mut self) -> Res<()> {
     self.solver.kill() ? ;
     profile! {
-      self "quals once done" => add self.qualifiers.qual_count()
-    }
-    profile! {
-      self "qual count once done" => add self.qualifiers.real_qual_count()
+      self "quals once done" => add self.qualifiers.real_qual_count()
     }
     Ok(())
   }

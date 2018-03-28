@@ -684,7 +684,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("5").takes_value(
+      ).default_value("1").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -1230,13 +1230,13 @@ impl Config {
     ).arg(
 
       Arg::with_name("term_simpl").long("--term_simpl").help(
-        "level of term simplification between 0 and 2"
+        "level of term simplification between 0 and 3"
       ).validator(
         int_validator
       ).value_name(
         "int"
       ).default_value(
-        "1"
+        "2"
       ).takes_value(true).number_of_values(1).display_order(
         order()
       ).hidden(true)

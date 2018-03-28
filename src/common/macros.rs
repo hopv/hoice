@@ -275,14 +275,18 @@ macro_rules! profile {
     res
   }) ;
   ( | $stuff:ident $(. $prof:ident)* | $stat:expr => add $e:expr ) => (
-    $stuff$(.$prof)*.stat_do( $stat, |val| val + $e )
+    if conf.stats {
+      $stuff$(.$prof)*.stat_do( $stat, |val| val + $e )
+    }
   ) ;
   ( | $stuff:ident $(. $prof:ident)* |
     $meth:ident $( $scope:expr ),+ $(,)*
   ) => (
-    $stuff$(.$prof)*.$meth(
-      vec![ $($scope),+ ]
-    )
+    if conf.stats {
+      $stuff$(.$prof)*.$meth(
+        vec![ $($scope),+ ]
+      )
+    }
   ) ;
   ( $slf:ident wrap $b:block $( $scope:expr ),+ $(,)* ) => (
     profile! { |$slf._profiler| wrap $b $($scope),+ }

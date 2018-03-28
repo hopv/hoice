@@ -579,7 +579,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         }
       }
 
-      args = term::simplify::conj_vec_simpl(args) ;
+      if conf.term_simpl >= 4 {
+        args = term::simplify::conj_vec_simpl(args)
+      }
 
       if args.is_empty() {
         return NormRes::Term( term::tru() )

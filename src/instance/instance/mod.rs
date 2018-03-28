@@ -1010,6 +1010,7 @@ impl Instance {
           if ! app_quals.is_empty() {
             let build_conj = app_quals.len() > 1 ;
             let mut conj = Vec::with_capacity( app_quals.len() ) ;
+
             for term in app_quals.drain() {
               if build_conj { conj.push(term.clone()) }
               quals.insert(& term, pred) ? ;
@@ -1095,24 +1096,25 @@ impl Instance {
                     vec![ term_args[0].clone(), other_args[0].clone() ]
                   ) ;
 
-                  let mut old_vars = term::vars(& term_args[0]) ;
-                  old_vars.extend( term::vars(& other_args[0]) ) ;
-                  let nu_vars = term::vars(& nu_lhs) ;
+                  // let mut old_vars = term::vars(& term_args[0]) ;
+                  // old_vars.extend( term::vars(& other_args[0]) ) ;
+                  // let nu_vars = term::vars(& nu_lhs) ;
 
-                  let use_qual = true || (
-                    old_vars.len() == 2
-                  ) || (
-                    old_vars.len() > nu_vars.len()
-                  ) ;
+                  // let use_qual = true || (
+                  //   old_vars.len() == 2
+                  // ) || (
+                  //   old_vars.len() > nu_vars.len()
+                  // ) ;
 
                   log! { @4
                     " " ;
-                    "     {} -> {}", old_vars.len(), nu_vars.len() ;
+                    // "     {} -> {}", old_vars.len(), nu_vars.len() ;
                     "from {}", term ;
                     "     {}", other
                   }
 
-                  if use_qual {
+                  // if use_qual {
+                  if true {
                     let op = match (op_1, op_2) {
                       (_, Op::Gt) |
                       (Op::Gt, _) => Op::Gt,
@@ -1143,7 +1145,7 @@ impl Instance {
                         vec![ other_args[0].clone(), term_args[0].clone() ]
                       ) ;
                       let nu_rhs = term::sub(
-                        vec![ other_args[0].clone(), term_args[1].clone() ]
+                        vec![ other_args[1].clone(), term_args[1].clone() ]
                       ) ;
                       let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
                       quals.insert(& nu_term, pred) ? ;
@@ -1152,7 +1154,7 @@ impl Instance {
                         vec![ term_args[0].clone(), other_args[0].clone() ]
                       ) ;
                       let nu_rhs = term::sub(
-                        vec![ term_args[1].clone(), other_args[0].clone() ]
+                        vec![ term_args[1].clone(), other_args[1].clone() ]
                       ) ;
                       let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
                       quals.insert(& nu_term, pred) ? ;
@@ -1169,10 +1171,13 @@ impl Instance {
           }
 
           conj.insert( term.clone() ) ;
+
           let term = if let Some(term) = term.rm_neg() {
             term
           } else { term } ;
+
           quals.insert(& term, pred) ? ;
+
           ()
         }
 
