@@ -940,18 +940,22 @@ impl<'core> IceLearner<'core> {
           } else {
             * best = Some((term, gain))
           }
-          if let Some(pivot) = gain_pivot_synth {
-            if gain >= pivot {
-              msg! {
-                self_core =>
-                "  stopping on synth qual {}, gain {} >= {}",
-                best.as_ref().unwrap().0, gain, pivot
-              }
-            }
-            Ok( gain >= pivot )
+
+          let stop = gain >= 0.9999
+          || if let Some(pivot) = gain_pivot_synth {
+            gain >= pivot
           } else {
-            Ok( gain >= 1.0 )
+            false
+          } ;
+
+          if stop {
+            msg! {
+              self_core =>
+              "  stopping on synth qual {}, gain {}",
+              best.as_ref().unwrap().0, gain
+            }
           }
+          Ok(stop)
         } else {
           Ok(false)
         }

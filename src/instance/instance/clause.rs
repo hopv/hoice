@@ -224,6 +224,7 @@ impl Clause {
   fn clever_insert(mut term: Term, set: & mut HConSet<Term>) -> bool {
     use std::cmp::Ordering::* ;
     use term::simplify::SimplRes::* ;
+
     let mut redundant = false ;
     let mut rmed_stuff = false ;
     let mut keep_checking = true ;

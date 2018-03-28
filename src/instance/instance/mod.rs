@@ -1044,52 +1044,128 @@ impl Instance {
       for term in clause.lhs_terms().iter() {
 
         if let Some( (term, true) ) = term.subst_total(& map) {
+
           for other in & conj {
+
             match (term.app_inspect(), other.app_inspect()) {
-              ( Some((Op::Ge, term_args)), Some((Op::Ge, other_args)) ) => {
-                if term_args[0].typ().is_arith()
-                && term_args[0].typ() == other_args[1].typ() {
-                  let nu_term = term::ge(
-                    term::add(
-                      vec![ term_args[0].clone(), other_args[0].clone() ]
-                    ),
-                    term::add(
-                      vec![ term_args[1].clone(), other_args[1].clone() ]
-                    )
-                  ) ;
-                  // log! { @info
-                  //   "from {}", term ;
-                  //   "     {}", other ;
-                  //   "  -> {}", nu_term
-                  // }
-                  quals.insert(& nu_term, pred) ? ;
-                }
-              },
-              ( Some((Op::Ge, term_args)), Some((Op::Gt, other_args)) ) |
-              ( Some((Op::Gt, term_args)), Some((Op::Ge, other_args)) ) |
-              ( Some((Op::Gt, term_args)), Some((Op::Gt, other_args)) ) => {
+
+              (
+                Some((op_1 @ Op::Ge, term_args)),
+                Some((op_2 @ Op::Gt, other_args))
+              ) |
+              (
+                Some((op_1 @ Op::Gt, term_args)),
+                Some((op_2 @ Op::Ge, other_args))
+              ) |
+              (
+                Some((op_1 @ Op::Gt, term_args)),
+                Some((op_2 @ Op::Gt, other_args))
+              ) |
+              (
+                Some((op_1 @ Op::Ge, term_args)),
+                Some((op_2 @ Op::Ge, other_args))
+              ) |
+
+              (
+                Some((op_1 @ Op::Eql, term_args)),
+                Some((op_2 @ Op::Gt, other_args))
+              ) |
+              (
+                Some((op_1 @ Op::Gt, term_args)),
+                Some((op_2 @ Op::Eql, other_args))
+              ) |
+
+              (
+                Some((op_1 @ Op::Ge, term_args)),
+                Some((op_2 @ Op::Eql, other_args))
+              ) |
+              (
+                Some((op_1 @ Op::Eql, term_args)),
+                Some((op_2 @ Op::Ge, other_args))
+              ) |
+
+              (
+                Some((op_1 @ Op::Eql, term_args)),
+                Some((op_2 @ Op::Eql, other_args))
+              ) => {
+
                 if term_args[0].typ().is_arith()
                 && term_args[0].typ() == other_args[0].typ() {
-                  // log! { @info
-                  //   "from {}", term ;
-                  //   "     {}", other
-                  // }
-                  let nu_term = term::gt(
-                    term::add(
-                      vec![ term_args[0].clone(), other_args[0].clone() ]
-                    ),
-                    term::add(
-                      vec![ term_args[1].clone(), other_args[1].clone() ]
-                    )
+                  let nu_lhs = term::add(
+                    vec![ term_args[0].clone(), other_args[0].clone() ]
                   ) ;
-                  // log! { @info
-                  //   "  -> {}", nu_term
-                  // }
-                  quals.insert(& nu_term, pred) ? ;
+
+                  let mut old_vars = term::vars(& term_args[0]) ;
+                  old_vars.extend( term::vars(& other_args[0]) ) ;
+                  let nu_vars = term::vars(& nu_lhs) ;
+
+                  let use_qual = true || (
+                    old_vars.len() == 2
+                  ) || (
+                    old_vars.len() > nu_vars.len()
+                  ) ;
+
+                  log! { @4
+                    " " ;
+                    "     {} -> {}", old_vars.len(), nu_vars.len() ;
+                    "from {}", term ;
+                    "     {}", other
+                  }
+
+                  if use_qual {
+                    let op = match (op_1, op_2) {
+                      (_, Op::Gt) |
+                      (Op::Gt, _) => Op::Gt,
+
+                      (_, Op::Ge) |
+                      (Op::Ge, _) => Op::Ge,
+
+                      (Op::Eql, Op::Eql) => Op::Eql,
+
+                      _ => unreachable!(),
+                    } ;
+
+                    let nu_term = term::app(
+                      op, vec![
+                        nu_lhs, term::add(
+                          vec![
+                            term_args[1].clone(), other_args[1].clone()
+                          ]
+                        )
+                      ]
+                    ) ;
+                    quals.insert(& nu_term, pred) ? ;
+
+                    log! { @4 "  -> {}", nu_term }
+
+                    if op_1 == Op::Eql {
+                      let nu_lhs = term::sub(
+                        vec![ other_args[0].clone(), term_args[0].clone() ]
+                      ) ;
+                      let nu_rhs = term::sub(
+                        vec![ other_args[0].clone(), term_args[1].clone() ]
+                      ) ;
+                      let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
+                      quals.insert(& nu_term, pred) ? ;
+                    } else if op_2 == Op::Eql {
+                      let nu_lhs = term::sub(
+                        vec![ term_args[0].clone(), other_args[0].clone() ]
+                      ) ;
+                      let nu_rhs = term::sub(
+                        vec![ term_args[1].clone(), other_args[0].clone() ]
+                      ) ;
+                      let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
+                      quals.insert(& nu_term, pred) ? ;
+                    }
+                  }
                 }
+
               },
+
               _ => (),
+
             }
+
           }
 
           conj.insert( term.clone() ) ;
@@ -1102,6 +1178,7 @@ impl Instance {
 
         debug_assert!( subterms.is_empty() ) ;
         subterms.push(term) ;
+
         while let Some(subterm) = subterms.pop() {
           match subterm.app_inspect() {
             Some( (Op::Or, terms) ) |
@@ -1121,6 +1198,7 @@ impl Instance {
             _ => (),
           }
         }
+
       }
 
       if build_conj {

@@ -684,7 +684,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("1").takes_value(
+      ).default_value("5").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -954,6 +954,8 @@ pub struct Config {
   pub check_eld: bool,
   /// If true, SMT-check all simplifications.
   pub check_simpl: bool,
+  /// Level of term simplification.
+  pub term_simpl: usize,
 
   /// Instance and factory configuration.
   pub instance: InstanceConf,
@@ -1097,6 +1099,9 @@ impl Config {
     let check_eld = bool_of_matches(& matches, "check_eld") ;
     let check_simpl = bool_of_matches(& matches, "check_simpl") ;
 
+    // Timeout.
+    let term_simpl = int_of_matches(& matches, "term_simpl") ;
+
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
     let solver = SmtConf::new(& matches) ;
@@ -1106,7 +1111,7 @@ impl Config {
     Config {
       file, verb, stats, infer, split, split_step,
       timeout, out_dir, styles,
-      check, check_eld, check_simpl,
+      check, check_eld, check_simpl, term_simpl,
       instance, preproc, solver, ice, teacher,
     }
   }
@@ -1222,6 +1227,34 @@ impl Config {
         "off"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("term_simpl").long("--term_simpl").help(
+        "level of term simplification between 0 and 2"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value(
+        "1"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
+    ).arg(
+
+      Arg::with_name("check_simpl").long("--check_simpl").help(
+        "if true, check all simplifications"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
     )
   }
 
@@ -1251,20 +1284,6 @@ impl Config {
       ).default_value(
         "no"
       ).takes_value(true).number_of_values(1).display_order( order() )
-
-    ).arg(
-
-      Arg::with_name("check_simpl").long("--check_simpl").help(
-        "if true, check all simplifications"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value(
-        "no"
-      ).takes_value(true).number_of_values(1).display_order(
-        order()
-      ).hidden(true)
 
     )
   }

@@ -170,6 +170,10 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 pub fn conj_simpl<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
 
+  if conf.term_simpl == 0 {
+    return SimplRes::None
+  }
+
   let res = conj_simpl_2(lhs, rhs) ;
 
   if res.is_some() {
@@ -226,7 +230,10 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     }
   }
 
-  res
+  match res {
+    SimplRes::Yields(_) if conf.term_simpl > 1 => SimplRes::None,
+    res => res,
+  }
 }
 pub fn conj_simpl_2<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
@@ -278,6 +285,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   //     "{:?}", res
   //   }
   // }
+
   res
 }
 
@@ -412,3 +420,4 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
 
   SimplRes::None
 }
+
