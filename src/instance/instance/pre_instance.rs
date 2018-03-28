@@ -599,10 +599,11 @@ impl<'a> PreInstance<'a> {
       }
       self.instance.clauses[clause].unset_rhs() ;
     }
-    self.check("after force true") ? ;
 
     // Simplify all clauses that have been modified.
     info += self.simplify_clauses() ? ;
+
+    self.check("after force true") ? ;
 
     Ok(info)
   }
@@ -634,10 +635,11 @@ impl<'a> PreInstance<'a> {
       let prev = self.instance.clauses[* clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
     }
-    self.check("after force true") ? ;
 
     // Simplify all clauses that have been modified.
     info += self.simplify_clauses() ? ;
+
+    self.check("after force true") ? ;
 
     Ok(info)
   }
@@ -806,9 +808,9 @@ impl<'a> PreInstance<'a> {
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
 
-    self.check("after `force_pred_left`") ? ;
-
     info += self.force_trivial() ? ;
+
+    self.check("after `force_pred_left`") ? ;
 
     Ok(info)
   }

@@ -615,6 +615,16 @@ impl Val {
   pub fn lt(self, other: Self) -> Res<Self> {
     arith_bin_rel! { self lt other }
   }
+
+  /// Compares two values.
+  pub fn cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
+    match (self, other) {
+      (& Val::I(ref l), & Val::I(ref r)) => Some( l.cmp(r) ),
+      (& Val::R(ref l), & Val::R(ref r)) => Some( l.cmp(r) ),
+      (& Val::B(ref l), & Val::B(ref r)) => Some( l.cmp(r) ),
+      _ => None,
+    }
+  }
 }
 impl_fmt!{
   Val(self, fmt) {

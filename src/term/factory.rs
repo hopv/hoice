@@ -1,8 +1,5 @@
 //! Term creation functions.
 
-use std::ops::Deref ;
-use std::cmp::Ordering ;
-
 use hashconsing::{ HashConsign, HConser } ;
 
 use common::* ;
@@ -755,6 +752,11 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
               ]
             )
           } else {
+            // Rhs is zero, now normalize lhs. This is a bit ugly...
+            let mut u_minus_lhs = term::u_minus(args[0].clone()) ;
+            if u_minus_lhs.uid() < args[0].uid() {
+              ::std::mem::swap(& mut args[0], & mut u_minus_lhs)
+            }
             (op, args)
           }
         } else {
@@ -1370,125 +1372,4 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
   } ;
 
   NormRes::Term( factory.mk( RTerm::App { typ, op, args } ) )
-}
-
-
-
-/// Checks two atoms for syntactic implication.
-///
-/// Returns
-///
-/// - `None` if no conclusion was reached,
-/// - `Some(Greater)` if `lhs => rhs`,
-/// - `Some(Less)` if `lhs <= rhs`,
-/// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
-///
-/// So *greater* really means *more generic*.
-///
-/// # Examples
-///
-/// ```
-/// use std::cmp::Ordering::* ;
-/// use hoice::term ;
-///
-/// let lhs = term::not(
-///   term::lt(
-///     term::int(0),
-///     term::sub( vec![ term::int(3), term::int_var(0) ] )
-///   )
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// let rhs = term::ge( term::int_var(0), term::int(3) ) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Equal) }
-///
-/// # println!("   {}", lhs) ;
-/// let rhs = term::ge( term::int_var(0), term::int(7) ) ;
-/// # println!("<= {}\n\n", rhs) ;
-/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Less) }
-///
-/// # println!("   {}", rhs) ;
-/// # println!("=> {}\n\n", lhs) ;
-/// debug_assert_eq! { term::atom_implies(& rhs, & lhs), Some(Greater) }
-///
-/// let lhs = term::gt( term::int_var(0), term::int(7) ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { term::atom_implies(& lhs, & rhs), Some(Greater) }
-/// ```
-pub fn atom_implies<T1, T2>(lhs: & T1, rhs: & T2) -> Option<Ordering>
-where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
-  use std::cmp::Ordering::* ;
-  // Input boolean is true (false) for `lhs` => `rhs` (reversed).
-  macro_rules! ord_of_bool {
-    ($b:expr) => (
-      if $b {
-        Some(Greater)
-      } else {
-        Some(Less)
-      }
-    ) ;
-  }
-
-  let (lhs, rhs) = ( lhs.deref(), rhs.deref() ) ;
-
-  // A term implies itself.
-  if lhs == rhs { return Some(Equal) }
-
-  match ( lhs.bool(), rhs.bool() ) {
-    // True can only imply true.
-    (Some(true), rhs) => return ord_of_bool!(
-      rhs.unwrap_or(false)
-    ),
-    // False implies anything.
-    (Some(false), _) => return ord_of_bool!(true),
-    // False can only be implied by false.
-    (lhs, Some(false)) => return ord_of_bool!(
-      ! lhs.unwrap_or(true)
-    ),
-    // True is implied by anything.
-    (_, Some(true)) => return ord_of_bool!(true),
-    // Otherwise we don't know (yet).
-    (None, None) => (),
-  }
-
-  // Only legal atoms are `vars >= cst` and `vars > cst`.
-  let (
-    lhs_op, lhs_vars, lhs_cst
-  ) = if let Some((op, args)) = lhs.app_inspect() {
-    if op != Op::Ge && op != Op::Gt { return None }
-    (op, & args[0], args[1].val().unwrap())
-  } else {
-    return None
-  } ;
-  let (
-    rhs_op, rhs_vars, rhs_cst
-  ) = if let Some((op, args)) = rhs.app_inspect() {
-    if op != Op::Ge && op != Op::Gt { return None }
-    (op, & args[0], args[1].val().unwrap())
-  } else {
-    return None
-  } ;
-
-  if lhs_vars == rhs_vars {
-    if lhs_cst.eq(& rhs_cst) {
-      if lhs_op == rhs_op {
-        return Some(Equal)
-      } else if lhs_op == Op::Ge && rhs_op == Op::Gt {
-        return ord_of_bool!(false)
-      } else if lhs_op == Op::Gt && rhs_op == Op::Ge {
-        return ord_of_bool!(true)
-      } else {
-        unreachable!()
-      }
-    } else
-
-    if lhs_cst.lt(rhs_cst).unwrap().to_bool().unwrap().unwrap() {
-      return ord_of_bool!(false)
-    } else {
-      return ord_of_bool!(true)
-    }
-  }
-
-  None
 }

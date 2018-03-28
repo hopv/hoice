@@ -138,7 +138,7 @@ impl Clause {
 
       while let Some(term) = terms.next() {
         for t in terms.clone() {
-          if term.atom_implies(t).is_some() {
+          if term.conj_simpl(t).is_some() {
             bail!(
               "redundant atoms in clause:\n  {}\n  {}\n{}",
               term, t, conf.bad(blah)
@@ -217,34 +217,55 @@ impl Clause {
     self.lhs_preds.insert_pred_app(pred, args)
   }
 
+
   /// Checks if `term` is implied by a term in `set`.
   ///
   /// Removes the terms from `set` that are implied (strictly) by `term`.
-  fn is_redundant(term: & Term, set: & mut HConSet<Term>) -> bool {
+  fn clever_insert(mut term: Term, set: & mut HConSet<Term>) -> bool {
     use std::cmp::Ordering::* ;
+    use term::simplify::SimplRes::* ;
     let mut redundant = false ;
     let mut rmed_stuff = false ;
-    // println!("is redundant {}", term) ;
-    set.retain(
-      |t| match t.atom_implies(term) {
-        // `t` is more generic, `term` is redundant, keep `t`.
-        Some(Equal) | Some(Greater) => {
-          redundant = true ;
-          true
-        },
-        // `term` is more generic, discard.
-        Some(Less) => {
-          rmed_stuff = true ;
-          // println!("  removing {}", t) ;
-          false
-        },
-        // No relation, keep `t`.
-        None => true,
-      }
-    ) ;
+    let mut keep_checking = true ;
+
+    while keep_checking {
+      keep_checking = false ;
+
+      set.retain(
+        |t| match t.conj_simpl(& term) {
+          // `t` is more generic, `term` is redundant, keep `t`.
+          Cmp(Equal) | Cmp(Greater) => {
+            redundant = true ;
+            true
+          },
+          // `term` is more generic, discard.
+          Cmp(Less) => {
+            rmed_stuff = true ;
+            // println!("  removing {}", t) ;
+            false
+          },
+          // No relation, keep `t`.
+          None => true,
+          // New term.
+          Yields(nu_term) => {
+            rmed_stuff = true ;
+            redundant = false ;
+            keep_checking = true ;
+            term = nu_term ;
+            false
+          },
+        }
+      )
+    }
     // If we removed stuff, it means the term should not be redundant.
     assert! { ! rmed_stuff || ! redundant }
-    redundant
+    if ! redundant {
+      let is_new = set.insert(term) ;
+      debug_assert! { is_new }
+      true
+    } else {
+      false
+    }
   }
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
@@ -266,12 +287,8 @@ impl Clause {
           return true
         }
       } else {
-        if ! Self::is_redundant(& term, lhs_terms) {
-          let is_new = lhs_terms.insert( term.clone() ) ;
-          // Should be true since term is not redundant.
-          debug_assert! { is_new }
-          new_stuff = new_stuff || is_new
-        }
+        let is_new = Self::clever_insert(term.clone(), lhs_terms) ;
+        new_stuff = new_stuff || is_new
       }
     }
 
@@ -500,29 +517,52 @@ impl Clause {
   /// Removes all redundant terms from `lhs_terms`.
   fn prune(& mut self) {
     use std::cmp::Ordering::* ;
+    use term::simplify::SimplRes::* ;
     let mut to_rm = HConSet::<Term>::new() ;
-    scoped! {
-      let mut terms = self.lhs_terms.iter() ;
-      while let Some(term) = terms.next() {
-        for t in terms.clone() {
-          match t.atom_implies(term) {
-            // `t` is more generic, `term` is redundant, keep `t`.
-            Some(Equal) | Some(Greater) => {
-              to_rm.insert( term.clone() ) ;
-            },
-            // `term` is more generic, discard `t`.
-            Some(Less) => {
-              to_rm.insert( t.clone() ) ;
-            },
-            // No relation.
-            None => (),
+    let mut to_add = HConSet::<Term>::new() ;
+
+    let mut prune_things = true ;
+
+    while prune_things {
+      prune_things = false ;
+      debug_assert! { to_rm.is_empty() }
+      debug_assert! { to_add.is_empty() }
+
+      scoped! {
+        let mut terms = self.lhs_terms.iter() ;
+        while let Some(term) = terms.next() {
+          for t in terms.clone() {
+            match t.conj_simpl(term) {
+              // `t` is more generic, `term` is redundant, keep `t`.
+              Cmp(Equal) | Cmp(Greater) => {
+                to_rm.insert( term.clone() ) ;
+              },
+              // `term` is more generic, discard `t`.
+              Cmp(Less) => {
+                to_rm.insert( t.clone() ) ;
+              },
+              // No relation.
+              None => (),
+              Yields(nu_term) => {
+                to_rm.insert( t.clone() ) ;
+                to_rm.insert( term.clone() ) ;
+                to_add.insert(nu_term) ;
+                ()
+              },
+            }
           }
         }
       }
-    }
-    for to_rm in to_rm {
-      let was_there = self.lhs_terms.remove(& to_rm) ;
-      debug_assert! { was_there }
+      for to_rm in to_rm.drain() {
+        let was_there = self.lhs_terms.remove(& to_rm) ;
+        debug_assert! { was_there }
+      }
+
+      for to_add in to_add.drain() {
+        let is_new = self.lhs_terms.insert(to_add) ;
+        prune_things = prune_things || is_new
+      }
+
     }
   }
 

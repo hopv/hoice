@@ -65,6 +65,7 @@ mod op ;
 pub use self::op::* ;
 mod factory ;
 mod val ;
+pub mod simplify ;
 #[cfg(test)]
 mod test ;
 
@@ -324,8 +325,8 @@ impl RTerm {
   /// See [the module's function][atom implies] for more details and examples.
   ///
   /// [atom implies]: fn.atom_implies.html (atom_implies module-level function)
-  pub fn atom_implies(& self, other: & Self) -> Option<::std::cmp::Ordering> {
-    factory::atom_implies(& self, & other)
+  pub fn conj_simpl(& self, other: & Self) -> simplify::SimplRes {
+    simplify::conj_simpl(& self, & other)
   }
 
   /// Term evaluation (int).
