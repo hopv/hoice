@@ -240,6 +240,24 @@ impl RTerm {
     }
   }
 
+  /// Iterates over the subterms of a term.
+  pub fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
+    let mut stack = vec![self] ;
+
+    while let Some(term) = stack.pop() {
+      f(term) ;
+      match * term {
+        RTerm::App { ref args, .. } => for term in args {
+          stack.push(term)
+        },
+        RTerm::Var(_, _) |
+        RTerm::Int(_) |
+        RTerm::Real(_) |
+        RTerm::Bool(_) => (),
+      }
+    }
+  }
+
   /// Type of the term.
   pub fn typ(& self) -> Typ {
     match * self {

@@ -551,7 +551,6 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     },
 
     Op::And => {
-      args = term::simplify::conj_vec_simpl(args) ;
       let mut set = HConSet::<Term>::new() ;
       let mut cnt = 0 ;
       
@@ -579,6 +578,8 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           cnt += 1
         }
       }
+
+      args = term::simplify::conj_vec_simpl(args) ;
 
       if args.is_empty() {
         return NormRes::Term( term::tru() )

@@ -6,6 +6,23 @@ use std::ops::Deref ;
 use common::* ;
 
 
+
+lazy_static! {
+  static ref simpl_solver: RwLock<
+    Option<::rsmt2::Solver<()>>
+  > = RwLock::new(
+    if conf.check_simpl {
+      Some(
+        conf.solver.spawn("check_simpl", (), & Instance::new()).unwrap()
+      )
+    } else {
+      None
+    }
+  ) ;
+}
+
+
+
 /// Result of a simplification check between two terms.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SimplRes {
@@ -137,8 +154,81 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
 /// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+///
+/// let lhs = term::le( term::int_var(1), term::int(7) ) ;
+/// let rhs = term::or(
+///   vec![ lhs.clone(), term::eq( term::int_var(3), term::int(7) ) ]
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
+///
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
 /// ```
 pub fn conj_simpl<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
+where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
+
+  let res = conj_simpl_2(lhs, rhs) ;
+
+  if res.is_some() {
+    if let Some(solver) = simpl_solver.write().unwrap().as_mut() {
+      solver.push(1).unwrap() ;
+      let mut vars = VarSet::new() ;
+      lhs.iter(
+        |term| if let Some(idx) = term.var_idx() {
+          let is_new = vars.insert(idx) ;
+          if is_new {
+            solver.declare_const(& format!("{}", term), & term.typ()).unwrap()
+          }
+        }
+      ) ;
+      rhs.iter(
+        |term| if let Some(idx) = term.var_idx() {
+          let is_new = vars.insert(idx) ;
+          if is_new {
+            solver.declare_const(& format!("{}", term), & term.typ()).unwrap()
+          }
+        }
+      ) ;
+      use std::cmp::Ordering::* ;
+      let check = match res {
+        SimplRes::Cmp(Equal) => format!(
+          "(= {} {})", lhs.deref(), rhs.deref()
+        ),
+        SimplRes::Cmp(Less) => format!(
+          "(=> {} {})", rhs.deref(), lhs.deref()
+        ),
+        SimplRes::Cmp(Greater) => format!(
+          "(=> {} {})", lhs.deref(), rhs.deref()
+        ),
+        SimplRes::Yields(ref term) => format!(
+          "(= (and {} {}) {})", lhs.deref(), rhs.deref(), term
+        ),
+        SimplRes::None => unreachable!(),
+      } ;
+
+      solver.assert(& format!("(not {})", check)).unwrap() ;
+
+      if solver.check_sat().unwrap() {
+        log! { @0
+          " " ;
+          "{}", lhs.deref() ;
+          "{}", rhs.deref() ;
+          "{:?}", res ;
+          " "
+        }
+        panic! { "simplification failure" }
+      }
+
+      solver.pop(1).unwrap()
+    }
+  }
+
+  res
+}
+pub fn conj_simpl_2<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   use std::cmp::Ordering::* ;
 
@@ -274,9 +364,10 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       (Op::Eql, Op::Ge) |
       (Op::Eql, Op::Gt) => match lhs_cst.cmp(& rhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
-        Some(Equal) if rhs_op == Op::Gt => return SimplRes::Yields(
-          term::fls()
-        ),
+        Some(Equal) if rhs_op == Op::Gt => if conj {
+          return SimplRes::Yields( term::fls() )
+        } else {
+        },
         Some(Equal) |
         Some(Greater) => return SimplRes::Cmp(Greater),
         None => unreachable!(),
@@ -307,9 +398,16 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   if lhs_op == Op::Ge && rhs_op == Op::Ge
   && lhs_cst == rhs_cst.minus().unwrap()
   && rhs_vars == & term::u_minus( lhs_vars.clone() ) {
-    return SimplRes::Yields(
-      term::eq(lhs_vars.clone(), lhs_cst.to_term().unwrap())
-    )
+
+    if conj {
+      return SimplRes::Yields(
+        term::eq(lhs_vars.clone(), lhs_cst.to_term().unwrap())
+      )
+    } else {
+      return SimplRes::Yields(
+        term::tru()
+      )
+    }
   }
 
   SimplRes::None

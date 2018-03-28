@@ -952,6 +952,8 @@ pub struct Config {
   check: Option<String>,
   /// Eldarica result checking flag.
   pub check_eld: bool,
+  /// If true, SMT-check all simplifications.
+  pub check_simpl: bool,
 
   /// Instance and factory configuration.
   pub instance: InstanceConf,
@@ -1092,11 +1094,8 @@ impl Config {
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
-    let check_eld = matches.value_of("check_eld").and_then(
-      |s| bool_of_str(& s)
-    ).expect(
-      "unreachable(check_eld): default is provided and input validated in clap"
-    ) ;
+    let check_eld = bool_of_matches(& matches, "check_eld") ;
+    let check_simpl = bool_of_matches(& matches, "check_simpl") ;
 
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
@@ -1107,7 +1106,7 @@ impl Config {
     Config {
       file, verb, stats, infer, split, split_step,
       timeout, out_dir, styles,
-      check, check_eld,
+      check, check_eld, check_simpl,
       instance, preproc, solver, ice, teacher,
     }
   }
@@ -1252,6 +1251,20 @@ impl Config {
       ).default_value(
         "no"
       ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("check_simpl").long("--check_simpl").help(
+        "if true, check all simplifications"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
 
     )
   }

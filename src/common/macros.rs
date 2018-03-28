@@ -315,7 +315,7 @@ macro_rules! msg {
 #[cfg( not(feature = "bench") )]
 macro_rules! msg {
   ( debug $slf:expr => $($tt:tt)* ) => (
-    if conf.debug() {
+    if conf.verb >= 3 {
       msg!( force $slf => $($tt)* )
     }
   ) ;
@@ -326,7 +326,7 @@ macro_rules! msg {
     $slf.msg( format!( $($tt)* ) ) ? ;
   ) ;
   ( $core:expr => $e:expr ) => (
-    if conf.verbose() {
+    if conf.debug() {
       $core.msg($e) ? ;
     }
   ) ;
