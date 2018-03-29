@@ -223,39 +223,36 @@ impl<'a> Teacher<'a> {
   /// Constructor.
   pub fn new(
     instance: Arc<Instance>, profiler: & 'a Profiler,
-    _partial_model: & 'a ConjCandidates
+    partial_model: & 'a ConjCandidates
   ) -> Res<Self> {
     let solver = conf.solver.spawn(
       "teacher", Parser, & instance
     ) ? ;
 
-    // let mut subst = VarMap::new() ;
+    // let partial_model = PrdHMap::new() ;
+    let partial_model = partial_model.iter().filter_map(
+      |(pred, tterms_vec)| {
+        let subst = instance.map_from_original_sig_of(* pred) ;
+        let conj: Vec<_> = tterms_vec.iter().filter_map(
+          |tterms| if let Some(term) = tterms.to_term() {
+            term.subst_total(& subst).map(
+              |(term, _)| term
+            )
+          } else {
+            None
+          }
+        ).collect() ;
 
-    let partial_model = PrdHMap::new() ;
-    // let partial_model = partial_model.iter().filter_map(
-    //   |(pred, tterms_vec)| {
-    //     let conj: Vec<_> = tterms_vec.iter().filter_map(
-    //       |tterms| if let Some(term) = tterms.to_term() {
-    //         subst.clear() ;
-    //         for typ in instance.original_sig_of(* pred) {
-    //           subst.push( typ.default_term() )
-    //         }
-    //         let (term, _) = term.subst_total(& subst).unwrap() ;
-    //         Some(term)
-    //       } else {
-    //         None
-    //       }
-    //     ).collect() ;
-    //     if conj.is_empty() {
-    //       None
-    //     } else {
-    //       profile! {
-    //         |profiler| "partial model reuse" => add 1
-    //       }
-    //       Some( (* pred, term::and(conj)) )
-    //     }
-    //   }
-    // ).collect() ;
+        if conj.is_empty() {
+          None
+        } else {
+          profile! {
+            |profiler| "partial model reuse" => add 1
+          }
+          Some( (* pred, term::and(conj)) )
+        }
+      }
+    ).collect() ;
 
     let learners = LrnMap::with_capacity( 2 ) ;
     let (to_teacher, from_learners) = Msg::channel() ;

@@ -3,7 +3,7 @@
 use common::* ;
 use common::data::RArgs ;
 use instance::info::* ;
-use learning::ice::quals::Qualifiers ;
+use learning::ice::quals::NuQuals ;
 
 mod clause ;
 mod pre_instance ;
@@ -173,6 +173,17 @@ impl Instance {
       if def.is_none() { return false }
     }
     true
+  }
+
+  /// Map from the original signature of a predicate.
+  pub fn map_from_original_sig_of(
+    & self, pred: PrdIdx
+  ) -> VarHMap<Term> {
+    let mut res = VarHMap::with_capacity( self.old_preds[pred].1.len() ) ;
+    for (tgt, src) in self.old_preds[pred].1.index_iter() {
+      res.insert( * src, term::var(tgt, self.old_preds[pred].0[* src]) ) ;
+    }
+    res
   }
 
   /// Original signature of a predicate.
@@ -896,7 +907,7 @@ impl Instance {
   // }
 
   /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self, quals: & mut Qualifiers) -> Res<()> {
+  pub fn qualifiers(& self, quals: & mut NuQuals) -> Res<()> {
     for clause in & self.clauses {
       self.qualifiers_of_clause(clause, quals) ?
     }
@@ -906,12 +917,12 @@ impl Instance {
         let mut bool_vars = Vec::new() ;
         if * typ == Typ::Bool {
           let var = term::var(var, Typ::Bool) ;
-          quals.insert( & var, pred.idx ) ? ;
+          quals.insert( var.clone(), pred.idx ) ? ;
           bool_vars.push(var)
         }
         if bool_vars.len() > 1 {
-          quals.insert( & term::and( bool_vars.clone() ), pred.idx ) ? ;
-          quals.insert( & term::or( bool_vars ), pred.idx ) ? ;
+          quals.insert( term::and( bool_vars.clone() ), pred.idx ) ? ;
+          quals.insert( term::or( bool_vars ), pred.idx ) ? ;
           ()
         }
       }
@@ -926,7 +937,7 @@ impl Instance {
   /// - write an explanation of what actually happens
   /// - and some tests, probably
   pub fn qualifiers_of_clause(
-    & self, clause: & Clause, quals: & mut Qualifiers
+    & self, clause: & Clause, quals: & mut NuQuals
   ) -> Res<()> {
     // if clause.from_unrolling { return Ok(()) }
 
@@ -1013,12 +1024,12 @@ impl Instance {
 
             for term in app_quals.drain() {
               if build_conj { conj.push(term.clone()) }
-              quals.insert(& term, pred) ? ;
+              quals.insert(term, pred) ? ;
             }
 
             if build_conj {
               let term = term::and(conj) ;
-              quals.insert(& term, pred) ? ;
+              quals.insert(term, pred) ? ;
               ()
             }
           }
@@ -1136,7 +1147,7 @@ impl Instance {
                         )
                       ]
                     ) ;
-                    quals.insert(& nu_term, pred) ? ;
+                    quals.insert(nu_term.clone(), pred) ? ;
 
                     log! { @4 "  -> {}", nu_term }
 
@@ -1148,7 +1159,7 @@ impl Instance {
                         vec![ other_args[1].clone(), term_args[1].clone() ]
                       ) ;
                       let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
-                      quals.insert(& nu_term, pred) ? ;
+                      quals.insert(nu_term, pred) ? ;
                     } else if op_2 == Op::Eql {
                       let nu_lhs = term::sub(
                         vec![ term_args[0].clone(), other_args[0].clone() ]
@@ -1157,7 +1168,7 @@ impl Instance {
                         vec![ term_args[1].clone(), other_args[1].clone() ]
                       ) ;
                       let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
-                      quals.insert(& nu_term, pred) ? ;
+                      quals.insert(nu_term, pred) ? ;
                     }
                   }
                 }
@@ -1176,7 +1187,7 @@ impl Instance {
             term
           } else { term } ;
 
-          quals.insert(& term, pred) ? ;
+          quals.insert(term, pred) ? ;
 
           ()
         }
@@ -1197,7 +1208,7 @@ impl Instance {
                 } else {
                   qual
                 } ;
-                quals.insert(& qual, pred) ? ;
+                quals.insert(qual, pred) ? ;
               }
             },
             _ => (),
@@ -1215,7 +1226,7 @@ impl Instance {
       for (pred, conj) in conjs {
         if conj.len() > 1 {
           let term = term::and( conj.into_iter().collect() ) ;
-          quals.insert(& term, pred) ? ;
+          quals.insert(term, pred) ? ;
           ()
         }
       }
@@ -1317,22 +1328,22 @@ impl Instance {
           ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            let new = data.add_raw_neg(pred, args) ;
-            nu_stuff = nu_stuff || new
+            data.add_raw_neg(pred, args) ;
           },
           (0, Some( (pred, args) )) => {
-            let new = data.add_raw_pos(pred, args) ;
-            nu_stuff = nu_stuff || new
+            data.add_raw_pos(pred, args) ;
           },
           (_, consequent) => {
+            let (new_pos, new_neg) = data.propagate() ? ;
             let new = data.add_cstr(antecedents, consequent) ? ;
-            nu_stuff = nu_stuff || new
+            nu_stuff = nu_stuff || new || new_pos > 0 || new_neg > 0
           },
         }
       }
     }
 
-    data.propagate() ? ;
+    let (new_pos, new_neg) = data.propagate() ? ;
+    nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
 
     Ok(nu_stuff)
   }

@@ -11,7 +11,7 @@ pub mod quals ;
 pub mod synth ;
 pub mod data ;
 
-use self::quals::Qualifiers ;
+use self::quals::NuQuals ;
 use self::data::CData ;
 
 
@@ -64,7 +64,7 @@ pub struct IceLearner<'core> {
   /// Arc to the instance.
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
-  pub qualifiers: Qualifiers,
+  pub qualifiers: NuQuals,
   /// Current data.
   data: Data,
   /// Solver used to check if the constraints are respected.
@@ -115,7 +115,7 @@ impl<'core> IceLearner<'core> {
     ) ? ;
 
     profile!{ |core._profiler| tick "mining" }
-    let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
+    let qualifiers = NuQuals::new( instance.clone(), mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |core._profiler| mark "mining" }
@@ -717,7 +717,7 @@ impl<'core> IceLearner<'core> {
             }
             core.check_exit() ? ;
             Ok(res)
-          }, false
+          }
         ) ;
         profile!{ self mark "learning", "qual", "simple gain" }
         res ?
@@ -745,7 +745,7 @@ impl<'core> IceLearner<'core> {
             }
             core.check_exit() ? ;
             Ok(res)
-          }, false
+          }
         ) ;
         profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
         res ?
@@ -895,7 +895,7 @@ impl<'core> IceLearner<'core> {
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        let is_new = ! quals.all_quals[pred].contains(
+        let is_new = ! quals.quals_of(pred).contains(
           & term
         ) && known_quals.insert(
           term.clone()
@@ -925,7 +925,7 @@ impl<'core> IceLearner<'core> {
           }
           if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
-            quals.insert(& term, pred) ? ;
+            quals.insert(term.clone(), pred) ? ;
             ()
           }
           if let Some( (ref mut old_term, ref mut old_gain) ) = * best {

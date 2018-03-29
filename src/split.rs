@@ -104,10 +104,17 @@ pub fn work(
     if let Some(candidates) = res {
       log! { @info "sat\n\n" }
       let mut this_model = instance.model_of(candidates) ? ;
+      // profile! { |_profiler| tick "waiting" }
+      // while Arc::strong_count(& instance) != 1 {}
+      // profile! { |_profiler| mark "waiting" }
       if let Some(instance) = Arc::get_mut(& mut instance) {
         instance.simplify_pred_defs(& mut this_model) ?
       }
-      model!(add this_model)
+      model!(add this_model) ;
+
+      // let model = real_instance.extend_model(model.clone()) ? ;
+      // let stdout = & mut ::std::io::stdout() ;
+      // real_instance.write_model(& model, stdout) ?
     } else {
       log! { @info "unsat\n\n" }
       bail!(ErrorKind::Unsat)
