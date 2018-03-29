@@ -1084,10 +1084,12 @@ impl NuQuals {
   pub fn log(& self) {
     println!("; quals {{") ;
     for (pred, terms) in self.quals.index_iter() {
-      println!(";   {}", conf.emph(& self.instance[pred].name)) ;
-      println!(";   {}", self.instance[pred].sig) ;
-      for term in terms {
-        println!(";   | {}", term)
+      if ! terms.is_empty() {
+        println!(";   {}", conf.emph(& self.instance[pred].name)) ;
+        println!(";   {}", self.instance[pred].sig) ;
+        for term in terms {
+          println!(";   | {}", term)
+        }
       }
     }
     println!("; }}")

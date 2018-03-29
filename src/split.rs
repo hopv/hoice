@@ -112,7 +112,7 @@ pub fn work(
       }
       model!(add this_model) ;
 
-      // let model = real_instance.extend_model(model.clone()) ? ;
+      // let mut model = real_instance.extend_model(model.clone()) ? ;
       // let stdout = & mut ::std::io::stdout() ;
       // real_instance.write_model(& model, stdout) ?
     } else {
