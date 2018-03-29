@@ -1045,11 +1045,17 @@ impl Instance {
     let mut all_terms = HashSet::with_capacity(
       clause.lhs_terms().len()
     ) ;
+    // Stores all top terms.
+    let mut conj = HConSet::<Term>::with_capacity(
+      clause.lhs_terms().len()
+    ) ;
 
     // Now look for atoms and try to apply the mappings above.
-    for (pred, map, mut conj) in maps {
+    for (pred, map, app_quals) in maps {
       all_terms.clear() ;
+      conj.clear() ;
       debug_assert! { all_terms.is_empty() }
+      debug_assert! { conj.is_empty() }
 
       for term in clause.lhs_terms().iter() {
 
@@ -1086,19 +1092,25 @@ impl Instance {
                 quals.insert(qual, pred) ? ;
               }
             },
-            _ => if let Some( (term, true) ) = subterm.subst_total(& map) {
-              all_terms.insert(term) ;
+            _ => if let Some( (qual, true) ) = subterm.subst_total(& map) {
+              all_terms.insert(qual) ;
             },
           }
         }
 
       }
 
-      if build_conj && conj.len() > 1 {
+      if build_conj {
         quals.insert(
-          term::and( conj.into_iter().collect() ), pred
+          term::and(
+            app_quals.iter().map(|t| t.clone()).collect()
+          ), pred
         ) ? ;
-        ()
+        if conj.len() > 1 {
+          quals.insert(
+            term::and( conj.drain().chain(app_quals).collect() ), pred
+          ) ? ;
+        }
       }
 
       let mut all_terms = all_terms.iter() ;

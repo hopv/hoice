@@ -1236,7 +1236,7 @@ impl Config {
       ).value_name(
         "int"
       ).default_value(
-        "2"
+        "1"
       ).takes_value(true).number_of_values(1).display_order(
         order()
       ).hidden(true)

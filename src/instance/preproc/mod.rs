@@ -102,6 +102,7 @@ pub fn work_on_split(
   let mut strict_neg_clauses = Vec::with_capacity(
     instance.neg_clauses().len()
   ) ;
+
   // We're going to forget clauses (swap-remove), going in descending order.
   to_forget.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1)) ;
   for clause_idx in to_forget {
@@ -120,7 +121,7 @@ pub fn work_on_split(
 
     let mut pre_instance = PreInstance::new(& mut split_instance) ? ;
 
-    if conf.preproc.split_strengthen {
+    if conf.preproc.split_strengthen && strict_neg_clauses.len() < 30 {
 
       profile! { |profiler| tick "strengthening" }
 
