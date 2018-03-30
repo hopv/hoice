@@ -566,7 +566,7 @@ pub struct IceConf {
   /// Ignore unclassified data when computing entropy.
   pub simple_gain_ratio: f64,
   /// Sort predicates.
-  pub sort_preds: bool,
+  pub sort_preds: f64,
   /// Generate complete transformations for qualifiers.
   pub complete: bool,
   /// Biases qualifier selection based on the predicates the qualifier was
@@ -617,14 +617,16 @@ impl IceConf {
     ).arg(
 
       Arg::with_name("sort_preds").long("--sort_preds").help(
-        "(de)activates predicate sorting before learning"
+        "predicate sorting before learning probability"
       ).validator(
-        bool_validator
+        int_validator
       ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true).hidden(
-        true
-      ).number_of_values(1).display_order( order() )
+        "int"
+      ).default_value(
+        "40"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
 
     ).arg(
 
@@ -777,7 +779,18 @@ impl IceConf {
         value
       }
     } ;
-    let sort_preds = bool_of_matches(matches, "sort_preds") ;
+    let sort_preds = {
+      let mut value = int_of_matches(
+        matches, "sort_preds"
+      ) as f64 / 100. ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
     let qual_print = bool_of_matches(matches, "qual_print") ;
@@ -1212,7 +1225,7 @@ impl Config {
       ).value_name(
         bool_format
       ).default_value(
-        "off"
+        "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(

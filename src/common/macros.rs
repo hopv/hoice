@@ -318,6 +318,11 @@ macro_rules! msg {
 }
 #[cfg( not(feature = "bench") )]
 macro_rules! msg {
+  ( @$flag:tt $slf:expr => $($tt:tt)* ) => (
+    if log!(|cond_of| $flag) {
+      msg!( force $slf => $($tt)* )
+    }
+  ) ;
   ( debug $slf:expr => $($tt:tt)* ) => (
     if conf.verb >= 3 {
       msg!( force $slf => $($tt)* )

@@ -196,38 +196,6 @@
     )
   )
 )
-(assert
-  (forall ( (|$alpha-11:k| Real) (|$alpha-12:n| Real) (|$alpha-13:i| Real) (|$knormal:23| Real) (|$knormal:24| Real) (|$knormal:25| Real) (|$knormal:26| Real) (|$knormal:27| Real) (|$knormal:28| Real) )
-    (=>
-      ( and (= (not (= 0.0 |$knormal:28|)) (and (not (= 0.0 |$knormal:26|)) (not (= 0.0 |$knormal:27|)))) (= (not (= 0.0 |$knormal:27|)) (< |$alpha-13:i| |$alpha-12:n|)) (= (not (= 0.0 |$knormal:26|)) (<= 0.0 |$alpha-13:i|)) (= (not (= 0.0 |$knormal:25|)) (and (not (= 0.0 |$knormal:23|)) (not (= 0.0 |$knormal:24|)))) (= (not (= 0.0 |$knormal:24|)) (<= |$alpha-11:k| 0.0)) (= (not (= 0.0 |$knormal:23|)) (>= |$alpha-11:k| 0.0)) (not (= 0.0 |$knormal:28|)) (not (= 0.0 |$knormal:25|)) )
-      (|init$unknown:5| |$alpha-13:i| |$alpha-12:n| |$alpha-11:k|)
-    )
-  )
-)
-(assert
-  (forall ( (|$alpha-11:k| Real) (|$knormal:23| Real) (|$knormal:24| Real) (|$knormal:25| Real) )
-    (=>
-      ( and (= (not (= 0.0 |$knormal:25|)) (and (not (= 0.0 |$knormal:23|)) (not (= 0.0 |$knormal:24|)))) (= (not (= 0.0 |$knormal:24|)) (<= |$alpha-11:k| 0.0)) (= (not (= 0.0 |$knormal:23|)) (>= |$alpha-11:k| 0.0)) (not (= 0.0 |$knormal:25|)) )
-      true
-    )
-  )
-)
-(assert
-  (forall ( (|$alpha-11:k| Real) (|$knormal:23| Real) (|$knormal:24| Real) (|$knormal:25| Real) )
-    (=>
-      ( and (= (not (= 0.0 |$knormal:25|)) (and (not (= 0.0 |$knormal:23|)) (not (= 0.0 |$knormal:24|)))) (= (not (= 0.0 |$knormal:24|)) (<= |$alpha-11:k| 0.0)) (= (not (= 0.0 |$knormal:23|)) (>= |$alpha-11:k| 0.0)) (not (= 0.0 |$knormal:25|)) )
-      true
-    )
-  )
-)
-(assert
-  (forall ( (|$alpha-11:k| Real) (|$knormal:23| Real) (|$knormal:24| Real) (|$knormal:25| Real) )
-    (=>
-      ( and (= (not (= 0.0 |$knormal:25|)) (and (not (= 0.0 |$knormal:23|)) (not (= 0.0 |$knormal:24|)))) (= (not (= 0.0 |$knormal:24|)) (<= |$alpha-11:k| 0.0)) (= (not (= 0.0 |$knormal:23|)) (>= |$alpha-11:k| 0.0)) (not (= 0.0 |$knormal:25|)) )
-      true
-    )
-  )
-)
 (check-sat)
 
 (exit)

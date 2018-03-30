@@ -349,6 +349,7 @@ impl Cxt {
       }
       conf.check_timeout() ? ;
     }
+
     for index in keep {
       for (pred, vars) in self.dep[index].drain() {
         if_debug! {

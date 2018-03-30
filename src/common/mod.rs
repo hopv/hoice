@@ -124,9 +124,6 @@ pub type Int = ::num::BigInt ;
 /// Rationals.
 pub type Rat = ::num::BigRational ;
 
-/// A trivially hashed set of variable maps.
-pub type VarMapSet<T> = HashSet< VarMap<T> > ;
-
 /// A signature.
 pub type Sig = VarMap<Typ> ;
 

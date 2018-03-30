@@ -960,15 +960,22 @@ use common::* ;
 
 pub struct NuQuals {
   instance: Arc<Instance>,
-  quals: PrdMap< HConSet<Term> >,
+  quals: PrdMap< VarHMap< HConSet<Term> > >,
+  rng: ::rand::StdRng,
 }
 impl NuQuals {
   pub fn new(instance: Arc<Instance>, mine: bool) -> Res<Self> {
+    use rand::SeedableRng ;
+
     let mut quals = PrdMap::with_capacity( instance.preds().len() ) ;
     for _ in 0 .. instance.preds().len() {
-      quals.push( HConSet::<Term>::with_capacity(103) )
+      quals.push( VarHMap::new() )
     }
-    let mut quals = NuQuals { quals, instance: instance.clone() } ;
+    let mut quals = NuQuals {
+      quals,
+      instance: instance.clone(),
+      rng: ::rand::StdRng::from_seed(& [42]),
+    } ;
 
     if mine {
 
@@ -976,7 +983,9 @@ impl NuQuals {
 
         if instance.is_known(pred_info.idx) { continue 'all_preds }
 
-        for (var, typ) in pred_info.sig.index_iter() {
+        let mut sig = pred_info.sig.index_iter() ;
+
+        while let Some((var, typ)) = sig.next() {
 
           match * typ {
             Typ::Int => {
@@ -1064,7 +1073,14 @@ impl NuQuals {
   pub fn insert(
     & mut self, term: Term, pred: PrdIdx
   ) -> Res<bool> {
-    let is_new = self.quals[pred].insert(term) ;
+    let var_count = term::vars(& term).len() ;
+    let set = self.quals[pred].entry(
+      var_count.into()
+    ).or_insert_with(
+      || HConSet::<Term>::with_capacity(103)
+    ) ;
+
+    let is_new = set.insert(term) ;
     Ok(is_new)
   }
 
@@ -1084,19 +1100,29 @@ impl NuQuals {
   pub fn log(& self) {
     println!("; quals {{") ;
     for (pred, terms) in self.quals.index_iter() {
-      if ! terms.is_empty() {
+      if terms.iter().any(
+        |(_, terms)| ! terms.is_empty()
+      ) {
         println!(";   {}", conf.emph(& self.instance[pred].name)) ;
         println!(";   {}", self.instance[pred].sig) ;
-        for term in terms {
-          println!(";   | {}", term)
+        for (_, terms) in terms {
+          for term in terms {
+            println!(";   | {}", term)
+          }
         }
       }
     }
     println!("; }}")
   }
 
+  pub fn quals_of_contains(& self, pred: PrdIdx, term: & Term) -> bool {
+    self.quals[pred].iter().any(
+      |(_, terms)| terms.contains(term)
+    )
+  }
 
-  pub fn quals_of(& self, pred: PrdIdx) -> & HConSet<Term> {
+
+  pub fn quals_of(& self, pred: PrdIdx) -> & VarHMap< HConSet<Term> > {
     & self.quals[pred]
   }
 
@@ -1109,19 +1135,37 @@ impl NuQuals {
     & mut self, pred: PrdIdx, mut crit: Crit
   ) -> Res< Option<(Term, f64)> >
   where Crit: FnMut( & Term ) -> Res< Option<f64> > {
+    use rand::Rng ;
+
     let mut best = None ;
-    for term in & self.quals[pred] {
-      if let Some(value) = crit(term) ? {
-        best = if value > 0.9999 {
-          return Ok( Some((term.clone(), value)) )
-        } else if let Some((best, best_value)) = best {
-          if best_value >= value {
-            Some((best, best_value))
+    let rng = & mut self.rng ;
+
+    let mut quals: Vec<_> = self.quals[pred].iter().map(
+      |(_, terms)| terms
+    ).collect() ;
+
+    quals.sort_unstable_by(
+      |_, _| if rng.next_f64() > 0.5 {
+        ::std::cmp::Ordering::Greater
+      } else {
+        ::std::cmp::Ordering::Less
+      }
+    ) ;
+
+    for terms in quals {
+      for term in terms {
+        if let Some(value) = crit(term) ? {
+          best = if value > 0.9999 {
+            return Ok( Some((term.clone(), value)) )
+          } else if let Some((best, best_value)) = best {
+            if best_value >= value {
+              Some((best, best_value))
+            } else {
+              Some((term, value))
+            }
           } else {
             Some((term, value))
           }
-        } else {
-          Some((term, value))
         }
       }
     }

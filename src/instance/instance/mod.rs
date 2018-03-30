@@ -1042,7 +1042,7 @@ impl Instance {
     // Stores the subterms of `lhs_terms`.
     let mut subterms = Vec::with_capacity(7) ;
     // Stores all (sub-)terms.
-    let mut all_terms = HashSet::with_capacity(
+    let mut all_terms = HConSet::<Term>::with_capacity(
       clause.lhs_terms().len()
     ) ;
     // Stores all top terms.
