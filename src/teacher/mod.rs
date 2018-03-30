@@ -79,7 +79,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       if conf.teacher.step {
         pause(
           & format!(
-            "to send data to {} (--step on)...",
+            "to send data to {}... (--step on)",
             & conf.emph(& teacher.learners[idx].1)
           ), & teacher._profiler
         ) ;
@@ -89,7 +89,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
     } else {
       if conf.teacher.step {
         pause(
-          "to broadcast data (--step on)...",
+          "to broadcast data... (--step on)",
           & teacher._profiler
         ) ;
       }
@@ -122,6 +122,15 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
           }
           log!(@info "" )
         }
+
+        if conf.teacher.step {
+          pause(
+            & format!(
+              "to look for counterexamples... (--step on)",
+            ), & teacher._profiler
+          ) ;
+        }
+
         profile!{ teacher tick "cexs" }
         let cexs = teacher.get_cexs(& candidates) ? ;
         profile!{ teacher mark "cexs" }

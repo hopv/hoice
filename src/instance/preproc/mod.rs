@@ -522,9 +522,15 @@ impl<'a> Reductor<'a> {
       added += added_pre ;
       r_added += r_added_pre ;
 
-      info! { "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre }
-      info! { "           bakward {} ({})", r_added, r_added_pre }
-      info! { "             total {} / {}", added + r_added, max_clause_add }
+      log! { @verb
+        "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
+      }
+      log! { @verb
+        "           bakward {} ({})", r_added, r_added_pre
+      }
+      log! { @verb
+        "             total {} / {}", added + r_added, max_clause_add
+      }
 
       if (
         added_pre == 0 && r_added_pre == 0
@@ -1515,9 +1521,12 @@ impl RedStrat for Unroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'pos_clauses: for clause in instance.pos_clauses() {
-        let clause = & instance[* clause] ;
-        debug_assert! { clause.lhs_preds().is_empty() }
+      'pos_clauses: for clause in instance.clauses() {
+
+        if ! clause.lhs_preds().is_empty() {
+          continue 'pos_clauses
+        }
+
         conf.check_timeout() ? ;
 
         if let Some((pred, args)) = clause.rhs() {
@@ -1611,9 +1620,10 @@ impl RedStrat for RUnroll {
         || Vec::new()
       ).push((q, ts)) ;
 
-      'neg_clauses: for clause in instance.strict_neg_clauses() {
-        let clause = & instance[* clause] ;
-        debug_assert! { clause.rhs().is_none() }
+      'neg_clauses: for clause in instance.clauses() {
+
+        if clause.rhs().is_some() { continue 'neg_clauses }
+
         conf.check_timeout() ? ;
 
         let mut apps = clause.lhs_preds().iter() ;
@@ -1622,6 +1632,7 @@ impl RedStrat for RUnroll {
           if self.ignore.contains(& pred) {
             continue 'neg_clauses
           }
+
           let pred = * pred ;
           let mut argss = argss.iter() ;
           let args = if let Some(args) = argss.next() {
@@ -1630,8 +1641,10 @@ impl RedStrat for RUnroll {
             bail!("illegal clause, predicate application leads to nothing")
           } ;
 
-          debug_assert! { argss.next().is_none() }
-          debug_assert! { apps.next().is_some() }
+          if argss.next().is_some()
+          || apps.next().is_some() {
+            continue 'neg_clauses
+          }
 
           // Negative constraint with only one pred app, reverse-unrolling.
           match utils::terms_of_lhs_app(
@@ -1674,7 +1687,10 @@ impl RedStrat for RUnroll {
               let mut set = HConSet::<Term>::new() ;
               insert( pred, None, set )
             },
-            ExtractRes::Failed => continue 'neg_clauses,
+            ExtractRes::Failed => {
+              log! { @debug "extraction failed, skipping" }
+              continue 'neg_clauses
+            },
             ExtractRes::Trivial => bail!(
               "found a trivial clause during unrolling"
             ),

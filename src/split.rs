@@ -166,13 +166,61 @@ impl Splitter {
   pub fn new(instance: & Arc<Instance>) -> Self {
     let clauses = if conf.split
     && instance.neg_clauses().len() > 1 {
+      // We want the predicates that appear in the most lhs last (since
+      // we're popping).
       let mut clauses: Vec<_> = instance.neg_clauses().iter().map(
-        |c| * c
+        |c| (
+          * c,
+          if conf.preproc.split_sort {
+            instance[* c].lhs_preds().iter().fold(
+              0, |
+                mut sum, (pred, _)
+              | {
+
+                for clause in instance.clauses_of(* pred).0 {
+                  if instance[* clause].rhs().is_some() {
+                    sum += 1
+                  }
+                }
+
+                for clause in instance.clauses_of(* pred).1 {
+                  if instance[* clause].lhs_preds().is_empty() {
+                    // Positive clauses are bad.
+                    sum = 0 ;
+                    break
+                  } else {
+                    // sum -= ::std::cmp::min(sum, 1)
+                  }
+                }
+
+                sum
+              }
+            )
+          } else {
+            * * c
+          }
+        )
       ).collect() ;
+
       clauses.sort_unstable_by(
-        |c_1, c_2| c_2.cmp(c_1)
+        |& (_, count_1), & (_, count_2)| count_1.cmp(& count_2)
       ) ;
-      Either::Left(clauses)
+
+      if_verb! {
+        if conf.preproc.split_sort {
+          log! { @verb
+            "sorted clauses:"
+          }
+          for & (clause, count) in clauses.iter() {
+            log! { @verb "#{} ({})", clause, count }
+            log! { @debug
+              "{}", instance[clause].to_string_info(instance.preds()).unwrap()
+            }
+          }
+        }
+      }
+
+      Either::Left(clauses.into_iter().map(|(c,_)| c).collect())
     } else {
       Either::Right(false)
     } ;
