@@ -1108,6 +1108,9 @@ impl Instance {
         ) ? ;
         if conj.len() > 1 {
           quals.insert(
+            term::and( conj.iter().map(|t| t.clone()).collect() ), pred
+          ) ? ;
+          quals.insert(
             term::and( conj.drain().chain(app_quals).collect() ), pred
           ) ? ;
         }
@@ -1167,21 +1170,29 @@ impl Instance {
                   vec![ term_args[0].clone(), other_args[0].clone() ]
                 ) ;
 
-                let mut old_vars = term::vars(& term_args[0]) ;
-                old_vars.extend( term::vars(& other_args[0]) ) ;
-                let nu_vars = term::vars(& nu_lhs) ;
+                let mut old_vars_1 = term::vars(& term_args[0]) ;
+                let mut old_vars_2 = term::vars(& other_args[0]) ;
+                let mut nu_vars = term::vars(& nu_lhs) ;
 
-                let use_qual = (
-                  old_vars.len() == 2
+                let use_qual = self.clauses.len() < 35 || (
+                  nu_vars.len() <= 2
                 ) || (
-                  old_vars.len() > nu_vars.len()
+                  nu_vars.len() < old_vars_1.len() + old_vars_2.len()
                 ) ;
 
-                log! { @4
-                  " " ;
-                  // "     {} -> {}", old_vars.len(), nu_vars.len() ;
-                  "from {}", term ;
-                  "     {}", other
+                if use_qual {
+                  log! { @4
+                    "from {}", term ;
+                    "     {}", other
+                  }
+                } else {
+                  // log! { @1
+                  //   " " ;
+                  //   "skipping" ;
+                  //   "from {}", term ;
+                  //   "     {}", other ;
+                  //   "  -> {}", nu_lhs
+                  // }
                 }
 
                 if use_qual {

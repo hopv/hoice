@@ -88,7 +88,8 @@ fn finalize(
 ///
 /// Fails if `to_keep` is not a negative clause in `instance`.
 pub fn work_on_split(
-  instance: & Instance, to_keep: ClsIdx, profiler: & Profiler
+  instance: & Instance, to_keep: ClsIdx,
+  ignore: & ClsSet, profiler: & Profiler
 ) -> Res<Instance> {
 
   profile! { |profiler| tick "splitting" }
@@ -109,6 +110,7 @@ pub fn work_on_split(
     if clause_idx != to_keep {
       let clause = split_instance.forget_clause(clause_idx) ? ;
       if conf.preproc.split_strengthen
+      && ! ignore.contains(& clause_idx)
       && instance.strict_neg_clauses().contains(& clause_idx) {
         strict_neg_clauses.push(clause)
       }

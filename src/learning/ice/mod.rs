@@ -177,7 +177,7 @@ impl<'core> IceLearner<'core> {
   pub fn run(& mut self) -> Res<()> {
     profile!{ self "quals synthesized" => add 0 }
     profile!{
-      self "qual initially" =>
+      self "quals initially" =>
         add self.qualifiers.real_qual_count()
     }
 

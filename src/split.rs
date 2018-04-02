@@ -157,6 +157,8 @@ pub struct Splitter {
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
   /// will return `self.instance` if `! once` and `None` otherwise.
   clauses: Either<Vec<ClsIdx>, bool>,
+  /// Negative clauses for which we already have a solution.
+  prev_clauses: ClsSet,
   /// Profiler.
   _profiler: Option<Profiler>,
 }
@@ -197,7 +199,7 @@ impl Splitter {
               }
             )
           } else {
-            * * c
+            - (* * c as isize)
           }
         )
       ).collect() ;
@@ -227,7 +229,8 @@ impl Splitter {
     let instance = instance.clone() ;
     // let model = Vec::new() ;
     Splitter {
-      instance, clauses, _profiler: None,
+      instance, clauses,
+      prev_clauses: ClsSet::new(), _profiler: None,
     }
   }
 
@@ -265,10 +268,11 @@ impl Splitter {
         let preproc_res = profile! (
           |_prof| wrap {
             preproc(
-              self.instance.as_ref(), clause, & profiler
+              self.instance.as_ref(), clause, & self.prev_clauses, & profiler
             )
           } "sub-preproc"
         ) ? ;
+        self.prev_clauses.insert(clause) ;
         self._profiler = Some(profiler) ;
         Ok(
           Some(
@@ -301,7 +305,8 @@ impl Splitter {
 ///
 /// Fails in debug if the clause is not negative.
 fn preproc(
-  instance: & Instance, clause: ClsIdx, profiler: & Profiler
+  instance: & Instance, clause: ClsIdx,
+  prev_clauses: & ClsSet, profiler: & Profiler
 ) -> Res< Either<Instance, Option<Model>>> {
 
   debug_assert! {
@@ -309,7 +314,7 @@ fn preproc(
   }
 
   let instance = ::instance::preproc::work_on_split(
-    instance, clause, profiler
+    instance, clause, prev_clauses, profiler
   ) ? ;
 
   if let Some(maybe_model) = instance.is_trivial_model() ? {

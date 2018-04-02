@@ -1088,8 +1088,10 @@ impl NuQuals {
   /// Real number of qualifiers considered.
   pub fn real_qual_count(& self) -> usize {
     let mut count = 0 ;
-    for terms in & self.quals {
-      count += terms.len()
+    for sets in & self.quals {
+      for (_, terms) in sets {
+        count += terms.len()
+      }
     }
     count
   }
