@@ -11,7 +11,7 @@ pub mod quals ;
 pub mod synth ;
 pub mod data ;
 
-use self::quals::Qualifiers ;
+use self::quals::NuQuals ;
 use self::data::CData ;
 
 
@@ -64,7 +64,7 @@ pub struct IceLearner<'core> {
   /// Arc to the instance.
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
-  pub qualifiers: Qualifiers,
+  pub qualifiers: NuQuals,
   /// Current data.
   data: Data,
   /// Solver used to check if the constraints are respected.
@@ -115,7 +115,7 @@ impl<'core> IceLearner<'core> {
     ) ? ;
 
     profile!{ |core._profiler| tick "mining" }
-    let qualifiers = Qualifiers::new( instance.clone(), mine ).chain_err(
+    let qualifiers = NuQuals::new( instance.clone(), mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |core._profiler| mark "mining" }
@@ -177,7 +177,7 @@ impl<'core> IceLearner<'core> {
   pub fn run(& mut self) -> Res<()> {
     profile!{ self "quals synthesized" => add 0 }
     profile!{
-      self "qual initially" =>
+      self "quals initially" =>
         add self.qualifiers.real_qual_count()
     }
 
@@ -306,12 +306,12 @@ impl<'core> IceLearner<'core> {
 
     // Decide whether to use simple gain.
     let simple = self.simple_rng.next_f64() <= conf.ice.simple_gain_ratio ;
-    // Sort the predicates 80% of the time.
-    let sorted = conf.ice.sort_preds && self.sort_rng_1.next_f64() <= 0.80 ;
+    // Decide whether to sort the predicates.
+    let sorted = self.sort_rng_1.next_f64() <= conf.ice.sort_preds ;
     // Skip preliminary decision 20% of the time.
     let skip_prelim = self.pre_skip_rng.next_f64() <= 0.20 ;
 
-    msg! {
+    msg! { @verb
       self =>
       "starting learning\n  \
       simple:      {},\n  \
@@ -323,7 +323,35 @@ impl<'core> IceLearner<'core> {
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     debug_assert! { self.predicates.is_empty() }
 
-    for pred in PrdRange::zero_to(prd_count) {
+    let mut all_preds: Vec<_> = PrdRange::zero_to(prd_count).filter_map(
+      |pred| if self.instance.is_known(pred) {
+        None
+      } else {
+        Some(pred)
+      }
+    ).collect() ;
+
+    if sorted {
+      all_preds.sort_unstable_by(
+        |p_1, p_2| {
+          let sum_1 = self.data.pos[* p_1].len() + self.data.neg[* p_1].len() ;
+          let unc_1 = self.data.map()[* p_1].len() ;
+          let sum_1 = sum_1 - ::std::cmp::min(
+            sum_1, unc_1
+          ) ;
+
+          let sum_2 = self.data.pos[* p_2].len() + self.data.neg[* p_2].len() ;
+          let unc_2 = self.data.map()[* p_2].len() ;
+          let sum_2 = sum_2 - ::std::cmp::min(
+            sum_2, unc_2
+          ) ;
+
+          sum_1.cmp(& sum_2).reverse()
+        }
+      )
+    }
+
+    for pred in all_preds {
 
       if self.instance.is_known(pred) {
         continue
@@ -339,8 +367,8 @@ impl<'core> IceLearner<'core> {
           msg! { debug self => "legal_pred (1)" }
           // Maybe we can assert everything as negative right away?
           if self.is_legal_pred(pred, false) ? {
-            msg! {
-              debug self =>
+            msg! { @verb
+              self =>
               "{} only has negative ({}) and unclassified ({}) data\n\
               legal check ok, assuming everything negative",
               self.instance[pred], neg_len, unc_len
@@ -363,8 +391,8 @@ impl<'core> IceLearner<'core> {
           msg! { debug self => "legal_pred (2)" }
           // Maybe we can assert everything as positive right away?
           if self.is_legal_pred(pred, true) ? {
-            msg! {
-              debug self =>
+            msg! { @verb
+              self =>
               "{} only has positive ({}) and unclassified ({}) data\n\
               legal check ok, assuming everything positive",
               self.instance[pred], pos_len, unc_len
@@ -512,7 +540,7 @@ impl<'core> IceLearner<'core> {
     debug_assert!( self.unfinished.is_empty() ) ;
     self.classifier.clear() ;
 
-    msg! {
+    msg! { @verb
       self =>
       "working on predicate {} (pos: {}, neg: {}, unc: {})",
       self.instance[pred], data.pos().len(), data.neg().len(), data.unc().len()
@@ -717,7 +745,7 @@ impl<'core> IceLearner<'core> {
             }
             core.check_exit() ? ;
             Ok(res)
-          }, false
+          }
         ) ;
         profile!{ self mark "learning", "qual", "simple gain" }
         res ?
@@ -745,7 +773,7 @@ impl<'core> IceLearner<'core> {
             }
             core.check_exit() ? ;
             Ok(res)
-          }, false
+          }
         ) ;
         profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
         res ?
@@ -895,8 +923,8 @@ impl<'core> IceLearner<'core> {
 
       let mut treatment = |term: Term| {
         self_core.check_exit() ? ;
-        let is_new = ! quals.all_quals[pred].contains(
-          & term
+        let is_new = ! quals.quals_of_contains(
+          pred, & term
         ) && known_quals.insert(
           term.clone()
         ) ;
@@ -925,7 +953,7 @@ impl<'core> IceLearner<'core> {
           }
           if conf.ice.add_synth && gain == 1.0 {
             msg! { self_core => "  adding synth qual {}", term }
-            quals.insert(& term, pred) ? ;
+            quals.insert(term.clone(), pred) ? ;
             ()
           }
           if let Some( (ref mut old_term, ref mut old_gain) ) = * best {

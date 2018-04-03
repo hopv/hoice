@@ -104,10 +104,17 @@ pub fn work(
     if let Some(candidates) = res {
       log! { @info "sat\n\n" }
       let mut this_model = instance.model_of(candidates) ? ;
+      // profile! { |_profiler| tick "waiting" }
+      // while Arc::strong_count(& instance) != 1 {}
+      // profile! { |_profiler| mark "waiting" }
       if let Some(instance) = Arc::get_mut(& mut instance) {
         instance.simplify_pred_defs(& mut this_model) ?
       }
-      model!(add this_model)
+      model!(add this_model) ;
+
+      // let mut model = real_instance.extend_model(model.clone()) ? ;
+      // let stdout = & mut ::std::io::stdout() ;
+      // real_instance.write_model(& model, stdout) ?
     } else {
       log! { @info "unsat\n\n" }
       bail!(ErrorKind::Unsat)
@@ -150,6 +157,8 @@ pub struct Splitter {
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
   /// will return `self.instance` if `! once` and `None` otherwise.
   clauses: Either<Vec<ClsIdx>, bool>,
+  /// Negative clauses for which we already have a solution.
+  prev_clauses: ClsSet,
   /// Profiler.
   _profiler: Option<Profiler>,
 }
@@ -159,20 +168,69 @@ impl Splitter {
   pub fn new(instance: & Arc<Instance>) -> Self {
     let clauses = if conf.split
     && instance.neg_clauses().len() > 1 {
+      // We want the predicates that appear in the most lhs last (since
+      // we're popping).
       let mut clauses: Vec<_> = instance.neg_clauses().iter().map(
-        |c| * c
+        |c| (
+          * c,
+          if conf.preproc.split_sort {
+            instance[* c].lhs_preds().iter().fold(
+              0, |
+                mut sum, (pred, _)
+              | {
+
+                for clause in instance.clauses_of(* pred).0 {
+                  if instance[* clause].rhs().is_some() {
+                    sum += 1
+                  }
+                }
+
+                for clause in instance.clauses_of(* pred).1 {
+                  if instance[* clause].lhs_preds().is_empty() {
+                    // Positive clauses are bad.
+                    sum = 0 ;
+                    break
+                  } else {
+                    // sum -= ::std::cmp::min(sum, 1)
+                  }
+                }
+
+                sum
+              }
+            )
+          } else {
+            - (* * c as isize)
+          }
+        )
       ).collect() ;
+
       clauses.sort_unstable_by(
-        |c_1, c_2| c_2.cmp(c_1)
+        |& (_, count_1), & (_, count_2)| count_1.cmp(& count_2)
       ) ;
-      Either::Left(clauses)
+
+      if_verb! {
+        if conf.preproc.split_sort {
+          log! { @verb
+            "sorted clauses:"
+          }
+          for & (clause, count) in clauses.iter() {
+            log! { @verb "#{} ({})", clause, count }
+            log! { @debug
+              "{}", instance[clause].to_string_info(instance.preds()).unwrap()
+            }
+          }
+        }
+      }
+
+      Either::Left(clauses.into_iter().map(|(c,_)| c).collect())
     } else {
       Either::Right(false)
     } ;
     let instance = instance.clone() ;
     // let model = Vec::new() ;
     Splitter {
-      instance, clauses, _profiler: None,
+      instance, clauses,
+      prev_clauses: ClsSet::new(), _profiler: None,
     }
   }
 
@@ -210,10 +268,11 @@ impl Splitter {
         let preproc_res = profile! (
           |_prof| wrap {
             preproc(
-              self.instance.as_ref(), clause, & profiler
+              self.instance.as_ref(), clause, & self.prev_clauses, & profiler
             )
           } "sub-preproc"
         ) ? ;
+        self.prev_clauses.insert(clause) ;
         self._profiler = Some(profiler) ;
         Ok(
           Some(
@@ -246,7 +305,8 @@ impl Splitter {
 ///
 /// Fails in debug if the clause is not negative.
 fn preproc(
-  instance: & Instance, clause: ClsIdx, profiler: & Profiler
+  instance: & Instance, clause: ClsIdx,
+  prev_clauses: & ClsSet, profiler: & Profiler
 ) -> Res< Either<Instance, Option<Model>>> {
 
   debug_assert! {
@@ -254,7 +314,7 @@ fn preproc(
   }
 
   let instance = ::instance::preproc::work_on_split(
-    instance, clause, profiler
+    instance, clause, prev_clauses, profiler
   ) ? ;
 
   if let Some(maybe_model) = instance.is_trivial_model() ? {

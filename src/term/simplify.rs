@@ -144,11 +144,11 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 /// # println!("=> {}\n\n", rhs) ;
 /// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
 ///
-/// let lhs = term::le( term::int_var(0), term::int(7) ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// let expected = term::eq( term::int_var(0), term::int(7) ) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Yields(expected) }
+// / let lhs = term::le( term::int_var(0), term::int(7) ) ;
+// / # println!("   {}", lhs) ;
+// / # println!("=> {}\n\n", rhs) ;
+// / let expected = term::eq( term::int_var(0), term::int(7) ) ;
+// / debug_assert_eq! { conj_simpl(& lhs, & rhs), Yields(expected) }
 ///
 /// let lhs = term::le( term::int_var(1), term::int(7) ) ;
 /// # println!("   {}", lhs) ;
