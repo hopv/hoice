@@ -112,7 +112,7 @@ dependencies = [
  "mylib 0.1.0 (git+https://github.com/AdrienChampion/mylib)",
  "num 0.1.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "rsmt2 0.9.4 (git+https://github.com/kino-mc/rsmt2)",
+ "rsmt2 0.9.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -244,8 +244,8 @@ dependencies = [
 
 [[package]]
 name = "rsmt2"
-version = "0.9.4"
-source = "git+https://github.com/kino-mc/rsmt2#b7d53b9503e2d3e911e4603ca93af20e4b47f7e2"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -351,7 +351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "eba5f8cb59cc50ed56be8880a5c7b496bfd9bd26394e176bc67884094145c2c5"
 "checksum redox_syscall 0.1.37 (registry+https://github.com/rust-lang/crates.io-index)" = "0d92eecebad22b767915e4d529f89f28ee96dbbf5a4810d2b844373f136417fd"
 "checksum redox_termios 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "7e891cfe48e9100a70a3b6eb652fef28920c117d366339687bd5576160db0f76"
-"checksum rsmt2 0.9.4 (git+https://github.com/kino-mc/rsmt2)" = "<none>"
+"checksum rsmt2 0.9.6 (registry+https://github.com/rust-lang/crates.io-index)" = "903bf8374267794f8508c2af6e077f5a9be11f6fa139e5c429902a14b1ca12c9"
 "checksum rustc-demangle 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)" = "11fb43a206a04116ffd7cfcf9bcb941f8eb6cc7ff667272246b0a1c74259a3cb"
 "checksum rustc-serialize 0.3.24 (registry+https://github.com/rust-lang/crates.io-index)" = "dcf128d1287d2ea9d80910b5f1120d0b8eede3fbf1abe91c40d39ea7d51e6fda"
 "checksum strsim 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "bb4f380125926a99e52bc279241539c018323fab05ad6368b56f93d9369ff550"
