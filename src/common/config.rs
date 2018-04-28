@@ -2,12 +2,14 @@
 
 use std::path::PathBuf ;
 
-use rsmt2::conf::SolverConf ;
+use rsmt2::SmtConf as SolverConf ;
 
 use clap::Arg ;
 use ansi::{ Colour, Style } ;
 
 use errors::* ;
+use common::mk_dir ;
+use instance::Instance ;
 
 /// Clap `App` with static lifetimes.
 pub type App = ::clap::App<'static, 'static> ;
@@ -21,8 +23,6 @@ pub type Matches = ::clap::ArgMatches<'static> ;
 pub trait SubConf {
   /// True if the options of the subconf need the output directory.
   fn need_out_dir(& self) -> bool ;
-  /// Initializes stuff (creates directory, typically).
-  fn init(& self) -> Res<()> ;
 }
 
 
@@ -41,11 +41,12 @@ pub struct InstanceConf {
 }
 impl SubConf for InstanceConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl InstanceConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App { app }
+  pub fn add_args(app: App, _: usize) -> App {
+    app
+  }
 
   /// Creates itself from some matches.
   pub fn new(_: & Matches) -> Self {
@@ -72,19 +73,6 @@ pub struct SmtConf {
 }
 impl SubConf for SmtConf {
   fn need_out_dir(& self) -> bool { self.log }
-  fn init(& self) -> Res<()> {
-    if let Some(path) = self.log_dir() {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        path
-      ).chain_err(
-        || format!(
-          "while creating smt output directory in `{}`", ::common::conf.out_dir
-        )
-      )
-    } else {
-      Ok(())
-    }
-  }
 }
 impl SmtConf {
   /// Actual, `rsmt2` solver configuration.
@@ -92,40 +80,69 @@ impl SmtConf {
     self.conf.clone()
   }
 
-  /// Smt log dir, if any.
-  pub fn log_dir(& self) -> Option<PathBuf> {
-    if self.log {
-      let mut path = ::common::conf.out_dir() ;
-      path.push("solvers") ;
-      Some(path)
-    } else {
-      None
+  /// Spawns a solver.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
+    let mut solver = ::rsmt2::Solver::new(self.conf(), parser) ? ;
+    if let Some(log) = self.log_file(name, instance.as_ref()).chain_err(
+      || format!(
+        "While opening log file for {}", ::common::conf.emph(name)
+      )
+    ) ? {
+      solver.tee(log) ?
     }
+    Ok(solver)
   }
 
-  /// Smt log file, if any.
-  pub fn log_file<S: AsRef<str >>(
-    & self, name: S
-  ) -> ::common::IoRes< Option<::std::fs::File> > {
-    use std::fs::OpenOptions ;
-    if let Some(mut path) = self.log_dir() {
-      path.push(name.as_ref()) ;
-      path.set_extension("smt2") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some(f))
+  /// Smt log dir, if any.
+  fn log_dir(& self, instance: & Instance) -> Res< Option<PathBuf> > {
+    if self.log {
+      let mut path = ::common::conf.out_dir(instance) ;
+      path.push("solvers") ;
+      mk_dir(& path) ? ;
+      Ok(Some(path))
     } else {
       Ok(None)
     }
   }
 
-  /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  /// Smt log file, if any.
+  fn log_file<S: AsRef<str >>(
+    & self, name: S, instance: & Instance
+  ) -> Res< Option<::std::fs::File> > {
+    use std::fs::OpenOptions ;
+    if let Some(mut path) = self.log_dir(instance) ? {
+      path.push(name.as_ref()) ;
+      path.set_extension("smt2") ;
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!("while creating smt log file {}", path.to_string_lossy())
+      ) ? ;
+      Ok( Some(file) )
+    } else {
+      Ok(None)
+    }
+  }
+
+  /// Adds clap options to a clap `App`.
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("z3_cmd").long("--z3").help(
         "sets the command used to call z3"
-      ).default_value("z3").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "z3"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -135,7 +152,9 @@ impl SmtConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
@@ -145,7 +164,8 @@ impl SmtConf {
     let z3_cmd = matches.value_of("z3_cmd").expect(
       "unreachable(out_dir): default is provided"
     ).to_string() ;
-    let conf = SolverConf::z3().cmd( z3_cmd ) ;
+    let mut conf = SolverConf::z3() ;
+    conf.cmd( z3_cmd ) ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 
@@ -161,80 +181,147 @@ impl SmtConf {
 
 /// Pre-processing configuration.
 pub struct PreprocConf {
-  /// Dump instance as smt2 flag.
-  pub dump: bool,
-  /// Dump predicate dependency graph.
-  pub dump_pred_dep: bool,
-  /// Pre-processing flag.
+  /// (De)activates the whole preprocessing.
   pub active: bool,
-  /// Reduction flag.
+
+  /// Dump all steps of the preprocessing as smt2 systems.
+  pub dump: bool,
+  /// Dump predicate dependency graphs.
+  ///
+  /// The predicate dependency graphs are constructed by [`CfgRed`][cfg red].
+  /// For each of its runs, it will log the dependencies before and after
+  /// reduction.
+  ///
+  /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
+  /// (CfgRed reduction strategy)
+  pub dump_pred_dep: bool,
+
+  /// Horn reduction flag.
+  ///
+  /// (De)activates [`SimpleOneLhs`][slhs], [`SimpleOneRhs`][srhs],
+  /// [`OneLhs`][lhs], and [`OneRhs`][rhs]. If true, then these strategies are
+  /// controlled separately by the flags below.
+  ///
+  /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
+  /// (SimpleOneLhs reduction strategy)
+  /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
+  /// (SimpleOneRhs reduction strategy)
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
   pub reduction: bool,
-  /// Simple reduction flag.
-  pub smt_red: bool,
-  /// One rhs.
+
+  /// Allows right-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneRhs`][rhs] and [`SimpleOneRhs`][srhs] if false.
+  ///
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
+  /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
+  /// (SimpleOneRhs reduction strategy)
   pub one_rhs: bool,
-  /// Allow to introduce quantifiers.
+  /// Allows full right-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneRhs`][rhs] if false.
+  ///
+  /// [rhs]: ../../instance/preproc/struct.OneRhs.html
+  /// (OneRhs reduction strategy)
   pub one_rhs_full: bool,
-  /// One lhs.
+  /// Allows left-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneLhs`][lhs] and [`SimpleOneLhs`][slhs] if false.
+  ///
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
+  /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
+  /// (SimpleOneLhs reduction strategy)
   pub one_lhs: bool,
-  /// Allow to introduce quantifiers.
+  /// Allows full left-hand side Horn reduction.
+  ///
+  /// Deactivates [`OneLhs`][lhs] if false.
+  ///
+  /// [lhs]: ../../instance/preproc/struct.OneLhs.html
+  /// (OneLhs reduction strategy)
   pub one_lhs_full: bool,
-  /// Allow cfg reduction.
+
+  /// Allows cfg reduction.
+  ///
+  /// (De)activates [`CfgRed`][cfg red].
+  ///
+  /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
+  /// (CfgRed reduction strategy)
   pub cfg_red: bool,
-  /// Allow argument reduction.
+
+  /// Allows argument reduction.
+  ///
+  /// (De)activates [`ArgRed`][arg red].
+  ///
+  /// [arg red]: ../../instance/preproc/struct.ArgRed.html
+  /// (ArgRed reduction strategy)
   pub arg_red: bool,
+
+  /// Allows unrolling.
+  ///
+  /// (De)activates [`Unroll`][unroll].
+  ///
+  /// [unroll]: ../../instance/preproc/struct.Unroll.html
+  /// (Unroll strategy)
+  pub unroll: bool,
+
+  /// Allows multiplet unrollings.
+  pub mult_unroll: bool,
+
+  /// Allows clause term pruning.
+  ///
+  /// This is part of the [`Simplify`][simpl] strategy as well as the
+  /// simplification that run on the clauses modified by all reduction
+  /// strategies. This can be expensive as it relies on SMT queries for
+  /// pruning.
+  ///
+  /// [simpl]: ../../instance/preproc/struct.Simplify.html
+  /// (Simplify reduction strategy)
+  pub prune_terms: bool,
+
+  /// Allows strengthening when splitting.
+  pub split_strengthen: bool,
+
+  /// Allows clause sorting when splitting.
+  pub split_sort: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
     self.dump && self.active || self.dump_pred_dep
   }
-  fn init(& self) -> Res<()> {
-    let mut path = self.log_dir() ;
-    if self.dump && self.active {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & path
-      ).chain_err(
-        || format!(
-          "while creating preproc output directory in `{}`",
-          ::common::conf.out_dir
-        )
-      ) ?
-    }
-    if self.dump_pred_dep {
-      path.push("pred_dep") ;
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & path
-      ).chain_err(
-        || format!(
-          "while creating preproc output directory in `{}`",
-          ::common::conf.out_dir
-        )
-      ) ? ;
-      path.pop() ;
-    }
-    Ok(())
-  }
 }
 impl PreprocConf {
   /// Instance dump dir.
-  pub fn log_dir(& self) -> PathBuf {
-    let mut path = ::common::conf.out_dir() ;
+  fn log_dir<Path>(& self, sub: Path, instance: & Instance) -> Res<PathBuf>
+  where Path: AsRef<::std::path::Path> {
+    let mut path = ::common::conf.out_dir(instance) ;
     path.push("preproc") ;
-    path
+    path.push(sub) ;
+    mk_dir(& path) ? ;
+    Ok(path)
   }
 
   /// Instance dump file.
-  pub fn log_file<S: AsRef<str>>(
-    & self, name: S
-  ) -> ::common::IoRes< Option<::std::fs::File> > {
+  pub fn instance_log_file<S: AsRef<str>>(
+    & self, name: S, instance: & Instance
+  ) -> Res< Option<::std::fs::File> > {
     use std::fs::OpenOptions ;
     if self.dump && self.active {
-      let mut path = self.log_dir() ;
+      let mut path = self.log_dir("instances", instance) ? ;
       path.push(name.as_ref()) ;
       path.set_extension("smt2") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some(f))
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!(
+          "while creating instance dump file {}", path.to_string_lossy()
+        )
+      ) ? ;
+      Ok(Some(file))
     } else {
       Ok(None)
     }
@@ -242,26 +329,36 @@ impl PreprocConf {
 
   /// Predicate dependency file.
   pub fn pred_dep_file<S: AsRef<str>>(
-    & self, name: S
-  ) -> ::common::IoRes<
+    & self, name: S, instance: & Instance
+  ) -> Res<
     Option< (::std::fs::File, ::std::path::PathBuf) >
   > {
     use std::fs::OpenOptions ;
     if self.dump_pred_dep {
-      let mut path = self.log_dir() ;
-      path.push("pred_dep") ;
+      let mut path = self.log_dir("pred_dep", instance) ? ;
       path.push(name.as_ref()) ;
       path.set_extension("gv") ;
-      OpenOptions::new()
-      .write(true).truncate(true).create(true)
-      .open(& path).map(|f| Some((f, path)))
+      let file = OpenOptions::new().write(true).truncate(true).create(
+        true
+      ).open(& path).chain_err(
+        || format!(
+          "while creating predicade dependency graph file {}",
+          path.to_string_lossy()
+        )
+      ) ? ;
+      Ok(Some((file, path)))
     } else {
       Ok(None)
     }
   }
 
-  /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  /// Adds clap options to a clap `App`.
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("preproc").long("--preproc").help(
@@ -270,41 +367,47 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
-      Arg::with_name("smt_red").long("--smt_red").help(
-        "(de)activates smt-based reduction strategies"
+      Arg::with_name("dump_preproc").long("--dump_preproc").help(
+        "(de)activates instance dumping during preprocessing"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("prune_terms").long("--prune_terms").help(
+        "(de)activates clause term pruning when simplifying clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).hidden(
+        true
+      ).display_order( order() )
 
     ).arg(
 
       Arg::with_name("reduction").long("--reduction").help(
-        "(de)activates Horn reduction"
+        "(de)activates all Horn reduction"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("arg_red").long("--arg_red").help(
-        "(de)activates argument reduction"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -314,8 +417,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -325,8 +429,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -337,8 +442,9 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -348,8 +454,21 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("arg_red").long("--arg_red").help(
+        "(de)activates argument reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -359,28 +478,69 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("dump_preproc").long("--dump_preproc").help(
-        "(de)activates instance dumping during preprocessing"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("dump_pred_dep").long("--dump_pred_dep").help(
-        "(de)activates predicate dependency dumps"
+        "(de)activates predicate dependency dumps (cfg_red)"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("unroll").long("--unroll").help(
+        "(de)activates unrolling"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("mult_unroll").long("--mult_unroll").help(
+        "(de)activates multiple unrollings"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split_strengthen").long("--split_strengthen").help(
+        "(de)activates strengthening when splitting is active"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split_sort").long("--split_sort").help(
+        "(de)activates clause sorting when splitting is active"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
 
     )
   }
@@ -388,7 +548,6 @@ impl PreprocConf {
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
     let active = bool_of_matches(matches, "preproc") ;
-    let smt_red = bool_of_matches(matches, "smt_red") ;
     let reduction = bool_of_matches(matches, "reduction") ;
     let arg_red = bool_of_matches(matches, "arg_red") ;
     let one_rhs = bool_of_matches(matches, "one_rhs") ;
@@ -398,11 +557,16 @@ impl PreprocConf {
     let cfg_red = bool_of_matches(matches, "cfg_red") ;
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
+    let prune_terms = bool_of_matches(matches, "prune_terms") ;
+    let unroll = bool_of_matches(matches, "unroll") ;
+    let mult_unroll = bool_of_matches(matches, "mult_unroll") ;
+    let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
+    let split_sort = bool_of_matches(matches, "split_sort") ;
 
     PreprocConf {
-      dump, dump_pred_dep, active, smt_red,
+      dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red
+      arg_red, prune_terms, unroll, mult_unroll, split_strengthen, split_sort
     }
   }
 }
@@ -415,109 +579,284 @@ impl PreprocConf {
 
 /// Ice learner configuration.
 pub struct IceConf {
-  /// Fpice-style synthesis.
-  pub fpice_synth: bool,
-  /// Number of threads used for computing qualifier's gain.
-  pub gain_threads: usize,
-  /// Qualifier decay flag.
-  pub decay: bool,
-  /// Maximum decay above which qualifiers are dropped.
-  pub max_decay: usize,
   /// Ignore unclassified data when computing entropy.
-  pub simple_gain: bool,
+  pub simple_gain_ratio: f64,
   /// Sort predicates.
-  pub sort_preds: bool,
+  pub sort_preds: f64,
+  /// Generate complete transformations for qualifiers.
+  pub complete: bool,
+  /// Biases qualifier selection based on the predicates the qualifier was
+  /// created for.
+  pub qual_bias: bool,
+  /// Activates qualifier printing.
+  pub qual_print: bool,
+  /// Gain above which a qualifier is considered acceptable for splitting data.
+  pub gain_pivot: f64,
+  ///
+  pub gain_pivot_inc: f64,
+  ///
+  pub gain_pivot_mod: usize,
+  /// Same as `gain_pivot` but for qualifier synthesis.
+  pub gain_pivot_synth: Option<f64>,
+  /// Run a learner that does not mine the instance.
+  pub pure_synth: bool,
+  /// Mine conjunction of terms.
+  pub mine_conjs: bool,
+  /// Add synthesized qualifiers.
+  pub add_synth: bool,
+  /// Lockstep for qualifiers.
+  pub qual_step: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl IceConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
-      Arg::with_name("gain_threads").long("--gain_threads").help(
-        "sets the number of threads to use when computing qualifier gains, \
-        0 for auto"
+      Arg::with_name("simple_gain_ratio").long("--simple_gain_ratio").help(
+        "percent of times simple gain will be used"
       ).validator(
         int_validator
       ).value_name(
-        "INT"
-      ).default_value("1").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    // ).arg(
-
-    //   Arg::with_name("fpice_synth").long("--fpice_synth").help(
-    //     "(de)activates fpice-style synthesis"
-    //   ).validator(
-    //     bool_validator
-    //   ).value_name(
-    //     bool_format
-    //   ).default_value("on").takes_value(true)// .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("decay").long("--decay").short("-d").help(
-        "(de)activates qualifier decay (forgetting unused qualifiers)"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("no").takes_value(true).hidden(true)
-      // .number_of_values(1)
+        "int"
+      ).default_value(
+        "20"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("sort_preds").long("--sort_preds").help(
-        "(de)activates predicate sorting before learning"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("no").takes_value(true).hidden(true)
-      // .number_of_values(1)
-
-    ).arg(
-
-      Arg::with_name("max_decay").long("--max_decay").help(
-        "maximum decay above which qualifiers are dropped"
+        "predicate sorting before learning probability"
       ).validator(
         int_validator
       ).value_name(
-        "INT"
-      ).default_value("50").takes_value(true).hidden(true)
-      // .number_of_values(1)
+        "int"
+      ).default_value(
+        "40"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
 
     ).arg(
 
-      Arg::with_name("simple_gain").long("--simple_gain").help(
-        "ignore unclassified data when computing entropy"
+      Arg::with_name("complete").long("--qual_complete").help(
+        "generate complete transformations for qualifiers"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value("no").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("qual_bias").long("--qual_bias").help(
+        "predicate-based bias for qualifier section"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("qual_print").long("--qual_print").help(
+        "(de)activates qualifier printing"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("no").takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("gain_pivot").long("--gain_pivot").help(
+        "first qualifier with a gain higher than this value will be used\n\
+        (between 0 and 100)"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("5").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("gain_pivot_synth").long("--gain_pivot_synth").help(
+        "same as `--gain_pivot` but for qualifier synthesis \
+        (inactive if > 100)"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("1").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("gain_pivot_inc").long("--gain_pivot_inc").help(
+        "undocumented"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("0").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("gain_pivot_mod").long("--gain_pivot_mod").help(
+        "undocumented"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value("100").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("pure_synth").long("--pure_synth").help(
+        "if true, runs another pure-synthesis learner"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("no").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("add_synth").long("--add_synth").help(
+        "add synthesized qualifiers as normal qualifiers"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("mine_conjs").long("--mine_conjs").help(
+        "mine conjunctions of atoms from clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("qual_step").long("--qual_step").help(
+        "lockstep qualifier selection"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
 
     )
   }
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let fpice_synth = true ;
-    // let fpice_synth = bool_of_matches(matches, "fpice_synth") ;
-
-    let gain_threads = int_of_matches(matches, "gain_threads") ;
-
-    let decay = bool_of_matches(matches, "decay") ;
-    let max_decay = int_of_matches(matches, "max_decay") ;
-
-    let simple_gain = bool_of_matches(matches, "simple_gain") ;
-    let sort_preds = bool_of_matches(matches, "sort_preds") ;
+    let simple_gain_ratio = {
+      let mut value = int_of_matches(
+        matches, "simple_gain_ratio"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
+    let sort_preds = {
+      let mut value = int_of_matches(
+        matches, "sort_preds"
+      ) as f64 / 100. ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
+    let complete = bool_of_matches(matches, "complete") ;
+    let qual_bias = bool_of_matches(matches, "qual_bias") ;
+    let qual_print = bool_of_matches(matches, "qual_print") ;
+    let gain_pivot = {
+      let mut value = int_of_matches(
+        matches, "gain_pivot"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
+    let gain_pivot_inc = {
+      let mut value = int_of_matches(
+        matches, "gain_pivot_inc"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        0.0
+      } else if 1.0 < value {
+        1.0
+      } else {
+        value
+      }
+    } ;
+    let gain_pivot_synth = {
+      let mut value = int_of_matches(
+        matches, "gain_pivot_synth"
+      ) as f64 / 100.0 ;
+      if value < 0.0 {
+        Some(0.0)
+      } else if 1.0 < value {
+        None
+      } else {
+        Some(value)
+      }
+    } ;
+    let gain_pivot_mod = int_of_matches(matches, "gain_pivot_mod") ;
+    let add_synth = bool_of_matches(matches, "add_synth") ;
+    let pure_synth = bool_of_matches(matches, "pure_synth") ;
+    let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
+    let qual_step = bool_of_matches(matches, "qual_step") ;
 
     IceConf {
-      fpice_synth, gain_threads, decay, max_decay, simple_gain, sort_preds
+      simple_gain_ratio, sort_preds, complete,
+      qual_bias, qual_print,
+      gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
+      pure_synth, mine_conjs, add_synth, qual_step
     }
   }
 }
@@ -531,48 +870,108 @@ impl IceConf {
 pub struct TeacherConf {
   /// Stop before sending data to learner(s).
   pub step: bool,
+  /// Run the assistant to break implication constraints.
+  pub assistant: bool,
+  /// Try to find implication constraints related to existing samples first.
+  pub bias_cexs: bool,
+  /// Allow partial samples.
+  pub partial: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
-  fn init(& self) -> Res<()> { Ok(()) }
 }
 impl TeacherConf {
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
-      Arg::with_name("step").long("--step").short("-s").help(
+      Arg::with_name("teach_step").long("--teach_step").help(
         "forces the teacher to progress incrementally"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("assistant").long("--assistant").help(
+        "(de)activate breaking implication constraints"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("bias_cexs").long("--bias_cexs").help(
+        "(de)activate biased implication constraints"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("partial").long("--partial").help(
+        "(de)activate partial samples"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
 
   /// Creates itself from some matches.
   pub fn new(matches: & Matches) -> Self {
-    let step = bool_of_matches(matches, "step") ;
+    let step = bool_of_matches(matches, "teach_step") ;
+    let assistant = bool_of_matches(matches, "assistant") ;
+    let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
+    let partial = bool_of_matches(matches, "partial") ;
 
-    TeacherConf { step }
+    TeacherConf {
+      step, assistant, bias_cexs, partial
+    }
   }
 }
 
 
 
+use std::time::{ Instant, Duration } ;
 
 
 /// Global configuration.
 pub struct Config {
   file: Option<String>,
   /// Verbosity.
-  pub verb: Verb,
+  pub verb: usize,
   /// Statistics flag.
   pub stats: bool,
   /// Inference flag.
   pub infer: bool,
+  /// Reason on each negative clause separately.
+  pub split: bool,
+  /// Pause between negative clauses when in split mode.
+  pub split_step: bool,
+  /// Instant at which we'll timeout.
+  timeout: Option<Instant>,
   /// Output directory.
   out_dir: String,
   /// Styles, for coloring.
@@ -582,6 +981,10 @@ pub struct Config {
   check: Option<String>,
   /// Eldarica result checking flag.
   pub check_eld: bool,
+  /// If true, SMT-check all simplifications.
+  pub check_simpl: bool,
+  /// Level of term simplification.
+  pub term_simpl: usize,
 
   /// Instance and factory configuration.
   pub instance: InstanceConf,
@@ -599,36 +1002,78 @@ impl ColorExt for Config {
 }
 impl Config {
   /// Output directory as a `PathBuf`.
-  pub fn out_dir(& self) -> PathBuf {
-    PathBuf::from(& self.out_dir)
+  #[inline]
+  pub fn out_dir(& self, instance: & Instance) -> PathBuf {
+    let mut path = PathBuf::from(& self.out_dir) ;
+    if let Some(clause) = instance.split() {
+      path.push( format!("split_on_clause_{}", clause) )
+    }
+    path
   }
-  /// True iff verbose or debug.
+
+
+
+  /// True if minimal mode.
+  #[inline]
+  pub fn minimal(& self) -> bool {
+    self.verb >= 1
+  }
+  /// True if verbose mode.
+  #[inline]
   pub fn verbose(& self) -> bool {
-    self.verb.verbose()
+    self.verb >= 2
   }
-  /// True iff debug.
+  /// True if debug mode.
+  #[inline]
   pub fn debug(& self) -> bool {
-    self.verb.debug()
+    self.verb >= 3
   }
   /// Input file.
+  #[inline]
   pub fn in_file(& self) -> Option<& String> {
     self.file.as_ref()
   }
   /// Result to check file.
+  #[inline]
   pub fn check_file(& self) -> Option<& String> {
     self.check.as_ref()
+  }
+
+  /// Checks if we're out of time.
+  #[inline]
+  pub fn check_timeout(& self) -> Res<()> {
+    if let Some(max) = self.timeout.as_ref() {
+      if & Instant::now() > max {
+        bail!( ErrorKind::Timeout )
+      }
+    }
+    Ok(())
+  }
+  /// Time until timeout.
+  #[inline]
+  pub fn until_timeout(& self) -> Option<Duration> {
+    if let Some(timeout) = self.timeout.as_ref() {
+      let now = Instant::now() ;
+      if & now > timeout {
+        Some( Duration::new(0,0) )
+      } else {
+        Some( * timeout - now )
+      }
+    } else {
+      None
+    }
   }
 
   /// Parses command-line arguments and generates the configuration.
   pub fn clap() -> Self {
     let mut app = App::new( crate_name!() ) ;
-    app = Self::add_args(app) ;
-    app = Self::add_check_args(app) ;
-    app = InstanceConf::add_args(app) ;
-    app = PreprocConf::add_args(app) ;
-    app = SmtConf::add_args(app) ;
-    app = IceConf::add_args(app) ;
-    app = TeacherConf::add_args(app) ;
+    app = Self::add_args(app, 0) ;
+    app = PreprocConf::add_args(app, 100) ;
+    app = InstanceConf::add_args(app, 200) ;
+    app = SmtConf::add_args(app, 300) ;
+    app = IceConf::add_args(app, 400) ;
+    app = TeacherConf::add_args(app, 500) ;
+    app = Self::add_check_args(app, 600) ;
 
     let matches = app.get_matches() ;
 
@@ -636,12 +1081,14 @@ impl Config {
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity
-    let mut verb = Verb::default() ;
+    let mut verb = 0 ;
     for _ in 0..matches.occurrences_of("verb") {
-      verb.inc()
+      verb += 1
     }
     for _ in 0..matches.occurrences_of("quiet") {
-      verb.dec()
+      if verb > 0 {
+        verb -= 1
+      }
     }
 
     // Colors.
@@ -661,15 +1108,28 @@ impl Config {
     // Inference flag.
     let infer = bool_of_matches(& matches, "infer") ;
 
+    // Inference flag.
+    let split_step = bool_of_matches(& matches, "split_step") ;
+
+    // Timeout.
+    let timeout = match int_of_matches(& matches, "timeout") {
+      0 => None,
+      n => Some(
+        Instant::now() + Duration::new(n as u64, 0)
+      ),
+    } ;
+
+    let split = bool_of_matches(& matches, "split") ;
+
     // Result checking.
     let check = matches.value_of("check").map(
       |s| s.to_string()
     ) ;
-    let check_eld = matches.value_of("check_eld").and_then(
-      |s| bool_of_str(& s)
-    ).expect(
-      "unreachable(check_eld): default is provided and input validated in clap"
-    ) ;
+    let check_eld = bool_of_matches(& matches, "check_eld") ;
+    let check_simpl = bool_of_matches(& matches, "check_simpl") ;
+
+    // Timeout.
+    let term_simpl = int_of_matches(& matches, "term_simpl") ;
 
     let instance = InstanceConf::new(& matches) ;
     let preproc = PreprocConf::new(& matches) ;
@@ -678,84 +1138,169 @@ impl Config {
     let teacher = TeacherConf::new(& matches) ;
 
     Config {
-      file, verb, stats, infer, out_dir, styles,
-      check, check_eld,
-      instance, preproc, solver, ice, teacher
+      file, verb, stats, infer, split, split_step,
+      timeout, out_dir, styles,
+      check, check_eld, check_simpl, term_simpl,
+      instance, preproc, solver, ice, teacher,
     }
   }
 
   /// Adds clap options to a clap App.
-  pub fn add_args(app: App) -> App {
-    app.author( crate_authors!() ).about(
+  pub fn add_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
+    app.author( crate_authors!() ).version(
+      * ::common::version
+    ).about(
       "ICE engine for systems described as Horn Clauses."
     ).arg(
 
       Arg::with_name("input file").help(
         "sets the input file to use"
-      ).index(1)
+      ).index(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("verb").short("-v").help(
-        "verbose output"
-      ).takes_value(false).multiple(true)
+        "increases verbosity"
+      ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
 
       Arg::with_name("quiet").short("-q").help(
-        "quiet output"
-      ).takes_value(false).multiple(true)
+        "decreases verbosity"
+      ).takes_value(false).multiple(true).display_order( order() )
 
     ).arg(
 
       Arg::with_name("color").long("--color").short("-c").help(
-        "(de)activates coloring (inactive if output is not a tty)"
+        "(de)activates coloring (off if output is not a tty)"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
       Arg::with_name("out_dir").long("--out_dir").short("-o").help(
-        "sets the output directory (used only by smt logging currently)"
+        "sets the output directory"
       ).value_name(
         "DIR"
-      ).default_value("hoice_out").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "hoice_out"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
-      Arg::with_name("stats").long("--stats").help(
+      Arg::with_name("stats").long("--stats").short("-s").help(
         "reports some statistics at the end of the run"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
-      Arg::with_name("infer").long("--infer").help(
+      Arg::with_name("infer").long("--infer").short("-i").help(
         "if `off`, ignore `check-sat` and `get-model` queries"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true)//.number_of_values(1)
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("timeout").long("--timeout").short("-t").help(
+        "sets a timeout in seconds, `0` for none"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value(
+        "0"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split").long("--split").help(
+        "reason on each negative clause separately"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("split_step").long("--split_step").help(
+        "pause between negative clauses in split mode"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("term_simpl").long("--term_simpl").help(
+        "level of term simplification between 0 and 3"
+      ).validator(
+        int_validator
+      ).value_name(
+        "int"
+      ).default_value(
+        "1"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
+    ).arg(
+
+      Arg::with_name("check_simpl").long("--check_simpl").help(
+        "if true, check all simplifications"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
 
     )
   }
 
   /// Add args related to result checking.
-  pub fn add_check_args(app: App) -> App {
+  pub fn add_check_args(app: App, mut order: usize) -> App {
+    let mut order = || {
+      order += 1 ;
+      order
+    } ;
+
     app.arg(
 
       Arg::with_name("check").long("--check").help(
         "checks a model for the input system (does not run inference)"
       ).value_name(
         "FILE"
-      ).takes_value(true)// .number_of_values(1)
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
 
@@ -765,134 +1310,18 @@ impl Config {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("no").takes_value(true)// .number_of_values(1)
+      ).default_value(
+        "no"
+      ).takes_value(true).number_of_values(1).display_order( order() )
 
     )
   }
-
-  /// Initializes stuff.
-  pub fn init(& self) -> Res<()> {
-    // Setup the rayon thread pool.
-    if self.ice.gain_threads > 1 {
-      use rayon::{ Configuration, initialize } ;
-      initialize(
-        Configuration::new().num_threads(
-          self.ice.gain_threads
-        ).thread_name(
-          |i| format!("hoice_gain_{}", i)
-        )
-      ).map_err(
-        |e| Error::from_kind(
-          ErrorKind::Msg( format!("{}", e) )
-        )
-      ).chain_err(
-        || "during rayon initialization"
-      ) ?
-    }
-    // Are we gonna use the output directory?
-    if self.solver.need_out_dir()
-    || self.preproc.need_out_dir()
-    || self.instance.need_out_dir()
-    || self.ice.need_out_dir()
-    || self.teacher.need_out_dir() {
-      ::std::fs::DirBuilder::new().recursive(true).create(
-        & self.out_dir
-      ).chain_err(
-        || format!("while creating output directory `{}`", self.out_dir)
-      ) ?
-    }
-    self.solver.init() ? ;
-    self.preproc.init() ? ;
-    self.instance.init() ? ;
-    self.ice.init() ? ;
-    self.teacher.init() ? ;
-    Ok(())
-  }
 }
 
 
 
 
 
-
-
-
-
-
-
-#[doc = r#"Verbose level.
-
-```
-# use hoice::common::Verb ;
-let mut verb = Verb::Quiet ;
-assert!( ! verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.inc() ;
-assert_eq!( verb, Verb::Verb ) ;
-assert!( verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.inc() ;
-assert_eq!( verb, Verb::Debug ) ;
-assert!( verb.verbose() ) ;
-assert!( verb.debug() ) ;
-verb.dec() ;
-assert_eq!( verb, Verb::Verb ) ;
-assert!( verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-verb.dec() ;
-assert_eq!( verb, Verb::Quiet ) ;
-assert!( ! verb.verbose() ) ;
-assert!( ! verb.debug() ) ;
-```
-"#]
-#[derive(PartialEq, Eq, Debug)]
-pub enum Verb {
-  /// Quiet.
-  Quiet,
-  /// Verbose.
-  Verb,
-  /// Debug.
-  Debug,
-}
-impl Verb {
-  /// Default verbosity.
-  pub fn default() -> Self {
-    Verb::Quiet
-  }
-  /// Increments verbosity.
-  pub fn inc(& mut self) {
-    match * self {
-      Verb::Quiet => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Debug,
-      _ => ()
-    }
-  }
-  /// Decrements verbosity.
-  pub fn dec(& mut self) {
-    match * self {
-      Verb::Debug => * self = Verb::Verb,
-      Verb::Verb => * self = Verb::Quiet,
-      _ => ()
-    }
-  }
-  /// Log filter from verbosity.
-  pub fn filter(& self) -> ::log::LogLevelFilter {
-    match * self {
-      Verb::Debug => ::log::LogLevelFilter::Debug,
-      Verb::Verb => ::log::LogLevelFilter::Info,
-      Verb::Quiet => ::log::LogLevelFilter::Warn,
-    }
-  }
-
-  /// True iff verbose or debug.
-  pub fn verbose(& self) -> bool {
-    * self != Verb::Quiet
-  }
-  /// True iff debug.
-  pub fn debug(& self) -> bool {
-    * self == Verb::Debug
-  }
-}
 
 
 

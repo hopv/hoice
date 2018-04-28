@@ -44,6 +44,22 @@ Note that this disables some features such as verbosity.
 [Consult the wiki](https://github.com/hopv/hoice/wiki/Language) for a description of `hoice`'s language.
 
 
+# Features
+
+Sorts supported:
+
+- [x] `Bool`
+- [x] `Int`
+- [x] `Real` (experimental)
+- [ ] `List`
+- [ ] (mutually recursive) ADTs
+
+Future features:
+
+- [ ] `define-fun`s
+- [ ] user-specified qualifiers through `define-fun`s
+
+
 # Checking the result
 
 `hoice` can check its own results. The code performing this feature is completely separated from the code doing the actual inference so that the check is meaningful.

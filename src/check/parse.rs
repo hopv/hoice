@@ -3,6 +3,8 @@
 use check::* ;
 
 
+
+
 /// Parser.
 pub struct InParser<'a> {
   /// Predicate definitions.
@@ -61,12 +63,7 @@ impl<'a> InParser<'a> {
   fn backtrack(& mut self, mut mem: Vec<char>) {
     use std::iter::Extend ;
     mem.reverse() ;
-    self.buf.extend(mem) ;
-    // print!("done backtracking: `") ;
-    // for c in & self.buf {
-    //   print!("{}", c)
-    // }
-    // println!("`")
+    self.buf.extend(mem)
   }
 
   /// Parses a tag or fails.
@@ -79,12 +76,10 @@ impl<'a> InParser<'a> {
   }
   /// Tries to parse a tag.
   fn tag_opt(& mut self, tag: & str) -> bool {
-    // println!("  tag: {}", tag) ;
     let mut mem = vec![] ;
     for c in tag.chars() {
       if let Some(next) = self.next() {
         mem.push(next) ;
-        // println!("  - {}/{}", c, next) ;
         if c != next {
           self.backtrack(mem) ;
           return false
@@ -163,22 +158,8 @@ impl<'a> InParser<'a> {
     if cnt != 0 {
       bail!("found eof while parsing sexpr")
     }
-    // println!("sexpr {{") ;
-    // println!("{}", s) ;
-    // println!("}}") ;
     Ok(s)
   }
-
-  // /// Parses everything until a whitespace.
-  // fn not_ws(& mut self) {
-  //   // let mut s = String::new() ;
-  //   while let Some(next) = self.next() {
-  //     if ! next.is_whitespace() { self.txen(next) ; break } else {
-  //       // next.push(next)
-  //     }
-  //   }
-  //   // s
-  // }
 
   /// Reads whitespaces and comments.
   fn ws_cmt(& mut self) {
@@ -247,7 +228,6 @@ impl<'a> InParser<'a> {
     if ! self.tag_opt("set-logic") {
       return Ok(false)
     }
-    // println!("set-logic") ;
     self.ws_cmt() ;
     self.tag("HORN") ? ;
     Ok(true)
@@ -258,7 +238,6 @@ impl<'a> InParser<'a> {
     if ! self.tag_opt("set-info") {
       return Ok(false)
     }
-    // println!("set-info") ;
     self.ws_cmt() ;
     self.char(':') ? ;
     self.ident() ? ;
@@ -268,11 +247,9 @@ impl<'a> InParser<'a> {
       self.char('|') ?
     } else if self.char_opt('"') {
       let _blah = self.not_char('"') ;
-      // println!("{}", blah) ;
       self.char('"') ?
     } else {
       let _blah = self.not_char(')') ;
-      // println!("{}", blah)
     }
     Ok(true)
   }
@@ -291,6 +268,8 @@ impl<'a> InParser<'a> {
       Some( "Bool".to_string() )
     } else if self.tag_opt("Int") {
       Some( "Int".to_string() )
+    } else if self.tag_opt("Real") {
+      Some( "Real".to_string() )
     } else {
       None
     }
@@ -301,7 +280,6 @@ impl<'a> InParser<'a> {
     if ! self.tag_opt("declare-fun") {
       return Ok(false)
     }
-    // println!("declare-fun") ;
     self.ws_cmt() ;
     let pred = self.ident() ? ;
     self.ws_cmt() ;
@@ -340,7 +318,6 @@ impl<'a> InParser<'a> {
       self.ws_cmt() ;
       self.char(')') ? ;
       self.ws_cmt() ;
-      // println!("  {}: {}", id, ty) ;
       args.push( (id, ty) )
     }
     self.char(')') ? ;
@@ -352,7 +329,6 @@ impl<'a> InParser<'a> {
     if ! self.tag_opt("assert") {
       return Ok(false)
     }
-    // println!("assert") ;
     self.ws_cmt() ;
     self.char('(') ? ;
 
@@ -426,7 +402,6 @@ impl<'a> InParser<'a> {
 
   /// Parses an `smt2` file.
   pub fn parse_input(mut self) -> Res<Input> {
-    // println!("parsing") ;
     self.ws_cmt() ;
 
     while self.char_opt('(') {
@@ -492,7 +467,6 @@ impl<'a> InParser<'a> {
     let pred = self.ident().chain_err(
       || "while parsing predicate identifier"
     ) ? ;
-    // println!("pred: {}", pred) ;
     self.ws_cmt() ;
     let args = self.args().chain_err(
       || "while parsing arguments"
@@ -515,7 +489,6 @@ impl<'a> InParser<'a> {
 
   /// Parses an `smt2` file.
   pub fn parse_output(mut self) -> Res<Output> {
-    // println!("parsing") ;
     if conf.check_eld {
       self.ws_cmt() ;
       self.tag_opt("Warning: ignoring get-model") ;
@@ -536,14 +509,6 @@ impl<'a> InParser<'a> {
 
     while self.char_opt('(') {
       self.ws_cmt() ;
-        // while let Some(next) = self.next() {
-        //   if next != '\n' {
-        //     print!("{}", next)
-        //   } else {
-        //     break
-        //   }
-        // }
-        // println!("`") ;
 
       if self.define_fun().chain_err(
         || "while parsing a define-fun"

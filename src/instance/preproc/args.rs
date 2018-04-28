@@ -40,6 +40,12 @@ impl Cxt {
   }
 
   /// Log-debugs cvar_to_pvar.
+  #[cfg(feature = "bench")]
+  pub fn log_debug_internal(
+    & self, _: & Instance,
+    _: & ::instance::instance::Clause, _: & str
+  ) {}
+  #[cfg(not (feature = "bench") )]
   pub fn log_debug_internal(
     & self, instance: & Instance,
     clause: & ::instance::instance::Clause, pref: & str
@@ -68,6 +74,9 @@ impl Cxt {
   }
 
   /// Log-debugs the context.
+  #[cfg(feature = "bench")]
+  pub fn log_debug(& self, _: & Instance, _: & str) {}
+  #[cfg(not (feature = "bench") )]
   pub fn log_debug(& self, instance: & Instance, pref: & str) {
     if_debug! {
       macro_rules! logd {
@@ -205,7 +214,7 @@ impl Cxt {
     for (pvar, term) in args.index_iter() {
       // println!("{} -> {}", pvar, term) ;
       match ** term {
-        RTerm::Var(var) => {
+        RTerm::Var(_, var) => {
           if self.term_vars.contains(& var) {
             // println!("keeping {} {}", pred, var) ;
             self.keep(pred, pvar)
@@ -324,7 +333,7 @@ impl Cxt {
   }
 
   /// Destroys the context and returns the predicate variables to keep.
-  pub fn extract(mut self, instance: & Instance) -> PrdHMap<VarSet> {
+  pub fn extract(mut self, instance: & Instance) -> Res< PrdHMap<VarSet> > {
     log_debug! { "  extract..." }
     let mut keep = HashSet::new() ;
     let mut res = PrdHMap::with_capacity( self.keep.len() ) ;
@@ -338,7 +347,9 @@ impl Cxt {
           ).insert(var) ;
         }
       }
+      conf.check_timeout() ? ;
     }
+
     for index in keep {
       for (pred, vars) in self.dep[index].drain() {
         if_debug! {
@@ -350,7 +361,8 @@ impl Cxt {
         }
         res.entry(pred).or_insert_with(
           || VarSet::new()
-        ).extend(vars)
+        ).extend(vars) ;
+        conf.check_timeout() ? ;
       }
     }
     for pred in instance.pred_indices() {
@@ -372,7 +384,7 @@ impl Cxt {
       log_debug! { "  }}" }
     }
 
-    res
+    Ok(res)
   }
 }
 
@@ -394,11 +406,11 @@ pub fn to_keep(
   'all_clauses: for clause in instance.clauses() {
     cxt.check(instance) ? ;
 
-    log_debug! {
-      "    working on clause {}", clause.to_string_info(
-        instance.preds()
-      ).unwrap()
-    }
+    // log_debug! {
+    //   "    working on clause {}", clause.to_string_info(
+    //     instance.preds()
+    //   ).unwrap()
+    // }
 
     // All the variables appearing in the lhs's terms are off limits.
     for term in clause.lhs_terms() {
@@ -419,11 +431,13 @@ pub fn to_keep(
     }
     cxt.check(instance) ? ;
 
-    cxt.log_debug_internal(instance, clause, "    ") ;
+    // cxt.log_debug_internal(instance, clause, "    ") ;
 
     cxt.commit() ;
 
-    cxt.log_debug(instance, "    ")
+    conf.check_timeout() ? ;
+
+    // cxt.log_debug(instance, "    ")
   }
 
   // println!("dependencies:") ;
@@ -444,6 +458,6 @@ pub fn to_keep(
   // }
   // println!("") ;
 
-  Ok( cxt.extract(instance) )
+  cxt.extract(instance)
 
 }

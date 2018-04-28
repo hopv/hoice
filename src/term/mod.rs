@@ -9,28 +9,6 @@
 //! accessible. Terms are created *via* the functions in this module, such as
 //! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
 //!
-//! ```
-//! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm } ;
-//! let some_term = term::eq(
-//!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::var(5), term::int(2) ]
-//!   )
-//! ) ;
-//! // A `Term` dereferences to an `RTerm`:
-//! match * some_term {
-//!   RTerm::App { op: Op::Eql, ref args } => {
-//!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( term::int(11), args[0] ) ;
-//!     if let RTerm::App { op: Op::Mul, ref args } = * args[1] {
-//!       assert_eq!( term::var(5), args[0] ) ;
-//!       assert_eq!( term::int(2), args[1] )
-//!     } else { panic!("not a multiplication") }
-//!   },
-//!   _ => panic!("not an equality"),
-//! }
-//! ```
-//!
 //! Terms are not typed at all. A predicate application is **not** a term, only
 //! operator applications are.
 //!
@@ -54,16 +32,44 @@
 //! - the [`VarInfo`s](../instance/info/struct.VarInfo.html) stored in a
 //!   [`Clause`](../instance/struct.Clause.html), which give them a name and a
 //!   type.
+//!
+//! # Examples
+//!
+//! ```rust
+//! # use hoice::term ;
+//! # use hoice::term::{ Op, RTerm, Typ } ;
+//! let some_term = term::eq(
+//!   term::int(11), term::app(
+//!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
+//!   )
+//! ) ;
+//! # println!("{}", some_term) ;
+//! 
+//! // A `Term` dereferences to an `RTerm`:
+//! match * some_term {
+//!   RTerm::App { typ, op: Op::Eql, ref args } => {
+//!     assert_eq!( typ, Typ::Bool ) ;
+//!     assert_eq!( args.len(), 2 ) ;
+//!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
+//!   },
+//!   _ => panic!("not an equality"),
+//! }
+//! ```
 
 use hashconsing::* ;
 
 use common::* ;
 
 #[macro_use]
+mod op ;
+pub use self::op::* ;
 mod factory ;
 mod val ;
+pub mod simplify ;
 #[cfg(test)]
 mod test ;
+
+pub mod args ;
 
 pub use self::factory::* ;
 pub use self::val::Val ;
@@ -72,23 +78,64 @@ pub use self::val::Val ;
 
 
 /// Types.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[
+  derive(
+    Debug, Clone, Copy,
+    PartialEq, Eq, Hash,
+    PartialOrd, Ord
+  )
+]
 pub enum Typ {
   /// Integers.
   Int,
+  /// Reals.
+  Real,
   /// Booleans.
   Bool,
 }
 impl Typ {
+  /// True if the type is boolean.
+  pub fn is_bool(& self) -> bool {
+    * self == Typ::Bool
+  }
+  /// True if the type is arithmetic.
+  pub fn is_arith(& self) -> bool {
+    match * self {
+      Typ::Int | Typ::Real => true,
+      _ => false,
+    }
+  }
+
+  /// Given two arithmetic types, returns `Real` if one of them is `Real`.
+  pub fn arith_join(self, other: Self) -> Self {
+    debug_assert! { self.is_arith() }
+    debug_assert! { other.is_arith() }
+    if self == Typ::Real || other == Typ::Real {
+      Typ::Real
+    } else {
+      Typ::Int
+    }
+  }
+
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
+      Typ::Real => Val::R( Rat::zero() ),
       Typ::Int => Val::I( Int::zero() ),
       Typ::Bool => Val::B( true ),
     }
   }
+
+  /// Default term of a type.
+  pub fn default_term(& self) -> Term {
+    match * self {
+      Typ::Real => term::real( Rat::zero() ),
+      Typ::Int => term::int( Int::zero() ),
+      Typ::Bool => term::bool( true ),
+    }
+  }
 }
-impl ::rsmt2::to_smt::Sort2Smt for Typ {
+impl ::rsmt2::print::Sort2Smt for Typ {
   fn sort_to_smt2<Writer>(
     & self, w: &mut Writer
   ) -> SmtRes<()> where Writer: Write {
@@ -100,24 +147,28 @@ impl_fmt!{
   Typ(self, fmt) {
     match * self {
       Typ::Int => fmt.write_str("Int"),
+      Typ::Real => fmt.write_str("Real"),
       Typ::Bool => fmt.write_str("Bool"),
     }
   }
 }
 
 
-
 /// A real term.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {
   /// A clause variable.
-  Var(VarIdx),
+  Var(Typ, VarIdx),
   /// An integer.
   Int(Int),
+  /// A real (actually a rational).
+  Real(Rat),
   /// A boolean.
   Bool(bool),
   /// An operator application.
   App {
+    /// Type of the application.
+    typ: Typ,
     /// The operator.
     op: Op,
     /// The arguments.
@@ -128,29 +179,112 @@ impl RTerm {
   /// The operator and the kids of a term.
   pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
     match * self {
-      RTerm::App { op, ref args } => Some((op, args)),
+      RTerm::App { op, ref args, .. } => Some((op, args)),
       _ => None,
     }
   }
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::And, ref args } => Some(args),
+      RTerm::App { op: Op::And, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of disjunctions.
   pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Or, ref args } => Some(args),
+      RTerm::App { op: Op::Or, ref args, .. } => Some(args),
       _ => None,
     }
   }
   /// Returns the kids of equalities.
   pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
-      RTerm::App { op: Op::Eql, ref args } => Some(args),
+      RTerm::App { op: Op::Eql, ref args, .. } => Some(args),
       _ => None,
+    }
+  }
+  /// Returns the kids of additions.
+  pub fn add_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Add, ref args, .. } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of subtractions.
+  pub fn sub_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Sub, ref args, .. } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of multiplications.
+  pub fn mul_inspect(& self) -> Option<& Vec<Term>> {
+    match * self {
+      RTerm::App { op: Op::Mul, ref args, .. } => Some(args),
+      _ => None,
+    }
+  }
+  /// Returns the kids of a constant multiplication.
+  pub fn cmul_inspect(& self) -> Option<(Val, & Term)> {
+    match * self {
+      RTerm::App { op: Op::CMul, ref args, .. } => {
+        if args.len() == 2 {
+          if let Some(val) = args[0].val() {
+            return Some((val, & args[1]))
+          }
+        }
+        panic!("illegal c_mul application: {}", self)
+      },
+      _ => None,
+    }
+  }
+
+  /// Iterates over the subterms of a term.
+  pub fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
+    let mut stack = vec![self] ;
+
+    while let Some(term) = stack.pop() {
+      f(term) ;
+      match * term {
+        RTerm::App { ref args, .. } => for term in args {
+          stack.push(term)
+        },
+        RTerm::Var(_, _) |
+        RTerm::Int(_) |
+        RTerm::Real(_) |
+        RTerm::Bool(_) => (),
+      }
+    }
+  }
+
+  /// Type of the term.
+  pub fn typ(& self) -> Typ {
+    match * self {
+      RTerm::Var(typ, _) => typ,
+      RTerm::Int(_) => Typ::Int,
+      RTerm::Real(_) => Typ::Real,
+      RTerm::Bool(_) => Typ::Bool,
+      RTerm::App { typ, .. } => typ,
+    }
+  }
+
+  /// True if the term is zero (integer or real).
+  pub fn is_zero(& self) -> bool {
+    match ( self.int(), self.real() ) {
+      (Some(i), _) => i.is_zero(),
+      (_, Some(r)) => r.is_zero(),
+      _ => false,
+    }
+  }
+
+  /// True if the term is one (integer or real).
+  pub fn is_one(& self) -> bool {
+    use num::One ;
+    match ( self.int(), self.real() ) {
+      (Some(i), _) => i == Int::one(),
+      (_, Some(r)) => r == Rat::one(),
+      _ => false,
     }
   }
 
@@ -161,8 +295,8 @@ impl RTerm {
   where W: Write, WriteVar: Fn(& mut W, VarIdx) -> IoRes<()> {
     let mut stack = vec![
       (vec![self], "", "")
-    // ^^^^^^^^^|  ^|  ^^~~~ termination string (written once vector's empty)
-    //          |   |~~~~~~~ prefix string      (written before next element)
+    // ^^^^^^^^^|  ^^| ^^~~~ termination string (written once vector's empty)
+    //          |    |~~~~~~ prefix string      (written before next element)
     //          |~~~~~~~~~~~ elements to write
     ] ;
     while let Some( (mut to_do, sep, end) ) = stack.pop() {
@@ -170,20 +304,20 @@ impl RTerm {
       if let Some(term) = to_do.pop() {
         stack.push( (to_do, sep, end) ) ;
         match * term {
-          Var(v) => {
+          Var(_, v) => {
             write!(w, "{}", sep) ? ;
             write_var(w, v) ?
           },
           Int(ref i) => {
             write!(w, "{}", sep) ? ;
-            if i.is_negative() {
-              write!(w, "(- {})", - i) ?
-            } else {
-              write!(w, "{}", i) ?
-            }
+            int_to_smt!(w, i) ?
+          },
+          Real(ref r) => {
+            write!(w, "{}", sep) ? ;
+            rat_to_smt!(w, r) ?
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
-          App { op, ref args } => {
+          App { op, ref args, .. } => {
             write!(w, "{}({}", sep, op) ? ;
             stack.push(
               (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
@@ -195,19 +329,50 @@ impl RTerm {
     Ok(())
   }
 
+  /// True if atom `self` implies atom `other` syntactically.
+  ///
+  /// Returns
+  ///
+  /// - `None` if no conclusion was reached,
+  /// - `Some(Greater)` if `lhs => rhs`,
+  /// - `Some(Less)` if `lhs <= rhs`,
+  /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
+  ///
+  /// So *greater* really means *more generic*.
+  ///
+  /// See [the module's function][atom implies] for more details and examples.
+  ///
+  /// [atom implies]: fn.atom_implies.html (atom_implies module-level function)
+  pub fn conj_simpl(& self, other: & Self) -> simplify::SimplRes {
+    simplify::conj_simpl(& self, & other)
+  }
+
   /// Term evaluation (int).
-  pub fn int_eval(& self, model: & VarMap<Val>) -> Res< Option<Int> > {
+  pub fn int_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<Int> > {
     self.eval(model)?.to_int()
   }
 
+  /// Term evaluation (real).
+  pub fn real_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<Rat> > {
+    self.eval(model)?.to_real()
+  }
+
   /// Term evaluation (bool).
-  pub fn bool_eval(& self, model: & VarMap<Val>) -> Res< Option<bool> > {
+  pub fn bool_eval<E: Evaluator>(
+    & self, model: & E
+  ) -> Res< Option<bool> > {
     self.eval(model)?.to_bool()
   }
 
   /// True if the term has no variables and evaluates to true.
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   /// use hoice::term::Op ;
   ///
@@ -218,7 +383,7 @@ impl RTerm {
   /// println!("false") ;
   /// assert!( ! term.is_true() ) ;
   /// let term = term::eq(
-  ///   term::int(7), term::var(1)
+  ///   term::int(7), term::int_var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_true() ) ;
@@ -241,7 +406,7 @@ impl RTerm {
   /// assert!( term.is_true() ) ;
   /// ```
   pub fn is_true(& self) -> bool {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => b,
       _ => false,
     }
@@ -249,7 +414,9 @@ impl RTerm {
   
   /// True if the term has no variables and evaluates to true.
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   /// use hoice::term::Op ;
   ///
@@ -260,7 +427,7 @@ impl RTerm {
   /// println!("false") ;
   /// assert!( term.is_false() ) ;
   /// let term = term::eq(
-  ///   term::int(7), term::var(1)
+  ///   term::int(7), term::int_var(1)
   /// ) ;
   /// println!("7 = v_1") ;
   /// assert!( ! term.is_false() ) ;
@@ -283,23 +450,58 @@ impl RTerm {
   /// assert!( term.is_false() ) ;
   /// ```
   pub fn is_false(& self) -> bool {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => ! b,
       _ => false,
     }
   }
   /// Boolean a constant boolean term evaluates to.
   pub fn bool(& self) -> Option<bool> {
-    match self.bool_eval( & VarMap::with_capacity(0) ) {
+    match self.bool_eval( & () ) {
       Ok(Some(b)) => Some(b),
       _ => None
     }
   }
+
+  /// Evaluates a term with an empty model.
+  pub fn as_val(& self) -> Val {
+    if let Ok(res) = self.eval(& ()) { res } else { Val::N }
+  }
+
   /// Integer a constant integer term evaluates to.
   pub fn int(& self) -> Option<Int> {
-    match self.int_eval( & VarMap::with_capacity(0) ) {
+    if self.typ() != Typ::Int { return None }
+    match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
       _ => None
+    }
+  }
+  /// Integer a constant integer term evaluates to.
+  pub fn real(& self) -> Option<Rat> {
+    match self.real_eval( & () ) {
+      Ok(Some(r)) => Some(r),
+      _ => None
+    }
+  }
+
+  /// Turns a constant term in a `Val`.
+  pub fn val(& self) -> Option<Val> {
+    match * self {
+      RTerm::Int(ref i) => Some( i.clone().into() ),
+      RTerm::Real(ref r) => Some( r.clone().into() ),
+      RTerm::Bool(b) => Some( b.into() ),
+      _ => None,
+    }
+  }
+
+  /// Returns a constant arithmetic version of the term if any.
+  pub fn arith(& self) -> Option<Term> {
+    if let Some(i) = self.int() {
+      Some( term::int(i) )
+    } else if let Some(r) = self.real() {
+      Some( term::real(r) )
+    } else {
+      None
     }
   }
 
@@ -311,6 +513,7 @@ impl RTerm {
       None
     }
   }
+
   /// Checks whether the term is a relation.
   pub fn is_relation(& self) -> bool {
     match * self {
@@ -319,7 +522,7 @@ impl RTerm {
       RTerm::App { op: Op::Ge, .. } |
       RTerm::App { op: Op::Lt, .. } |
       RTerm::App { op: Op::Le, .. } => true,
-      RTerm::App { op: Op::Not, ref args } => args[0].is_relation(),
+      RTerm::App { op: Op::Not, ref args, .. } => args[0].is_relation(),
       _ => false,
     }
   }
@@ -333,7 +536,7 @@ impl RTerm {
 
 
   /// Term evaluation.
-  pub fn eval(& self, model: & VarMap<Val>) -> Res<Val> {
+  pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
     use self::RTerm::* ;
     let mut current = self ;
     let mut stack = vec![] ;
@@ -342,18 +545,19 @@ impl RTerm {
 
       // Go down applications.
       let mut evaled = match * current {
-        App { op, ref args } => {
+        App { op, ref args, .. } => {
           current = & args[0] ;
           stack.push( (op, & args[1..], vec![]) ) ;
           continue 'eval
         },
         // Rest are leaves, going up.
-        Var(v) => if v < model.len() {
-          model[v].clone()
+        Var(_, v) => if v < model.len() {
+          model.get(v).clone()
         } else {
-          bail!("model is too short")
+          bail!("model is too short ({})", model.len())
         },
         Int(ref i) => Val::I( i.clone() ),
+        Real(ref r) => Val::R( r.clone() ),
         Bool(b) => Val::B(b),
       } ;
 
@@ -383,9 +587,13 @@ impl RTerm {
     }
   }
 
-  /// If the term's an integer constants, returns the value.
-  pub fn int_val(& self) -> Option<Int> {
-    if let RTerm::Int(ref i) = * self { Some( i.clone() ) } else { None }
+  /// If the term's an integer constant, returns the value.
+  pub fn int_val(& self) -> Option<& Int> {
+    if let RTerm::Int(ref i) = * self { Some( i ) } else { None }
+  }
+  /// If the term's a rational constant, returns the value.
+  pub fn real_val(& self) -> Option<& Rat> {
+    if let RTerm::Real(ref r) = * self { Some( r ) } else { None }
   }
 
   /// The highest variable index appearing in the term.
@@ -394,10 +602,11 @@ impl RTerm {
     let mut max = None ;
     while let Some(term) = to_do.pop() {
       match * term {
-        RTerm::Var(i) => max = Some(
+        RTerm::Var(_, i) => max = Some(
           ::std::cmp::max( i, max.unwrap_or(0.into()) )
         ),
-        RTerm::Int(_) => (),
+        RTerm::Int(_) |
+        RTerm::Real(_) |
         RTerm::Bool(_) => (),
         RTerm::App{ ref args, .. } => for arg in args {
           to_do.push(arg)
@@ -410,7 +619,7 @@ impl RTerm {
   /// Returns the variable index if the term is a variable.
   pub fn var_idx(& self) -> Option<VarIdx> {
     match * self {
-      RTerm::Var(i) => Some(i),
+      RTerm::Var(_, i) => Some(i),
       _ => None,
     }
   }
@@ -418,7 +627,7 @@ impl RTerm {
   /// If the term is a negation, returns what's below the negation.
   pub fn rm_neg(& self) -> Option<Term> {
     match * self {
-      RTerm::App { op: Op::Not, ref args } => {
+      RTerm::App { op: Op::Not, ref args, .. } => {
         debug_assert_eq!( args.len(), 1 ) ;
         Some( args[0].clone() )
       },
@@ -454,15 +663,16 @@ impl RTerm {
 
       // Go down.
       let mut term = match * current.get() {
-        RTerm::Var(var) => if let Some(term) = map.var_get(var) {
+        RTerm::Var(typ, var) => if let Some(term) = map.var_get(var) {
+          debug_assert_eq! { typ, term.typ() }
           subst_count += 1 ;
-          term.clone()
+          term
         } else if total {
           return None
         } else {
           current.clone()
         },
-        RTerm::App { op, ref args } => {
+        RTerm::App { op, ref args, .. } => {
           current = & args[0] ;
           stack.push(
             (op, & args[1..], Vec::with_capacity( args.len() ))
@@ -536,6 +746,94 @@ impl RTerm {
   }
 
 
+  /// Tries to turn a term into a substitution.
+  ///
+  /// Works only on equalities.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use hoice::term ;
+  ///
+  /// let bv0 = term::bool_var(0) ;
+  /// let bv1 = term::bool_var(1) ;
+  /// let bv2 = term::bool_var(2) ;
+  /// let rhs = term::or(vec![bv1, bv2]) ;
+  /// let term = term::eq(bv0, rhs.clone()) ;
+  /// debug_assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
+  /// ```
+  pub fn as_subst(& self) -> Option<(VarIdx, Term)> {
+    if let Some(kids) = self.eq_inspect() {
+      debug_assert_eq! { kids.len(), 2 }
+      let (lhs, rhs) = (& kids[0], & kids[1]) ;
+
+      if let Some(var_idx) = lhs.var_idx() {
+        return Some((var_idx, rhs.clone()))
+      } else if let Some(var_idx) = rhs.var_idx() {
+        return Some((var_idx, lhs.clone()))
+      }
+
+      if lhs.typ().is_arith() {
+        debug_assert! { rhs.is_zero() }
+
+        let lhs = if let Some((_, term)) = lhs.cmul_inspect() {
+          term
+        } else { lhs } ;
+
+        let mut add = vec![] ;
+        let mut var = None ;
+        let mut negated = false ;
+
+        if let Some(kids) = lhs.add_inspect() {
+          for kid in kids {
+            if var.is_some() {
+              add.push(kid.clone()) ;
+              continue
+            }
+            if let Some(var_index) = kid.var_idx() {
+              debug_assert! { var.is_none() }
+              var = Some(var_index) ;
+              continue
+            } else if let Some((val, term)) = kid.cmul_inspect() {
+              if let Some(var_index) = term.var_idx() {
+                if val.is_one() {
+                  var = Some(var_index) ;
+                  continue
+                } else if val.is_minus_one() {
+                  var = Some(var_index) ;
+                  negated = true ;
+                  continue
+                }
+              }
+            }
+            add.push(kid.clone())
+          }
+
+          if let Some(var) = var {
+            let mut sum = term::add(add) ;
+            if ! negated { sum = term::u_minus(sum) }
+            Some((var, sum))
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+
+    } else {
+      None
+    }
+  }
+
+
+
+  /// Attempts to invert a term from a variable.
+  pub fn invert_var(& self, var: VarIdx, typ: Typ) -> Option<(VarIdx, Term)> {
+    self.invert( term::var(var, typ) )
+  }
 
   /// Attempts to invert a term.
   ///
@@ -548,61 +846,114 @@ impl RTerm {
   ///
   /// Also, only works when all operators are binary (expect for unary minus).
   ///
-  /// ```
+  /// # Examples
+  ///
+  /// ```rust
   /// use hoice::term ;
   ///
-  /// let term = term::u_minus( term::var(0) ) ;
+  /// let term = term::u_minus( term::int_var(0) ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
-  ///   Some( (0.into(), term::u_minus( term::var(1) ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
   /// }
-  /// let term = term::sub( vec![ term::var(0), term::int(7) ] ) ;
+  /// let term = term::sub( vec![ term::int_var(0), term::int(7) ] ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
-  ///   Some( (0.into(), term::add( vec![ term::var(1), term::int(7) ] ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
   /// }
-  /// let term = term::add( vec![ term::int(7), term::var(0) ] ) ;
+  /// let term = term::add( vec![ term::int(7), term::int_var(0) ] ) ;
+  /// println!("{}", term) ;
   /// assert_eq!{
-  ///   term.invert( 1.into() ),
-  ///   Some( (0.into(), term::sub( vec![ term::var(1), term::int(7) ] ) ) )
+  ///   term.invert( term::int_var(1) ),
+  ///   Some(
+  ///     (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
+  ///   )
   /// }
   /// ```
-  pub fn invert(& self, var: VarIdx) -> Option<(VarIdx, Term)> {
-    let mut solution = term::var(var) ;
+  pub fn invert(& self, term: Term) -> Option<(VarIdx, Term)> {
+    let mut solution = term ;
     let mut term = self ;
 
     loop {
+      // println!("inverting {}", term) ;
       match * term {
-        RTerm::App { op, ref args } => {
+        RTerm::App { op, ref args, .. } => {
           let (po, symmetric) = match op {
             Op::Add => (Op::Sub, true),
-            Op::Sub if args.len() == 1 => {
-              solution = term::u_minus( solution ) ;
+            Op::Sub => {
+              if args.len() == 1 {
+                solution = term::u_minus( solution ) ;
+                term = & args[0] ;
+                continue
+              } else if args.len() == 2 {
+                if args[0].val().is_some() {
+                  solution = term::sub(
+                    vec![ args[0].clone(), solution ]
+                  ) ;
+                  term = & args[1] ;
+                  continue
+                } else if args[1].val().is_some() {
+                  solution = term::add(
+                    vec![ args[1].clone(), solution ]
+                  ) ;
+                  term = & args[0] ;
+                  continue
+                }
+              }
+              return None
+            },
+            Op::IDiv => return None,
+            Op::CMul => {
+              if args.len() == 2 {
+                if let Some(val) = args[0].val() {
+                  use num::One ;
+                  if val.minus().expect(
+                    "illegal c_mul application found in `invert`"
+                  ) == Int::one().into() {
+                    solution = term::u_minus(solution) ;
+                    term = & args[1] ;
+                    continue
+                  } else {
+                    return None
+                  }
+                }
+              }
+
+              panic!("illegal c_mul application found in `invert`")
+            },
+            // Op::Div => (Op::Mul, false),
+            // Op::Mul => (Op::Div, true),
+            Op::ToReal => {
+              solution = term::to_int(solution) ;
               term = & args[0] ;
               continue
             },
-            Op::Sub => (Op::Add, false),
-            Op::Div => (Op::Mul, false),
-            Op::Mul => (Op::Div, true),
+            Op::ToInt => {
+              solution = term::to_real(solution) ;
+              term = & args[0] ;
+              continue
+            },
             _ => return None,
           } ;
           if args.len() != 2 { return None }
 
-          if let Some(i) = args[0].int() {
+          if let Some(arith) = args[0].arith() {
             if symmetric {
-              solution = term::app( po, vec![ solution, term::int(i) ] )
+              solution = term::app( po, vec![ solution, arith ] )
             } else {
-              solution = term::app( op, vec![ term::int(i), solution ] )
+              solution = term::app( op, vec![ arith, solution ] )
             }
             term = & args[1]
-          } else if let Some(i) = args[1].int() {
-            solution = term::app( po, vec![ solution, term::int(i) ] ) ;
+          } else if let Some(arith) = args[1].arith() {
+            solution = term::app( po, vec![ solution, arith ] ) ;
             term = & args[0]
           } else {
             return None
           }
         },
-        RTerm::Var(v) => return Some((v, solution)),
+        RTerm::Var(_, v) => return Some((v, solution)),
         _ => return None,
       }
     }
@@ -653,7 +1004,7 @@ pub enum TTerm {
     /// Predicate applied.
     pred: PrdIdx,
     /// The arguments.
-    args: TArgs,
+    args: HTArgs,
   },
   /// Just a term.
   T(Term),
@@ -662,6 +1013,16 @@ impl TTerm {
   /// The false top term.
   pub fn fls() -> Self {
     TTerm::T( term::fls() )
+  }
+
+  /// Type of the top term.
+  ///
+  /// Should always be bool, except during parsing.
+  pub fn typ(& self) -> Typ {
+    match * self {
+      TTerm::P { .. } => Typ::Bool,
+      TTerm::T(ref term) => term.typ(),
+    }
   }
 
   /// True if the top term is a term with no variables and evaluates to true.
@@ -708,7 +1069,7 @@ impl TTerm {
   }
 
   /// The arguments of a top term if it's a predicate application.
-  pub fn args(& self) -> Option<& TArgs> {
+  pub fn args(& self) -> Option<& HTArgs> {
     match * self {
       TTerm::P { ref args, .. } => Some(args),
       _ => None,
@@ -717,7 +1078,7 @@ impl TTerm {
 
   /// Applies some treatment if the top term is a predicate application.
   pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
-  where F: Fn(T, PrdIdx, & mut TArgs) -> T {
+  where F: Fn(T, PrdIdx, & mut HTArgs) -> T {
     if let TTerm::P { pred, ref mut args } = * self {
       f(init, pred, args)
     } else {
@@ -730,7 +1091,7 @@ impl TTerm {
     match * self {
       TTerm::P { ref args, .. } => {
         let mut vars = VarSet::with_capacity(17) ;
-        for term in args {
+        for term in args.iter() {
           vars.extend( term::vars(term) )
         }
         vars
@@ -753,11 +1114,13 @@ impl TTerm {
       },
       TTerm::P { ref mut args, .. } => {
         let mut changed = false ;
-        for arg in args.iter_mut() {
+        let mut nu_args = VarMap::with_capacity( args.len() ) ;
+        for arg in args.iter() {
           let (t, b) = arg.subst(map) ;
-          * arg = t ;
+          nu_args.push(t) ;
           changed = changed || b
         }
+        * args = nu_args.into() ;
         changed
       },
     }
@@ -772,14 +1135,14 @@ impl TTerm {
     match * self {
       TTerm::P { pred, ref args } => {
         let mut new_args = VarMap::with_capacity( args.len() ) ;
-        for term in args {
+        for term in args.iter() {
           if let Some((term, _)) = term.subst_total(map) {
             new_args.push(term)
           } else {
             bail!("total substitution failed (predicate)")
           }
         }
-        Ok( TTerm::P { pred, args: new_args } )
+        Ok( TTerm::P { pred, args: new_args.into() } )
       },
       TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
         Ok( TTerm::T(term) )
@@ -797,7 +1160,7 @@ impl TTerm {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
     use self::TTerm::* ;
     match * self {
       P { pred, ref args } => write_prd(w, pred, args),
@@ -812,7 +1175,7 @@ impl TTerm {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
@@ -823,7 +1186,7 @@ impl_fmt!{
     match * self {
       TTerm::P { pred, ref args } => {
         write!(fmt, "(p_{}", pred) ? ;
-        for arg in args {
+        for arg in args.iter() {
           write!(fmt, " {}", arg) ?
         }
         write!(fmt, ")")
@@ -843,7 +1206,7 @@ pub struct TTermSet {
   /// Set of terms.
   terms: HConSet<Term>,
   /// Predicate applications.
-  preds: PrdHMap< HashSet<TArgs> >,
+  preds: PrdHMap< HTArgss >,
 }
 impl TTermSet {
   /// Creates a new top term set with some capacity
@@ -861,6 +1224,12 @@ impl TTermSet {
       terms: HConSet::with_capacity(term_capa),
       preds: PrdHMap::with_capacity(pred_capa),
     }
+  }
+
+  /// Destroys the set.
+  #[inline]
+  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<HTArgss>) {
+    (self.terms, self.preds)
   }
 
   /// Reserves some space.
@@ -906,7 +1275,7 @@ impl TTermSet {
   }
   /// Predicate applications.
   #[inline]
-  pub fn preds(& self) -> & PrdHMap< TArgss > {
+  pub fn preds(& self) -> & PrdHMap< HTArgss > {
     & self.preds
   }
 
@@ -917,7 +1286,7 @@ impl TTermSet {
   }
   /// Predicate applications (mutable version).
   #[inline]
-  pub fn preds_mut(& mut self) -> & mut PrdHMap< TArgss > {
+  pub fn preds_mut(& mut self) -> & mut PrdHMap< HTArgss > {
     & mut self.preds
   }
 
@@ -943,11 +1312,32 @@ impl TTermSet {
     true
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    let mut terms = HConSet::<Term>::with_capacity(self.terms.len()) ;
+    for term in self.terms() {
+      let (term, _) = term.subst(map) ;
+      terms.insert(term) ;
+    }
+
+    let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
+    for (pred, argss) in self.preds.iter() {
+      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      for args in argss {
+        let args = term::args::new( args.subst(map) ) ;
+        nu_argss.insert(args) ;
+      }
+      preds.insert(* pred, nu_argss) ;
+    }
+
+    TTermSet { terms, preds }
+  }
+
   /// Inserts a predicate application.
   #[inline]
-  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: TArgs) -> bool {
+  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
     self.preds.entry(pred).or_insert_with(
-      || HashSet::new()
+      || HTArgss::new()
     ).insert(args)
   }
   /// Inserts some predicate applications.
@@ -955,12 +1345,12 @@ impl TTermSet {
     & mut self, pred: PrdIdx, argss: TArgss
   )
   where
-  Iter: Iterator<Item = TArgs> + ExactSizeIterator,
-  TArgss: IntoIterator<Item = TArgs, IntoIter = Iter> {
+  Iter: Iterator<Item = HTArgs> + ExactSizeIterator,
+  TArgss: IntoIterator<Item = HTArgs, IntoIter = Iter> {
     let argss = argss.into_iter() ;
     if argss.len() == 0 { return () }
     self.preds.entry(pred).or_insert_with(
-      || HashSet::new()
+      || HTArgss::new()
     ).extend( argss )
   }
 
@@ -1015,7 +1405,7 @@ impl TTermSet {
     }
     for (_, argss) in & self.preds {
       for args in argss {
-        for arg in args {
+        for arg in args.iter() {
           set.extend( term::vars(arg) )
         }
       }
@@ -1037,7 +1427,7 @@ impl TTermSet {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
     // Don't print the separator the first time.
     let mut separate = false ;
     macro_rules! write_sep {
@@ -1126,7 +1516,7 @@ impl ::std::cmp::PartialOrd for TTermSet {
 
 /// Removes some arguments from some predicate applications.
 fn remove_vars_from_pred_apps(
-  apps: & mut PrdHMap< TArgss >, to_keep: & PrdHMap<VarSet>
+  apps: & mut PrdHMap< HTArgss >, to_keep: & PrdHMap<VarSet>
 ) {
   for (pred, argss) in apps.iter_mut() {
     let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
@@ -1134,18 +1524,17 @@ fn remove_vars_from_pred_apps(
     } else {
       continue
     } ;
-    let mut old_argss = HashSet::with_capacity( argss.len() ) ;
+    let mut old_argss = HTArgss::with_capacity( argss.len() ) ;
     ::std::mem::swap( & mut old_argss, argss ) ;
-    for mut args in old_argss {
-      args.remove( vars_to_keep ) ;
-      argss.insert(args) ;
+    for args in old_argss {
+      argss.insert( args.remove( vars_to_keep ) ) ;
     }
   }
 }
 
 
 /// A formula composed of top terms.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
   True,
@@ -1153,13 +1542,14 @@ pub enum TTerms {
   False,
   /// Conjunction.
   Conj {
-    quant: Option<Quant>, tterms: TTermSet
+    quant: Option<Quant>,
+    tterms: TTermSet,
   },
   /// Disjunction.
   Disj {
     quant: Option<Quant>,
     tterms: TTermSet,
-    neg_preds: PrdHMap< TArgss >
+    neg_preds: PrdHMap< HTArgss >,
   },
   /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
   Dnf {
@@ -1201,6 +1591,46 @@ impl TTerms {
     if b { Self::tru() } else { Self::fls() }
   }
 
+  /// Attempts to transform some terms in a term.
+  pub fn to_term(& self) -> Option<Term> {
+    match * self {
+      TTerms::True => Some( term::tru() ),
+      TTerms::False => Some( term::fls() ),
+
+      TTerms::Conj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
+      TTerms::Conj { ref tterms, .. } => Some(
+        term::and(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Disj { ref quant, .. } if quant.is_some() => None,
+      TTerms::Disj {
+        ref tterms, ref neg_preds, ..
+      } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
+      TTerms::Disj { ref tterms, .. } => Some(
+        term::or(
+          tterms.terms().iter().map(|term| term.clone()).collect()
+        )
+      ),
+
+      TTerms::Dnf { ref disj } => {
+        let mut disj_terms = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref conj) in disj {
+          if quant.is_some()
+          || ! conj.preds.is_empty() { return None }
+          disj_terms.push(
+            term::and(
+              conj.terms().iter().map(|term| term.clone()).collect()
+            )
+          )
+        }
+        Some( term::or(disj_terms) )
+      },
+    }
+  }
+
   /// Boolean value of some top terms.
   #[inline]
   pub fn bool(& self) -> Option<bool> {
@@ -1228,6 +1658,74 @@ impl TTerms {
     }
   }
 
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    match * self {
+      TTerms::True => TTerms::True,
+      TTerms::False => TTerms::False,
+
+      TTerms::Conj { ref quant, ref tterms } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+        TTerms::Conj { quant: quant.clone(), tterms: tterms.subst(map) }
+      },
+
+      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
+        debug_assert! {
+          if let Some(quant) = quant.as_ref() {
+            quant.vars().keys().all(
+              |v| map.var_get(* v).is_none()
+            )
+          } else {
+            true
+          }
+        }
+
+        let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
+        for (pred, argss) in neg_preds.iter() {
+          let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+          for args in argss {
+            let args = term::args::new( args.subst(map) ) ;
+            nu_argss.insert(args) ;
+          }
+          preds.insert(* pred, nu_argss) ;
+        }
+
+        TTerms::Disj {
+          quant: quant.clone(),
+          tterms: tterms.subst(map),
+          neg_preds: preds,
+        }
+      },
+
+      TTerms::Dnf { ref disj } => {
+        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
+        for & (ref quant, ref tterms) in disj {
+          debug_assert! {
+            if let Some(quant) = quant.as_ref() {
+              quant.vars().keys().all(
+                |v| map.var_get(* v).is_none()
+              )
+            } else {
+              true
+            }
+          }
+          nu_disj.push(
+            (quant.clone(), tterms.subst(map))
+          )
+        }
+        TTerms::Dnf { disj: nu_disj }
+      },
+    }
+  }
+
   /// Constructor for a single term.
   pub fn of_term(quant: Option<Quant>, term: Term) -> Self {
     Self::conj( quant, TTermSet::of_term(term) )
@@ -1235,21 +1733,21 @@ impl TTerms {
 
   /// Constructs a conjuction.
   pub fn conj(quant: Option<Quant>, tterms: TTermSet) -> Self {
-    TTerms::Conj{ quant, tterms }.simplify()
+    TTerms::Conj { quant, tterms }.simplify()
   }
 
   /// Constructs a disjuction.
   pub fn disj(
-    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<TArgss>
+    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<HTArgss>
   ) -> Self {
-    TTerms::Disj{ quant, tterms, neg_preds }.simplify()
+    TTerms::Disj { quant, tterms, neg_preds }.simplify()
   }
   /// Constructs a disjunction from a positive application and some negated top
   /// terms.
   ///
   /// This special format is exactly the one used by preprocessing.
   pub fn disj_of_pos_neg(
-    quant: Option<Quant>, pos: Option<(PrdIdx, TArgs)>, neg: TTermSet
+    quant: Option<Quant>, pos: Option<(PrdIdx, HTArgs)>, neg: TTermSet
   ) -> Self {
     let TTermSet { terms, preds: neg_preds } = neg ;
     let mut tterms = TTermSet::with_capacities(terms.len(), 1) ;
@@ -1525,7 +2023,7 @@ impl TTerms {
             tterms.vars(& mut active) ;
             for (_, argss) in & neg_preds {
               for args in argss {
-                for arg in args {
+                for arg in args.iter()   {
                   active.extend( term::vars(arg) )
                 }
               }
@@ -1597,11 +2095,17 @@ impl TTerms {
 
 
   /// Simplifies some top terms given some definitions for the predicates.
-  pub fn simplify_pred_apps(self, model: & Model) -> Self {
+  pub fn simplify_pred_apps(
+    self, model: & Model, pred_terms: & PrdMap< Option<TTerms> >
+  ) -> Self {
     macro_rules! if_defined {
       ($pred:ident then |$def:ident| $stuff:expr) => (
-        for & (ref idx, ref $def) in model {
-          if idx == $pred { $stuff }
+        if let Some($def) = pred_terms[* $pred].as_ref() {
+          $stuff
+        } else {
+          for & (ref idx, ref $def) in model {
+            if idx == $pred { $stuff }
+          }
         }
       )
     }
@@ -1673,7 +2177,7 @@ impl TTerms {
         for (quant, tterms) in disj {
           match (
             TTerms::Conj { quant, tterms }
-          ).simplify_pred_apps(model) {
+          ).simplify_pred_apps(model, pred_terms) {
             TTerms::True => return TTerms::tru(),
             TTerms::False => (),
 
@@ -1706,7 +2210,7 @@ impl TTerms {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
 
     macro_rules! write_conj {
       ($quant:expr, $tterms:expr) => ({
@@ -1796,14 +2300,14 @@ impl TTerms {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & TArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
   }
 }
 
-impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
+impl<'a, 'b> ::rsmt2::print::Expr2Smt<
   & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
 > for TTerms {
   fn expr_to_smt2<Writer: Write>(
@@ -1822,7 +2326,7 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
           write!(w, "{}", pred_info[pred])
         } else {
           write!(w, "({}", pred_info[pred]) ? ;
-          for arg in args {
+          for arg in args.iter() {
             write!(w, " ") ? ;
             arg.write(w, |w, var| var.default_write(w)) ?
           }
@@ -1831,309 +2335,6 @@ impl<'a, 'b> ::rsmt2::to_smt::Expr2Smt<
       }
     ) ? ;
     Ok(())
-  }
-}
-
-
-
-
-
-
-
-/// Operators.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum Op {
-  /// Addition.
-  Add,
-  /// Subtraction.
-  Sub,
-  /// Multiplication.
-  Mul,
-  /// Division.
-  Div,
-  /// Modulo.
-  Mod,
-  /// Greater than.
-  Gt,
-  /// Greater than or equal to.
-  Ge,
-  /// Less than or equal to.
-  Le,
-  /// Less than.
-  Lt,
-  /// Implication.
-  Impl,
-  /// Equal to.
-  Eql,
-  /// Negation.
-  Not,
-  /// Conjunction.
-  And,
-  /// Disjunction.
-  Or,
-  /// If-then-else.
-  Ite,
-}
-impl Op {
-  /// String representation.
-  pub fn as_str(& self) -> & str {
-    use self::Op::* ;
-    match * self {
-      Add => "+", Sub => "-", Mul => "*", Div => "div", Mod => "mod",
-      Gt => ">", Ge => ">=", Le => "<=", Lt => "<", Eql => "=",
-      Not => "not", And => "and", Or => "or", Impl => "=>", Ite => "ite"
-    }
-  }
-
-
-  /// Evaluation.
-  pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
-    use term::Op::* ;
-    if args.is_empty() {
-      bail!("evaluating operator on 0 elements")
-    }
-    match * self {
-      Add => {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res + try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
-        }
-      },
-      Sub => if args.len() == 1 {
-        Ok(
-          Val::I(
-            - try_val!( int args.pop().unwrap() )
-          )
-        )
-      } else {
-        let mut res ;
-        for_first!{
-          args.into_iter() => {
-            |fst| res = try_val!(int fst),
-            then |nxt| res = res - try_val!(int nxt),
-            yild Ok( Val::I(res) )
-          } else unreachable!()
-        }
-      },
-      Mul => {
-        let mut unknown = false ;
-        let mut res: Int = 1.into() ;
-        for arg in args.into_iter() {
-          if let Some(i) = arg.to_int() ? {
-            if i.is_zero() {
-              return Ok( 0.into() )
-            } else {
-              res = res * i
-            }
-          } else {
-            unknown = true
-          }
-        }
-        if unknown { Ok(Val::N) } else { Ok(Val::I(res)) }
-      },
-      Div => {
-        if args.len() != 2 {
-          bail!("unexpected division over {} numbers", args.len())
-        }
-        let den = try_val!( int args.pop().unwrap() ) ;
-        let num = try_val!( int args.pop().unwrap() ) ;
-        if den.is_zero() {
-          bail!("denominator is zero...")
-        }
-        let mut res = & num / & den ;
-        use num::Signed ;
-        if num.is_positive() ^ den.is_positive() {
-          if den * & res != num {
-            res = res - 1
-          }
-        }
-        Ok( Val::I(res) )
-      },
-
-      Mod => if args.len() != 2 {
-        bail!(
-          format!("evaluating `Div` with {} (!= 2) arguments", args.len())
-        )
-      } else {
-        use num::Integer ;
-        let b = try_val!( int args.pop().unwrap() ) ;
-        if b == 1.into() {
-          Ok( 0.into() )
-        } else {
-          let a = try_val!( int args.pop().unwrap() ) ;
-          Ok( Val::I( a.mod_floor(& b) ) )
-        }
-      },
-
-      // Bool operators.
-
-      Gt => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last > nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
-      },
-
-      Ge => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last >= nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
-      },
-
-      Le => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last <= nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
-      },
-
-      Lt => {
-        let mut last ;
-        for_first!{
-          args.into_iter() => {
-            |fst| last = try_val!(int fst),
-            then |nxt| {
-              let nxt = try_val!(int nxt) ;
-              if last < nxt { last = nxt } else {
-                return Ok( Val::B(false) )
-              }
-            },
-            yild Ok( Val::B(true) )
-          } else unreachable!()
-        }
-      },
-
-      Eql => {
-        let mem ;
-        let mut res = true ;
-        for_first!{
-          args.into_iter() => {
-            |fst| mem = fst,
-            then |nxt| {
-              if ! mem.same_type( & nxt ) {
-                return Ok(Val::N)
-              }
-              if mem != nxt {
-                res = false
-              }
-            },
-          } else unreachable!()
-        }
-        Ok( Val::B(res) )
-      },
-
-      Not => if args.len() != 1 {
-        bail!(
-          format!("evaluating `Not` with {} (!= 1) arguments", args.len())
-        )
-      } else {
-        if let Some(b) = args.pop().unwrap().to_bool() ? {
-          Ok( Val::B(! b) )
-        } else {
-          Ok(Val::N)
-        }
-      },
-
-      And => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(false) => return Ok( Val::B(false) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(true) )
-        }
-      },
-
-      Or => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(true) => return Ok( Val::B(true) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(false) )
-        }
-      },
-
-      Impl => if args.len() != 2 {
-        bail!(
-          format!("evaluating `Impl` with {} (!= 2) arguments", args.len())
-        )
-      } else {
-        // Safe because of the check above.
-        let rhs = args.pop().unwrap() ;
-        let lhs = args.pop().unwrap() ;
-        match ( lhs.to_bool() ?, rhs.to_bool() ? ) {
-          (_, Some(true)) | (Some(false), _) => Ok( Val::B(true) ),
-          (Some(lhs), Some(rhs)) => Ok( Val::B(rhs || ! lhs) ),
-          _ => Ok(Val::N),
-        }
-      },
-
-      Ite => if args.len() != 3 {
-        bail!(
-          format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
-        )
-      } else {
-        let (els, thn, cnd) = (
-          args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
-        ) ;
-        match cnd.to_bool() ? {
-          Some(true) => Ok(thn),
-          Some(false) => Ok(els),
-          _ => Ok(Val::N),
-        }
-      }
-
-    }
-  }
-}
-impl_fmt!{
-  Op(self, fmt) {
-    fmt.write_str( self.as_str() )
   }
 }
 

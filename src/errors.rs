@@ -1,4 +1,16 @@
 //! Error types.
+//!
+//! Two specific events are handled are errors so that they propagate upwards
+//! naturally, although technically they're not really errors.
+//!
+//! - [`ErrorKind::Unsat`][unsat], self-explanatory ;
+//! - [`LError::Exit`][exit], used in learners to bail out of the learning
+//!   phase when the teacher sent an exit order.
+//!
+//! [unsat]: enum.ErrorKind.html#variant.Unsat
+//! (Unsat variant of the ErrorKind enum)
+//! [exit]: learners/enum.LError.html#variant.Exit
+//! (Exit variant of the LError enum)
 
 use common::* ;
 
@@ -46,8 +58,7 @@ impl_fmt!{
     writeln!(
       fmt, "{0: ^1$}| {0: ^2$}{3}", "", line_str.len(), self.pref.len(),
       conf.bad( & format!("{0:^>1$}", "", self.token.len()) )
-    ) ? ;
-    writeln!(fmt, "")
+    )
   }
 }
 
@@ -82,14 +93,49 @@ error_chain!{
       description("unsat")
       display("unsat")
     }
+    #[doc = "Not really an error, exit early return."]
+    Exit {
+      description("exit")
+      display("exit")
+    }
+    #[doc = "Timeout reached."]
+    Timeout {
+      description("timeout")
+      display("timeout")
+    }
   }
 }
 
 impl Error {
-  /// True if the kind of the error is `ErrorKind::Unsat`.
+  /// True if the kind of the error is [`ErrorKind::Unsat`][unsat].
+  ///
+  /// [unsat]: enum.ErrorKind.html#variant.Unsat
+  /// (ErrorKind's Unsat variant)
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,
+      _ => false,
+    }
+  }
+
+  /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
+  ///
+  /// [timeout]: enum.ErrorKind.html#variant.Timeout
+  /// (ErrorKind's Timeout variant)
+  pub fn is_timeout(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Timeout => true,
+      _ => false,
+    }
+  }
+
+  /// True if the kind of the error is [`ErrorKind::Exit`][exit].
+  ///
+  /// [exit]: enum.ErrorKind.html#variant.Exit
+  /// (ErrorKind's Exit variant)
+  pub fn is_exit(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Exit => true,
       _ => false,
     }
   }
@@ -98,12 +144,13 @@ impl Error {
 
 /// Prints an error.
 pub fn print_err(errs: Error) {
-  let mut lines ;
-  for_first!(
-    errs.iter() => {
-      |err| lines = format!("{}", err),
-      then |err| lines = format!("{}\n{}", lines, err),
-      yild error!{"{}", lines}
-    } else ()
-  )
+  println!(
+    "({} \"", conf.bad("error")
+  ) ;
+  for err in errs.iter() {
+    for line in format!("{}", err).lines() {
+      println!("  {}", line)
+    }
+  }
+  println!("\")")
 }

@@ -7,11 +7,6 @@ use instance::preproc::utils ;
 /// Maps predicates to the predicates they depend on.
 pub type Dep = PrdMap< PrdMap<usize> > ;
 
-/// Creates a new graph.
-pub fn new(instance: & Instance) -> Graph {
-  Graph::new(instance)
-}
-
 /// Graph of dependencies.
 #[derive(Clone)]
 pub struct Graph {
@@ -25,33 +20,57 @@ pub struct Graph {
   pos: PrdMap<usize>,
 }
 impl Graph {
-  /// Constructor.
+  /// Constructs an empty graph.
   pub fn new(instance: & Instance) -> Self {
-    let mut forward: Dep = vec![
+    let forward: Dep = vec![
       vec![ 0 ; instance.preds().len() ].into() ; instance.preds().len()
     ].into() ;
-    let mut bakward = forward.clone() ;
-    let mut neg: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
-    let mut pos: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    let bakward = forward.clone() ;
+    let neg: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    let pos: PrdMap<_> = vec![ 0 ; instance.preds().len() ].into() ;
+    Graph { forward, bakward, neg, pos }
+  }
+
+  /// Resets the graph.
+  fn reset(& mut self) {
+    for forward in self.forward.iter_mut() {
+      for count in forward.iter_mut() {
+        * count = 0
+      }
+    }
+    for bakward in self.bakward.iter_mut() {
+      for count in bakward.iter_mut() {
+        * count = 0
+      }
+    }
+    for count in self.pos.iter_mut() {
+      * count = 0
+    }
+    for count in self.neg.iter_mut() {
+      * count = 0
+    }
+  }
+
+  /// Clears itself and sets everything up for the input instance.
+  pub fn setup(& mut self, instance: & Instance) {
+    self.reset() ;
 
     for clause in instance.clauses() {
       if let Some((tgt, _)) = clause.rhs() {
         if clause.lhs_preds().is_empty() {
-          pos[tgt] += 1 ;
+          self.pos[tgt] += 1 ;
         } else {
           for (prd, _) in clause.lhs_preds() {
-            bakward[tgt][* prd] += 1 ;
-            forward[* prd][tgt] += 1 ;
+            self.bakward[tgt][* prd] += 1 ;
+            self.forward[* prd][tgt] += 1 ;
           }
         }
       } else {
         for (prd, _) in clause.lhs_preds() {
-          neg[* prd] += 1 ;
+          self.neg[* prd] += 1 ;
         }
       }
     }
-
-    Graph { forward, bakward, neg, pos }
   }
 
   /// Dumps a graph in dot format.
@@ -121,7 +140,7 @@ impl Graph {
   ) -> Res<()> {
     if let Some(
       (mut pred_dep_file, path)
-    ) = conf.preproc.pred_dep_file(file) ? {
+    ) = conf.preproc.pred_dep_file(file, instance) ? {
       use std::process::Command ;
       self.dot_write(& mut pred_dep_file, instance, hi_lite) ? ;
       let mut pdf_path = path.clone() ;
@@ -162,7 +181,7 @@ impl Graph {
   }
 
   /// Checks that the graph makes sense.
-  #[cfg(not(debug_assertions))]
+  #[cfg( not(debug_assertions) )]
   #[inline(always)]
   pub fn check(& self, _: & Instance) -> Res<()> {
     Ok(())
@@ -242,6 +261,7 @@ impl Graph {
     }
 
     while ! to_do.is_empty() {
+      conf.check_timeout() ? ;
       let pred = * to_do.iter().next().unwrap() ;
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
@@ -270,15 +290,14 @@ impl Graph {
   /// arguments of `pred` and the quantified variables in `rgt`.
   ///
   /// Renames the quantified variables so that they don't clash.
-  fn merge<Map>(
+  fn merge(
     instance: & Instance, pred: PrdIdx,
-    substs: & HashSet<Map>,
+    substs: & HTArgss,
     lft: & Vec<(Quantfed, TTermSet)>,
     rgt: & Vec<(Quantfed, TTermSet)>
-  ) -> Vec<(Quantfed, TTermSet)>
-  where Map: VarIndexed<Term> + Eq + ::std::hash::Hash {
+  ) -> Res< Vec<(Quantfed, TTermSet)> > {
     log_debug! { "    merging..." }
-    let first_index = instance[pred].sig.next_index() ;
+    let first_index = instance.original_sig_of(pred).next_index() ;
     log_debug! { "    first index: {}", first_index }
 
     let mut result = Vec::with_capacity( lft.len() * rgt.len() ) ;
@@ -294,6 +313,7 @@ impl Graph {
 
       // Generate map for substitution and update left qvars.
       let mut map = VarHMap::with_capacity(0) ;
+      conf.check_timeout() ? ;
       for & (ref l_qvars, ref l_conj) in lft {
         let mut curr_qvar = first_index ;
         map.clear() ;
@@ -302,7 +322,7 @@ impl Graph {
         qvars.reserve( l_qvars.len() ) ;
         for (qvar, typ) in l_qvars {
           log_debug! { "    - lft qvar {}", qvar }
-          let prev = map.insert(* qvar, term::var(curr_qvar)) ;
+          let prev = map.insert(* qvar, term::var(curr_qvar, * typ)) ;
           debug_assert!( prev.is_none() ) ;
           let prev = qvars.insert( curr_qvar, * typ ) ;
           debug_assert!( prev.is_none() ) ;
@@ -321,6 +341,7 @@ impl Graph {
           log_debug! { "    }}" }
         }
 
+        conf.check_timeout() ? ;
 
         'all_substitutions: for subst in substs {
           let mut conj = r_conj.clone() ;
@@ -330,14 +351,14 @@ impl Graph {
             conj.insert_term( term ) ;
           }
           for (pred, argss) in l_conj.preds() {
-            let mut nu_argss = TArgss::with_capacity( argss.len() ) ;
+            let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
             for args in argss {
-              let mut nu_args = TArgs::with_capacity( args.len() ) ;
-              for arg in args {
+              let mut nu_args = VarMap::with_capacity( args.len() ) ;
+              for arg in args.iter() {
                 let (arg, _) = arg.subst( & (& map, subst) ) ;
                 nu_args.push(arg)
               }
-              nu_argss.insert(nu_args) ;
+              nu_argss.insert( nu_args.into() ) ;
             }
             conj.insert_pred_apps( * pred, nu_argss )
           }
@@ -350,7 +371,7 @@ impl Graph {
       }
     }
 
-    result
+    Ok(result)
   }
 
 
@@ -369,6 +390,8 @@ impl Graph {
     let mut increase: usize = 0 ;
 
     let forced_inlining = keep.len() == 0 ;
+
+    conf.check_timeout() ? ;
 
     'construct: loop {
 
@@ -391,19 +414,21 @@ impl Graph {
       }
 
       let pred = if let Some(p) = pred { p } else {
-        log_debug! { "  no predicate illeligible for inlining" }
+        log! { @debug "  no predicate illeligible for inlining" }
         break 'construct
       } ;
-      log_debug! { "  inlining {}", instance[pred] }
+      log! { @debug "  inlining {}", instance[pred] }
 
       // read_line("to continue...") ;
 
-      let (lhs_clauses, clauses) = instance.clauses_of_pred(pred) ;
+      let (lhs_clauses, clauses) = instance.clauses_of(pred) ;
       let mut def = Vec::with_capacity( clauses.len() ) ;
+
+      conf.check_timeout() ? ;
 
       'clause_iter: for clause in clauses {
         let mut to_merge: Vec<(
-          PrdIdx, TArgss, & Vec<(Quantfed, TTermSet)>
+          PrdIdx, HTArgss, & Vec<(Quantfed, TTermSet)>
         )> = Vec::with_capacity(7) ;
 
         let clause = & instance[* clause] ;
@@ -419,7 +444,9 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log_debug! { "from clause {}", clause.to_string_info(& instance.preds()) ? }
+            log! { @debug
+              "from clause {}", clause.to_string_info(& instance.preds()) ?
+            }
             if ! forced_inlining && ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }
@@ -464,7 +491,9 @@ impl Graph {
               }
 
               let mut curr = vec![ (qvars, tterms) ] ;
+
               for (_this_pred, argss, p_def) in to_merge.drain(0..) {
+                conf.check_timeout() ? ;
                 if_debug! {
                   let mut first = true ;
                   log_debug! { "  args for {} {{", instance[_this_pred] }
@@ -506,7 +535,9 @@ impl Graph {
                   }
                   log_debug! { "  }}" }
                 }
-                curr = Self::merge(instance, pred, & argss, p_def, & curr)
+                curr = Self::merge(
+                  instance, pred, & argss, p_def, & curr
+                ) ?
               }
               // if_debug! {
               //   log_debug! { "  finally {{" }
@@ -538,6 +569,7 @@ impl Graph {
         )
       }
 
+      conf.check_timeout() ? ;
       for clause in lhs_clauses {
         let count = if let Some(argss) = instance[
           * clause
@@ -563,7 +595,7 @@ impl Graph {
 
       }
 
-      let rmed = instance.clauses_of_pred(pred).1.len() ;
+      let rmed = instance.clauses_of(pred).1.len() ;
       this_pred_increase = if this_pred_increase >= rmed {
         this_pred_increase - rmed
       } else {
@@ -612,6 +644,7 @@ impl Graph {
     log_debug! { "breaking cycles in pred dep graph..." }
     let mut set = PrdSet::with_capacity(instance.preds().len() / 3) ;
 
+    conf.check_timeout() ? ;
     for (prd, prds) in self.forward.index_iter() {
       if prds[prd] > 0 {
         let is_new = set.insert(prd) ;
@@ -619,6 +652,7 @@ impl Graph {
       }
     }
 
+    conf.check_timeout() ? ;
     let mut pos = PrdSet::new() ;
     for (prd, cnt) in self.pos.index_iter() {
       if set.contains(& prd) { continue }
@@ -627,6 +661,7 @@ impl Graph {
       }
     }
 
+    conf.check_timeout() ? ;
     let mut forward = PrdHMap::new() ;
     for (prd, prds) in self.forward.index_iter() {
       if set.contains(& prd) { continue }
@@ -643,6 +678,7 @@ impl Graph {
 
     let mut cnt = 0 ;
 
+    conf.check_timeout() ? ;
     'break_cycles: while ! forward.is_empty() {
 
       cnt += 1 ;

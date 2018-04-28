@@ -3,9 +3,10 @@
 use std::io::Write ;
 use std::fmt ;
 
-use rsmt2::to_smt::* ;
+use rsmt2::print::* ;
 
-use common::SmtRes ;
+use common::{ SmtRes, VarIndexed } ;
+use term::Term ;
 
 wrap_usize!{
   #[doc = "Predicate indices."]
@@ -47,25 +48,18 @@ impl VarIdx {
   }
 }
 
-impl VarMap<::term::Val> {
-  /// Evaluates some arguments and yields the resulting `VarMap`.
-  pub fn apply_to(
-    & self, args: & VarMap<::term::Term>
-  ) -> ::errors::Res<Self> {
-    let mut res = Self::with_capacity( args.len() ) ;
-    for arg in args {
-      res.push( arg.eval(self) ? )
-    }
-    Ok(res)
+impl Into< ::common::HTArgs > for VarMap<::term::Term> {
+  fn into(self) -> ::common::HTArgs {
+    ::term::args::new(self)
   }
 }
 
-impl VarMap< ::term::Term > {
+impl VarMap< Term > {
   /// Removes the arguments of indices **not** in the set. Preserves the order.
   ///
   /// This is used when useless arguments are detected, to slice predicate
   /// applications.
-  pub fn remove(& mut self, to_keep: & VarSet) {
+  pub fn remove(& self, to_keep: & VarSet) -> ::common::HTArgs {
     debug_assert! { self.len() >= to_keep.len() }
     debug_assert! {{
       let mut okay = true ;
@@ -76,13 +70,41 @@ impl VarMap< ::term::Term > {
       }
       okay
     }}
-    let mut old_vars = VarMap::with_capacity( to_keep.len() ) ;
-    ::std::mem::swap( & mut old_vars, self ) ;
-    for (var, term) in old_vars.into_index_iter() {
+    let mut nu_args = VarMap::with_capacity( self.len() ) ;
+    for (var, term) in self.index_iter() {
       if to_keep.contains(& var) {
-        self.push(term)
+        nu_args.push( term.clone() )
       }
     }
+    nu_args.into()
+  }
+
+  /// Variable substitution.
+  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
+    let mut var_map = VarMap::with_capacity( self.len() ) ;
+    for term in self.iter() {
+      let (term, _) = term.subst(map) ;
+      var_map.push(term)
+    }
+    var_map
+  }
+
+  /// True if all terms are different variables.
+  pub fn are_diff_vars(& self) -> bool {
+    let mut iter = self.iter() ;
+    while let Some(term) = iter.next() {
+      if let Some(_) = term.var_idx() {
+        for other in iter.clone() {
+          if term == other {
+            return false
+          }
+        }
+      } else {
+        // Not a var.
+        return false
+      }
+    }
+    true
   }
 }
 
@@ -156,6 +178,8 @@ wrap_usize! {
 wrap_usize!{
   #[doc = "Constraint index."]
   CstrIdx
+  #[doc = "Range over constraint indices."]
+  range: CstrRange
   #[doc = "Constraint set."]
   set: CstrSet
   #[doc = "Constraint total map."]

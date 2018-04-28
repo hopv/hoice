@@ -6,12 +6,12 @@ use std::fs::OpenOptions ;
 use common::* ;
 use read_and_work ;
 
-static sat_files_dir: & str = "tests/rsc/sat" ;
-static unsat_files_dir: & str = "tests/rsc/unsat" ;
+static sat_files_dir: & str = "tests/sat" ;
+static unsat_files_dir: & str = "tests/unsat" ;
+static err_files_dir: & str = "tests/error" ;
 
-#[test]
-fn sat() {
-  if let Err(e) = run_sat() {
+fn run<F: Fn() -> Res<()>>(f: F) {
+  if let Err(e) = f() {
     println!("Error:") ;
     for e in e.iter() {
       let mut pref = "> " ;
@@ -25,19 +25,13 @@ fn sat() {
 }
 
 #[test]
-fn unsat() {
-  if let Err(e) = run_unsat() {
-    for e in e.iter() {
-      println!("Error:") ;
-      let mut pref = "> " ;
-      for line in format!("{}", e).lines() {
-        println!("{}{}", pref, line) ;
-        pref = "  "
-      }
-    }
-    panic!("failure")
-  }
-}
+fn sat() { run(run_sat) }
+
+#[test]
+fn unsat() { run(run_unsat) }
+
+#[test]
+fn err() { run(run_err) }
 
 macro_rules! map_err {
   ($e:expr, $msg:expr) => (
@@ -46,6 +40,36 @@ macro_rules! map_err {
   ($e:expr, $($tt:tt)*) => (
     $e.map_err( |e| format!("{}:\n{}", format!($($tt)*), e) ) ?
   ) ;
+}
+
+fn run_err() -> Res<()> {
+
+  let files = map_err!(
+    read_dir(err_files_dir), format!("while reading `{}`", err_files_dir)
+  ) ;
+
+  for entry in files {
+    let entry = map_err!(
+      entry, "while reading entry"
+    ) ;
+    let file_name = format!("{}", entry.file_name().to_string_lossy()) ;
+    if map_err!(
+      entry.file_type(), "while reading entry (file type of `{}`)", file_name
+    ).is_file() {
+      println!("looking at `{}`", file_name) ;
+      let file = OpenOptions::new().read(true).open(entry.path()).chain_err(
+        || format!( "while opening file {}", file_name )
+      ) ? ;
+      match read_and_work(file, true, true, true) {
+        Err(e) => println!("got {}", e),
+        Ok((model, _)) => bail!(
+          "expected error, got {}",
+          if model.is_some() { "sat" } else { "unsat" }
+        ),
+      }
+    }
+  }
+  Ok(())
 }
 
 fn run_sat() -> Res<()> {
@@ -66,7 +90,7 @@ fn run_sat() -> Res<()> {
       let file = OpenOptions::new().read(true).open(entry.path()).chain_err(
         || format!( "while opening file {}", file_name )
       ) ? ;
-      let (model, instance) = read_and_work(file, true, true).chain_err(
+      let (model, instance) = read_and_work(file, true, true, true).chain_err(
         || "while reading file and getting model"
       ) ? ;
       if let Some(model) = model {
@@ -109,7 +133,7 @@ fn run_unsat() -> Res<()> {
       let file = OpenOptions::new().read(true).open(entry.path()).chain_err(
         || format!( "while opening file {}", file_name )
       ) ? ;
-      let (model, instance) = read_and_work(file, true, true) ? ;
+      let (model, instance) = read_and_work(file, true, true, true) ? ;
       if let Some(model) = model {
         println!("sat") ;
         instance.write_model(& model, & mut ::std::io::stdout()) ? ;
