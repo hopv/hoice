@@ -1583,11 +1583,18 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
   /// Parses a forall.
+  ///
+  /// Returns
+  ///
+  /// - `None` if nothing was parsed ;
+  /// - `Some(None)` if a clause was parsed but it was not actually added
+  ///   (*e.g.* redundant) ;
+  /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
   fn forall(
     & mut self, instance: & mut Instance
-  ) -> Res<bool> {
+  ) -> Res< Option< Option<ClsIdx> > > {
     if ! self.tag_opt(keywords::forall) {
-      return Ok(false)
+      return Ok(None)
     }
 
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
@@ -1619,7 +1626,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ) ? ;
 
     self.ws_cmt() ;
-    self.parse_clause(
+    let idx = self.parse_clause(
       var_map, hash_map, instance, false
     ) ? ;
 
@@ -1631,14 +1638,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag(")") ?
     }
 
-    Ok(true)
+    Ok(Some(idx))
   }
 
 
   /// Parses a negated exists.
-  fn nexists(& mut self, instance: & mut Instance) -> Res<bool> {
+  ///
+  /// Returns
+  ///
+  /// - `None` if nothing was parsed ;
+  /// - `Some(None)` if a clause was parsed but it was not actually added
+  ///   (*e.g.* redundant) ;
+  /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
+  fn nexists(
+    & mut self, instance: & mut Instance
+  ) -> Res< Option<Option<ClsIdx>> > {
     if ! self.tag_opt(keywords::op::not_) {
-      return Ok(false)
+      return Ok(None)
     }
     self.ws_cmt() ;
     let outter_bind_count = self.let_bindings(
@@ -1675,7 +1691,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     self.ws_cmt() ;
-    self.parse_clause(var_map, hash_map, instance, true) ? ;
+    let idx = self.parse_clause(var_map, hash_map, instance, true) ? ;
 
     self.ws_cmt() ;
     self.tag(")") ? ;
@@ -1688,7 +1704,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag(")") ?
     }
 
-    Ok(true)
+    Ok(Some(idx))
   }
 
 
@@ -1698,7 +1714,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: HashMap<& 's str, VarIdx>,
     instance: & mut Instance,
     negated: bool,
-  ) -> Res<()> {
+  ) -> Res< Option<ClsIdx> > {
     self.ws_cmt() ;
 
     let start_pos = self.pos() ;
@@ -1719,21 +1735,34 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ptterms = PTTerms::not(ptterms) ?
     }
 
+    let (mut at_least_one, idx) = (
+      false, instance.next_clause_index()
+    ) ;
     let mut clauses = ptterms.to_clauses()?.into_iter() ;
+
     if let Some((last_lhs, last_rhs)) = clauses.next() {
+
       for (lhs, rhs) in clauses {
-        self.add_clause(instance, var_map.clone(), lhs, rhs) ?
+        if self.add_clause(instance, var_map.clone(), lhs, rhs) ? {
+          at_least_one = true
+        }
       }
-      self.add_clause(instance, var_map, last_lhs, last_rhs) ?
+      if self.add_clause(instance, var_map, last_lhs, last_rhs) ? {
+        at_least_one = true
+      }
     }
-    Ok(())
+    if at_least_one {
+      Ok(Some(idx))
+    } else {
+      Ok(None)
+    }
   }
 
   /// Adds a clause to an instance.
   fn add_clause(
     & self, instance: & mut Instance,
     var_map: VarInfos, lhs: Vec<TTerm>, rhs: TTerm
-  ) -> Res<()> {
+  ) -> Res<bool> {
     let mut nu_lhs = Vec::with_capacity( lhs.len() ) ;
     let mut lhs_is_false = false ;
     for lhs in lhs {
@@ -1756,12 +1785,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       },
     } ;
     if ! lhs_is_false {
-      instance.push_clause(
-        Clause::new(var_map.clone(), nu_lhs, rhs, "parsing")
+      let maybe_index = instance.push_new_clause(
+        var_map.clone(), nu_lhs, rhs, "parsing"
       ) ? ;
-      ()
+      Ok(maybe_index.is_some())
+    } else {
+      Ok(false)
     }
-    Ok(())
   }
 
 
@@ -1772,16 +1802,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     self.ws_cmt() ;
-    let bind_count = self.let_bindings(
-      & VarMap::new(), & HashMap::new(), instance) ? ;
 
-    if self.tag_opt("(") {
+    let start_pos = self.pos() ;
+    let tagged = if self.tag_opt("(") {
+      self.ws_cmt() ;
+      if self.tag_opt("!") {
+        self.ws_cmt() ;
+        true
+      } else {
+        self.backtrack_to(start_pos) ;
+        false
+      }
+    } else {
+      false
+    } ;
+
+    let bind_count = self.let_bindings(
+      & VarMap::new(), & HashMap::new(), instance
+    ) ? ;
+
+    let idx = if self.tag_opt("(") {
       self.ws_cmt() ;
 
-      if self.forall(instance) ? {
-        ()
-      } else if self.nexists(instance) ? {
-        ()
+      let idx = if let Some(idx) = self.forall(instance) ? {
+        idx
+      } else if let Some(idx) = self.nexists(instance) ? {
+        idx
       } else {
         bail!(
           self.error_here("expected forall or negated exists")
@@ -1790,18 +1836,36 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
       self.ws_cmt() ;
       self.tag(")") ? ;
+      idx
     } else if self.tag_opt("true") {
-      ()
+      None
     } else if self.tag_opt("false") {
-      instance.set_unsat()
+      instance.set_unsat() ;
+      None
     } else {
       bail!(
         self.error_here("expected negation, qualifier, `true` or `false`")
       )
-    }
+    } ;
 
     self.ws_cmt() ;
     self.close_let_bindings(bind_count) ? ;
+
+    if tagged {
+      self.ws_cmt() ;
+      self.tag(":named").chain_err(
+        || "unexpected tag"
+      ) ? ;
+      self.ws_cmt() ;
+      let (_, ident) = self.ident().chain_err(
+        || "expected identifier after `:named` tag"
+      ) ? ;
+      if let Some(idx) = idx {
+        instance.set_old_clause_name(idx, ident.into()) ?
+      }
+      self.ws_cmt() ;
+      self.tag(")") ? ;
+    }
 
     Ok(true)
   }

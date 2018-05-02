@@ -76,6 +76,9 @@ pub struct Instance {
   /// The constructor sets this to `None`. Function `clone_with_clauses`
   /// automatically sets it to the clause kept.
   split: Option<ClsIdx>,
+
+  /// Maps **original** clause indexes to their optional name.
+  old_names: ClsHMap<String>,
 }
 impl Instance {
   /// Instance constructor.
@@ -99,6 +102,7 @@ impl Instance {
       imp_clauses: ClsSet::new(),
       is_finalized: false,
       split: None,
+      old_names: ClsHMap::with_capacity(clause_capa),
     }
   }
 
@@ -129,6 +133,7 @@ impl Instance {
       imp_clauses: ClsSet::new(),
       is_finalized: false,
       split: Some(clause),
+      old_names: self.old_names.clone(),
     }
   }
 
@@ -833,7 +838,38 @@ impl Instance {
     Ok(res)
   }
 
+  /// First free clause index.
+  pub fn next_clause_index(& self) -> ClsIdx {
+    self.clauses.next_index()
+  }
+
   /// Pushes a new clause.
+  pub fn push_new_clause(
+    & mut self, vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
+    info: & 'static str
+  ) -> Res< Option<ClsIdx> > {
+    let idx = self.clauses.next_index() ;
+    let clause = Clause::new(vars, lhs, rhs, info, idx) ;
+    self.push_clause(clause)
+  }
+
+  /// Sets the name for an original clause.
+  pub fn set_old_clause_name(
+    & mut self, cls: ClsIdx, name: String
+  ) -> Res<()> {
+    let prev = self.old_names.insert(cls, name) ;
+    if let Some(prev) = prev {
+      bail!(
+        format!(
+          "trying to name clause #{}, but it's already called {}", 
+          cls, conf.bad(& prev)
+        )
+      )
+    }
+    Ok(())
+  }
+
+  /// Pushes a clause.
   ///
   /// Returns its index, if it was added.
   pub fn push_clause(& mut self, clause: Clause) -> Res< Option<ClsIdx> > {
@@ -1587,8 +1623,23 @@ impl Instance {
       }
     }
 
+    write!(
+      w, "\n; Original clauses' names ({}) {{\n", self.old_names.len()
+    ) ? ;
+    for (idx, name) in & self.old_names {
+      write!(w, ";   #{}: `{}`.\n", idx, name) ?
+    }
+    write!(w, "; }}\n") ? ;
+
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
+      for clause in clause.from() {
+        write!(w, ";   from #{}", clause) ? ;
+        if let Some(name) = self.old_names.get(clause) {
+          write!(w, ": {}", name) ?
+        }
+        write!(w, "\n") ?
+      }
       clause.write(
         w, |w, p, args| {
           if ! args.is_empty() {
@@ -1857,8 +1908,23 @@ impl<'a> PebcakFmt<'a> for Instance {
       }
     }
 
+    write!(
+      w, "\n; Original clauses' names ({}) {{\n", self.old_names.len()
+    ) ? ;
+    for (idx, name) in & self.old_names {
+      write!(w, "; Original clause #{} is called `{}`.\n", idx, name) ?
+    }
+    write!(w, "; }}\n") ? ;
+
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
+      for clause in clause.from() {
+        write!(w, "; from #{}", clause) ? ;
+        if let Some(name) = self.old_names.get(clause) {
+          write!(w, ": {}", name) ?
+        }
+        write!(w, "\n") ?
+      }
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
 

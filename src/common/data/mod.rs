@@ -6,6 +6,7 @@ use learning::ice::data::CData ;
 pub mod args ;
 pub mod sample ;
 pub mod constraint ;
+pub mod unsat_core ;
 mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;

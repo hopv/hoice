@@ -35,19 +35,24 @@ pub struct Clause {
   pub from_unrolling: bool,
   /// Info about who created this clause.
   pub info: & 'static str,
+
+  /// Index of the original clause this comes from.
+  from: ClsSet,
 }
 impl Clause {
   /// Creates a clause.
   pub fn new(
     vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
-    info: & 'static str
+    info: & 'static str, cls: ClsIdx,
   ) -> Self {
+    let mut from = ClsSet::new() ;
+    from.insert(cls) ;
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause {
       vars, lhs_terms, lhs_preds, rhs,
       terms_changed: true, from_unrolling: false,
-      info
+      info, from
     } ;
     for tterm in lhs { clause.lhs_insert(tterm) ; }
     clause
@@ -460,6 +465,20 @@ impl Clause {
     & self.vars
   }
 
+  /// Adds a source clause.
+  ///
+  /// Source clauses are original clauses this clause stems from.
+  pub fn add_from(& mut self, cls: ClsIdx) -> bool {
+    self.from.insert(cls)
+  }
+
+  /// Returns the source clauses.
+  ///
+  /// Source clauses are original clauses this clause stems from.
+  pub fn from(& self) -> & ClsSet {
+    & self.from
+  }
+
   /// Clones a clause without the lhs predicate applications.
   pub fn clone_except_lhs_of(
     & self, pred: PrdIdx, info: & 'static str
@@ -478,6 +497,7 @@ impl Clause {
       terms_changed: true,
       from_unrolling: self.from_unrolling,
       info,
+      from: self.from.clone(),
     }
   }
 
@@ -510,7 +530,8 @@ impl Clause {
       rhs,
       terms_changed,
       from_unrolling: self.from_unrolling,
-      info
+      info,
+      from: self.from.clone()
     }
   }
 
@@ -693,6 +714,11 @@ impl Clause {
       ",
       inactive, self.from_unrolling, self.terms_changed, self.info
     ) ? ;
+    write!(w, "  ; from: {{") ? ;
+    for clause in & self.from {
+      write!(w, " {}", clause) ?
+    }
+    write!(w, " }}\n") ? ;
 
     let lhs_len = self.lhs_len() ;
 

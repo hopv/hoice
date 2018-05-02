@@ -2,7 +2,9 @@
 name = "hoice"
 version = "1.5.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
-
+description = "A ICE-based Horn clause solver."
+homepage = "https://github.com/hopv/hoice"
+repository = "https://github.com/hopv/hoice"
 readme = "README.md"
 categories = ["science"]
 keywords = ["machine learning", "verification", "proof"]
@@ -29,6 +31,7 @@ panic = 'unwind'
 bench = [ ]
 
 [dependencies]
+human-panic = "*"
 lazy_static = "*"
 clap = "*"
 hashconsing = "*"

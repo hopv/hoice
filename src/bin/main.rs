@@ -1,10 +1,13 @@
 //! Entry point for the binary.
 
+#[macro_use]
+extern crate human_panic ;
 extern crate hoice ;
 
 use hoice::common::* ;
 
 fn main() {
+  setup_panic!() ;
 
   // Work and report error if any.
   if let Err(errs) = ::hoice::work() {
