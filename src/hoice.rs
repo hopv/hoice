@@ -252,11 +252,14 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::GetUnsatCore => match unsat.as_ref().map(
         |core| core.as_ref()
       ) {
-        Some(None) | None => println!("\
-          (error \"unsat cores are only available after an unsat result, \
-          and if the command `(set-option :produce-unsat-core true)` \
-          was issued before the `(check-sat)`\"))\
-        "),
+        Some(None) | None => println!(
+          "({} \"\n  \
+            unsat cores are only available {},\n  \
+            and if the command {}\n  \
+            was issued at the beginning of the script\n\")\
+          ", conf.bad("error"), conf.emph("after an unsat result"),
+          conf.emph("`(set-option :produce-unsat-core true)`")
+        ),
         Some(Some(& (ref graph, ref source))) => {
           let core = graph.unsat_core_for(
             & instance, & source

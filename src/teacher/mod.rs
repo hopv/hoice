@@ -35,38 +35,18 @@ pub fn start_class(
 
   let res = match teach(& mut teacher) {
 
-    Ok(Some(candidates)) => Ok( Either::Left(candidates) ),
-
-    Ok(None) => {
-      warn! {
-        "legacy unsat (by None) result triggered\n\
-        unsat core will not be available\n\
-        please consider contacting the developer"
-      }
-      let res = teacher.data.sample_graph().map(
-        |graph| (graph, vec![])
-      ) ;
-      Ok( Either::Right(res) )
-    },
+    Ok(res) => Ok(res),
 
     Err(e) => {
       match e.kind() {
-        & ErrorKind::NuUnsat(ref unsat, _) => {
-          let res = teacher.data.sample_graph().map(
-            |graph| (graph, unsat.clone())
-          ) ;
-          return Ok( Either::Right(res) )
-        },
         & ErrorKind::Unsat => {
           warn! {
             "legacy unsat (by error) result triggered\n\
             unsat core will not be available\n\
             please consider contacting the developer"
           }
-          let res = teacher.data.sample_graph().map(
-            |graph| (graph, vec![])
-          ) ;
-          return Ok( Either::Right(res) )
+          let core = teacher.unsat_core() ? ;
+          return Ok( Either::Right(core) )
         },
         _ => ()
       }
@@ -82,7 +62,9 @@ pub fn start_class(
 
 
 /// Teaching to the learners.
-pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
+pub fn teach(teacher: & mut Teacher) -> Res<
+  Either<Candidates, UnsatRes>
+>{
 
   log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
@@ -94,7 +76,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
     log_debug!{ "solved by initial cex..." }
-    return Ok( Some(cands) )
+    return Ok( Either::Left(cands) )
   }
   log_debug!{ "generating data from initial cex..." }
   let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
@@ -115,10 +97,6 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
-    }
-
-    if let Some(unsat) = teacher.data.is_unsat() {
-      nu_unsat!(unsat)
     }
 
     if let Some(idx) = learner {
@@ -148,10 +126,10 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
     match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
-      None => return Ok(None),
+      Either::Right(unsat) => return Ok(Either::Right(unsat)),
 
       // Got a candidate.
-      Some( ( idx, candidates) ) => {
+      Either::Left( ( idx, candidates) ) => {
         learner = Some(idx) ;
         if_verb!{
           log! { conf.teacher.step, || @info
@@ -182,7 +160,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         profile!{ teacher mark "cexs" }
 
         if cexs.is_empty() {
-          return Ok( Some(candidates) )
+          return Ok( Either::Left(candidates) )
         }
 
         profile!{ teacher tick "data" }
@@ -215,7 +193,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
           },
           Err(e) => {
             if e.is_unsat() {
-              return Ok(None)
+              return Ok( Either::Right(teacher.unsat_core() ?) )
             } else {
               bail!(e)
             }
@@ -469,7 +447,7 @@ impl<'a> Teacher<'a> {
   /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
     & mut self, drain: bool
-  ) -> Res< Option<(LrnIdx, Candidates)> > {
+  ) -> Res< Either<(LrnIdx, Candidates), UnsatRes> > {
     macro_rules! all_dead {
       () => ( bail!("all learners are dead") ) ;
     }
@@ -533,7 +511,7 @@ impl<'a> Teacher<'a> {
         MsgKind::Cands(cands) => {
           profile!{ self "candidates" => add 1 }
           if let Id::Learner(idx) = id {
-            return Ok( Some( (idx, cands) ) )
+            return Ok( Either::Left( (idx, cands) ) )
           } else {
             bail!("received candidates from {}", id)
           }
@@ -592,10 +570,20 @@ impl<'a> Teacher<'a> {
           }
         },
 
-        MsgKind::Unsat => return Ok(None),
+        MsgKind::Unsat => return Ok(Either::Right(self.unsat_core() ?)),
 
       }
 
+    }
+  }
+
+  /// Retrieves the unsat core, if any.
+  pub fn unsat_core(& mut self) -> Res<UnsatRes> {
+    if let Some(unsat) = self.data.is_unsat() {
+      let res = self.data.sample_graph().map(|graph| (graph, unsat)) ;
+      return Ok(res)
+    } else {
+      bail!("could not retrieve unsat result")
     }
   }
 

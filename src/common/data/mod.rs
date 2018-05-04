@@ -754,7 +754,7 @@ impl Data {
         if let Some((pred, args)) = rhs {
           unsat.push((pred, self.mk_sample(args).0))
         }
-        nu_unsat!(unsat)
+        unsat!()
       },
     }
   }

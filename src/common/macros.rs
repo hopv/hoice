@@ -43,14 +43,6 @@ macro_rules! unsat {
 }
 
 
-/// Bails with unsat.
-macro_rules! nu_unsat {
-  ($unsat:expr) => (
-    bail!($crate::errors::ErrorKind::NuUnsat($unsat, None))
-  ) ;
-}
-
-
 
 /// Wraps stuff in a block, usually to please borrow-checking.
 macro_rules! scoped {
