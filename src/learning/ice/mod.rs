@@ -289,7 +289,7 @@ impl<'core> IceLearner<'core> {
       } "learning", "setup"
     ) ? ;
 
-    if contradiction { bail!( ErrorKind::Unsat ) }
+    if contradiction { unsat!() }
 
     self.check_exit() ? ;
 
@@ -893,7 +893,7 @@ impl<'core> IceLearner<'core> {
         // }
         // msg.push_str("\n)") ;
         // bail!(msg)
-        bail!(ErrorKind::Unsat)
+        unsat!()
       },
     } ;
     profile!{ self tick "learning", "qual", "data split" }

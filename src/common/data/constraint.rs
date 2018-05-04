@@ -316,7 +316,7 @@ impl Constraint {
   ///
   /// If the result isn't `None`, the sample returned has been removed and the
   /// constraint is now a tautology.
-  pub fn is_trivial(& mut self) -> Res< Option<(Sample, bool)> > {
+  pub fn is_trivial(& mut self) -> Either<(Sample, bool), bool> {
     if self.lhs().map(|lhs| lhs.is_empty()).unwrap_or(false) {
       let mut rhs = None ;
       ::std::mem::swap(& mut rhs, & mut self.rhs) ;
@@ -324,9 +324,13 @@ impl Constraint {
       ::std::mem::swap(& mut lhs, & mut self.lhs) ;
       if rhs.is_none() {
         // true => false
-        unsat!()
+        return Either::Right(true)
       }
-      Ok( rhs.map(|s| (s, true)) )
+      if let Some(s) = rhs {
+        Either::Left((s, true))
+      } else {
+        Either::Right(false)
+      }
     } else if self.rhs.is_none() {
       if let Some(lhs) = self.lhs() {
         let mut first = true ;
@@ -335,12 +339,12 @@ impl Constraint {
             if first {
               first = false
             } else {
-              return Ok(None)
+              return Either::Right(false)
             }
           }
         }
       } else {
-        return Ok(None)
+        return Either::Right(false)
       }
 
       let mut old_lhs = None ;
@@ -349,13 +353,11 @@ impl Constraint {
       // Only reachable if there's one pred app in lhs.
       let (pred, argss) = old_lhs.unwrap().into_iter().next().unwrap() ;
       let args = argss.into_iter().next().unwrap() ;
-      Ok(
-        Some((
-          Sample { pred, args }, false
-        ))
-      )
+      Either::Left((
+        Sample { pred, args }, false
+      ))
     } else {
-      Ok(None)
+      Either::Right(false)
     }
   }
 }

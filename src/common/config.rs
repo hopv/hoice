@@ -1,6 +1,9 @@
 //! Hoice's global configuration.
 
-use std::path::PathBuf ;
+use std::{
+  path::PathBuf,
+  sync::{ Arc, RwLock },
+} ;
 
 use rsmt2::SmtConf as SolverConf ;
 
@@ -986,6 +989,15 @@ pub struct Config {
   /// Level of term simplification.
   pub term_simpl: usize,
 
+  /// Print success.
+  ///
+  /// Can only be set by `(set-option :print-success true)`.
+  print_success: Arc<RwLock<bool>>,
+  /// Unsat core production.
+  ///
+  /// Can only be set by `(set-option :produce-unsat-cores true)`.
+  unsat_cores: Arc<RwLock<bool>>,
+
   /// Instance and factory configuration.
   pub instance: InstanceConf,
   /// Pre-processing configuration.
@@ -1009,6 +1021,76 @@ impl Config {
       path.push( format!("split_on_clause_{}", clause) )
     }
     path
+  }
+
+  /// Reverts `set-option`-related flags to default.
+  pub fn init(& self) {
+    self.set_print_success(::common::consts::values::default::print_success) ;
+    self.set_unsat_cores(::common::consts::values::default::unsat_cores) ;
+    ()
+  }
+
+
+  /// Sets print-success flag.
+  pub fn set_print_success(& self, b: bool) {
+    if let Ok(mut flag) = self.print_success.write() {
+      * flag = b
+    } else {
+      panic!("failed to set print-success conf flag")
+    }
+  }
+  /// Print-success flag accessor.
+  pub fn print_success(& self) -> bool {
+    if let Ok(flag) = self.print_success.read() {
+      * flag
+    } else {
+      panic!("failed to retrieve print-success conf flag")
+    }
+  }
+  /// Sets unsat-cores flag.
+  pub fn set_unsat_cores(& self, b: bool) {
+    if let Ok(mut flag) = self.unsat_cores.write() {
+      * flag = b
+    } else {
+      panic!("failed to set unsat-cores conf flag")
+    }
+  }
+  /// Unsat-cores flag.
+  pub fn unsat_cores(& self) -> bool {
+    if let Ok(flag) = self.unsat_cores.read() {
+      * flag
+    } else {
+      panic!("failed to retrieve unsat-cores conf flag")
+    }
+  }
+
+  /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
+  /// an error.
+  fn bool_of_str(s: & str) -> Res<bool> {
+    match s {
+      "true" => Ok(true),
+      "false" => Ok(false),
+      _ => bail!("expected boolean `true/false`, got `{}`", s),
+    }
+  }
+  
+
+
+  /// Sets an option.
+  pub fn set_option(& self, flag: & str, val: & str) -> Res<()> {
+    let flag_err = || format!("while handling set-option for {}", flag) ;
+    match flag {
+      "print-success" => self.set_print_success(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      "produce-unsat-cores" => self.set_unsat_cores(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      _ => warn!(
+        "ignoring (set-option :{} {}): unknown flag {}", flag, val, flag
+      ),
+    }
+    Ok(())
   }
 
 
@@ -1141,6 +1223,16 @@ impl Config {
       file, verb, stats, infer, split, split_step,
       timeout, out_dir, styles,
       check, check_eld, check_simpl, term_simpl,
+      print_success: Arc::new(
+        RwLock::new(
+          ::common::consts::values::default::print_success
+        )
+      ),
+      unsat_cores: Arc::new(
+        RwLock::new(
+          ::common::consts::values::default::unsat_cores
+        )
+      ),
       instance, preproc, solver, ice, teacher,
     }
   }

@@ -1410,7 +1410,7 @@ impl RedStrat for CfgRed {
         let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
         info += this_info ;
         if ! is_sat {
-          bail!( ErrorKind::Unsat )
+          unsat!()
         } else {
           total_info += info ;
           break

@@ -1,6 +1,10 @@
 //! SMT-related zero-cost wrappers.
 
+use std::str::FromStr ;
+use std::io::BufRead ;
+
 use rsmt2::print::* ;
+use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
 
 use common::* ;
 use common::data::Constraint ;
@@ -286,6 +290,57 @@ impl<'a, T> Expr2Smt<()> for SmtActSamples<
   }
 }
 
+
+
+/// Wrapper around some terms and some values for these terms.
+///
+/// Asserts that each term is equal to the corresponding value.
+pub struct EqConj<'a> {
+  /// Terms.
+  pub terms: & 'a Vec<Term>,
+  /// Values.
+  pub vals: & 'a Args,
+}
+impl<'a> EqConj<'a> {
+  /// Constructor.
+  ///
+  /// Both lists must have the same length.
+  pub fn new(terms: & 'a Vec<Term>, vals: & 'a Args) -> Self {
+    debug_assert_eq! { terms.len(), vals.len() }
+
+    EqConj { terms, vals }
+  }
+}
+impl<'a> Expr2Smt<()> for EqConj<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    let mut is_first = true ;
+    for (term, val) in self.terms.iter().zip( self.vals.iter() ) {
+      if ! val.is_known() {
+        continue
+      }
+      if is_first {
+        write!(w, "(and") ? ;
+        is_first = false
+      }
+      write!(w, " (= ") ? ;
+      term.write(w, |w, var| write!(w, "{}", var.default_str())) ? ;
+      write!(w, " ") ? ;
+      val.expr_to_smt2(w, ()) ? ;
+      write!(w, ")") ?
+    }
+    if is_first {
+      write!(w, "true") ?
+    } else {
+      write!(w, ")") ?
+    }
+    Ok(())
+  }
+}
+
+
+
 /// Wrapper for some arguments and a disjunction of terms.
 ///
 /// Corresponds to the disjunction of `(= args v)` for `v` in `vals`.
@@ -339,5 +394,65 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
     write!(w, ")") ? ;
 
     Ok(())
+  }
+}
+
+
+
+
+
+/// Unit type parsing the output of the SMT solver.
+///
+/// Parses variables of the form `v<int>` and constants. It is designed to
+/// parse models of the falsification of a single clause, where the
+/// variables of the clause are written as `v<index>` in smt2.
+#[derive(Clone, Copy)]
+pub struct FullParser ;
+
+impl<'a> IdentParser<VarIdx, (), & 'a str> for FullParser {
+  fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
+    debug_assert_eq!( & input[0..2], "v_" ) ;
+    match usize::from_str(& input[2..]) {
+      Ok(idx) => Ok( idx.into() ),
+      Err(e) => bail!(
+        "could not retrieve var index from `{}`: {}", input, e
+      ),
+    }
+  }
+  fn parse_type(self, _: & 'a str) -> SmtRes<()> {
+    Ok(())
+  }
+}
+
+impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for FullParser
+where Br: BufRead {
+  fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
+    if let Some(val) = input.try_int::<
+      _, _, ::num::bigint::ParseBigIntError
+    >(
+      |int, pos| {
+        let int = Int::from_str(int) ? ;
+        Ok( if ! pos { - int } else { int } )
+      }
+    ) ? {
+      Ok( Val::I(val) )
+    } else if let Some(val) = input.try_bool() ? {
+      Ok( Val::B(val) )
+    } else if let Some(val) = input.try_rat::<
+      _, _, ::num::bigint::ParseBigIntError
+    >(
+      |num, den, pos| {
+        let (num, den) = (
+          Int::from_str(num) ?, Int::from_str(den) ?
+        ) ;
+        let rat = Rat::new(num, den) ;
+        Ok( if ! pos { - rat } else { rat } )
+      }
+    ) ? {
+      let mut val = Val::R(val) ;
+      Ok(val)
+    } else {
+      input.fail_with("unexpected value")
+    }
   }
 }

@@ -31,10 +31,10 @@ pub use instance::Instance ;
 pub use common::consts::keywords ;
 
 mod wrappers ;
-pub mod config ;
 
 #[macro_use]
 pub mod macros ;
+pub mod config ;
 pub mod data ;
 #[macro_use]
 pub mod msg ;
@@ -62,6 +62,12 @@ lazy_static!{
 
 
 // |===| Helpers.
+
+/// Resets whatever flags, set-option and such need resetting.
+pub fn reset() {
+  conf.init() ;
+  ()
+}
 
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg(feature = "bench")]

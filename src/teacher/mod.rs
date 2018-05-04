@@ -11,12 +11,11 @@
 use common::* ;
 use common::data::Data ;
 use common::msg::* ;
-use common::smt::SmtTerm ;
-
-use self::smt::Parser ;
+use common::smt::{ SmtTerm, FullParser as Parser } ;
 
 pub mod assistant ;
 use self::assistant::Assistant ;
+use data::unsat_core::UnsatRes ;
 
 /// Starts the teaching process.
 ///
@@ -26,14 +25,57 @@ pub fn start_class(
   instance: & Arc<Instance>,
   partial_model: & ConjCandidates,
   profiler: & Profiler
-) -> Res< Option<Candidates> > {
+) -> Res< Either<Candidates, UnsatRes> > {
   let instance = instance.clone() ;
   log! { @debug
     "starting the learning process" ;
     "  launching solver kid..."
   }
-  let mut teacher = Teacher::new(instance, profiler, partial_model) ? ;
-  let res = teach(& mut teacher) ;
+  let mut teacher = Teacher::new(instance.clone(), profiler, partial_model) ? ;
+
+  let res = match teach(& mut teacher) {
+
+    Ok(Some(candidates)) => Ok( Either::Left(candidates) ),
+
+    Ok(None) => {
+      warn! {
+        "legacy unsat (by None) result triggered\n\
+        unsat core will not be available\n\
+        please consider contacting the developer"
+      }
+      let res = teacher.data.sample_graph().map(
+        |graph| (graph, vec![])
+      ) ;
+      Ok( Either::Right(res) )
+    },
+
+    Err(e) => {
+      match e.kind() {
+        & ErrorKind::NuUnsat(ref unsat, _) => {
+          let res = teacher.data.sample_graph().map(
+            |graph| (graph, unsat.clone())
+          ) ;
+          return Ok( Either::Right(res) )
+        },
+        & ErrorKind::Unsat => {
+          warn! {
+            "legacy unsat (by error) result triggered\n\
+            unsat core will not be available\n\
+            please consider contacting the developer"
+          }
+          let res = teacher.data.sample_graph().map(
+            |graph| (graph, vec![])
+          ) ;
+          return Ok( Either::Right(res) )
+        },
+        _ => ()
+      }
+
+      return Err(e)
+    }
+
+  } ;
+
   teacher.finalize() ? ;
   res
 }
@@ -73,6 +115,10 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
+    }
+
+    if let Some(unsat) = teacher.data.is_unsat() {
+      nu_unsat!(unsat)
     }
 
     if let Some(idx) = learner {
@@ -915,73 +961,5 @@ impl<'a> Teacher<'a> {
     }
 
     Ok( (lhs_actlit, rhs_actlit) )
-  }
-}
-
-
-
-/// Teacher's smt stuff.
-mod smt {
-  use std::str::FromStr ;
-  use std::io::BufRead ;
-
-  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
-
-  use common::* ;
-
-  /// Unit type parsing the output of the SMT solver.
-  ///
-  /// Parses variables of the form `v<int>` and constants. It is designed to
-  /// parse models of the falsification of a single clause, where the
-  /// variables of the clause are written as `v<index>` in smt2.
-  #[derive(Clone, Copy)]
-  pub struct Parser ;
-
-  impl<'a> IdentParser<VarIdx, (), & 'a str> for Parser {
-    fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
-      debug_assert_eq!( & input[0..2], "v_" ) ;
-      match usize::from_str(& input[2..]) {
-        Ok(idx) => Ok( idx.into() ),
-        Err(e) => bail!(
-          "could not retrieve var index from `{}`: {}", input, e
-        ),
-      }
-    }
-    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
-      Ok(())
-    }
-  }
-
-  impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for Parser
-  where Br: BufRead {
-    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
-      if let Some(val) = input.try_int::<
-        _, _, ::num::bigint::ParseBigIntError
-      >(
-        |int, pos| {
-          let int = Int::from_str(int) ? ;
-          Ok( if ! pos { - int } else { int } )
-        }
-      ) ? {
-        Ok( Val::I(val) )
-      } else if let Some(val) = input.try_bool() ? {
-        Ok( Val::B(val) )
-      } else if let Some(val) = input.try_rat::<
-        _, _, ::num::bigint::ParseBigIntError
-      >(
-        |num, den, pos| {
-          let (num, den) = (
-            Int::from_str(num) ?, Int::from_str(den) ?
-          ) ;
-          let rat = Rat::new(num, den) ;
-          Ok( if ! pos { - rat } else { rat } )
-        }
-      ) ? {
-        let mut val = Val::R(val) ;
-        Ok(val)
-      } else {
-        input.fail_with("unexpected value")
-      }
-    }
   }
 }

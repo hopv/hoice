@@ -1,13 +1,23 @@
 //! Entry point for the binary.
 
+#[allow(unused_imports)]
 #[macro_use]
 extern crate human_panic ;
 extern crate hoice ;
 
 use hoice::common::* ;
 
+#[cfg(not(debug_assertions))]
+fn setup() {
+  setup_panic!()
+}
+#[cfg(debug_assertions)]
+fn setup() {
+  ()
+}
+
 fn main() {
-  setup_panic!() ;
+  setup() ;
 
   // Work and report error if any.
   if let Err(errs) = ::hoice::work() {

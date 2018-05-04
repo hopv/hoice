@@ -3,7 +3,7 @@
 //! Used to reason separately on each positive/negative clause.
 
 use common::* ;
-
+use data::unsat_core::UnsatRes ;
 
 
 
@@ -19,7 +19,7 @@ use common::* ;
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
   real_instance: Arc<Instance>, _profiler: & Profiler
-) -> Res< Option<ConjCandidates> > {
+) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
   let mut model = ConjCandidates::new() ;
 
   macro_rules! model {
@@ -73,11 +73,12 @@ pub fn work(
       Either::Left(instance) => instance,
       Either::Right(None) => {
         log! { @info "unsat by preproc\n\n" }
-        bail!(ErrorKind::Unsat)
+        unsat!()
       },
       Either::Right(Some(this_model)) => {
         log! { @info "sat by preproc\n\n" }
         model! { add this_model }
+
         continue 'split_loop
       },
     } ;
@@ -88,7 +89,9 @@ pub fn work(
       } else {
         log! { @info "Skipping learning..." }
       }
+
       continue 'split_loop
+
     } else if conf.split_step {
       pause("to start solving", _profiler) ;
     } else {
@@ -101,29 +104,29 @@ pub fn work(
       } "solving"
     ) ? ;
 
-    if let Some(candidates) = res {
-      log! { @info "sat\n\n" }
-      let mut this_model = instance.model_of(candidates) ? ;
-      // profile! { |_profiler| tick "waiting" }
-      // while Arc::strong_count(& instance) != 1 {}
-      // profile! { |_profiler| mark "waiting" }
-      if let Some(instance) = Arc::get_mut(& mut instance) {
-        instance.simplify_pred_defs(& mut this_model) ?
-      }
-      model!(add this_model) ;
+    match res {
+      Either::Left(candidates) => {
+        log! { @info "sat\n\n" }
+        let mut this_model = instance.model_of(candidates) ? ;
+        // profile! { |_profiler| tick "waiting" }
+        // while Arc::strong_count(& instance) != 1 {}
+        // profile! { |_profiler| mark "waiting" }
+        if let Some(instance) = Arc::get_mut(& mut instance) {
+          instance.simplify_pred_defs(& mut this_model) ?
+        }
+        model!(add this_model) ;
+        // let mut model = real_instance.extend_model(model.clone()) ? ;
+        // let stdout = & mut ::std::io::stdout() ;
+        // real_instance.write_model(& model, stdout) ?
+      },
 
-      // let mut model = real_instance.extend_model(model.clone()) ? ;
-      // let stdout = & mut ::std::io::stdout() ;
-      // real_instance.write_model(& model, stdout) ?
-    } else {
-      log! { @info "unsat\n\n" }
-      bail!(ErrorKind::Unsat)
+      Either::Right(reason) => return Ok( Some( Either::Right(reason) ) ),
     }
 
   }
 
   if conf.infer {
-    Ok( Some(model) )
+    Ok( Some( Either::Left(model) ) )
   } else {
     Ok(None)
   }
@@ -134,7 +137,7 @@ pub fn work(
 pub fn run_teacher(
   instance: Arc<Instance>,
   model: & ConjCandidates,
-) -> Res< Option<Candidates> > {
+) -> Res< Either<Candidates, UnsatRes> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
     & instance, model, & teacher_profiler

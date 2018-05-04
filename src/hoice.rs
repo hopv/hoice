@@ -92,6 +92,8 @@ pub fn read_and_work<R: ::std::io::Read>(
 ) -> Res< (Option<ConjModel>, Instance) > {
   use instance::parse::ItemRead ;
 
+  reset() ;
+
   let profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
@@ -107,6 +109,13 @@ pub fn read_and_work<R: ::std::io::Read>(
   let mut model = None ;
   // Any error encountered?
   // let mut error = false ;
+
+  // Unsat core.
+  //
+  // - `None`             if not unsat
+  // - `Some(None)`       if unsat but no core
+  // - `Some(Some(core))` otherwise
+  let mut unsat = None ;
 
   'parse_work: loop {
     use instance::parse::Parsed ;
@@ -142,8 +151,18 @@ pub fn read_and_work<R: ::std::io::Read>(
     
     match parse_res {
 
+      // Check-sat on unsat instance?
+      Parsed::CheckSat if unsat.is_some() => {
+        println!("unsat") ;
+
+        if stop_on_check {
+          return Ok( (model, instance) )
+        }
+      },
+
       // Check-sat, start class.
       Parsed::CheckSat => {
+
         log! { @info "Running top pre-processing" }
 
         let preproc_profiler = Profiler::new() ;
@@ -190,7 +209,7 @@ pub fn read_and_work<R: ::std::io::Read>(
           } ;
 
           match solve_res {
-            Ok(Some(res)) => {
+            Ok(Some(Either::Left(res))) => {
               println!("sat") ;
               Some(
                 instance.extend_model(res) ?
@@ -200,16 +219,22 @@ pub fn read_and_work<R: ::std::io::Read>(
               println!("unknown") ;
               None
             },
-            Err(e) => if e.is_unsat() {
+            Ok(Some(Either::Right(res))) => {
+              unsat = Some(res) ;
               println!("unsat") ;
               None
-            } else if e.is_timeout() {
+            }
+            Err(ref e) if e.is_unsat() => {
+              unsat = Some(None) ;
+              println!("unsat") ;
+              None
+            },
+            Err(ref e) if e.is_timeout() => {
               println!("unknown") ;
               print_stats("top", profiler) ;
               ::std::process::exit(0)
-            } else {
-              bail!(e)
             },
+            Err(e) => bail!(e),
           }
         } ;
 
@@ -219,7 +244,40 @@ pub fn read_and_work<R: ::std::io::Read>(
 
       },
 
+      Parsed::GetUnsatCore |
       Parsed::GetModel if ! conf.infer => (),
+
+
+      // Print unsat core if available.
+      Parsed::GetUnsatCore => match unsat.as_ref().map(
+        |core| core.as_ref()
+      ) {
+        Some(None) | None => println!("\
+          (error \"unsat cores are only available after an unsat result, \
+          and if the command `(set-option :produce-unsat-core true)` \
+          was issued before the `(check-sat)`\"))\
+        "),
+        Some(Some(& (ref graph, ref source))) => {
+          let core = graph.unsat_core_for(
+            & instance, & source
+          ) ? ;
+          println!("(") ;
+          for (clause, vals) in core {
+            if let Some(name) = instance.name_of_old_clause(clause) {
+              println!("  ({} (", name) ;
+              for (var, val) in vals {
+                println!(
+                  "    (define-fun {} () {} {})",
+                  instance[clause][var], instance[clause][var].name, val
+                )
+              }
+              println!("  ) )")
+            }
+          }
+          println!(")")
+        },
+      }
+
 
       // Print model if available.
       Parsed::GetModel => if let Some(model) = model.as_mut() {
@@ -231,9 +289,12 @@ pub fn read_and_work<R: ::std::io::Read>(
         bail!("no model available")
       },
 
-      Parsed::Items => (),
+      Parsed::Items => if conf.print_success() {
+        println!("success")
+      },
 
       Parsed::Reset => {
+        reset() ;
         parser_cxt.reset() ;
         instance = Instance::new() ;
         model = None

@@ -93,6 +93,17 @@ error_chain!{
       description("unsat")
       display("unsat")
     }
+    /// Not really an error, unsat early return.
+    ///
+    /// When raised by a kid, `core` is none, only the samples causing the
+    /// unsat result is there. The teacher adds the core.
+    NuUnsat(
+      unsat: Vec<(PrdIdx, Args)>,
+      core: Option<::common::data::unsat_core::SampleGraph>
+    ) {
+      description("unsat")
+      display("unsat")
+    }
     #[doc = "Not really an error, exit early return."]
     Exit {
       description("exit")
@@ -114,6 +125,7 @@ impl Error {
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,
+      ErrorKind::NuUnsat(_, _) => true,
       _ => false,
     }
   }

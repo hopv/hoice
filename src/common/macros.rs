@@ -43,6 +43,14 @@ macro_rules! unsat {
 }
 
 
+/// Bails with unsat.
+macro_rules! nu_unsat {
+  ($unsat:expr) => (
+    bail!($crate::errors::ErrorKind::NuUnsat($unsat, None))
+  ) ;
+}
+
+
 
 /// Wraps stuff in a block, usually to please borrow-checking.
 macro_rules! scoped {
@@ -145,13 +153,13 @@ macro_rules! debug {
 macro_rules! warn {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     println!(
-      "; {}", conf.sad("|===| Warning:")
+      "; {}", ::common::conf.sad("|===| Warning:")
     ) ;
     $(
-      print!("; {} ", conf.sad("|")) ;
+      print!("; {} ", ::common::conf.sad("|")) ;
       println!( $str $(, $args)* ) ;
     )*
-    println!("; {}", conf.sad("|===|"))
+    println!("; {}", ::common::conf.sad("|===|"))
   }) ;
 }
 

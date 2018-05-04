@@ -853,6 +853,13 @@ impl Instance {
     self.push_clause(clause)
   }
 
+  /// The name of an original clause if any.
+  pub fn name_of_old_clause(
+    & self, cls: ClsIdx
+  ) -> Option<& String> {
+    self.old_names.get(& cls)
+  }
+
   /// Sets the name for an original clause.
   pub fn set_old_clause_name(
     & mut self, cls: ClsIdx, name: String
@@ -1293,7 +1300,7 @@ impl Instance {
 
   }
 
-  /// Turns a teacher counterexample into learning data.
+  /// Turns some teacher counterexamples into learning data.
   pub fn cexs_to_data(
     & self, data: & mut ::common::data::Data, cexs: Cexs
   ) -> Res<bool> {
@@ -1314,8 +1321,21 @@ impl Instance {
       })
     }
 
+    // Registers sample dependencies in `data`.
+    macro_rules! sample_dep {
+      ($clause:expr, $antecedents:expr, $rhs_pred:expr, $rhs_args:expr) => ({
+        let mut ante = PrdHMap::new() ;
+        for (pred, args) in $antecedents {
+          ante.entry(pred).or_insert_with(
+            || vec![]
+          ).push(args)
+        }
+        data.register(Some(($rhs_pred, $rhs_args)), $clause, ante) ?
+      }) ;
+    }
+
     let mut nu_stuff = false ;
-    for (clause, cexs) in cexs.into_iter() {
+    for (clause_idx, cexs) in cexs.into_iter() {
 
       for cex in cexs {
 
@@ -1327,7 +1347,7 @@ impl Instance {
         //   }
         // }
 
-        let clause = & self[clause] ;
+        let clause = & self[clause_idx] ;
         let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
 
         // debug! { "    working on lhs..." }
@@ -1380,20 +1400,33 @@ impl Instance {
         } ;
 
         match ( antecedents.len(), consequent ) {
-          (0, None) => bail!(
-            ErrorKind::Unsat
-          ),
+          (0, None) => unsat!(),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            data.add_raw_neg(pred, args) ;
+            if let Some(args) = data.add_raw_neg(pred, args) {
+              let mut lhs = PrdHMap::new() ;
+              let mut argss = Vec::new() ;
+              argss.push(args) ;
+              lhs.insert(pred, argss) ;
+              data.register(None, clause_idx, lhs) ?
+            }
           },
           (0, Some( (pred, args) )) => {
-            data.add_raw_pos(pred, args) ;
+            if let Some(args) = data.add_raw_pos(pred, args) {
+              sample_dep! {
+                clause.from().iter().next().unwrap().clone(),
+                vec![], pred, args
+              }
+            }
           },
           (_, consequent) => {
             let (new_pos, new_neg) = data.propagate() ? ;
-            let new = data.add_cstr(antecedents, consequent) ? ;
-            nu_stuff = nu_stuff || new || new_pos > 0 || new_neg > 0
+            let res = data.add_cstr(antecedents, consequent) ? ;
+            nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
+            if let Some((rhs, lhs)) = res {
+              nu_stuff = true ;
+              data.register(rhs, clause_idx, lhs) ?
+            }
           },
         }
       }

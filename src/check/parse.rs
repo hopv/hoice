@@ -254,6 +254,30 @@ impl<'a> InParser<'a> {
     Ok(true)
   }
 
+  /// Set-option.
+  fn set_option(& mut self) -> Res< Option<(String, String)> > {
+    if ! self.tag_opt("set-option") {
+      return Ok(None)
+    }
+    self.ws_cmt() ;
+    self.char(':') ? ;
+    let key = self.ident() ? ;
+    self.ws_cmt() ;
+    let val = if self.char_opt('|') {
+      let res = self.not_char('|') ;
+      self.char('|') ? ;
+      res
+    } else if self.char_opt('"') {
+      let res = self.not_char('"') ;
+      self.char('"') ? ;
+      res
+    } else {
+      let res = self.not_char(')') ;
+      res.trim().into()
+    } ;
+    Ok(Some((key, val)))
+  }
+
   /// Type or fails.
   fn typ(& mut self) -> Res<Typ> {
     if let Some(t) = self.typ_opt() {
@@ -410,6 +434,8 @@ impl<'a> InParser<'a> {
       if self.set_logic() ? {
         ()
       } else if self.set_info() ? {
+        ()
+      } else if let Some(_) = self.set_option() ? {
         ()
       } else if self.declare_fun() ? {
         ()

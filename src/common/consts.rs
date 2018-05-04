@@ -64,6 +64,27 @@ macro_rules! keys {
 
 
 
+/// Values used in hoice.
+pub mod values {
+  /// Default values.
+  pub mod default {
+    /// Generate unsat cores?
+    pub const unsat_cores: bool = false ;
+    /// Print success?
+    pub const print_success: bool = false ;
+  }
+}
+
+/// Error messages.
+pub mod errors {
+  /// Unsat core asked but not active.
+  pub const no_unsat_cores: & str = "\
+    unsat core production is not active:\n\
+    consider adding `(set-option :produce-unsat-core true)`\n\
+    at the start of your script
+  " ;
+}
+
 
 
 
@@ -133,6 +154,7 @@ pub mod keywords {
 
         check_sat ("check-sat", doc = "Check-sat keyword.")
         get_model ("get-model", doc = "Get-model keyword.")
+        get_unsat_core ("get-unsat-core", doc = "Get-unsat-core keyword.")
 
         reset ("reset", doc = "Reset keyword.")
         exit  ("exit", doc = "Exit keyword.")

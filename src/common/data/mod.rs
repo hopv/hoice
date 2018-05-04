@@ -7,6 +7,7 @@ pub mod args ;
 pub mod sample ;
 pub mod constraint ;
 pub mod unsat_core ;
+use self::unsat_core::SampleGraph ;
 mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
@@ -42,8 +43,26 @@ pub struct Data {
   staged: Staged,
   /// Constraint info.
   cstr_info: CstrInfo,
+  /// Sample dependency graph for unsat cores extraction.
+  ///
+  /// Different from `None` iff `conf.unsat_cores()`
+  graph: Option<SampleGraph>,
+
   /// Profiler.
   _profiler: Profiler,
+}
+
+
+impl ::std::fmt::Debug for Data {
+  fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+    write!(
+      fmt,
+      "Data {{ {} pos, {} neg, {} constraints }}",
+      self.pos.iter().fold(0, |acc, argss| acc + argss.len()),
+      self.neg.iter().fold(0, |acc, argss| acc + argss.len()),
+      self.constraints.len(),
+    )
+  }
 }
 
 
@@ -72,6 +91,11 @@ impl Data {
       factory: new_factory(),
       staged: Staged::with_capacity(pred_count),
       cstr_info: CstrInfo::new(),
+      graph: if conf.unsat_cores() {
+        Some( SampleGraph::new() )
+      } else {
+        None
+      },
       _profiler: Profiler::new(),
     }
   }
@@ -100,6 +124,36 @@ impl Data {
         self.instance.preds()
       ).unwrap()
     )
+  }
+
+  /// Registers a dependency between samples.
+  pub fn register(
+    & mut self, rhs: Option<(PrdIdx, Args)>,
+    cls: ClsIdx, samples: PrdHMap<Vec<Args>>,
+  ) -> Res<()> {
+    if let Some(graph) = self.graph.as_mut() {
+      if let Some((pred, args)) = rhs {
+        graph.add(pred, args, cls, samples) ?
+      } else {
+        for (pred, argss) in & samples {
+          for args in argss {
+            graph.add_neg(* pred, args.clone(), cls, samples.clone()) ?
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// The sample graph, used for unsat cores.
+  pub fn sample_graph(& mut self) -> Option<SampleGraph> {
+    if let Some(ref mut graph) = self.graph {
+      let mut old_graph = SampleGraph::new() ;
+      ::std::mem::swap(graph, & mut old_graph) ;
+      Some(old_graph)
+    } else {
+      None
+    }
   }
 
   /// Clones the new/modded constraints to create a new `Data`.
@@ -201,17 +255,25 @@ impl Data {
   /// Adds a new positive example.
   ///
   /// Does not propagate.
-  pub fn add_raw_pos(& mut self, pred: PrdIdx, args: RArgs) -> bool {
+  pub fn add_raw_pos(& mut self, pred: PrdIdx, args: RArgs) -> Option<Args> {
     let (args, _) = self.mk_sample(args) ;
-    self.staged.add_pos(pred, args)
+    if self.staged.add_pos(pred, args.clone()) {
+      Some(args)
+    } else {
+      None
+    }
   }
 
   /// Adds a new negative example.
   ///
   /// Does not propagate.
-  pub fn add_raw_neg(& mut self, pred: PrdIdx, args: RArgs) -> bool {
+  pub fn add_raw_neg(& mut self, pred: PrdIdx, args: RArgs) -> Option<Args> {
     let (args, _) = self.mk_sample(args) ;
-    self.staged.add_neg(pred, args)
+    if self.staged.add_neg(pred, args.clone()) {
+      Some(args)
+    } else {
+      None
+    }
   }
 
 
@@ -342,6 +404,26 @@ impl Data {
 
 
 
+  /// Checks whether the data is contradictory.
+  pub fn is_unsat(& self) -> Option<
+    Vec<(PrdIdx, Args)>
+  > {
+    for (pred, samples) in self.pos.index_iter() {
+      for sample in samples {
+        for neg in & self.neg[pred] {
+          if sample.compare(neg).is_some() {
+            return Some(
+              vec![(pred, sample.clone()), (pred, neg.clone())]
+            )
+          }
+        }
+      }
+    }
+    None
+  }
+
+
+
 
   /// Propagates all staged samples.
   ///
@@ -426,23 +508,29 @@ impl Data {
             if tautology {
               // Tautology, discard.
               self.cstr_info.forget(constraint_idx)
-            } else if let Some((
-              Sample { pred, args }, pos
-            )) = constraint.is_trivial() ? {
-              // Constraint is trivial: unlink and forget.
-              if let Some(set) = map[pred].get_mut(& args) {
-                let was_there = set.remove(& constraint_idx) ;
-                debug_assert! { was_there }
-              }
-              self.cstr_info.forget(constraint_idx) ;
-              // Stage the consequence of the triviality.
-              self.staged.add(pred, args, pos) ;
             } else {
-              // Otherwise, the constraint was modified and we're keeping it.
-              self.cstr_info.register_modded(
-                constraint_idx, & constraint
-              ) ? ;
-              modded_constraints.insert(constraint_idx) ;
+
+              match constraint.is_trivial() {
+                Either::Left((Sample { pred, args }, pos)) => {
+                  // Constraint is trivial: unlink and forget.
+                  if let Some(set) = map[pred].get_mut(& args) {
+                    let was_there = set.remove(& constraint_idx) ;
+                    debug_assert! { was_there }
+                  }
+                  self.cstr_info.forget(constraint_idx) ;
+                  // Stage the consequence of the triviality.
+                  self.staged.add(pred, args, pos) ;
+                },
+                Either::Right(false) => {
+                  // Otherwise, the constraint was modified and we're keeping
+                  // it.
+                  self.cstr_info.register_modded(
+                    constraint_idx, & constraint
+                  ) ? ;
+                  modded_constraints.insert(constraint_idx) ;
+                }
+                Either::Right(true) => unsat!(),
+              }
             }
           }
           profile! { self mark "propagate", "cstr update" }
@@ -544,7 +632,7 @@ impl Data {
   /// - propagates staged samples beforehand
   pub fn add_cstr(
     & mut self, lhs: Vec<(PrdIdx, RArgs)>, rhs: Option<(PrdIdx, RArgs)>
-  ) -> Res<bool> {
+  ) -> Res< Option<(Option<(PrdIdx, Args)>, PrdHMap<(Vec<Args>)>)> > {
     profile!(
       self wrap { self.propagate() }
       "add cstr", "pre-propagate"
@@ -553,10 +641,14 @@ impl Data {
     profile! { self tick "add cstr", "pre-checks" }
 
     let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
+    let mut final_lhs = PrdHMap::new() ;
 
     // Look at the lhs and remove stuff we know is true.
-    'lhs_iter: for (pred, args) in lhs {
-      let (args, is_new) = self.mk_sample(args) ;
+    'lhs_iter: for & (pred, ref args) in & lhs {
+      let (args, is_new) = self.mk_sample( args.clone() ) ;
+      final_lhs.entry(pred).or_insert_with(
+        || vec![]
+      ).push( args.clone() ) ;
 
       // If no partial examples and sample is new, no need to check anything.
       if conf.teacher.partial || ! is_new {
@@ -567,7 +659,7 @@ impl Data {
           // Negative, constraint is trivial.
           profile! { self mark "add cstr", "pre-checks" }
           profile! { self "trivial constraints" => add 1 }
-          return Ok(false)
+          return Ok(None)
         }
       }
 
@@ -581,10 +673,10 @@ impl Data {
       ()
     }
 
-    let nu_rhs = if let Some((pred, args)) = rhs {
+    let nu_rhs = if let Some(& (pred, ref args)) = rhs.as_ref() {
       // Not a look, just makes early return easier thanks to breaking.
       'get_rhs: loop {
-        let (args, is_new) = self.mk_sample(args) ;
+        let (args, is_new) = self.mk_sample( args.clone() ) ;
 
         // If no partial examples and sample is new, no need to check anything.
         if conf.teacher.partial || ! is_new {
@@ -592,7 +684,7 @@ impl Data {
             profile! { self mark "add cstr", "pre-checks" }
             profile! { self "trivial constraints" => add 1 }
             // Positive, constraint is trivial.
-            return Ok(false)
+            return Ok(None)
           } else if args.set_subsumed(& self.neg[pred]) {
             // Negative, ignore.
             break 'get_rhs None
@@ -607,7 +699,7 @@ impl Data {
             profile! { self mark "add cstr", "pre-checks" }
             profile! { self "trivial constraints" => add 1 }
             // Trivially implied by lhs.
-            return Ok(false)
+            return Ok(None)
           }
         }
 
@@ -618,6 +710,13 @@ impl Data {
     } ;
 
     nu_lhs.shrink_to_fit() ;
+
+    let res = Some(
+      (
+        nu_rhs.as_ref().map(
+          |sample| (sample.pred, sample.args.clone())
+        ), final_lhs)
+    ) ;
 
     let mut constraint = Constraint::new(nu_lhs, nu_rhs) ;
     constraint.check().chain_err(
@@ -631,20 +730,32 @@ impl Data {
 
     profile! { self mark "add cstr", "pre-checks" }
 
-    if let Some((Sample { pred, args }, pos)) = constraint.is_trivial() ? {
-      let is_new = self.staged.add(pred, args, pos) ;
-      Ok(is_new)
-    } else {
+    match constraint.is_trivial() {
+      Either::Left((Sample { pred, args }, pos)) => {
+        let is_new = self.staged.add(pred, args, pos) ;
+        Ok(if is_new { res } else { None })
+      },
+      Either::Right(false) => {
+        // Handles linking and constraint info registration.
+        let is_new = profile!(
+          self wrap { self.raw_add_cstr(constraint) }
+          "add cstr", "raw"
+        ) ? ;
 
-      // Handles linking and constraint info registration.
-      let is_new = profile!(
-        self wrap { self.raw_add_cstr(constraint) }
-        "add cstr", "raw"
-      ) ? ;
+        self.check("after add_cstr") ? ;
 
-      self.check("after add_cstr") ? ;
-
-      Ok(is_new)
+        Ok(if is_new { res } else { None })
+      },
+      Either::Right(true) => {
+        let mut unsat = Vec::with_capacity(lhs.len()) ;
+        for (pred, args) in lhs {
+          unsat.push((pred, self.mk_sample(args).0))
+        }
+        if let Some((pred, args)) = rhs {
+          unsat.push((pred, self.mk_sample(args).0))
+        }
+        nu_unsat!(unsat)
+      },
     }
   }
 
@@ -684,23 +795,28 @@ impl Data {
         if tautology {
           // Tautology, discard.
           self.cstr_info.forget(constraint)
-        } else if let Some((
-          Sample { pred, args }, pos
-        )) = self.constraints[constraint].is_trivial() ? {
-          // Constraint is trivial: unlink and forget.
-          if let Some(set) = map[pred].get_mut(& args) {
-            let was_there = set.remove(& constraint) ;
-            debug_assert! { was_there }
-          }
-          self.cstr_info.forget(constraint) ;
-          // Stage the consequence of the triviality.
-          self.staged.add(pred, args, pos) ;
         } else {
-          // Otherwise, the constraint was modified and we're keeping it.
-          self.cstr_info.register_modded(
-            constraint, & self.constraints[constraint]
-          ) ? ;
-          modded_constraints.insert(constraint) ;
+
+          match self.constraints[constraint].is_trivial() {
+            Either::Left((Sample { pred, args }, pos)) => {
+              // Constraint is trivial: unlink and forget.
+              if let Some(set) = map[pred].get_mut(& args) {
+                let was_there = set.remove(& constraint) ;
+                debug_assert! { was_there }
+              }
+              self.cstr_info.forget(constraint) ;
+              // Stage the consequence of the triviality.
+              self.staged.add(pred, args, pos) ;
+            },
+            Either::Right(false) => {
+              // Otherwise, the constraint was modified and we're keeping it.
+              self.cstr_info.register_modded(
+                constraint, & self.constraints[constraint]
+              ) ? ;
+              modded_constraints.insert(constraint) ;
+            },
+            Either::Right(true) => unsat!(),
+          }
         }
       }
     }
@@ -1068,6 +1184,9 @@ impl<'a> PebcakFmt<'a> for Data {
       write!(w, "  #{}\n", cstr) ?
     }
     write!(w, ")\n") ? ;
+    if let Some(graph) = self.graph.as_ref() {
+      graph.write(w, "", & self.instance) ? ;
+    }
     Ok(())
   }
 }

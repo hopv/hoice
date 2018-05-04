@@ -13,6 +13,8 @@ pub enum Parsed {
   CheckSat,
   /// Get-model.
   GetModel,
+  /// Get unsat core.
+  GetUnsatCore,
   /// Exit.
   Exit,
   /// Only parsed some item(s), no query.
@@ -489,15 +491,19 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
-  /// Consumes characters until and **including** some character.
+  /// Consumes characters until some character.
   ///
   /// Returns `true` iff `char` was found. Hence, returns `false` iff `eof` was
   /// reached.
-  fn eat_until(& mut self, char: char) -> bool {
+  fn eat_until(& mut self, char: char, inclusive: bool) -> bool {
     for c in self.string[ self.cursor .. ].chars() {
-      self.cursor += 1 ;
       if char == c {
+        if inclusive {
+          self.cursor += 1
+        }
         return true
+      } else {
+        self.cursor += 1
       }
     }
     false
@@ -506,9 +512,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Returns all the characters until some character.
   ///
   /// `None` iff `char` was not found, i.e. `eat_until` returns `false`.
-  fn get_until(& mut self, char: char) -> Option<& 's str> {
+  fn get_until(& mut self, char: char, inclusive: bool) -> Option<& 's str> {
     let start_pos = self.pos() ;
-    let found_id = self.eat_until(char) ;
+    let found_id = self.eat_until(char, inclusive) ;
     if found_id {
       Some( & self.string[ * start_pos .. self.cursor ] )
     } else {
@@ -527,7 +533,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let _ = self.ident() ? ;
     self.ws_cmt() ;
     if self.tag_opt("\"") {
-      let found_it = self.eat_until('"') ;
+      let found_it = self.eat_until('"', true) ;
       if ! found_it {
         bail!(
           self.error_here("expected closing `\"`, found <eof>")
@@ -539,6 +545,45 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(true)
   }
 
+  /// Set-option.
+  fn set_option(& mut self) -> Res< Option<(& 's str, & 's str)> > {
+    let start_pos = self.pos() ;
+    if ! self.tag_opt("set-option") {
+      return Ok(None)
+    }
+    self.ws_cmt() ;
+    self.tag(":") ? ;
+    let key = self.ident()?.1 ;
+    self.ws_cmt() ;
+    let val = if self.tag_opt("|") {
+      if let Some(res) = self.get_until('|', true) {
+        res
+      } else {
+        bail!(
+          self.error_here("could not find closing `|` opened here")
+        )
+      }
+    } else if self.tag_opt("\"") {
+      if let Some(res) = self.get_until('"', true) {
+        res
+      } else {
+        bail!(
+          self.error_here("could not find closing `\"` opened here")
+        )
+      }
+    } else {
+      if let Some(res) = self.get_until(')', false) {
+        res.trim()
+      } else {
+        self.backtrack_to(start_pos) ;
+        bail!(
+          self.error_here("could not find closing `)` for this set-option")
+        )
+      }
+    } ;
+    Ok(Some((key, val)))
+  }
+
   /// Parses an echo.
   fn echo(& mut self) -> Res< Option<& 's str> > {
     if ! self.tag_opt("echo") {
@@ -546,7 +591,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
     self.ws_cmt() ;
     self.tag("\"") ? ;
-    let blah = self.get_until('"') ;
+    let blah = self.get_until('"', false) ;
+    self.tag("\"") ? ;
     if let Some(blah) = blah {
       Ok( Some(blah) )
     } else {
@@ -1888,6 +1934,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Parses a get-unsat-core.
+  fn get_unsat_core(& mut self) -> bool {
+    if self.tag_opt(keywords::cmd::get_unsat_core) {
+      true
+    } else {
+      false
+    }
+  }
+
   /// Parses an exit command.
   fn exit(& mut self) -> bool {
     if self.tag_opt(keywords::cmd::exit) {
@@ -1924,7 +1979,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ) ? ;
       self.ws_cmt() ;
 
+      let start_pos = self.pos() ;
+
       res = if self.set_info() ? {
+        Parsed::Items
+      } else if let Some((key, val)) = self.set_option() ? {
+        ::common::conf.set_option(key, val).chain_err(
+          || {
+            self.backtrack_to(start_pos) ;
+            self.error_here("in this set-option")
+          }
+        ) ? ;
         Parsed::Items
       } else if self.set_logic() ? {
         Parsed::Items
@@ -1936,6 +2001,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Parsed::CheckSat
       } else if self.get_model() {
         Parsed::GetModel
+      } else if self.get_unsat_core() {
+        Parsed::GetUnsatCore
       } else if self.exit() {
         Parsed::Exit
       } else if self.reset() {

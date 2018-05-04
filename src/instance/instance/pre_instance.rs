@@ -188,7 +188,7 @@ impl<'a> PreInstance<'a> {
     log! { @debug "simplifying clause #{}", clause }
 
     if self.instance[clause].is_unsat() {
-      bail!( ErrorKind::Unsat )
+      unsat!()
     }
 
     // log_debug! {
@@ -420,7 +420,7 @@ impl<'a> PreInstance<'a> {
           "unsat because of {}",
           clause.to_string_info( self.instance.preds() ) ?
         }
-        bail!( ErrorKind::Unsat )
+        unsat!()
       }
 
     } else {
