@@ -59,10 +59,11 @@ impl SynthSys {
     let mut int = false ;
     let mut real = false ;
     for typ in sig {
-      match * typ {
-        Typ::Int => int = true,
-        Typ::Real => real = true,
-        _ => (),
+      match ** typ {
+        typ::RTyp::Int => int = true,
+        typ::RTyp::Real => real = true,
+        typ::RTyp::Bool => (),
+        typ::RTyp::Array(_) => unimplemented!(),
       }
     }
 

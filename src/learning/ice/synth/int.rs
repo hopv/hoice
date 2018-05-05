@@ -17,7 +17,7 @@ impl IntSynth {
   pub fn new() -> Self {
     IntSynth {
       expressivity: 0,
-      typ: Typ::Int,
+      typ: typ::int(),
     }
   }
 }
@@ -65,13 +65,13 @@ impl TheoSynth for IntSynth {
   fn project(
     & self, sample: & Args, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
-    match * typ {
-      Typ::Real => for (var, val) in sample.index_iter() {
+    match ** typ {
+      typ::RTyp::Real => for (var, val) in sample.index_iter() {
         match * val {
           Val::I(ref i) => {
             let val = Op::ToReal.eval( vec![ Val::I( i.clone() ) ] ) ? ;
             let prev = map.insert(
-              term::to_real( term::var(var, Typ::Real) ), val
+              term::to_real( term::var(var, typ::real()) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -105,7 +105,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
+        let var = term::var(var_idx, typ::int()) ;
         simple_arith_synth! { previous_int, f, int | var = ( val.clone() ) }
       },
       _ => (),
@@ -141,7 +141,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
+        let var = term::var(var_idx, typ::int()) ;
         arith_synth_non_lin! {
           previous_int, f, int | var = ( val.clone() )
         }
@@ -181,7 +181,7 @@ where F: FnMut(Term) -> Res<bool> {
   for (var_idx, val) in sample.index_iter() {
     match * val {
       Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
+        let var = term::var(var_idx, typ::int()) ;
         arith_synth_three_terms! {
           previous_int, f, int | var = ( val.clone() )
         }

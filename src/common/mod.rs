@@ -24,6 +24,7 @@ pub use term::{
   TTermSet, TTerms,
   Val, Op, Typ, Quant,
 } ;
+pub use term::typ ;
 pub use term::args::{
   HTArgs, HTArgss
 } ;
@@ -187,13 +188,13 @@ impl Signature for VarMap<
 > {
   fn len(& self) -> usize { VarMap::len(self) }
   fn get(& self, var: VarIdx) -> Typ {
-    self[var].typ
+    self[var].typ.clone()
   }
 }
 impl Signature for VarMap<Typ> {
   fn len(& self) -> usize { VarMap::len(self) }
   fn get(& self, var: VarIdx) -> Typ {
-    self[var]
+    self[var].clone()
   }
 }
 
@@ -416,7 +417,7 @@ impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
 impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
-      Some( term::var( self[var].0, self[var].1 ) )
+      Some( term::var( self[var].0, self[var].1.clone() ) )
     } else {
       None
     }
@@ -425,7 +426,7 @@ impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
 impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     self.get(& var).map(
-      |& (v, t)| term::var(v, t)
+      |& (v, ref t)| term::var(v, t.clone())
     )
   }
 }

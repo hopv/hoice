@@ -186,7 +186,9 @@ impl Instance {
   ) -> VarHMap<Term> {
     let mut res = VarHMap::with_capacity( self.old_preds[pred].1.len() ) ;
     for (tgt, src) in self.old_preds[pred].1.index_iter() {
-      res.insert( * src, term::var(tgt, self.old_preds[pred].0[* src]) ) ;
+      res.insert(
+        * src, term::var(tgt, self.old_preds[pred].0[* src].clone())
+      ) ;
     }
     res
   }
@@ -477,7 +479,7 @@ impl Instance {
       let mut map = VarMap::with_capacity( info.sig.len() ) ;
       for (var, typ) in info.sig.index_iter() {
         map.push(
-          term::var(self.old_preds[pred].1[var], * typ)
+          term::var(self.old_preds[pred].1[var], typ.clone())
         )
       }
       self.old_var_maps.push(map)
@@ -958,8 +960,8 @@ impl Instance {
     for pred in & self.preds {
       for (var, typ) in pred.sig.index_iter() {
         let mut bool_vars = Vec::new() ;
-        if * typ == Typ::Bool {
-          let var = term::var(var, Typ::Bool) ;
+        if * typ == typ::bool() {
+          let var = term::var(var, typ::bool()) ;
           quals.insert( var.clone(), pred.idx ) ? ;
           bool_vars.push(var)
         }
@@ -1007,7 +1009,7 @@ impl Instance {
           let mut map: VarHMap<Term> = VarHMap::with_capacity( args.len() ) ;
 
           for (pred_var, term) in args.index_iter() {
-            let pred_var_typ = self[pred].sig[pred_var] ;
+            let pred_var_typ = self[pred].sig[pred_var].clone() ;
             // Parameter's a variable?
             if let Some(clause_var_index) = term.var_idx() {
 
@@ -1032,7 +1034,7 @@ impl Instance {
             } else {
               // Parameter's not a variable, store potential equality.
               let _prev = eq_quals.insert(
-                pred_var, (pred_var_typ, term.clone())
+                pred_var, (pred_var_typ.clone(), term.clone())
               ) ;
               debug_assert!( _prev.is_none() ) ;
               // Try to revert the term.
@@ -1761,7 +1763,7 @@ impl Instance {
     for (var, typ) in old_sig.index_iter() {
       write!(w, " ({} {})", var.default_str(), typ) ?
     }
-    write!(w, " ) {}", Typ::Bool) ? ;
+    write!(w, " ) {}", typ::bool()) ? ;
     Ok(())
   }
 

@@ -99,19 +99,19 @@ pub fn var<V: Into<VarIdx>>(v: V, typ: Typ) -> Term {
 /// Creates an integer variable.
 #[inline(always)]
 pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
-  factory.mk( RTerm::Var(Typ::Int, v.into()) )
+  factory.mk( RTerm::Var(typ::int(), v.into()) )
 }
 
 /// Creates a real variable.
 #[inline(always)]
 pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
-  factory.mk( RTerm::Var(Typ::Real, v.into()) )
+  factory.mk( RTerm::Var(typ::real(), v.into()) )
 }
 
 /// Creates a boolean variable.
 #[inline(always)]
 pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
-  factory.mk( RTerm::Var(Typ::Bool, v.into()) )
+  factory.mk( RTerm::Var(typ::bool(), v.into()) )
 }
 
 /// Creates an integer constant.
@@ -541,8 +541,8 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       (Some(rgt), Some(lft)) => {
         debug_assert! { args.pop().is_none() }
         return NormRes::App(
-          Typ::Bool, Op::Or, vec![
-            NormRes::App(Typ::Bool, Op::Not, vec![ NormRes::Term(lft) ]),
+          typ::bool(), Op::Or, vec![
+            NormRes::App(typ::bool(), Op::Not, vec![ NormRes::Term(lft) ]),
             NormRes::Term(rgt)
           ]
         )
@@ -645,42 +645,42 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
 
         RTerm::App { op: Op::And, ref args, .. } => {
           return NormRes::App(
-            Typ::Bool, Op::Or, args.iter().map(
+            typ::bool(), Op::Or, args.iter().map(
               |arg| NormRes::App(
-                Typ::Bool, Op::Not, vec![ NormRes::Term( arg.clone() ) ]
+                typ::bool(), Op::Not, vec![ NormRes::Term( arg.clone() ) ]
               )
             ).collect()
           )
         },
         RTerm::App { op: Op::Or, ref args, .. } => {
           return NormRes::App(
-            Typ::Bool, Op::And, args.iter().map(
+            typ::bool(), Op::And, args.iter().map(
               |arg| NormRes::App(
-                Typ::Bool, Op::Not, vec![ NormRes::Term( arg.clone() ) ]
+                typ::bool(), Op::Not, vec![ NormRes::Term( arg.clone() ) ]
               )
             ).collect()
           )
         },
 
         RTerm::App { op: Op::Gt, ref args, .. } => return NormRes::App(
-          Typ::Bool, Op::Ge, args.iter().map(
+          typ::bool(), Op::Ge, args.iter().map(
             |arg| NormRes::Term( arg.clone() )
           ).rev().collect()
           //^^^~~~~ IMPORTANT.
         ),
         RTerm::App { op: Op::Ge, ref args, .. } => return NormRes::App(
-          Typ::Bool, Op::Gt, args.iter().map(
+          typ::bool(), Op::Gt, args.iter().map(
             |arg| NormRes::Term( arg.clone() )
           ).rev().collect()
           //^^^~~~~ IMPORTANT.
         ),
         RTerm::App { op: Op::Lt, ref args, .. } => return NormRes::App(
-          Typ::Bool, Op::Ge, args.iter().map(
+          typ::bool(), Op::Ge, args.iter().map(
             |arg| NormRes::Term( arg.clone() )
           ).collect()
         ),
         RTerm::App { op: Op::Le, ref args, .. } => return NormRes::App(
-          Typ::Bool, Op::Gt, args.iter().map(
+          typ::bool(), Op::Gt, args.iter().map(
             |arg| NormRes::Term( arg.clone() )
           ).rev().collect()
           //^^^~~~~ IMPORTANT.
@@ -745,13 +745,13 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             let typ = rhs.typ() ;
             let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
               NormRes::App(
-                typ, Op::Sub, vec![
+                typ.clone(), Op::Sub, vec![
                   NormRes::Term(lhs), NormRes::Term(rhs)
                 ]
               )
             } ;
             return NormRes::App(
-              Typ::Bool, Op::Eql, vec![
+              typ::bool(), Op::Eql, vec![
                 lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
               ]
             )
@@ -776,7 +776,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           for arg in args {
             conj.push(
               NormRes::App(
-                Typ::Bool, Op::Eql, vec![
+                typ::bool(), Op::Eql, vec![
                   NormRes::Term( first.clone() ),
                   NormRes::Term(arg)
                 ]
@@ -784,7 +784,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             )
           }
           if ! conj.is_empty() {
-            return NormRes::App(Typ::Bool, Op::And, conj)
+            return NormRes::App(typ::bool(), Op::And, conj)
           }
         }
         panic!(
@@ -797,7 +797,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
 
       let mut args = args.into_iter() ;
       if let Some(first) = args.next() {
-        let minus_one = if first.typ() == Typ::Int {
+        let minus_one = if first.typ() == typ::int() {
           int(- Int::one())
         } else {
           real(- Rat::one())
@@ -822,7 +822,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           for arg in args {
             to_do.push(
               NormRes::App(
-                typ, Op::CMul, vec![
+                typ.clone(), Op::CMul, vec![
                   NormRes::Term( minus_one.clone() ),
                   NormRes::Term(arg),
                 ]
@@ -842,7 +842,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       panic!("trying to construct an empty sum")
     } else {
 
-      let mut sum: Val = if args[0].typ() == Typ::Int {
+      let mut sum: Val = if args[0].typ() == typ::int() {
         0.into()
       } else {
         (0,1).into()
@@ -889,7 +889,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           } else {
             args.push(
               NormRes::App(
-                typ, Op::CMul, vec![
+                typ.clone(), Op::CMul, vec![
                   NormRes::Term( coef.to_term().unwrap() ),
                   NormRes::Term(term)
                 ]
@@ -912,7 +912,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           args.push(
             factory.mk(
               RTerm::App {
-                typ,
+                typ: typ.clone(),
                 op: Op::CMul,
                 args: vec![ coef, term ]
               }
@@ -981,10 +981,10 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       if let Some((op, args)) = term.app_inspect() {
         match op {
           Op::Add | Op::Mul | Op::Sub => return NormRes::App(
-            typ, op, args.iter().map(
+            typ.clone(), op, args.iter().map(
               |arg| {
                 NormRes::App(
-                  typ, Op::CMul, vec![
+                  typ.clone(), Op::CMul, vec![
                     NormRes::Term( cst.clone() ),
                     NormRes::Term( arg.clone() )
                   ]
@@ -999,7 +999,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             let cst_2 = args[0].clone() ;
             let term = args[1].clone() ;
             return NormRes::App(
-              typ, op, vec![
+              typ.clone(), op, vec![
                 NormRes::App(
                   typ, Op::Mul, vec![
                     NormRes::Term(cst),
@@ -1020,10 +1020,10 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
               args[2].clone(),
             ) ;
             return NormRes::App(
-              typ, op, vec![
+              typ.clone(), op, vec![
                 NormRes::Term(c),
                 NormRes::App(
-                  typ, Op::CMul, vec![
+                  typ.clone(), Op::CMul, vec![
                     NormRes::Term(cst.clone()),
                     NormRes::Term(t),
                   ]
@@ -1057,7 +1057,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     } else {
 
       let mut cnt = 0 ;
-      let mut coef: Val = if args[0].typ() == Typ::Int {
+      let mut coef: Val = if args[0].typ() == typ::int() {
         1.into()
       } else {
         (1,1).into()
@@ -1108,9 +1108,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           )
         } else {
           return NormRes::App(
-            typ, Op::Mul, args.into_iter().map(
+            typ.clone(), Op::Mul, args.into_iter().map(
               |arg| NormRes::App(
-                typ, Op::CMul, vec![
+                typ.clone(), Op::CMul, vec![
                   NormRes::Term( coef.clone() ),
                   NormRes::Term( arg )
                 ]
@@ -1204,7 +1204,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         if let ( _, Some(num) ) = ( args.pop(), args.pop() ) {
           debug_assert! { args.pop().is_none() }
           return NormRes::App(
-            Typ::Bool, Op::Mul, vec![
+            typ::bool(), Op::Mul, vec![
               NormRes::Term( term::int(-1) ),
               NormRes::Term(num),
             ]
@@ -1259,7 +1259,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         }
         if let Some(correction) = correction {
           return NormRes::App(
-            Typ::Bool, op, vec![
+            typ::bool(), op, vec![
               NormRes::App(
                 lhs.typ(), Op::Sub, vec![
                   NormRes::Term( lhs ),
@@ -1294,15 +1294,15 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         let typ = rhs.typ() ;
         debug_assert_eq! { lhs.typ(), typ }
         return NormRes::App(
-          Typ::Bool, op, vec![
+          typ::bool(), op, vec![
             NormRes::App(
-              typ, Op::Sub, vec![
+              typ.clone(), Op::Sub, vec![
                 NormRes::Term( lhs ),
                 NormRes::Term( rhs )
               ]
             ),
             NormRes::Term(
-              if typ == Typ::Int {
+              if typ == typ::int() {
                 int_zero()
               } else {
                 real_zero()
@@ -1322,7 +1322,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     Op::Le => {
       args.reverse() ;
       return NormRes::App(
-        Typ::Bool, Op::Ge, args.into_iter().map(
+        typ::bool(), Op::Ge, args.into_iter().map(
           |arg| NormRes::Term(arg)
         ).collect()
       )
@@ -1331,7 +1331,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     Op::Lt => {
       args.reverse() ;
       return NormRes::App(
-        Typ::Bool, Op::Gt, args.into_iter().map(
+        typ::bool(), Op::Gt, args.into_iter().map(
           |arg| NormRes::Term(arg)
         ).collect()
       )

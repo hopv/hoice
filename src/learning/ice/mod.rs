@@ -1092,8 +1092,6 @@ impl<'core> IceLearner<'core> {
   /// - **declares** samples that neither pos nor neg
   /// - asserts constraints
   pub fn setup_solver(& mut self) -> Res<bool> {
-    // Dummy arguments used in the `define_fun` for pos (neg) data.
-    let args: [ (SmtSample, Typ) ; 0 ] = [] ;
 
     // Positive data.
     self.solver.comment("Positive data:") ? ;
@@ -1101,9 +1099,9 @@ impl<'core> IceLearner<'core> {
       for sample in set.iter() {
         let is_new = self.dec_mem[pred].insert( sample.uid() ) ;
         debug_assert!(is_new) ;
-        self.solver.define_fun(
+        self.solver.define_const(
           & SmtSample::new(pred, sample),
-          & args, & Typ::Bool, & "true"
+          typ::bool().get(), & "true"
         ) ?
       }
     }
@@ -1116,9 +1114,9 @@ impl<'core> IceLearner<'core> {
           // Contradiction found.
           return Ok(true)
         }
-        self.solver.define_fun(
+        self.solver.define_const(
           & SmtSample::new(pred, sample),
-          & args, & Typ::Bool, & "false"
+          typ::bool().get(), & "false"
         ) ?
       }
     }
@@ -1154,7 +1152,7 @@ impl<'core> IceLearner<'core> {
           if ! self.dec_mem[pred].contains(& uid) {
             let _ = self.dec_mem[pred].insert(uid) ;
             self.solver.declare_const(
-              & SmtSample::new(pred, sample), & Typ::Bool
+              & SmtSample::new(pred, sample), & typ::RTyp::Bool,
             ) ?
           }
         }

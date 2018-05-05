@@ -1552,7 +1552,7 @@ impl<'a> PreInstance<'a> {
           // Re-route current **new** var to the original variable `var` is
           // pointing to.
           var_map.push( self.old_preds[pred].1[var] ) ;
-          nu_sig.push(* typ)
+          nu_sig.push(typ.clone())
         } else {
           info.args_rmed += 1
         }
@@ -1656,14 +1656,14 @@ impl<'a> PreInstance<'a> {
       log_debug! { "    definining {}", self[pred] }
 
       let sig: Vec<_> = self.instance[pred].sig.index_iter().map(
-        |(var, typ)| (var.default_str(), * typ)
+        |(var, typ)| (var.default_str(), typ.get())
       ).collect() ;
 
       if let Some(ref def) = self.instance.pred_terms[pred] {
         self.solver.define_fun_with(
           & self.instance[pred].name,
           & sig,
-          & Typ::Bool,
+          & typ::RTyp::Bool,
           def,
           & (& set, & set, & self.instance.preds)
         ) ?
@@ -1679,7 +1679,9 @@ impl<'a> PreInstance<'a> {
       self.solver.push(1) ? ;
       for info in clause.vars() {
         if info.active {
-          self.solver.declare_const( & info.idx.default_str(), & info.typ ) ?
+          self.solver.declare_const(
+            & info.idx.default_str(), info.typ.get()
+          ) ?
         }
       }
       self.solver.assert_with(
@@ -2038,7 +2040,7 @@ impl ClauseSimplifier {
           // Two terms.
           None => {
             debug_assert_eq! { args[1].typ(), args[0].typ() }
-            let inline = if args[0].typ() == Typ::Bool {
+            let inline = if args[0].typ().is_bool() {
               if clause.lhs_terms().contains(& args[0]) {
                 Some( args[1].clone() )
               } else if clause.lhs_terms().contains(& args[1]) {
@@ -2099,7 +2101,7 @@ impl ClauseSimplifier {
       for var in set {
         if var != rep {
           let _prev = self.var_to_rep_term.insert(
-            * var, term::var(* rep, clause[* var].typ)
+            * var, term::var(* rep, clause[* var].typ.clone())
           ) ;
           debug_assert!( _prev.is_none() )
         }
@@ -2127,7 +2129,7 @@ impl ClauseSimplifier {
         "unreachable".into()
       ) ? ;
       self.terms_to_add.push(
-        term::eq( term::var(to_rm, clause[to_rm].typ), term )
+        term::eq( term::var(to_rm, clause[to_rm].typ.clone()), term )
       )
     }
 
@@ -2158,7 +2160,7 @@ impl ClauseSimplifier {
         term.clone()
       } else {
         debug_assert!( clause.vars[rep].active ) ;
-        term::var(rep, clause[rep].typ)
+        term::var(rep, clause[rep].typ.clone())
       } ;
       for var in vars {
         if var != rep {

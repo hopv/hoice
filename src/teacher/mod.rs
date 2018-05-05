@@ -682,10 +682,10 @@ impl<'a> Teacher<'a> {
           None => {
             let pred = & self.instance[pred] ;
             let sig: Vec<_> = pred.sig.index_iter().map(
-              |(var, typ)| (var, * typ)
+              |(var, typ)| (var, typ.get())
             ).collect() ;
             self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & SmtTerm::new(& term)
+              & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
             ) ?
           },
         }

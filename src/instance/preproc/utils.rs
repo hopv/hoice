@@ -51,11 +51,11 @@ macro_rules! add_vars {
         if ! $quantifiers {
           return Ok( TExtractRes::Failed )
         }
-        let _prev = $qvars.insert(* $fresh, $info[var].typ) ;
+        let _prev = $qvars.insert(* $fresh, $info[var].typ.clone()) ;
         debug_assert_eq!( None, _prev ) ;
         log! { @6 "adding fresh v_{} for {}", $fresh, $info[var] }
         let _prev = $map.insert(
-          var, term::var(* $fresh, $info[var].typ)
+          var, term::var(* $fresh, $info[var].typ.clone())
         ) ;
         debug_assert_eq!( None, _prev ) ;
         $fresh.inc()

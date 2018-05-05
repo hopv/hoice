@@ -628,21 +628,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let start_pos = self.pos() ;
     if self.tag_opt("Int") {
       if ! self.legal_id_char() {
-        Some(Typ::Int)
+        Some(typ::int())
       } else {
         self.backtrack_to(start_pos) ;
         None
       }
     } else if self.tag_opt("Real") {
       if ! self.legal_id_char() {
-        Some(Typ::Real)
+        Some(typ::real())
       } else {
         self.backtrack_to(start_pos) ;
         None
       }
     } else if self.tag_opt("Bool") {
       if ! self.legal_id_char() {
-        Some(Typ::Bool)
+        Some(typ::bool())
       } else {
         self.backtrack_to(start_pos) ;
         None
@@ -1152,7 +1152,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else if let Some((pos, id)) = self.ident_opt()? {
 
         if let Some(idx) = map.get(id) {
-          term::var(* idx, var_map[* idx].typ)
+          term::var(* idx, var_map[* idx].typ.clone())
         } else if let Some(ptterms) = self.get_bind(id) {
           if let Some(term) = ptterms.to_term().chain_err(
             || format!("while retrieving binding for {}", conf.emph(id))
@@ -2052,7 +2052,7 @@ impl PTTerms {
     match * self {
       PTTerms::And(_) |
       PTTerms::Or(_) |
-      PTTerms::NTTerm(_) => Typ::Bool,
+      PTTerms::NTTerm(_) => typ::bool(),
       PTTerms::TTerm(ref tterm) => tterm.typ(),
     }
   }

@@ -322,9 +322,9 @@ impl Graph {
         qvars.reserve( l_qvars.len() ) ;
         for (qvar, typ) in l_qvars {
           log_debug! { "    - lft qvar {}", qvar }
-          let prev = map.insert(* qvar, term::var(curr_qvar, * typ)) ;
+          let prev = map.insert(* qvar, term::var(curr_qvar, typ.clone())) ;
           debug_assert!( prev.is_none() ) ;
-          let prev = qvars.insert( curr_qvar, * typ ) ;
+          let prev = qvars.insert( curr_qvar, typ.clone() ) ;
           debug_assert!( prev.is_none() ) ;
           curr_qvar.inc()
         }

@@ -84,7 +84,7 @@ impl RArgs {
       ).collect()
     ) ;
     for (var, _, val) in model {
-      slf[var] = val.cast(info[var].typ) ? ;
+      slf[var] = val.cast(& info[var].typ) ? ;
     }
     Ok(slf)
   }

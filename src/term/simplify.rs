@@ -184,7 +184,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         |term| if let Some(idx) = term.var_idx() {
           let is_new = vars.insert(idx) ;
           if is_new {
-            solver.declare_const(& format!("{}", term), & term.typ()).unwrap()
+            solver.declare_const(
+              & format!("{}", term), term.typ().get()
+            ).unwrap()
           }
         }
       ) ;
@@ -192,7 +194,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         |term| if let Some(idx) = term.var_idx() {
           let is_new = vars.insert(idx) ;
           if is_new {
-            solver.declare_const(& format!("{}", term), & term.typ()).unwrap()
+            solver.declare_const(
+              & format!("{}", term), term.typ().get()
+            ).unwrap()
           }
         }
       ) ;

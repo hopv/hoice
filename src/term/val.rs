@@ -149,22 +149,22 @@ impl Val {
   }
 
   /// Attempts to cast a value.
-  pub fn cast(self, typ: ::term::Typ) -> Res<Self> {
+  pub fn cast(self, typ: & ::term::Typ) -> Res<Self> {
     use num::One ;
-    use term::Typ ;
-    match (self, typ) {
-      (Val::I(i), Typ::Int) => Ok(
+    use term::typ::RTyp ;
+    match (self, typ.get()) {
+      (Val::I(i), & RTyp::Int) => Ok(
         Val::I(i)
       ),
-      (Val::I(num), Typ::Real) => Ok(
+      (Val::I(num), & RTyp::Real) => Ok(
         Val::R( (num, Int::one()).into() )
       ),
 
-      (Val::R(r), Typ::Real) => Ok(
+      (Val::R(r), & RTyp::Real) => Ok(
         Val::R(r)
       ),
 
-      (Val::B(b), Typ::Bool) => Ok(
+      (Val::B(b), & RTyp::Bool) => Ok(
         Val::B(b)
       ),
 

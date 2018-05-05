@@ -54,7 +54,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
     solver.push(1) ? ;
     for var in vars {
       if var.active {
-        solver.declare_const(& var.idx, & var.typ) ?
+        solver.declare_const(& var.idx, var.typ.get()) ?
       }
     }
     solver.assert( self ) ? ;

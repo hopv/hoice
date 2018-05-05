@@ -37,7 +37,7 @@
 //!
 //! ```rust
 //! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm, Typ } ;
+//! # use hoice::term::{ Op, RTerm, typ } ;
 //! let some_term = term::eq(
 //!   term::int(11), term::app(
 //!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
@@ -47,8 +47,8 @@
 //! 
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { typ, op: Op::Eql, ref args } => {
-//!     assert_eq!( typ, Typ::Bool ) ;
+//!   RTerm::App { ref typ, op: Op::Eql, ref args } => {
+//!     assert_eq!( typ, & typ::bool() ) ;
 //!     assert_eq!( args.len(), 2 ) ;
 //!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
 //!   },
@@ -66,6 +66,7 @@ pub use self::op::* ;
 mod factory ;
 mod val ;
 pub mod simplify ;
+pub mod typ ;
 #[cfg(test)]
 mod test ;
 
@@ -73,85 +74,7 @@ pub mod args ;
 
 pub use self::factory::* ;
 pub use self::val::Val ;
-
-
-
-
-/// Types.
-#[
-  derive(
-    Debug, Clone, Copy,
-    PartialEq, Eq, Hash,
-    PartialOrd, Ord
-  )
-]
-pub enum Typ {
-  /// Integers.
-  Int,
-  /// Reals.
-  Real,
-  /// Booleans.
-  Bool,
-}
-impl Typ {
-  /// True if the type is boolean.
-  pub fn is_bool(& self) -> bool {
-    * self == Typ::Bool
-  }
-  /// True if the type is arithmetic.
-  pub fn is_arith(& self) -> bool {
-    match * self {
-      Typ::Int | Typ::Real => true,
-      _ => false,
-    }
-  }
-
-  /// Given two arithmetic types, returns `Real` if one of them is `Real`.
-  pub fn arith_join(self, other: Self) -> Self {
-    debug_assert! { self.is_arith() }
-    debug_assert! { other.is_arith() }
-    if self == Typ::Real || other == Typ::Real {
-      Typ::Real
-    } else {
-      Typ::Int
-    }
-  }
-
-  /// Default value of a type.
-  pub fn default_val(& self) -> Val {
-    match * self {
-      Typ::Real => Val::R( Rat::zero() ),
-      Typ::Int => Val::I( Int::zero() ),
-      Typ::Bool => Val::B( true ),
-    }
-  }
-
-  /// Default term of a type.
-  pub fn default_term(& self) -> Term {
-    match * self {
-      Typ::Real => term::real( Rat::zero() ),
-      Typ::Int => term::int( Int::zero() ),
-      Typ::Bool => term::bool( true ),
-    }
-  }
-}
-impl ::rsmt2::print::Sort2Smt for Typ {
-  fn sort_to_smt2<Writer>(
-    & self, w: &mut Writer
-  ) -> SmtRes<()> where Writer: Write {
-    write!(w, "{}", self) ? ;
-    Ok(())
-  }
-}
-impl_fmt!{
-  Typ(self, fmt) {
-    match * self {
-      Typ::Int => fmt.write_str("Int"),
-      Typ::Real => fmt.write_str("Real"),
-      Typ::Bool => fmt.write_str("Bool"),
-    }
-  }
-}
+pub use self::typ::Typ ;
 
 
 /// A real term.
@@ -261,11 +184,11 @@ impl RTerm {
   /// Type of the term.
   pub fn typ(& self) -> Typ {
     match * self {
-      RTerm::Var(typ, _) => typ,
-      RTerm::Int(_) => Typ::Int,
-      RTerm::Real(_) => Typ::Real,
-      RTerm::Bool(_) => Typ::Bool,
-      RTerm::App { typ, .. } => typ,
+      RTerm::Var(ref typ, _) => typ.clone(),
+      RTerm::Int(_) => typ::int(),
+      RTerm::Real(_) => typ::real(),
+      RTerm::Bool(_) => typ::bool(),
+      RTerm::App { ref typ, .. } => typ.clone(),
     }
   }
 
@@ -470,7 +393,7 @@ impl RTerm {
 
   /// Integer a constant integer term evaluates to.
   pub fn int(& self) -> Option<Int> {
-    if self.typ() != Typ::Int { return None }
+    if self.typ() != typ::int() { return None }
     match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
       _ => None
@@ -663,8 +586,8 @@ impl RTerm {
 
       // Go down.
       let mut term = match * current.get() {
-        RTerm::Var(typ, var) => if let Some(term) = map.var_get(var) {
-          debug_assert_eq! { typ, term.typ() }
+        RTerm::Var(ref typ, var) => if let Some(term) = map.var_get(var) {
+          debug_assert_eq! { typ, & term.typ() }
           subst_count += 1 ;
           term
         } else if total {
@@ -1020,7 +943,7 @@ impl TTerm {
   /// Should always be bool, except during parsing.
   pub fn typ(& self) -> Typ {
     match * self {
-      TTerm::P { .. } => Typ::Bool,
+      TTerm::P { .. } => typ::bool(),
       TTerm::T(ref term) => term.typ(),
     }
   }

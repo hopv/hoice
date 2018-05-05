@@ -987,77 +987,86 @@ impl NuQuals {
 
         while let Some((var, typ)) = sig.next() {
 
-          match * typ {
-            Typ::Int => {
+          match ** typ {
+            typ::RTyp::Int => {
               quals.insert(
-                term::ge( term::var(var, * typ), term::int(0) ),
+                term::ge( term::var(var, typ.clone()),
+                term::int(0) ),
                 pred_info.idx
               ) ? ;
               quals.insert(
-                term::le( term::var(var, * typ), term::int(0) ),
+                term::le( term::var(var, typ.clone()),
+                term::int(0) ),
                 pred_info.idx
               ) ? ;
               quals.insert(
-                term::eq( term::var(var, * typ), term::int(0) ),
+                term::eq( term::var(var, typ.clone()),
+                term::int(0) ),
                 pred_info.idx
               ) ? ;
               // quals.insert(
-              //   term::ge( term::var(var, * typ), term::int(1) ),
+              //   term::ge( term::var(var, typ.clone()),
+              //   term::int(1) ),
               //   pred_info.idx
               // ) ? ;
               // quals.insert(
-              //   term::le( term::var(var, * typ), term::int(1) ),
+              //   term::le( term::var(var, typ.clone()),
+              //   term::int(1) ),
               //   pred_info.idx
               // ) ? ;
               // quals.insert(
-              //   term::eq( term::var(var, * typ), term::int(1) ),
+              //   term::eq( term::var(var, typ.clone()),
+              //   term::int(1) ),
               //   pred_info.idx
               // ) ? ;
             },
-            Typ::Real => {
+            typ::RTyp::Real => {
               quals.insert(
                 term::ge(
-                  term::var(var, * typ), term::real(Rat::from_integer(0.into()))
-                ),
-                pred_info.idx
-              ) ? ;
-              quals.insert(
-                term::le(
-                  term::var(var, * typ),
+                  term::var(var, typ.clone()),
                   term::real(Rat::from_integer(0.into()))
                 ),
                 pred_info.idx
               ) ? ;
               quals.insert(
+                term::le(
+                  term::var(var, typ.clone()),
+                                  term::real(Rat::from_integer(0.into()))
+                ),
+                pred_info.idx
+              ) ? ;
+              quals.insert(
                 term::eq(
-                  term::var(var, * typ),
+                  term::var(var, typ.clone()),
                   term::real(Rat::from_integer(0.into()))
                 ),
                 pred_info.idx
               ) ? ;
               // quals.insert(
               //   term::ge(
-              //     term::var(var, * typ),
+              //     term::var(var, typ.clone()),
               //     term::real(Rat::from_integer(1.into()))
               //   ),
               //   pred_info.idx
               // ) ? ;
               // quals.insert(
               //   term::le(
-              //     term::var(var, * typ),
+              //     term::var(var, typ.clone()),
               //     term::real(Rat::from_integer(1.into()))
               //   ),
               //   pred_info.idx
               // ) ? ;
               // quals.insert(
               //   term::eq(
-              //     term::var(var, * typ),
+              //     term::var(var, typ.clone()),
               //     term::real(Rat::from_integer(1.into()))
               //   ),
               //   pred_info.idx
               // ) ? ;
             },
-            Typ::Bool => (),
+            typ::RTyp::Bool => (),
+
+            typ::RTyp::Array(_) => unimplemented!(),
           }
         }
       }

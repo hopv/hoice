@@ -281,7 +281,7 @@ impl Clause {
     let mut stack = vec![term] ;
 
     while let Some(term) = stack.pop() {
-      debug_assert! { term.typ() == Typ::Bool }
+      debug_assert! { term.typ().is_bool() }
       if let Some(kids) = term.conj_inspect() {
         for kid in kids {
           stack.push( kid.clone() )
@@ -645,9 +645,9 @@ impl Clause {
     for (var, typ) in vars {
       let fresh = self.vars.next_index() ;
       let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
-      let info = VarInfo::new(fresh_name, * typ, fresh) ;
+      let info = VarInfo::new(fresh_name, typ.clone(), fresh) ;
       self.vars.push(info) ;
-      let _prev = map.insert(* var, term::var(fresh, * typ)) ;
+      let _prev = map.insert(* var, term::var(fresh, typ.clone())) ;
       debug_assert!( _prev.is_none() )
     }
     map
@@ -666,9 +666,9 @@ impl Clause {
       for (var, typ) in vars {
         let fresh = self.vars.next_index() ;
         let fresh_name = format!("hoice_fresh_var@{}", fresh) ;
-        let info = VarInfo::new(fresh_name, * typ, fresh) ;
+        let info = VarInfo::new(fresh_name, typ.clone(), fresh) ;
         self.vars.push(info) ;
-        let _prev = map.insert(* var, term::var(fresh, * typ)) ;
+        let _prev = map.insert(* var, term::var(fresh, typ.clone())) ;
         debug_assert!( _prev.is_none() )
       }
       map
@@ -683,7 +683,7 @@ impl Clause {
   ) -> Res<()> {
     for var in self.vars() {
       if var.active {
-        solver.declare_const(& var.idx, & var.typ) ?
+        solver.declare_const(& var.idx, var.typ.get()) ?
       }
     }
     Ok(())

@@ -160,11 +160,11 @@ impl Op {
       (bool) => ({
         while let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
-          if typ != Typ::Bool {
-            err!(lft (Some(Typ::Bool), (typ, index)) )
+          if typ != typ::bool() {
+            err!(lft (Some(typ::bool()), (typ, index)) )
           }
         }
-        Typ::Bool
+        typ::bool()
       }) ;
 
       () => ({
@@ -197,33 +197,33 @@ impl Op {
       },
       IDiv | Rem | Mod => arity_check!(
         [ 2, 2 ] => {
-          all_same!(Typ::Int)
+          all_same!(typ::int())
         }
       ),
       Gt | Ge | Le | Lt => arity_check!(
         [ 2, 2 ] => {
           all_same!(arith) ;
-          Typ::Bool
+          typ::bool()
         }
       ),
       Eql => {
         all_same!() ;
-        Typ::Bool
+        typ::bool()
       },
       Not => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Bool)
+        [ 1, 1 ] => all_same!(typ::bool())
       ),
       And | Or | Impl => all_same!(bool),
       ToInt => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Real)
+        [ 1, 1 ] => all_same!(typ::real())
       ),
       ToReal => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Int)
+        [ 1, 1 ] => all_same!(typ::int())
       ),
       Ite => arity_check!(
         [ 3, 3 ] => if let Some((index, cond)) = args_iter.next() {
           if ! cond.typ().is_bool() {
-            err!(lft (Some(Typ::Bool), (cond.typ(), index)))
+            err!(lft (Some(typ::bool()), (cond.typ(), index)))
           }
           all_same!()
         } else {
