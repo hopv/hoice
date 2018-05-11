@@ -1163,7 +1163,7 @@ impl Config {
     let file = matches.value_of("input file").map(|s| s.to_string()) ;
 
     // Verbosity
-    let mut verb = 4 ;
+    let mut verb = 0 ;
     for _ in 0..matches.occurrences_of("verb") {
       verb += 1
     }

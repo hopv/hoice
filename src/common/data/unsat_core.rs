@@ -1,4 +1,25 @@
-//! Unsat-core-related types and helpers.
+/*! Unsat-core-related types and helpers.
+
+An unsat result comes from a sample (a predicate/arguments pair) that needs to
+be both `true` and `false`. `SampleGraph` tracks dependencies between samples
+**without any propagation**, unlike the usual data structure manipulated by the
+engine which does propagate.
+
+When unsat core production is active, the graph is maintained alongside the
+data structure used by the engine. When an unsat core is requested, the caller
+provides a sample on which the contradiction was detected.
+
+The graph extracts a trace (tree) of samples that explain why the sample needs
+to be true and false at the same time. Last, the actual core is obtained by
+retrieving the values of the variables of the clauses involved in the trace of
+samples.
+
+The core is printed as a pair:
+
+- some predicate definitions, *i.e.* the predicate inferred by preprocessing
+- a set of values for the variables of some clauses that lead to the
+  contradiction
+*/
 
 use common::* ;
 use data::Args ;
