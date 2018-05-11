@@ -38,13 +38,13 @@ macro_rules! simple_arith_synth {
     apply! { $f to term }
 
     for & (ref other_term, ref other_val) in & $previous {
-      if & $val == other_val {
+      if $val == other_val {
         let term = term::eq(
           $term.clone(), other_term.clone()
         ) ;
         apply! { $f to term }
       }
-      if - (& $val) == * other_val {
+      if - $val == * other_val {
         let term = term::eq(
           $term.clone(), term::sub( vec![ other_term.clone() ] )
         ) ;
@@ -54,7 +54,7 @@ macro_rules! simple_arith_synth {
       let add = term::app(
         Op::Add, vec![ $term.clone(), other_term.clone() ]
       ) ;
-      let add_val = term::$constructor( & $val + other_val ) ;
+      let add_val = term::$constructor( $val + other_val ) ;
       let term = term::app(
         Op::Ge, vec![ add.clone(), add_val.clone() ]
       ) ;
@@ -67,7 +67,7 @@ macro_rules! simple_arith_synth {
       let sub = term::app(
         Op::Sub, vec![ $term.clone(), other_term.clone() ]
       ) ;
-      let sub_val = term::$constructor( & $val - other_val ) ;
+      let sub_val = term::$constructor( $val - other_val ) ;
       let term = term::app(
         Op::Ge, vec![ sub.clone(), sub_val.clone() ]
       ) ;
@@ -89,15 +89,15 @@ macro_rules! arith_synth_non_lin {
     let zero: Int = 0.into() ;
     for & (ref other_term, ref other_val) in & $previous {
       let (lft, rgt, div, rem) = {
-        if ! other_val.is_zero() && & $val / other_val != zero {
+        if ! other_val.is_zero() && $val / other_val != zero {
           (
             $term.clone(), other_term.clone(),
-            & $val / other_val, & $val % other_val
+            $val / other_val, $val % other_val
           )
         } else if ! $val.is_zero() {
           (
             other_term.clone(), $term.clone(),
-            other_val / & $val, other_val % & $val
+            other_val / $val, other_val % $val
           )
         } else {
           continue
@@ -153,7 +153,7 @@ macro_rules! arith_synth_three_terms {
               term::add(
                 vec![ $term.clone(), other_term.clone(), another_term.clone() ]
               ),
-              term::$constructor( & $val + other_val + another_val )
+              term::$constructor( $val + other_val + another_val )
             )
           }
 
@@ -166,7 +166,7 @@ macro_rules! arith_synth_three_terms {
                   term::sub( vec![ another_term.clone() ] ),
                 ]
               ),
-              term::$constructor( & $val + other_val - another_val )
+              term::$constructor( $val + other_val - another_val )
             )
           }
 
@@ -179,7 +179,7 @@ macro_rules! arith_synth_three_terms {
                   another_term.clone(),
                 ]
               ),
-              term::$constructor( & $val - other_val + another_val )
+              term::$constructor( $val - other_val + another_val )
             )
           }
 
@@ -190,7 +190,7 @@ macro_rules! arith_synth_three_terms {
                   $term.clone(), other_term.clone(), another_term.clone()
                 ]
               ),
-              term::$constructor( & $val - other_val - another_val )
+              term::$constructor( $val - other_val - another_val )
             )
           }
 
@@ -203,7 +203,7 @@ macro_rules! arith_synth_three_terms {
                   another_term.clone()
                 ]
               ),
-              term::$constructor( (- & $val) + other_val + another_val )
+              term::$constructor( (- $val) + other_val + another_val )
             )
           }
 
@@ -216,7 +216,7 @@ macro_rules! arith_synth_three_terms {
                   another_term.clone()
                 ]
               ),
-              term::$constructor( (- & $val) + other_val - another_val )
+              term::$constructor( (- $val) + other_val - another_val )
             )
           }
 
@@ -229,7 +229,7 @@ macro_rules! arith_synth_three_terms {
                   other_term.clone(),
                 ]
               ),
-              term::$constructor( (- & $val) - other_val + another_val )
+              term::$constructor( (- $val) - other_val + another_val )
             )
           }
 
@@ -246,7 +246,7 @@ macro_rules! arith_synth_three_terms {
                   )
                 ]
               ),
-              term::$constructor( (- & $val) - other_val - another_val )
+              term::$constructor( (- $val) - other_val - another_val )
             )
           }
 

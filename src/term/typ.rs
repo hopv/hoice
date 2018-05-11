@@ -55,10 +55,19 @@ pub enum RTyp {
   Array(Typ)
 }
 impl RTyp {
-  /// True if the type is boolean.
+  /// True if the type is bool.
   pub fn is_bool(& self) -> bool {
     * self == RTyp::Bool
   }
+  /// True if the type is integer.
+  pub fn is_int(& self) -> bool {
+    * self == RTyp::Int
+  }
+  /// True if the type is real.
+  pub fn is_real(& self) -> bool {
+    * self == RTyp::Real
+  }
+
   /// True if the type is arithmetic.
   pub fn is_arith(& self) -> bool {
     match * self {
@@ -81,9 +90,9 @@ impl RTyp {
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
-      RTyp::Real => Val::R( Rat::zero() ),
-      RTyp::Int => Val::I( Int::zero() ),
-      RTyp::Bool => Val::B( true ),
+      RTyp::Real => val::rat( Rat::zero() ),
+      RTyp::Int => val::int( Int::zero() ),
+      RTyp::Bool => val::bool( true ),
       RTyp::Array(_) => unimplemented!(),
     }
   }

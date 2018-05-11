@@ -357,7 +357,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     match (lhs_op, rhs_op) {
       (Op::Gt, Op::Gt) |
       (Op::Ge, Op::Ge) => return SimplRes::Cmp(
-        lhs_cst.cmp(& rhs_cst).unwrap()
+        lhs_cst.get().cmp(& rhs_cst).unwrap()
       ),
 
       (Op::Gt, Op::Ge) |
@@ -369,12 +369,12 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         }
       } else {
         return SimplRes::Cmp(
-          lhs_cst.cmp(& rhs_cst).unwrap().reverse()
+          lhs_cst.get().cmp(& rhs_cst).unwrap().reverse()
         )
       },
 
       (Op::Eql, Op::Ge) |
-      (Op::Eql, Op::Gt) => match lhs_cst.cmp(& rhs_cst) {
+      (Op::Eql, Op::Gt) => match lhs_cst.get().cmp(& rhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
         Some(Equal) if rhs_op == Op::Gt => if conj {
           return SimplRes::Yields( term::fls() )
@@ -386,7 +386,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       },
 
       (Op::Ge, Op::Eql) |
-      (Op::Gt, Op::Eql) => match rhs_cst.cmp(& lhs_cst) {
+      (Op::Gt, Op::Eql) => match rhs_cst.get().cmp(& lhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
         Some(Equal) if rhs_op == Op::Gt => return SimplRes::Yields(
           term::fls()
@@ -396,7 +396,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         None => unreachable!(),
       },
 
-      (Op::Eql, Op::Eql) => if rhs_cst == lhs_cst {
+      (Op::Eql, Op::Eql) => if rhs_cst.equal(& lhs_cst) {
         return SimplRes::Cmp(Greater)
       } else {
         return SimplRes::Yields( term::fls() )

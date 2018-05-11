@@ -67,9 +67,9 @@ impl TheoSynth for IntSynth {
   ) -> Res<()> {
     match ** typ {
       typ::RTyp::Real => for (var, val) in sample.index_iter() {
-        match * val {
-          Val::I(ref i) => {
-            let val = Op::ToReal.eval( vec![ Val::I( i.clone() ) ] ) ? ;
+        match val.get() {
+          & val::RVal::I(_) => {
+            let val = Op::ToReal.eval( vec![ val.clone() ] ) ? ;
             let prev = map.insert(
               term::to_real( term::var(var, typ::real()) ), val
             ) ;
@@ -103,10 +103,10 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         let var = term::var(var_idx, typ::int()) ;
-        simple_arith_synth! { previous_int, f, int | var = ( val.clone() ) }
+        simple_arith_synth! { previous_int, f, int | var = val }
       },
       _ => (),
     }
@@ -114,8 +114,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         simple_arith_synth! { previous_int, f, int | term = val }
       }
       val => bail!(
@@ -139,8 +139,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         let var = term::var(var_idx, typ::int()) ;
         arith_synth_non_lin! {
           previous_int, f, int | var = ( val.clone() )
@@ -152,10 +152,10 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         arith_synth_non_lin! {
-          previous_int, f, int | term = val
+          previous_int, f, int | term = ( val.clone() )
         }
       }
       val => bail!(
@@ -179,8 +179,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         let var = term::var(var_idx, typ::int()) ;
         arith_synth_three_terms! {
           previous_int, f, int | var = ( val.clone() )
@@ -192,8 +192,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         arith_synth_three_terms! {
           previous_int, f, int | term = val
         }

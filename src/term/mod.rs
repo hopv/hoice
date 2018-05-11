@@ -64,7 +64,7 @@ use common::* ;
 mod op ;
 pub use self::op::* ;
 mod factory ;
-mod val ;
+pub mod val ;
 pub mod simplify ;
 pub mod typ ;
 #[cfg(test)]
@@ -388,7 +388,9 @@ impl RTerm {
 
   /// Evaluates a term with an empty model.
   pub fn as_val(& self) -> Val {
-    if let Ok(res) = self.eval(& ()) { res } else { Val::N }
+    if let Ok(res) = self.eval(& ()) { res } else {
+      val::none(self.typ().clone())
+    }
   }
 
   /// Integer a constant integer term evaluates to.
@@ -410,9 +412,9 @@ impl RTerm {
   /// Turns a constant term in a `Val`.
   pub fn val(& self) -> Option<Val> {
     match * self {
-      RTerm::Int(ref i) => Some( i.clone().into() ),
-      RTerm::Real(ref r) => Some( r.clone().into() ),
-      RTerm::Bool(b) => Some( b.into() ),
+      RTerm::Int(ref i) => Some( val::int(i.clone()) ),
+      RTerm::Real(ref r) => Some( val::rat(r.clone()) ),
+      RTerm::Bool(b) => Some( val::bool(b) ),
       _ => None,
     }
   }
@@ -479,9 +481,9 @@ impl RTerm {
         } else {
           bail!("model is too short ({})", model.len())
         },
-        Int(ref i) => Val::I( i.clone() ),
-        Real(ref r) => Val::R( r.clone() ),
-        Bool(b) => Val::B(b),
+        Int(ref i) => val::int( i.clone() ),
+        Real(ref r) => val::rat( r.clone() ),
+        Bool(b) => val::bool(b),
       } ;
 
       // Go up.
@@ -831,10 +833,9 @@ impl RTerm {
             Op::CMul => {
               if args.len() == 2 {
                 if let Some(val) = args[0].val() {
-                  use num::One ;
                   if val.minus().expect(
                     "illegal c_mul application found in `invert`"
-                  ) == Int::one().into() {
+                  ).is_one() {
                     solution = term::u_minus(solution) ;
                     term = & args[1] ;
                     continue

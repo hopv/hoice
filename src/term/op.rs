@@ -254,9 +254,11 @@ impl Op {
         if let (
           Some(fst), Some(mut pre)
         ) = (args.next(), args.next()) {
-          let mut res = fst.$op( pre.clone() ) ? ;
+
+          let mut res = fst.get().$op( & pre ) ? ;
+
           for arg in args {
-            res = res.and( pre.$op( arg.clone() ) ? ) ? ;
+            res = res.and( & pre.get().$op( & arg ) ? ) ? ;
             pre = arg
           }
           Ok(res)
@@ -268,7 +270,7 @@ impl Op {
         let mut args = $args.into_iter() ;
         if let Some(mut acc) = args.next() {
           for arg in args {
-            acc = acc.$op(arg) ?
+            acc = acc.$op(& arg) ?
           }
           Ok(acc)
         } else {
@@ -287,17 +289,17 @@ impl Op {
       },
 
       Mul => {
-        let mut res: Val = 1.into() ;
+        let mut res: Val = val::int(1) ;
         for arg in args.into_iter() {
-          res = res.mul(arg) ?
+          res = res.mul(& arg) ?
         }
         Ok(res)
       },
 
       CMul => {
-        let mut res: Val = 1.into() ;
+        let mut res: Val = val::int(1) ;
         for arg in args.into_iter() {
-          res = res.mul(arg) ?
+          res = res.mul(& arg) ?
         }
         Ok(res)
       },
@@ -315,48 +317,77 @@ impl Op {
             )
           }
         ) ;
+
         if args.pop().is_some() {
-          bail!("unexpected division over {} numbers", args.len())
+          bail!("unexpected division over {} numbers", args.len() + 3)
         }
 
-        let res = match (num.clone(), den.clone()) {
-          (num, Val::N) => if num.is_zero() {
-            Ok(num)
+        let res = match (num.get(), den.get()) {
+          (num_val, & val::RVal::N(ref typ))
+          if typ.is_arith() => if num_val.is_zero() {
+            Ok(num.clone())
           } else {
-            Ok(Val::N)
+            Ok(val::none(typ::real()))
           },
 
-          (Val::I(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
-          } else if & num % & den == Int::zero() {
-            Ok( Val::I( num / den ) )
+          (
+            & val::RVal::I(ref num), & val::RVal::I(ref den)
+          ) => if num.is_zero() {
+            Ok( val::int(num.clone()) )
+          } else if num % den == Int::zero() {
+            Ok( val::int( num / den ) )
           } else {
-            Ok( Val::R( Rat::new(num, den) ) )
+            Ok( val::rat( Rat::new(num.clone(), den.clone()) ) )
           },
 
-          (Val::I(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
+          (
+            & val::RVal::I(ref num_val), & val::RVal::R(ref den_val)
+          ) => if num_val.is_zero() {
+            Ok( val::rat(Rat::new(0.into(), 1.into())) )
           } else {
-            Ok( Val::R( Rat::new(num, 1.into()) / den ) )
+            Ok(
+              val::rat( Rat::new(num_val.clone(), 1.into()) / den_val.clone() )
+            )
           },
 
-          (Val::R(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
+          (
+            & val::RVal::R(ref num_val), & val::RVal::I(ref den_val)
+          ) => if num.is_zero() {
+            Ok( val::rat(Rat::new(0.into(), 1.into())) )
           } else {
-            Ok( Val::R( num / Rat::new(den, 1.into()) ) )
+            Ok(
+              val::rat(
+                num_val.clone() / Rat::new(den_val.clone(), 1.into())
+              )
+            )
           },
 
-          (Val::R(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
+          (
+            & val::RVal::R(ref num_val), & val::RVal::R(ref den_val)
+          ) => if num.is_zero() {
+            Ok( val::rat(Rat::new(0.into(), 1.into())) )
           } else {
-            Ok( Val::R( num / den ) )
+            Ok( val::rat( num_val.clone() / den_val.clone() ) )
           },
 
-          (Val::B(_), _) | (_, Val::B(_)) => bail!(
-            "illegal application of division to booleans"
+          (& val::RVal::N(ref t_1), & val::RVal::I(ref i))
+          if t_1.is_arith() => if i.is_zero() {
+            bail!("division by zero, aborting...")
+          } else {
+            Ok(val::none(t_1.clone()))
+          },
+
+          (& val::RVal::N(ref t_1), & val::RVal::R(ref r))
+          if t_1.is_arith() => if r.is_zero() {
+            bail!("division by zero, aborting...")
+          } else {
+            Ok(val::none(typ::real()))
+          },
+
+          (num, den) => bail!(
+            "illegal division application to {} ({}) {} ({})",
+            num, num.typ(), den, den.typ()
           ),
-
-          (Val::N, _) => Ok(Val::N),
         } ;
 
         // println!("(/ {} {}) = {}", num, den, res.as_ref().unwrap()) ;
@@ -371,7 +402,7 @@ impl Op {
         let den = try_val!( int args.pop().unwrap() ) ;
         let num = try_val!( int args.pop().unwrap() ) ;
         if den.is_zero() {
-          bail!("denominator is zero...")
+          bail!("division by zero, aborting...")
         }
         let mut res = & num / & den ;
         use num::Signed ;
@@ -381,7 +412,7 @@ impl Op {
           }
         }
         // println!("(div {} {}) = {}", num, den, res) ;
-        Ok( Val::I(res) )
+        Ok( val::int(res) )
       },
 
       Rem => if args.len() != 2 {
@@ -392,10 +423,10 @@ impl Op {
         use num::Integer ;
         let b = try_val!( int args.pop().unwrap() ) ;
         if b == 1.into() {
-          Ok( 0.into() )
+          Ok( val::int(0) )
         } else {
           let a = try_val!( int args.pop().unwrap() ) ;
-          Ok( Val::I( a.div_rem(& b).1 ) )
+          Ok( val::int( a.div_rem(& b).1 ) )
         }
       },
 
@@ -407,7 +438,7 @@ impl Op {
         use num::{ Integer, Signed } ;
         let b = try_val!( int args.pop().unwrap() ) ;
         if b == 1.into() {
-          Ok( 0.into() )
+          Ok( val::int(0) )
         } else {
           let a = try_val!( int args.pop().unwrap() ) ;
           let res = a.mod_floor(& b) ;
@@ -416,26 +447,26 @@ impl Op {
           } else {
             res
           } ;
-          Ok( Val::I( res ) )
+          Ok( val::int( res ) )
         }
       },
 
       // Bool operators.
 
       Gt => arith_app! {
-        relation gt ">" => args
+        relation g_t ">" => args
       },
 
       Ge => arith_app! {
-        relation ge ">=" => args
+        relation g_e ">=" => args
       },
 
       Le => arith_app! {
-        relation le "<=" => args
+        relation l_e "<=" => args
       },
 
       Lt => arith_app! {
-        relation lt "<" => args
+        relation l_t "<" => args
       },
 
       Eql => {
@@ -447,7 +478,7 @@ impl Op {
             then |nxt| {
               // println!("{} != {} : {}", mem, nxt, mem != nxt) ;
               if ! mem.same_type( & nxt ) {
-                return Ok(Val::N)
+                return Ok(val::none(typ::bool()))
               }
               if mem != nxt {
                 res = false ;
@@ -456,7 +487,7 @@ impl Op {
             },
           } else unreachable!()
         }
-        Ok( Val::B(res) )
+        Ok( val::bool(res) )
       },
 
       Not => if args.len() != 1 {
@@ -465,9 +496,9 @@ impl Op {
         )
       } else {
         if let Some(b) = args.pop().unwrap().to_bool() ? {
-          Ok( Val::B(! b) )
+          Ok( val::bool(! b) )
         } else {
-          Ok(Val::N)
+          Ok(val::none(typ::bool()))
         }
       },
 
@@ -475,15 +506,15 @@ impl Op {
         let mut unknown = false ;
         for arg in args {
           match arg.to_bool() ? {
-            Some(false) => return Ok( Val::B(false) ),
+            Some(false) => return Ok( val::bool(false) ),
             None => unknown = true,
             _ => ()
           }
         }
         if unknown {
-          Ok( Val::N )
+          Ok( val::none(typ::bool()) )
         } else {
-          Ok( Val::B(true) )
+          Ok( val::bool(true) )
         }
       },
 
@@ -491,15 +522,15 @@ impl Op {
         let mut unknown = false ;
         for arg in args {
           match arg.to_bool() ? {
-            Some(true) => return Ok( Val::B(true) ),
+            Some(true) => return Ok( val::bool(true) ),
             None => unknown = true,
             _ => ()
           }
         }
         if unknown {
-          Ok( Val::N )
+          Ok( val::none(typ::bool()) )
         } else {
-          Ok( Val::B(false) )
+          Ok( val::bool(false) )
         }
       },
 
@@ -512,9 +543,9 @@ impl Op {
         let rhs = args.pop().unwrap() ;
         let lhs = args.pop().unwrap() ;
         match ( lhs.to_bool() ?, rhs.to_bool() ? ) {
-          (_, Some(true)) | (Some(false), _) => Ok( Val::B(true) ),
-          (Some(lhs), Some(rhs)) => Ok( Val::B(rhs || ! lhs) ),
-          _ => Ok(Val::N),
+          (_, Some(true)) | (Some(false), _) => Ok( val::bool(true) ),
+          (Some(lhs), Some(rhs)) => Ok( val::bool(rhs || ! lhs) ),
+          _ => Ok(val::none(typ::bool())),
         }
       },
 
@@ -526,10 +557,20 @@ impl Op {
         let (els, thn, cnd) = (
           args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
         ) ;
+
+        if thn.get().equal(& els) {
+          return Ok(thn)
+        }
+
         match cnd.to_bool() ? {
           Some(true) => Ok(thn),
           Some(false) => Ok(els),
-          _ => Ok(Val::N),
+          None => match (
+            thn.get().typ().is_real(), els.get().typ().is_real()
+          ) {
+            (true, _) | (_, true) => Ok(val::none(typ::real())),
+            _ => Ok(val::none(thn.get().typ().clone())),
+          }
         }
       }
 
@@ -542,12 +583,12 @@ impl Op {
         if let Some(rat) = val.to_real() ? {
           let res = rat.denom() / rat.denom() ;
           if rat.denom().is_negative() ^ rat.denom().is_negative() {
-            Ok( Val::I(- res) )
+            Ok( val::int(- res) )
           } else {
-            Ok( Val::I(res) )
+            Ok( val::int(res) )
           }
         } else {
-          Ok(Val::N)
+          Ok(val::none(typ::int()))
         }
       } else {
         bail!("expected one argument for `{}`, found none", ToInt)
@@ -560,9 +601,9 @@ impl Op {
           )
         }
         if let Some(i) = val.to_int() ? {
-          Ok( Val::R( Rat::new(i.clone(), 1.into()) ) )
+          Ok( val::rat( Rat::new(i.clone(), 1.into()) ) )
         } else {
-          Ok(Val::N)
+          Ok(val::none(typ::real()))
         }
       } else {
         bail!("expected one argument for `{}`, found none", ToReal)

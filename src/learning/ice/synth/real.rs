@@ -62,9 +62,9 @@ impl TheoSynth for RealSynth {
   ) -> Res<()> {
     match ** typ {
       typ::RTyp::Int => for (var, val) in sample.index_iter() {
-        match * val {
-          Val::R(ref r) => {
-            let val = Op::ToInt.eval( vec![ Val::R( r.clone() ) ] ) ? ;
+        match val.get() {
+          & val::RVal::R(ref r) => {
+            let val = Op::ToInt.eval( vec![ val::rat( r.clone() ) ] ) ? ;
             let prev = map.insert(
               term::to_int( term::var(var, typ::int()) ), val
             ) ;
@@ -98,10 +98,10 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::R(ref val) => {
+    match val.get() {
+      & val::RVal::R(ref val) => {
         let var = term::var(var_idx, typ::real()) ;
-        simple_arith_synth! { previous_real, f, real | var = ( val.clone() ) }
+        simple_arith_synth! { previous_real, f, real | var = val }
       },
       _ => (),
     }
@@ -109,8 +109,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::R(val) => {
+    match val.get() {
+      & val::RVal::R(ref val) => {
         simple_arith_synth! { previous_real, f, real | term = val }
       }
       val => bail!(
@@ -134,8 +134,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         let var = term::var(var_idx, typ::real()) ;
         arith_synth_three_terms! {
           previous_real, f, real | var = ( val.clone() )
@@ -147,8 +147,8 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
+    match val.get() {
+      & val::RVal::I(ref val) => {
         arith_synth_three_terms! {
           previous_real, f, real | term = val
         }

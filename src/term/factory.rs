@@ -843,9 +843,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     } else {
 
       let mut sum: Val = if args[0].typ() == typ::int() {
-        0.into()
+        val::int(0)
       } else {
-        (0,1).into()
+        val::rat( Rat::new(0.into(), 1.into()))
       } ;
 
       let mut c_args = HConMap::<Term, Val>::new() ;
@@ -855,18 +855,18 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         if let Some(kids) = arg.add_inspect().map(|kids| kids.clone()) {
           args.extend(kids)
         } else if let Some(v) = arg.val() {
-          sum = sum.add(v).expect(
+          sum = sum.add(& v).expect(
             "during add simplification"
           )
         } else {
           let (val, term) = if let Some((val, term)) = arg.cmul_inspect() {
             (val, term)
           } else {
-            (1.into(), & arg)
+            (val::int(1), & arg)
           } ;
 
           if let Some(value) = c_args.get_mut(term) {
-            * value = value.clone().add(val).expect(
+            * value = value.add(& val).expect(
               "during add simplification"
             ) ;
             changed = true ;
@@ -964,7 +964,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         let cst_val = cst.val().expect(
           & format!("illegal c_mul application: {} {}", cst, term)
         ) ;
-        let res = cst_val.mul(val).expect(
+        let res = cst_val.mul(& val).expect(
           & format!("illegal c_mul application: {} {}", cst, term)
         ).to_term().expect(
           "cannot be unknown"
@@ -1058,9 +1058,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
 
       let mut cnt = 0 ;
       let mut coef: Val = if args[0].typ() == typ::int() {
-        1.into()
+        val::int(1)
       } else {
-        (1,1).into()
+        val::rat( Rat::new(1.into(), 1.into()) )
       } ;
 
       while cnt < args.len() {
@@ -1069,12 +1069,12 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           args.extend(kids)
         } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
-          coef = coef.mul( i.into() ).expect(
+          coef = coef.mul( & val::int(i) ).expect(
             "during multiplication simplification"
           )
         } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
-          coef = coef.mul( r.into() ).expect(
+          coef = coef.mul( & val::rat(r) ).expect(
             "during multiplication simplification"
           )
         } else {
@@ -1123,53 +1123,33 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     },
 
     Op::IDiv => if args.len() == 2 {
-      macro_rules! num_den {
-        () => (
-          if let ( Some(den), Some(num) ) = (
-            args.pop(), args.pop()
-          ) {
-            (num, den)
-          } else {
-            panic!("logic error, pop failed after length check")
-          }
+
+      if args[1].is_zero() {
+        panic!("division by zero, aborting...")
+      } else if args[0].is_zero() {
+        return NormRes::Term( term::int(0) )
+      } else if ! args[0].typ().is_arith() || ! args[1].typ().is_arith() {
+        panic!(
+          "illegal integer division application to {} ({}) and {} ({})",
+          args[0], args[0].typ(), args[1], args[1].typ()
         )
       }
 
-      match ( args[0].as_val(), args[1].as_val() ) {
-        ( Val::I(num), Val::I(den) ) => match Op::IDiv.eval(
-          vec![ Val::I( num ), Val::I( den ) ]
-        ) {
-          Ok( Val::I(i) ) => return NormRes::Term( int(i) ),
-          Ok(_) => panic!(
+      match Op::IDiv.eval( vec![args[0].as_val(), args[1].as_val()] ) {
+
+        Ok(val) => if val.typ().is_int() {
+          if let Some(val) = val.to_term() {
+            return NormRes::Term(val)
+          } else {
+            ()
+          }
+        } else {
+          panic!(
             "unexpected result while evaluating `({} {} {})`",
             op, args[0], args[1]
-          ),
-          Err(e) => panic!(
-            "error while evaluating `({} {} {})`: {}",
-            op, args[0], args[1], e.description()
-          ),
+          )
         },
-
-        ( Val::I(num), Val::N ) => if num.is_zero() {
-          return NormRes::Term( int(0) )
-        },
-
-        ( Val::N, Val::I(den) ) => if den.abs() == Int::one() {
-          let (num, _) = num_den!() ;
-          if den.is_negative() {
-            return NormRes::App( typ, Op::Sub, vec![ NormRes::Term(num) ] )
-          } else {
-            return NormRes::Term(num)
-          }
-        },
-
-        ( Val::N, Val::N ) => (),
-
-        // Anything else is type error.
-        ( _, _ ) => panic!(
-          "illegal application or `{}` to {} ({}) and {} ({})",
-          op, args[0], args[0].typ(), args[1], args[1].typ()
-        ),
+        Err(_) => (),
       }
 
       (op, args)
@@ -1238,12 +1218,12 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         // If lhs is also a constant, we done.
         if let Some(lhs_val) = args[0].val() {
           let res = if op == Op::Ge {
-            lhs_val.ge(rhs_val)
+            lhs_val.get().g_e(& rhs_val).unwrap()
           } else {
-            lhs_val.gt(rhs_val)
+            lhs_val.get().g_t(& rhs_val).unwrap()
           } ;
           return NormRes::Term(
-            bool( res.unwrap().to_bool().unwrap().unwrap() )
+            bool( res.to_bool().unwrap().unwrap() )
           )
         }
 
@@ -1267,15 +1247,15 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
                 ]
               ),
               NormRes::Term(
-                rhs_val.sub(correction).unwrap().to_term().unwrap()
+                rhs_val.sub(& correction).unwrap().to_term().unwrap()
               )
             ]
           )
         } else {
           // Normalize gt to ge for integers.
           if op == Op::Gt {
-            match rhs_val {
-              Val::I(ref i) => {
+            match rhs_val.get() {
+              & val::RVal::I(ref i) => {
                 rhs = term::int(i + 1) ;
                 op = Op::Ge
               },

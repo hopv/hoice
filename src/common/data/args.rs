@@ -76,7 +76,7 @@ impl RArgs {
     let mut slf = RArgs::new(
       info.iter().map(
         |info| if partial {
-          Val::N
+          val::none(info.typ.clone())
         } else {
           let default = info.typ.default_val() ;
           default

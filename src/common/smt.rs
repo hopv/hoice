@@ -435,9 +435,9 @@ where Br: BufRead {
         Ok( if ! pos { - int } else { int } )
       }
     ) ? {
-      Ok( Val::I(val) )
+      Ok( val::int(val) )
     } else if let Some(val) = input.try_bool() ? {
-      Ok( Val::B(val) )
+      Ok( val::bool(val) )
     } else if let Some(val) = input.try_rat::<
       _, _, ::num::bigint::ParseBigIntError
     >(
@@ -449,7 +449,7 @@ where Br: BufRead {
         Ok( if ! pos { - rat } else { rat } )
       }
     ) ? {
-      let mut val = Val::R(val) ;
+      let mut val = val::rat(val) ;
       Ok(val)
     } else {
       input.fail_with("unexpected value")

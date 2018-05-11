@@ -25,6 +25,7 @@ pub use term::{
   Val, Op, Typ, Quant,
 } ;
 pub use term::typ ;
+pub use term::val ;
 pub use term::args::{
   HTArgs, HTArgss
 } ;

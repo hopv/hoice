@@ -375,12 +375,12 @@ macro_rules! msg {
 macro_rules! try_val {
   (int $e:expr) => (
     if let Some(i) = $e.to_int()? { i } else {
-      return Ok( Val::N )
+      return Ok( $crate::term::val::none($crate::term::typ::int()) )
     }
   ) ;
   (bool $e:expr) => (
     if let Some(b) = $e.to_bool()? { b } else {
-      return Ok( Val::N )
+      return Ok( $crate::term::val::none($crate::term::typ::bool()) )
     }
   ) ;
 }
