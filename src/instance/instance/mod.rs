@@ -1413,10 +1413,7 @@ impl Instance {
           },
           (0, Some( (pred, args) )) => {
             if let Some(args) = data.add_raw_pos(pred, args) {
-              sample_dep! {
-                clause.from().iter().next().unwrap().clone(),
-                vec![], pred, args
-              }
+              sample_dep! { clause_idx, vec![], pred, args }
             }
           },
           (_, consequent) => {
@@ -1666,13 +1663,14 @@ impl Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      for clause in clause.from() {
-        write!(w, ";   from #{}", clause) ? ;
-        if let Some(name) = self.old_names.get(clause) {
-          write!(w, ": {}", name) ?
-        }
-        write!(w, "\n") ?
+
+      // Print source.
+      write!(w, ";   from #{}", clause.from()) ? ;
+      if let Some(name) = self.old_names.get(& clause.from()) {
+        write!(w, ": {}", name) ?
       }
+      write!(w, "\n") ? ;
+
       clause.write(
         w, |w, p, args| {
           if ! args.is_empty() {
@@ -1766,11 +1764,12 @@ impl Instance {
   }
 
 
-  /// Writes a model.
-  pub fn write_model<W: Write>(
-    & self, model: & ConjModel, w: & mut W
+
+  /// Writes some definitions.
+  pub fn write_definitions<W: Write>(
+    & self, w: & mut W, pref: & str, model: & ConjModel
   ) -> Res<()> {
-    writeln!(w, "(model") ? ;
+
     for defs in model {
 
       if defs.is_empty() {
@@ -1779,30 +1778,41 @@ impl Instance {
         let (pred, ref tterms) = defs[0] ;
 
         writeln!(
-          w, "  ({} {}", keywords::cmd::def_fun, self[pred].name
+          w, "{}({} {}", pref, keywords::cmd::def_fun, self[pred].name
         ) ? ;
-        write!(w, "    ")  ?;
+        write!(w, "{}  ", pref)  ?;
         self.write_pred_sig(w, pred) ? ;
-        write!(w, "\n    ") ? ;
+        write!(w, "\n{}  ", pref) ? ;
         self.write_tterms_conj(w, tterms) ? ;
-        writeln!(w, "\n  )") ?
+        writeln!(w, "\n{})", pref) ?
 
       } else {
         write!(
-          w, "  ({} (", keywords::cmd::def_funs
+          w, "{}({} (", pref, keywords::cmd::def_funs
         ) ? ;
         for & (pred, _) in defs {
-          write!(w, "\n    {} ", self[pred].name) ? ;
+          write!(w, "\n{}  {} ", pref, self[pred].name) ? ;
           self.write_pred_sig(w, pred) ? ;
         }
-        write!(w, "\n  ) (") ? ;
+        write!(w, "\n{}) (", pref) ? ;
         for & (_, ref tterms) in defs {
-          write!(w, "\n    ") ? ;
+          write!(w, "\n{}  ", pref) ? ;
           self.write_tterms_conj(w, tterms) ? ;
         }
-        writeln!(w, "\n  ) )") ? ;
+        writeln!(w, "\n{}) )", pref) ? ;
       }
     }
+
+    Ok(())
+  }
+
+
+  /// Writes a model.
+  pub fn write_model<W: Write>(
+    & self, model: & ConjModel, w: & mut W
+  ) -> Res<()> {
+    writeln!(w, "(model") ? ;
+    self.write_definitions(w, "  ", model) ? ;
     writeln!(w, ")") ? ;
     Ok(())
   }
@@ -1951,13 +1961,11 @@ impl<'a> PebcakFmt<'a> for Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      for clause in clause.from() {
-        write!(w, "; from #{}", clause) ? ;
-        if let Some(name) = self.old_names.get(clause) {
-          write!(w, ": {}", name) ?
-        }
-        write!(w, "\n") ?
+      write!(w, "; from #{}", clause.from()) ? ;
+      if let Some(name) = self.old_names.get(& clause.from()) {
+        write!(w, ": {}", name) ?
       }
+      write!(w, "\n") ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
 

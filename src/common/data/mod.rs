@@ -1185,7 +1185,7 @@ impl<'a> PebcakFmt<'a> for Data {
     }
     write!(w, ")\n") ? ;
     if let Some(graph) = self.graph.as_ref() {
-      graph.write(w, "", & self.instance) ? ;
+      graph.write_graph(w, "", & self.instance) ? ;
     }
     Ok(())
   }

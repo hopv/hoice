@@ -37,7 +37,7 @@ pub struct Clause {
   pub info: & 'static str,
 
   /// Index of the original clause this comes from.
-  from: ClsSet,
+  from: ClsIdx,
 }
 impl Clause {
   /// Creates a clause.
@@ -45,8 +45,7 @@ impl Clause {
     vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
     info: & 'static str, cls: ClsIdx,
   ) -> Self {
-    let mut from = ClsSet::new() ;
-    from.insert(cls) ;
+    let from = cls ;
     let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
     let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
     let mut clause = Clause {
@@ -465,18 +464,18 @@ impl Clause {
     & self.vars
   }
 
-  /// Adds a source clause.
-  ///
-  /// Source clauses are original clauses this clause stems from.
-  pub fn add_from(& mut self, cls: ClsIdx) -> bool {
-    self.from.insert(cls)
-  }
+  // /// Adds a source clause.
+  // ///
+  // /// Source clauses are original clauses this clause stems from.
+  // pub fn add_from(& mut self, cls: ClsIdx) -> bool {
+  //   self.from.insert(cls)
+  // }
 
   /// Returns the source clauses.
   ///
   /// Source clauses are original clauses this clause stems from.
-  pub fn from(& self) -> & ClsSet {
-    & self.from
+  pub fn from(& self) -> ClsIdx {
+    self.from
   }
 
   /// Clones a clause without the lhs predicate applications.
@@ -714,11 +713,7 @@ impl Clause {
       ",
       inactive, self.from_unrolling, self.terms_changed, self.info
     ) ? ;
-    write!(w, "  ; from: {{") ? ;
-    for clause in & self.from {
-      write!(w, " {}", clause) ?
-    }
-    write!(w, " }}\n") ? ;
+    writeln!(w, "  ; from: {}", self.from()) ? ;
 
     let lhs_len = self.lhs_len() ;
 
