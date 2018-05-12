@@ -8,16 +8,16 @@ extern crate hoice ;
 use hoice::common::* ;
 
 #[cfg(not(debug_assertions))]
-fn setup() {
-  setup_panic!()
+macro_rules! setup {
+  () => (setup_panic!()) ;
 }
 #[cfg(debug_assertions)]
-fn setup() {
-  ()
+macro_rules! setup {
+  () => () ;
 }
 
 fn main() {
-  setup() ;
+  setup!() ;
 
   // Work and report error if any.
   if let Err(errs) = ::hoice::work() {
