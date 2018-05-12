@@ -126,25 +126,6 @@ impl Data {
     )
   }
 
-  /// Registers a dependency between samples.
-  pub fn register(
-    & mut self, rhs: Option<(PrdIdx, Args)>,
-    cls: ClsIdx, samples: PrdHMap<Vec<Args>>,
-  ) -> Res<()> {
-    if let Some(graph) = self.graph.as_mut() {
-      if let Some((pred, args)) = rhs {
-        graph.add(pred, args, cls, samples) ?
-      } else {
-        for (pred, argss) in & samples {
-          for args in argss {
-            graph.add_neg(* pred, args.clone(), cls, samples.clone()) ?
-          }
-        }
-      }
-    }
-    Ok(())
-  }
-
   /// The sample graph, used for unsat cores.
   pub fn sample_graph(& mut self) -> Option<SampleGraph> {
     if let Some(ref mut graph) = self.graph {
@@ -189,6 +170,13 @@ impl Data {
     for (pred, samples) in other.neg.into_index_iter() {
       for sample in samples {
         self.staged.add_neg(pred, sample) ;
+      }
+    }
+    if let Some(graph) = self.graph.as_mut() {
+      if let Some(other) = other.graph {
+        graph.merge(other)
+      } else {
+        bail!("inconsistent sample dependency tracking")
       }
     }
     self.propagate()
@@ -252,43 +240,90 @@ impl Data {
   }
 
 
-  /// Adds a new positive example.
+  /// Adds a positive example.
+  ///
+  /// The `clause` input is necessary for unsat core extraction.
   ///
   /// Does not propagate.
-  pub fn add_raw_pos(& mut self, pred: PrdIdx, args: RArgs) -> Option<Args> {
+  pub fn add_raw_pos(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: RArgs
+  ) -> () {
     let (args, _) = self.mk_sample(args) ;
-    if self.staged.add_pos(pred, args.clone()) {
-      Some(args)
-    } else {
-      None
-    }
+    self.add_pos(clause, pred, args.clone()) ;
+    ()
   }
 
-  /// Adds a new negative example.
+  /// Adds a negative example.
+  ///
+  /// The `clause` input is necessary for unsat core extraction.
   ///
   /// Does not propagate.
-  pub fn add_raw_neg(& mut self, pred: PrdIdx, args: RArgs) -> Option<Args> {
+  pub fn add_raw_neg(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: RArgs
+  ) -> () {
     let (args, _) = self.mk_sample(args) ;
-    if self.staged.add_neg(pred, args.clone()) {
-      Some(args)
-    } else {
-      None
-    }
+    self.add_neg(clause, pred, args.clone()) ;
+    ()
   }
 
 
 
-  /// Adds a new positive example.
+  /// Adds a positive example.
+  ///
+  /// The `clause` input is necessary for unsat core extraction.
   ///
   /// Does not propagate.
-  pub fn add_pos(& mut self, pred: PrdIdx, args: Args) -> bool {
+  pub fn add_pos(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: Args
+  ) -> bool {
+    if self.add_pos_untracked(pred, args.clone()) {
+      if let Some(graph) = self.graph.as_mut() {
+        graph.add(pred, args.clone(), clause, PrdHMap::new())
+      }
+      true
+    } else {
+      false
+    }
+  }
+  /// Adds a positive example.
+  ///
+  /// Does track dependencies for unsat core.
+  ///
+  /// Used by the learner(s).
+  pub fn add_pos_untracked(
+    & mut self, pred: PrdIdx, args: Args
+  ) -> bool {
     self.staged.add_pos(pred, args)
   }
 
   /// Adds a new negative example.
   ///
+  /// The `clause` input is necessary for unsat core extraction.
+  ///
   /// Does not propagate.
-  pub fn add_neg(& mut self, pred: PrdIdx, args: Args) -> bool {
+  pub fn add_neg(
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: Args
+  ) -> bool {
+    if self.add_neg_untracked(pred, args.clone()) {
+      if let Some(graph) = self.graph.as_mut() {
+        let mut lhs = PrdHMap::with_capacity(1) ;
+        let prev = lhs.insert(pred, vec![ args.clone() ]) ;
+        debug_assert! { prev.is_none() }
+        graph.add_neg(pred, args.clone(), clause, lhs)
+      }
+      true
+    } else {
+      false
+    }
+  }
+  /// Adds a negative example.
+  ///
+  /// Does track dependencies for unsat core.
+  ///
+  /// Used by the learner(s).
+  pub fn add_neg_untracked(
+    & mut self, pred: PrdIdx, args: Args
+  ) -> bool {
     self.staged.add_neg(pred, args)
   }
 
@@ -529,7 +564,9 @@ impl Data {
                   ) ? ;
                   modded_constraints.insert(constraint_idx) ;
                 }
-                Either::Right(true) => unsat!(),
+                Either::Right(true) => unsat!(
+                  "by `true => false` in constraint (data, propagate)"
+                ),
               }
             }
           }
@@ -627,28 +664,57 @@ impl Data {
 
   /// Adds a constraint.
   ///
+  /// Returns `true` and if something new was added.
+  ///
+  /// The `clause` input is necessary for unsat core extraction.
+  ///
   /// Partial samples ARE NOT ALLOWED in constraints.
   ///
   /// - propagates staged samples beforehand
   pub fn add_cstr(
-    & mut self, lhs: Vec<(PrdIdx, RArgs)>, rhs: Option<(PrdIdx, RArgs)>
-  ) -> Res< Option<(Option<(PrdIdx, Args)>, PrdHMap<(Vec<Args>)>)> > {
+    & mut self, clause: ClsIdx,
+    lhs: Vec<(PrdIdx, RArgs)>, rhs: Option<(PrdIdx, RArgs)>
+  ) -> Res< bool > {
     profile!(
       self wrap { self.propagate() }
       "add cstr", "pre-propagate"
     ) ? ;
 
+    if_log! { @4
+      log! { @4 "adding constraint" }
+      if let Some((pred, args)) = rhs.as_ref() {
+        log! { @4 "({} {})", self.instance[* pred], args }
+      } else {
+        log! { @4 "false" }
+      }
+      let mut pref = "<=" ;
+      for (pred, args) in & lhs {
+          log! { @4 "{} ({} {})", pref, self.instance[* pred], args }
+          pref = "  "
+      }
+    }
+
     profile! { self tick "add cstr", "pre-checks" }
 
     let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
-    let mut final_lhs = PrdHMap::new() ;
+    // This stores the information for the unsat core, if needed. That is, if
+    // `self.graph` is some.
+    let mut final_lhs = self.graph.as_ref().map(
+      |_| PrdHMap::with_capacity( lhs.len() )
+    ) ;
+    let mut final_rhs = self.graph.as_ref().map(
+      |_| None
+    ) ;
 
     // Look at the lhs and remove stuff we know is true.
     'lhs_iter: for & (pred, ref args) in & lhs {
       let (args, is_new) = self.mk_sample( args.clone() ) ;
-      final_lhs.entry(pred).or_insert_with(
-        || vec![]
-      ).push( args.clone() ) ;
+      // Remember stuff for the unsat core.
+      final_lhs.as_mut().map(
+        |lhs| lhs.entry(pred).or_insert_with(
+          || vec![]
+        ).push( args.clone() )
+      ) ;
 
       // If no partial examples and sample is new, no need to check anything.
       if conf.teacher.partial || ! is_new {
@@ -659,7 +725,7 @@ impl Data {
           // Negative, constraint is trivial.
           profile! { self mark "add cstr", "pre-checks" }
           profile! { self "trivial constraints" => add 1 }
-          return Ok(None)
+          return Ok(false)
         }
       }
 
@@ -677,6 +743,13 @@ impl Data {
       // Not a look, just makes early return easier thanks to breaking.
       'get_rhs: loop {
         let (args, is_new) = self.mk_sample( args.clone() ) ;
+        // Remember stuff for the unsat core.
+        final_rhs.as_mut().map(
+          |opt| {
+            debug_assert! { opt.is_none() }
+            * opt = Some((pred, args.clone()))
+          }
+        ) ;
 
         // If no partial examples and sample is new, no need to check anything.
         if conf.teacher.partial || ! is_new {
@@ -684,7 +757,7 @@ impl Data {
             profile! { self mark "add cstr", "pre-checks" }
             profile! { self "trivial constraints" => add 1 }
             // Positive, constraint is trivial.
-            return Ok(None)
+            return Ok(false)
           } else if args.set_subsumed(& self.neg[pred]) {
             // Negative, ignore.
             break 'get_rhs None
@@ -699,7 +772,7 @@ impl Data {
             profile! { self mark "add cstr", "pre-checks" }
             profile! { self "trivial constraints" => add 1 }
             // Trivially implied by lhs.
-            return Ok(None)
+            return Ok(false)
           }
         }
 
@@ -711,12 +784,33 @@ impl Data {
 
     nu_lhs.shrink_to_fit() ;
 
-    let res = Some(
-      (
-        nu_rhs.as_ref().map(
-          |sample| (sample.pred, sample.args.clone())
-        ), final_lhs)
-    ) ;
+    // Do we need to remember stuff for the unsat core?
+    if let Some(lhs) = final_lhs {
+      let rhs = if let Some(rhs) = final_rhs {
+        rhs
+      } else {
+        bail!("constructing unsat core, but rhs is inexistant")
+      } ;
+      let graph = if let Some(graph) = self.graph.as_mut() {
+        graph
+      } else {
+        bail!("constructing unsat core, but sample dependency graph is `None`")
+      } ;
+      if let Some((pred, args)) = rhs {
+        graph.add(
+          pred, args, clause, lhs
+        )
+      } else {
+        for (pred, argss) in & lhs {
+          for args in argss {
+            let mut lhs = lhs.clone() ;
+            graph.add_neg(
+              * pred, args.clone(), clause, lhs
+            )
+          }
+        }
+      }
+    }
 
     let mut constraint = Constraint::new(nu_lhs, nu_rhs) ;
     constraint.check().chain_err(
@@ -733,7 +827,7 @@ impl Data {
     match constraint.is_trivial() {
       Either::Left((Sample { pred, args }, pos)) => {
         let is_new = self.staged.add(pred, args, pos) ;
-        Ok(if is_new { res } else { None })
+        Ok(is_new)
       },
       Either::Right(false) => {
         // Handles linking and constraint info registration.
@@ -744,17 +838,31 @@ impl Data {
 
         self.check("after add_cstr") ? ;
 
-        Ok(if is_new { res } else { None })
+        Ok(is_new)
       },
       Either::Right(true) => {
-        let mut unsat = Vec::with_capacity(lhs.len()) ;
-        for (pred, args) in lhs {
-          unsat.push((pred, self.mk_sample(args).0))
-        }
+        // The data isn't unsat at this point, need to add something so that
+        // it's unsat.
         if let Some((pred, args)) = rhs {
-          unsat.push((pred, self.mk_sample(args).0))
+          let args = self.mk_sample(args).0 ;
+          self.add_pos_untracked(pred, args) ;
+        } else {
+          // The whole lhs is true, and implies false. Let's just add one of
+          // the samples in the lhs.
+          let mut lhs = lhs ;
+          if let Some((pred, args)) = lhs.pop() {
+            let args = self.mk_sample(args).0 ;
+            self.add_neg_untracked(pred, args) ;
+          } else {
+            bail!("data was asked to add a `true => false` constraint")
+          }
         }
-        unsat!()
+
+        self.propagate() ? ;
+
+        unsat!(
+          "by `true => false` in constraint (data, add_cstr)"
+        )
       },
     }
   }
@@ -815,7 +923,9 @@ impl Data {
               ) ? ;
               modded_constraints.insert(constraint) ;
             },
-            Either::Right(true) => unsat!(),
+            Either::Right(true) => unsat!(
+              "by `true => false` in constraint (data, force_pred)"
+            ),
           }
         }
       }

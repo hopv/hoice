@@ -335,6 +335,17 @@ impl<'a> Reductor<'a> {
     macro_rules! check_solved {
       () => (
         if self.instance.is_solved() {
+          if ! self.instance.is_unsat() {
+            // Check remaining clauses, maybe some of them are unsat.
+            match self.instance.simplify_all() {
+              Ok(_) => (),
+              Err(e) => if e.is_unsat() {
+                self.instance.set_unsat()
+              } else {
+                return Err(e)
+              },
+            }
+          }
           return Ok(())
         }
       ) ;
@@ -1410,7 +1421,7 @@ impl RedStrat for CfgRed {
         let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
         info += this_info ;
         if ! is_sat {
-          unsat!()
+          unsat!("by preprocessing (all predicates resolved but unsat)")
         } else {
           total_info += info ;
           break

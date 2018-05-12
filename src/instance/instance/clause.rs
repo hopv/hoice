@@ -423,8 +423,12 @@ impl Clause {
   pub fn unset_rhs(& mut self) -> Option<PredApp> {
     let mut old_rhs = None ;
     ::std::mem::swap( & mut self.rhs, & mut old_rhs ) ;
+    if old_rhs.is_some() {
+      self.terms_changed = true
+    }
     old_rhs
   }
+
   /// Forces the RHS of a clause.
   #[inline]
   pub fn set_rhs(& mut self, pred: PrdIdx, args: HTArgs) -> Res<()> {
@@ -519,7 +523,7 @@ impl Clause {
         } ;
         (None, self.terms_changed || added)
       },
-      None => (None, self.terms_changed),
+      None => (None, self.terms_changed || self.rhs.is_some()),
     } ;
 
     Clause {

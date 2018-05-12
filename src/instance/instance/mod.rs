@@ -208,6 +208,11 @@ impl Instance {
     self.split.clone()
   }
 
+  /// True if the unsat flag is set.
+  pub fn is_unsat(& self) -> bool {
+    self.is_unsat
+  }
+
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
     self.is_unsat = true
@@ -1321,20 +1326,8 @@ impl Instance {
       })
     }
 
-    // Registers sample dependencies in `data`.
-    macro_rules! sample_dep {
-      ($clause:expr, $antecedents:expr, $rhs_pred:expr, $rhs_args:expr) => ({
-        let mut ante = PrdHMap::new() ;
-        for (pred, args) in $antecedents {
-          ante.entry(pred).or_insert_with(
-            || vec![]
-          ).push(args)
-        }
-        data.register(Some(($rhs_pred, $rhs_args)), $clause, ante) ?
-      }) ;
-    }
-
     let mut nu_stuff = false ;
+
     for (clause_idx, cexs) in cexs.into_iter() {
 
       for cex in cexs {
@@ -1400,29 +1393,25 @@ impl Instance {
         } ;
 
         match ( antecedents.len(), consequent ) {
-          (0, None) => unsat!(),
+          (0, None) => unsat!(
+            "by `true => false` during model to cex translation"
+          ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            if let Some(args) = data.add_raw_neg(pred, args) {
-              let mut lhs = PrdHMap::new() ;
-              let mut argss = Vec::new() ;
-              argss.push(args) ;
-              lhs.insert(pred, argss) ;
-              data.register(None, clause_idx, lhs) ?
-            }
+            debug_assert! { antecedents.is_empty() }
+            data.add_raw_neg(clause_idx, pred, args)
           },
-          (0, Some( (pred, args) )) => {
-            if let Some(args) = data.add_raw_pos(pred, args) {
-              sample_dep! { clause_idx, vec![], pred, args }
-            }
-          },
+          (0, Some( (pred, args) )) => data.add_raw_pos(
+            clause_idx, pred, args
+          ),
           (_, consequent) => {
             let (new_pos, new_neg) = data.propagate() ? ;
-            let res = data.add_cstr(antecedents, consequent) ? ;
             nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
-            if let Some((rhs, lhs)) = res {
-              nu_stuff = true ;
-              data.register(rhs, clause_idx, lhs) ?
+            let new_stuff = data.add_cstr(
+              clause_idx, antecedents, consequent
+            ) ? ;
+            if new_stuff {
+              nu_stuff = true
             }
           },
         }

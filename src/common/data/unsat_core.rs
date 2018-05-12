@@ -64,11 +64,49 @@ impl SampleGraph {
   }
 
 
+  /// Merges two graphs.
+  pub fn merge(& mut self, other : Self) {
+    let SampleGraph { graph, neg } = other ;
+
+    for (pred, map) in graph {
+      let pred_target = self.graph.entry(pred).or_insert_with(
+        || HConMap::with_capacity(map.len())
+      ) ;
+      for (args, origins) in map {
+        let target = pred_target.entry(args).or_insert_with(
+          || Vec::with_capacity(origins.len())
+        ) ;
+        for origin in origins {
+          if ! target.contains(& origin) {
+            target.push(origin)
+          }
+        }
+      }
+    }
+
+    for (pred, map) in neg {
+      let pred_target = self.neg.entry(pred).or_insert_with(
+        || HConMap::with_capacity(map.len())
+      ) ;
+      for (args, origins) in map {
+        let target = pred_target.entry(args).or_insert_with(
+          || Vec::with_capacity(origins.len())
+        ) ;
+        for origin in origins {
+          if ! target.contains(& origin) {
+            target.push(origin)
+          }
+        }
+      }
+    }
+  }
+
+
   /// Adds traceability for a sample.
   pub fn add(
     & mut self, prd: PrdIdx, args: Args,
     cls: ClsIdx, samples: PrdHMap<Vec<Args>>,
-  ) -> Res<()> {
+  ) -> () {
     if_log! { @3
       log! { @3
         "adding origin for ({} {})", prd, args ;
@@ -86,23 +124,19 @@ impl SampleGraph {
       || HConMap::new()
     ).entry(args).or_insert_with(
       || vec![]
-    ).push( (cls, samples) ) ;
-
-    Ok(())
+    ).push( (cls, samples) )
   }
 
   /// Adds traceability for a negative sample.
   pub fn add_neg(
     & mut self, prd: PrdIdx, args: Args,
     cls: ClsIdx, samples: PrdHMap<Vec<Args>>
-  ) -> Res<()> {
+  ) -> () {
     self.neg.entry(prd).or_insert_with(
       || HConMap::new()
     ).entry(args).or_insert_with(
       || vec![]
-    ).push( (cls, samples) ) ;
-
-    Ok(())
+    ).push( (cls, samples) )
   }
 
   /// Returns the set of positive samples (transitively) from the graph.
@@ -343,7 +377,12 @@ impl SampleGraph {
     & self, w: & mut W, instance: & Instance, source: & UnsatSource
   ) -> Res<()> {
     log! { @debug "retrieving core..." }
+    if_log! { @3
+      self.write_graph(& mut ::std::io::stdout(), ";     ", instance) ?
+    }
     let core = self.unsat_core_for(instance, source) ? ;
+
+    log! { @debug "core length is {}", core.len() }
 
     log! { @debug "retrieving definitions..." }
     let empty_candidates = PrdHMap::with_capacity( instance.preds().len() ) ;

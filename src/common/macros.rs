@@ -39,7 +39,11 @@ macro_rules! fail_with {
 
 /// Bails with unsat.
 macro_rules! unsat {
-  () => (bail!($crate::errors::ErrorKind::Unsat)) ;
+  ($($stuff:tt)*) => ({
+    log! { @info "unsat" } ;
+    log! { @debug $($stuff)* } ;
+    bail!($crate::errors::ErrorKind::Unsat)
+  }) ;
 }
 
 

@@ -190,7 +190,12 @@ pub fn read_and_work<R: ::std::io::Read>(
           if maybe_model.is_some() {
             println!("sat")
           } else {
-            println!("unsat")
+            println!("unsat") ;
+            unsat = Some(
+              Some(
+                (::common::data::unsat_core::SampleGraph::new(), vec![])
+              )
+            )
           }
           maybe_model
         } else {
