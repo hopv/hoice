@@ -138,11 +138,11 @@ impl Assistant {
           // Discard the constraint, regardless of what will happen.
           profile! { self tick "data" }
           data.tautologize(cstr) ? ;
-          for Sample { pred, args } in pos.drain(0..) {
-            data.add_pos(pred, args) ;
+          for (Sample { pred, args }, clause) in pos.drain(0..) {
+            data.add_pos(clause, pred, args) ;
           }
-          for Sample { pred, args } in neg.drain(0..) {
-            data.add_neg(pred, args) ;
+          for (Sample { pred, args }, clause) in neg.drain(0..) {
+            data.add_neg(clause, pred, args) ;
           }
           data.propagate() ? ;
           profile! { self mark "data" }
@@ -218,7 +218,7 @@ impl Assistant {
   ///   sample to be classified negative.
   pub fn try_force(
     & mut self, _data: & Data, pred: PrdIdx, vals: & Args
-  ) -> Res< Option< Either<Sample, Sample> > > {
+  ) -> Res< Option< Either<(Sample, ClsIdx), (Sample, ClsIdx)> > > {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
     ) ? ;
@@ -227,8 +227,9 @@ impl Assistant {
 
       self.solver.comment("working on positive clauses") ? ;
 
-      for clause in clauses {
-        let clause = & self.instance[* clause] ;
+      for clause_idx in clauses {
+        let clause_idx = * clause_idx ;
+        let clause = & self.instance[clause_idx] ;
         if let Some((p, args)) = clause.rhs() {
           debug_assert_eq! { pred, p }
           debug_assert! { clause.lhs_preds().is_empty() }
@@ -251,7 +252,7 @@ impl Assistant {
             return Ok(
               Some(
                 Either::Left(
-                  Sample { pred, args: vals.clone() }
+                  (Sample { pred, args: vals.clone() }, clause_idx)
                 )
               )
             )
@@ -267,8 +268,9 @@ impl Assistant {
 
       self.solver.comment("working on negative clauses") ? ;
 
-      for clause in clauses {
-        let clause = & self.instance[* clause] ;
+      for clause_idx in clauses {
+        let clause_idx = * clause_idx ;
+        let clause = & self.instance[clause_idx] ;
         if let Some(argss) = clause.lhs_preds().get(& pred) {
           let args = {
             let mut argss = argss.iter() ;
@@ -298,7 +300,7 @@ impl Assistant {
             return Ok(
               Some(
                 Either::Right(
-                  Sample { pred, args: vals.clone() }
+                  (Sample { pred, args: vals.clone() }, clause_idx)
                 )
               )
             )

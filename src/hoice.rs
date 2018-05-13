@@ -190,7 +190,12 @@ pub fn read_and_work<R: ::std::io::Read>(
           if maybe_model.is_some() {
             println!("sat")
           } else {
-            println!("unsat")
+            println!("unsat") ;
+            unsat = Some(
+              Some(
+                (::common::data::unsat_core::SampleGraph::new(), vec![])
+              )
+            )
           }
           maybe_model
         } else {
@@ -258,27 +263,11 @@ pub fn read_and_work<R: ::std::io::Read>(
             and if the command {}\n  \
             was issued at the beginning of the script\n\")\
           ", conf.bad("error"), conf.emph("after an unsat result"),
-          conf.emph("`(set-option :produce-unsat-core true)`")
+          conf.emph("`(set-option :produce-unsat-cores true)`")
         ),
-        Some(Some(& (ref graph, ref source))) => {
-          let core = graph.unsat_core_for(
-            & instance, & source
-          ) ? ;
-          println!("(") ;
-          for (clause, vals) in core {
-            if let Some(name) = instance.name_of_old_clause(clause) {
-              println!("  ({} (", name) ;
-              for (var, val) in vals {
-                println!(
-                  "    (define-fun {} () {} {})",
-                  instance[clause][var], instance[clause][var].name, val
-                )
-              }
-              println!("  ) )")
-            }
-          }
-          println!(")")
-        },
+        Some(Some(& (ref graph, ref source))) => graph.write_core(
+          & mut ::std::io::stdout(), & instance, source
+        ) ?,
       }
 
 

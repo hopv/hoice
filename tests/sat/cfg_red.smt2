@@ -1,3 +1,7 @@
+(set-logic HORN)
+
+(set-option :produce-unsat-cores true)
+
 (declare-fun
   |f_1036$unknown:60|
   ( Int Int Int Int Int Int Int ) Bool

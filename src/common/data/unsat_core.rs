@@ -1,4 +1,25 @@
-//! Unsat-core-related types and helpers.
+/*! Unsat-core-related types and helpers.
+
+An unsat result comes from a sample (a predicate/arguments pair) that needs to
+be both `true` and `false`. `SampleGraph` tracks dependencies between samples
+**without any propagation**, unlike the usual data structure manipulated by the
+engine which does propagate.
+
+When unsat core production is active, the graph is maintained alongside the
+data structure used by the engine. When an unsat core is requested, the caller
+provides a sample on which the contradiction was detected.
+
+The graph extracts a trace (tree) of samples that explain why the sample needs
+to be true and false at the same time. Last, the actual core is obtained by
+retrieving the values of the variables of the clauses involved in the trace of
+samples.
+
+The core is printed as a pair:
+
+- some predicate definitions, *i.e.* the predicate inferred by preprocessing
+- a set of values for the variables of some clauses that lead to the
+  contradiction
+*/
 
 use common::* ;
 use data::Args ;
@@ -19,7 +40,6 @@ pub type UnsatRes = Option<(SampleGraph, UnsatSource)> ;
 pub type UnsatCore = Vec<(ClsIdx, VarHMap<Val>)> ;
 
 
-
 /// Stores the graph of dependency between samples.
 ///
 /// Remembers where each sample comes from.
@@ -32,9 +52,9 @@ pub type UnsatCore = Vec<(ClsIdx, VarHMap<Val>)> ;
 pub struct SampleGraph {
   /// Maps samples to the clause and the samples for this clause they come
   /// from.
-  graph: PrdHMap< HConMap<Args, Origin> >,
+  graph: PrdHMap< HConMap<Args, Vec<Origin>> >,
   /// Negative samples.
-  neg: PrdHMap<HConMap<Args, Origin>>
+  neg: PrdHMap<HConMap<Args, Vec<Origin>>>
 }
 
 impl SampleGraph {
@@ -44,42 +64,162 @@ impl SampleGraph {
   }
 
 
+  /// Merges two graphs.
+  pub fn merge(& mut self, other : Self) {
+    let SampleGraph { graph, neg } = other ;
+
+    for (pred, map) in graph {
+      let pred_target = self.graph.entry(pred).or_insert_with(
+        || HConMap::with_capacity(map.len())
+      ) ;
+      for (args, origins) in map {
+        let target = pred_target.entry(args).or_insert_with(
+          || Vec::with_capacity(origins.len())
+        ) ;
+        for origin in origins {
+          if ! target.contains(& origin) {
+            target.push(origin)
+          }
+        }
+      }
+    }
+
+    for (pred, map) in neg {
+      let pred_target = self.neg.entry(pred).or_insert_with(
+        || HConMap::with_capacity(map.len())
+      ) ;
+      for (args, origins) in map {
+        let target = pred_target.entry(args).or_insert_with(
+          || Vec::with_capacity(origins.len())
+        ) ;
+        for origin in origins {
+          if ! target.contains(& origin) {
+            target.push(origin)
+          }
+        }
+      }
+    }
+  }
+
+
   /// Adds traceability for a sample.
   pub fn add(
     & mut self, prd: PrdIdx, args: Args,
     cls: ClsIdx, samples: PrdHMap<Vec<Args>>,
-  ) -> Res<()> {
-    let prev = self.graph.entry(prd).or_insert_with(
-      || HConMap::new()
-    ).insert(
-      args, (cls, samples)
-    ) ;
-    if prev.is_some() {
-      bail!("trying to redefine origin of a sample")
+  ) -> () {
+    if_log! { @3
+      log! { @3
+        "adding origin for ({} {})", prd, args ;
+        "from clause #{} {{", cls
+      }
+      for (pred, samples) in & samples {
+        log! { @3 "  from predicate {}:", pred }
+        for sample in samples {
+          log! { @3 "    {}", sample }
+        }
+      }
+      log! { @3 "}}" }
     }
-    Ok(())
+    self.graph.entry(prd).or_insert_with(
+      || HConMap::new()
+    ).entry(args).or_insert_with(
+      || vec![]
+    ).push( (cls, samples) )
   }
 
   /// Adds traceability for a negative sample.
   pub fn add_neg(
     & mut self, prd: PrdIdx, args: Args,
     cls: ClsIdx, samples: PrdHMap<Vec<Args>>
-  ) -> Res<()> {
-    let prev = self.neg.entry(prd).or_insert_with(
+  ) -> () {
+    self.neg.entry(prd).or_insert_with(
       || HConMap::new()
-    ).insert(
-      args, (cls, samples)
-    ) ;
-    if prev.is_some() {
-      bail!("trying to redefine origin of a sample")
+    ).entry(args).or_insert_with(
+      || vec![]
+    ).push( (cls, samples) )
+  }
+
+  /// Returns the set of positive samples (transitively) from the graph.
+  ///
+  /// This operation is quite expensive...
+  pub fn positive_samples(& self) -> PrdHMap<ArgsSet> {
+    let mut res = PrdHMap::new() ;
+    let mut changed = true ;
+
+    while changed {
+      changed = false ;
+
+      for (pred, arg_map) in & self.graph {
+
+        'current_pred: for (args, origins) in arg_map {
+
+          // Skip if current sample is known to be true.
+          if res.get(pred).map(
+            |set: & ArgsSet| set.contains(args)
+          ).unwrap_or(false) {
+            continue 'current_pred
+          }
+
+          // Check all origins.
+          for (_clause_idx, origin) in origins {
+
+            // Check all samples in the origin are known to be true.
+            for (o_pred, o_argss) in origin {
+              for o_args in o_argss {
+
+                if res.get(o_pred).map(
+                  |set: & ArgsSet| ! set.contains(o_args)
+                ).unwrap_or(true) {
+                  continue 'current_pred
+                }
+
+              }
+            }
+
+            // Only reachable if all samples in this origin are true.
+            let is_new = res.entry(* pred).or_insert_with(
+              || ArgsSet::new()
+            ).insert(args.clone()) ;
+
+            debug_assert! { is_new }
+
+            changed = true ;
+            // No need to check other origins, move on to the next sample.
+            continue 'current_pred
+          }
+        }
+
+      }
+
     }
-    Ok(())
+
+    res
   }
 
   /// Trace the origin of a sample.
   pub fn trace(& self, samples: & Vec<(PrdIdx, Args)>) -> Res<
     Vec<(ClsIdx, PrdIdx, Args, PrdHMap< Vec<Args> >)>
   > {
+    // Retrieve the set of positive samples to chose the right origins.
+    let pos_samples = self.positive_samples() ;
+    macro_rules! is_all_positive {
+      ($origin:expr) => ({
+        let mut all_positive = true ;
+        for (pred, argss) in $origin {
+          if ! all_positive { break }
+          for args in argss {
+            if pos_samples.get(pred).map(
+              |set| ! set.contains(args)
+            ).unwrap_or(false) {
+              all_positive = false ;
+              break
+            }
+          }
+        }
+        all_positive
+      })
+    }
+
     let mut known = PrdHMap::new() ;
     for pred in self.graph.keys() {
       known.insert(* pred, HConSet::<Args>::new()) ;
@@ -105,34 +245,42 @@ impl SampleGraph {
 
       let mut found_it = false ;
 
-      if let Some(& (clause, ref samples)) = self.graph.get(& pred).and_then(
+      if let Some(origins) = self.graph.get(& pred).and_then(
         |map| map.get(& args)
       ) {
-        found_it = true ;
-        for (pred, argss) in samples {
-          let pred = * pred ;
-          for args in argss {
-            if ! known!(? pred, args) {
-              to_find.push((pred, args))
+        for & (clause, ref samples) in origins {
+          if is_all_positive!(samples) {
+            found_it = true ;
+            for (pred, argss) in samples {
+              let pred = * pred ;
+              for args in argss {
+                if ! known!(? pred, args) {
+                  to_find.push((pred, args))
+                }
+              }
             }
+            trace.push( (clause, pred, args.clone(), samples.clone()) )
           }
         }
-        trace.push( (clause, pred, args.clone(), samples.clone()) )
       }
 
-      if let Some(& (clause, ref samples)) = self.neg.get(& pred).and_then(
+      if let Some(origins) = self.neg.get(& pred).and_then(
         |map| map.get(& args)
       ) {
-        found_it = true ;
-        for (pred, argss) in samples {
-          let pred = * pred ;
-          for args in argss {
-            if ! known!(? pred, args) {
-              to_find.push((pred, args))
+        for & (clause, ref samples) in origins {
+          if is_all_positive!(samples) {
+            found_it = true ;
+            for (pred, argss) in samples {
+              let pred = * pred ;
+              for args in argss {
+                if ! known!(? pred, args) {
+                  to_find.push((pred, args))
+                }
+              }
             }
+            trace.push( (clause, pred, args.clone(), samples.clone()) )
           }
         }
-        trace.push( (clause, pred, args.clone(), samples.clone()) )
       }
 
       if ! found_it {
@@ -149,11 +297,15 @@ impl SampleGraph {
   #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
     for args in self.graph.values() {
-      for & (_, ref samples) in args.values() {
-        for (pred, argss) in samples {
-          for args in argss {
-            if self.graph.get(pred).and_then( |map| map.get(args) ).is_none() {
-              bail!("inconsistent sample graph state...")
+      for origins in args.values() {
+        for & (_, ref samples) in origins {
+          for (pred, argss) in samples {
+            for args in argss {
+              if self.graph.get(pred).and_then(
+                |map| map.get(args)
+              ).is_none() {
+                bail!("inconsistent sample graph state...")
+              }
             }
           }
         }
@@ -172,46 +324,97 @@ impl SampleGraph {
 
 
   /// Writes the sample graph with a prefix.
-  pub fn write<W: Write>(
+  pub fn write_graph<W: Write>(
     & self, w: & mut W, pref: & str, instance: & Instance
   ) -> IoRes<()> {
     writeln!(w, "{}sample graph {{", pref) ? ;
 
     for (pred, map) in & self.graph {
       writeln!(w, "{}  {}:", pref, instance[* pred]) ? ;
-      for (args, & (clause, ref apps)) in map {
-        write!(w, "{}    {}  <=#{}=", pref, args, clause) ? ;
-        if apps.is_empty() {
-          write!(w, "  true") ?
-        } else {
-          for (pred, argss) in apps {
-            for args in argss {
-              write!(w, "  ({} {})", instance[* pred], args) ?
+      for (args, origins) in map {
+        for & (clause, ref apps) in origins {
+          write!(w, "{}    {}  <=#{}=", pref, args, clause) ? ;
+          if apps.is_empty() {
+            write!(w, "  true") ?
+          } else {
+            for (pred, argss) in apps {
+              for args in argss {
+                write!(w, "  ({} {})", instance[* pred], args) ?
+              }
             }
           }
+          writeln!(w, "") ?
         }
-        writeln!(w, "") ?
       }
     }
 
     for (pred, map) in & self.neg {
       writeln!(w, "{}  {}:", pref, instance[* pred]) ? ;
-      for (args, & (clause, ref apps)) in map {
-        write!(w, "{}    {}: false  <=#{}=", pref, args, clause) ? ;
-        if apps.is_empty() {
-          write!(w, "  true") ?
-        } else {
-          for (pred, argss) in apps {
-            for args in argss {
-              write!(w, "  ({} {})", instance[* pred], args) ?
+      for (args, origins) in map {
+        for & (clause, ref apps) in origins {
+          write!(w, "{}    {}: false  <=#{}=", pref, args, clause) ? ;
+          if apps.is_empty() {
+            write!(w, "  true") ?
+          } else {
+            for (pred, argss) in apps {
+              for args in argss {
+                write!(w, "  ({} {})", instance[* pred], args) ?
+              }
             }
           }
+          writeln!(w, "") ?
         }
-        writeln!(w, "") ?
       }
     }
 
     writeln!(w, "{}}}", pref)
+  }
+
+
+
+  /// Writes an unsat core.
+  pub fn write_core<W: Write>(
+    & self, w: & mut W, instance: & Instance, source: & UnsatSource
+  ) -> Res<()> {
+    log! { @debug "retrieving core..." }
+    if_log! { @3
+      self.write_graph(& mut ::std::io::stdout(), ";     ", instance) ?
+    }
+    let core = self.unsat_core_for(instance, source) ? ;
+
+    log! { @debug "core length is {}", core.len() }
+
+    log! { @debug "retrieving definitions..." }
+    let empty_candidates = PrdHMap::with_capacity( instance.preds().len() ) ;
+    let definitions = instance.extend_model(empty_candidates) ? ;
+
+    writeln!(w, "(") ? ;
+
+    // Write definitions.
+    writeln!(w, "  ( ; Predicate definitions, obtained by pre-processing.") ? ;
+    instance.write_definitions(w, "    ", & definitions) ? ;
+    writeln!(w, "  )") ? ;
+
+    // Write the core itself.
+    writeln!(w, "  ( ; Trace of clauses explaining the contradiction.") ? ;
+    for (clause, vals) in core {
+      let original_clause = instance[clause].from() ;
+      if let Some(name) = instance.name_of_old_clause(original_clause) {
+        writeln!(w, "    ({} (", name) ? ;
+        for (var, val) in vals {
+          writeln!(
+            w, "      (define-fun {} () {} {})",
+            instance[clause][var], instance[clause][var].name, val
+          ) ?
+        }
+        writeln!(w, "    ) )") ?
+      }
+    }
+    writeln!(w, "  )") ? ;
+
+    writeln!(w, ")") ? ;
+
+    Ok(())
   }
 
 
@@ -224,6 +427,7 @@ impl SampleGraph {
       FullParser as Parser, SmtConj, EqConj
     } ;
 
+    log! { @4 "retrieving trace..." }
     let trace = self.trace(samples) ? ;
 
     let mut core = Vec::with_capacity( trace.len() ) ;
@@ -232,7 +436,10 @@ impl SampleGraph {
       "core_extraction", Parser, & instance
     ) ? ;
 
+    log! { @4 "extracting quantified variables' values..." }
+
     for (clause_idx, pred, rhs_sample, lhs) in trace {
+      log! { @4 "working on clause #{}", clause_idx }
       let clause = & instance[clause_idx] ;
       solver.comment(
         & format!("Working on clause #{}", clause_idx)

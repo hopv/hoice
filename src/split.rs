@@ -71,9 +71,8 @@ pub fn work(
 
     let mut instance = match preproc_res {
       Either::Left(instance) => instance,
-      Either::Right(None) => {
-        log! { @info "unsat by preproc\n\n" }
-        unsat!()
+      Either::Right(None) => unsat!{
+        "by preprocessing"
       },
       Either::Right(Some(this_model)) => {
         log! { @info "sat by preproc\n\n" }

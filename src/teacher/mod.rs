@@ -581,9 +581,12 @@ impl<'a> Teacher<'a> {
   pub fn unsat_core(& mut self) -> Res<UnsatRes> {
     if let Some(unsat) = self.data.is_unsat() {
       let res = self.data.sample_graph().map(|graph| (graph, unsat)) ;
-      return Ok(res)
+      Ok(res)
     } else {
-      bail!("could not retrieve unsat result")
+      bail!(
+        "failed to retrieve unsat result\ndata:\n{}",
+        self.data.to_string_info(& ()) ?
+      )
     }
   }
 

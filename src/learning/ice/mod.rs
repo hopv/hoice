@@ -289,7 +289,9 @@ impl<'core> IceLearner<'core> {
       } "learning", "setup"
     ) ? ;
 
-    if contradiction { unsat!() }
+    if contradiction {
+      unsat!("by contradiction in ICE solver")
+    }
 
     self.check_exit() ? ;
 
@@ -574,7 +576,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.add_pos(pred, unc) ;
+              self.data.add_pos_untracked(pred, unc) ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -620,7 +622,7 @@ impl<'core> IceLearner<'core> {
         profile!(
           |self.core._profiler| wrap {
             for unc in unc {
-              self.data.add_neg(pred, unc) ;
+              self.data.add_neg_untracked(pred, unc) ;
             }
             self.data.propagate()
           } "learning", "data"
@@ -893,7 +895,7 @@ impl<'core> IceLearner<'core> {
         // }
         // msg.push_str("\n)") ;
         // bail!(msg)
-        unsat!()
+        unsat!("by lack of (synth) qualifier")
       },
     } ;
     profile!{ self tick "learning", "qual", "data split" }

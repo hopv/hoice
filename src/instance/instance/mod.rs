@@ -210,6 +210,11 @@ impl Instance {
     self.split.clone()
   }
 
+  /// True if the unsat flag is set.
+  pub fn is_unsat(& self) -> bool {
+    self.is_unsat
+  }
+
   /// Sets the unsat flag in the instance.
   pub fn set_unsat(& mut self) {
     self.is_unsat = true
@@ -1323,20 +1328,8 @@ impl Instance {
       })
     }
 
-    // Registers sample dependencies in `data`.
-    macro_rules! sample_dep {
-      ($clause:expr, $antecedents:expr, $rhs_pred:expr, $rhs_args:expr) => ({
-        let mut ante = PrdHMap::new() ;
-        for (pred, args) in $antecedents {
-          ante.entry(pred).or_insert_with(
-            || vec![]
-          ).push(args)
-        }
-        data.register(Some(($rhs_pred, $rhs_args)), $clause, ante) ?
-      }) ;
-    }
-
     let mut nu_stuff = false ;
+
     for (clause_idx, cexs) in cexs.into_iter() {
 
       for cex in cexs {
@@ -1402,32 +1395,25 @@ impl Instance {
         } ;
 
         match ( antecedents.len(), consequent ) {
-          (0, None) => unsat!(),
+          (0, None) => unsat!(
+            "by `true => false` during model to cex translation"
+          ),
           (1, None) => {
             let (pred, args) = antecedents.pop().unwrap() ;
-            if let Some(args) = data.add_raw_neg(pred, args) {
-              let mut lhs = PrdHMap::new() ;
-              let mut argss = Vec::new() ;
-              argss.push(args) ;
-              lhs.insert(pred, argss) ;
-              data.register(None, clause_idx, lhs) ?
-            }
+            debug_assert! { antecedents.is_empty() }
+            data.add_raw_neg(clause_idx, pred, args)
           },
-          (0, Some( (pred, args) )) => {
-            if let Some(args) = data.add_raw_pos(pred, args) {
-              sample_dep! {
-                clause.from().iter().next().unwrap().clone(),
-                vec![], pred, args
-              }
-            }
-          },
+          (0, Some( (pred, args) )) => data.add_raw_pos(
+            clause_idx, pred, args
+          ),
           (_, consequent) => {
             let (new_pos, new_neg) = data.propagate() ? ;
-            let res = data.add_cstr(antecedents, consequent) ? ;
             nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
-            if let Some((rhs, lhs)) = res {
-              nu_stuff = true ;
-              data.register(rhs, clause_idx, lhs) ?
+            let new_stuff = data.add_cstr(
+              clause_idx, antecedents, consequent
+            ) ? ;
+            if new_stuff {
+              nu_stuff = true
             }
           },
         }
@@ -1668,13 +1654,14 @@ impl Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      for clause in clause.from() {
-        write!(w, ";   from #{}", clause) ? ;
-        if let Some(name) = self.old_names.get(clause) {
-          write!(w, ": {}", name) ?
-        }
-        write!(w, "\n") ?
+
+      // Print source.
+      write!(w, ";   from #{}", clause.from()) ? ;
+      if let Some(name) = self.old_names.get(& clause.from()) {
+        write!(w, ": {}", name) ?
       }
+      write!(w, "\n") ? ;
+
       clause.write(
         w, |w, p, args| {
           if ! args.is_empty() {
@@ -1768,11 +1755,12 @@ impl Instance {
   }
 
 
-  /// Writes a model.
-  pub fn write_model<W: Write>(
-    & self, model: & ConjModel, w: & mut W
+
+  /// Writes some definitions.
+  pub fn write_definitions<W: Write>(
+    & self, w: & mut W, pref: & str, model: & ConjModel
   ) -> Res<()> {
-    writeln!(w, "(model") ? ;
+
     for defs in model {
 
       if defs.is_empty() {
@@ -1781,30 +1769,41 @@ impl Instance {
         let (pred, ref tterms) = defs[0] ;
 
         writeln!(
-          w, "  ({} {}", keywords::cmd::def_fun, self[pred].name
+          w, "{}({} {}", pref, keywords::cmd::def_fun, self[pred].name
         ) ? ;
-        write!(w, "    ")  ?;
+        write!(w, "{}  ", pref)  ?;
         self.write_pred_sig(w, pred) ? ;
-        write!(w, "\n    ") ? ;
+        write!(w, "\n{}  ", pref) ? ;
         self.write_tterms_conj(w, tterms) ? ;
-        writeln!(w, "\n  )") ?
+        writeln!(w, "\n{})", pref) ?
 
       } else {
         write!(
-          w, "  ({} (", keywords::cmd::def_funs
+          w, "{}({} (", pref, keywords::cmd::def_funs
         ) ? ;
         for & (pred, _) in defs {
-          write!(w, "\n    {} ", self[pred].name) ? ;
+          write!(w, "\n{}  {} ", pref, self[pred].name) ? ;
           self.write_pred_sig(w, pred) ? ;
         }
-        write!(w, "\n  ) (") ? ;
+        write!(w, "\n{}) (", pref) ? ;
         for & (_, ref tterms) in defs {
-          write!(w, "\n    ") ? ;
+          write!(w, "\n{}  ", pref) ? ;
           self.write_tterms_conj(w, tterms) ? ;
         }
-        writeln!(w, "\n  ) )") ? ;
+        writeln!(w, "\n{}) )", pref) ? ;
       }
     }
+
+    Ok(())
+  }
+
+
+  /// Writes a model.
+  pub fn write_model<W: Write>(
+    & self, model: & ConjModel, w: & mut W
+  ) -> Res<()> {
+    writeln!(w, "(model") ? ;
+    self.write_definitions(w, "  ", model) ? ;
     writeln!(w, ")") ? ;
     Ok(())
   }
@@ -1953,13 +1952,11 @@ impl<'a> PebcakFmt<'a> for Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      for clause in clause.from() {
-        write!(w, "; from #{}", clause) ? ;
-        if let Some(name) = self.old_names.get(clause) {
-          write!(w, ": {}", name) ?
-        }
-        write!(w, "\n") ?
+      write!(w, "; from #{}", clause.from()) ? ;
+      if let Some(name) = self.old_names.get(& clause.from()) {
+        write!(w, ": {}", name) ?
       }
+      write!(w, "\n") ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
 

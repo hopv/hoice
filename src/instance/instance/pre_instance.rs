@@ -185,10 +185,10 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    log! { @debug "simplifying clause #{}", clause }
+    log! { @debug "simplifying clause #{} ({})", clause, self.instance[clause].terms_changed() }
 
     if self.instance[clause].is_unsat() {
-      unsat!()
+      unsat!("by preprocessing, clause simplification")
     }
 
     // log_debug! {
@@ -200,13 +200,9 @@ impl<'a> PreInstance<'a> {
       // Propagate.
       rm_return! {
         clause if {
-          // println!("clause before:") ;
-          // println!("{}", self.instance[clause].to_string_info(self.preds()).unwrap()) ;
           let res = self.simplifier.clause_propagate(
             & mut self.instance[clause]
           ) ? ;
-          // println!("clause after:") ;
-          // println!("{}", self.instance[clause].to_string_info(self.preds()).unwrap()) ;
           res
         } => "propagation"
       }
@@ -1709,11 +1705,11 @@ impl<'a> ::std::ops::Deref for PreInstance<'a> {
     self.instance
   }
 }
-// impl<'a, Slver> ::std::ops::DerefMut for PreInstance<'a, Slver> {
-//   fn deref_mut(& mut self) -> & mut Instance {
-//     self.instance
-//   }
-// }
+impl<'a> ::std::ops::DerefMut for PreInstance<'a> {
+  fn deref_mut(& mut self) -> & mut Instance {
+    self.instance
+  }
+}
 
 
 
