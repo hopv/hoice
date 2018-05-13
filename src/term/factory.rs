@@ -845,7 +845,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       let mut sum: Val = if args[0].typ() == typ::int() {
         val::int(0)
       } else {
-        val::rat( Rat::new(0.into(), 1.into()))
+        val::real( Rat::new(0.into(), 1.into()))
       } ;
 
       let mut c_args = HConMap::<Term, Val>::new() ;
@@ -1060,7 +1060,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       let mut coef: Val = if args[0].typ() == typ::int() {
         val::int(1)
       } else {
-        val::rat( Rat::new(1.into(), 1.into()) )
+        val::real( Rat::new(1.into(), 1.into()) )
       } ;
 
       while cnt < args.len() {
@@ -1074,7 +1074,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           )
         } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
           args.swap_remove(cnt) ;
-          coef = coef.mul( & val::rat(r) ).expect(
+          coef = coef.mul( & val::real(r) ).expect(
             "during multiplication simplification"
           )
         } else {

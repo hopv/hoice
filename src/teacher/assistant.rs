@@ -406,6 +406,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           write!(w, ")") ?
         },
         & val::RVal::N(_) => unknown += 1,
+        & val::RVal::Array { .. } => unimplemented!(),
       }
     }
 

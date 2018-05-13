@@ -413,7 +413,7 @@ impl RTerm {
   pub fn val(& self) -> Option<Val> {
     match * self {
       RTerm::Int(ref i) => Some( val::int(i.clone()) ),
-      RTerm::Real(ref r) => Some( val::rat(r.clone()) ),
+      RTerm::Real(ref r) => Some( val::real(r.clone()) ),
       RTerm::Bool(b) => Some( val::bool(b) ),
       _ => None,
     }
@@ -482,7 +482,7 @@ impl RTerm {
           bail!("model is too short ({})", model.len())
         },
         Int(ref i) => val::int( i.clone() ),
-        Real(ref r) => val::rat( r.clone() ),
+        Real(ref r) => val::real( r.clone() ),
         Bool(b) => val::bool(b),
       } ;
 

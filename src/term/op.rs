@@ -337,26 +337,26 @@ impl Op {
           } else if num % den == Int::zero() {
             Ok( val::int( num / den ) )
           } else {
-            Ok( val::rat( Rat::new(num.clone(), den.clone()) ) )
+            Ok( val::real( Rat::new(num.clone(), den.clone()) ) )
           },
 
           (
             & val::RVal::I(ref num_val), & val::RVal::R(ref den_val)
           ) => if num_val.is_zero() {
-            Ok( val::rat(Rat::new(0.into(), 1.into())) )
+            Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
             Ok(
-              val::rat( Rat::new(num_val.clone(), 1.into()) / den_val.clone() )
+              val::real( Rat::new(num_val.clone(), 1.into()) / den_val.clone() )
             )
           },
 
           (
             & val::RVal::R(ref num_val), & val::RVal::I(ref den_val)
           ) => if num.is_zero() {
-            Ok( val::rat(Rat::new(0.into(), 1.into())) )
+            Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
             Ok(
-              val::rat(
+              val::real(
                 num_val.clone() / Rat::new(den_val.clone(), 1.into())
               )
             )
@@ -365,9 +365,9 @@ impl Op {
           (
             & val::RVal::R(ref num_val), & val::RVal::R(ref den_val)
           ) => if num.is_zero() {
-            Ok( val::rat(Rat::new(0.into(), 1.into())) )
+            Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
-            Ok( val::rat( num_val.clone() / den_val.clone() ) )
+            Ok( val::real( num_val.clone() / den_val.clone() ) )
           },
 
           (& val::RVal::N(ref t_1), & val::RVal::I(ref i))
@@ -601,7 +601,7 @@ impl Op {
           )
         }
         if let Some(i) = val.to_int() ? {
-          Ok( val::rat( Rat::new(i.clone(), 1.into()) ) )
+          Ok( val::real( Rat::new(i.clone(), 1.into()) ) )
         } else {
           Ok(val::none(typ::real()))
         }

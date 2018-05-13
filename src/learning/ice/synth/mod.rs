@@ -63,7 +63,7 @@ impl SynthSys {
         typ::RTyp::Int => int = true,
         typ::RTyp::Real => real = true,
         typ::RTyp::Bool => (),
-        typ::RTyp::Array(_) => unimplemented!(),
+        typ::RTyp::Array { .. } => unimplemented!(),
       }
     }
 

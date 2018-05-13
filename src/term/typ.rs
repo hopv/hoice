@@ -28,8 +28,8 @@ pub fn bool() -> Typ {
   factory.mk(RTyp::Bool)
 }
 /// Generates an Array type.
-pub fn array(typ: Typ) -> Typ {
-  factory.mk(RTyp::Array(typ))
+pub fn array(src: Typ, tgt: Typ) -> Typ {
+  factory.mk(RTyp::Array { src, tgt })
 }
 
 /// A hash-consed type.
@@ -37,6 +37,16 @@ pub type Typ = HConsed<RTyp> ;
 
 
 /// Types.
+///
+/// # Examples
+///
+/// ```rust
+/// use hoice::term::typ::* ;
+/// debug_assert_eq! {
+///   format!("{}", array(int(), array(int(), int()))),
+///   "(Array Int (Array Int Int))"
+/// }
+/// ```
 #[
   derive(
     Debug, Clone,
@@ -52,7 +62,12 @@ pub enum RTyp {
   /// Booleans.
   Bool,
   /// Arrays.
-  Array(Typ)
+  Array {
+    /// Type of indices.
+    src: Typ,
+    /// Type of values
+    tgt: Typ,
+  }
 }
 impl RTyp {
   /// True if the type is bool.
@@ -76,6 +91,22 @@ impl RTyp {
     }
   }
 
+  /// True if the type is an array.
+  pub fn is_array(& self) -> bool {
+    match * self {
+      RTyp::Array { .. } => true,
+      _ => false,
+    }
+  }
+
+  /// Inspects an array type.
+  pub fn array_inspect(& self) -> Option<(& Typ, & Typ)> {
+    match * self {
+      RTyp::Array { ref src, ref tgt } => Some((src, tgt)),
+      _ => None,
+    }
+  }
+
   /// Given two arithmetic types, returns `Real` if one of them is `Real`.
   pub fn arith_join(self, other: Self) -> Self {
     debug_assert! { self.is_arith() }
@@ -90,10 +121,12 @@ impl RTyp {
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {
-      RTyp::Real => val::rat( Rat::zero() ),
+      RTyp::Real => val::real( Rat::zero() ),
       RTyp::Int => val::int( Int::zero() ),
       RTyp::Bool => val::bool( true ),
-      RTyp::Array(_) => unimplemented!(),
+      RTyp::Array { ref tgt, .. } => val::array(
+        factory.mk( self.clone() ), tgt.default_val(),
+      ),
     }
   }
 
@@ -103,7 +136,7 @@ impl RTyp {
       RTyp::Real => term::real( Rat::zero() ),
       RTyp::Int => term::int( Int::zero() ),
       RTyp::Bool => term::bool( true ),
-      RTyp::Array(_) => unimplemented!(),
+      RTyp::Array { .. } => unimplemented!(),
     }
   }
 }
@@ -116,36 +149,29 @@ impl ::rsmt2::print::Sort2Smt for RTyp {
   }
 }
 
-/// Display implementation.
-///
-/// # Examples
-///
-/// ```
-/// # use rsmt2::term::typ::* ;
-/// debug_assert_eq! {
-///   format!("{}", array(array(int()))),
-///   "(Array (Array Int))"
-/// }
-/// ```
 impl_fmt!{
   RTyp(self, fmt) {
-    let mut stack = vec![ (vec![self], "", "") ] ;
+    let mut stack = vec![ (vec![self].into_iter(), "", "") ] ;
 
     'stack: while let Some( (mut typs, sep, end) ) = stack.pop() {
-      while let Some(typ) = typs.pop() {
+      while let Some(typ) = typs.next() {
+        fmt.write_str(sep) ? ;
         match * typ {
-          RTyp::Int => write!(fmt, "{}Int", sep) ?,
-          RTyp::Real => write!(fmt, "{}Real", sep) ?,
-          RTyp::Bool => write!(fmt, "{}Bool", sep) ?,
+          RTyp::Int => fmt.write_str("Int") ?,
+          RTyp::Real => fmt.write_str("Real") ?,
+          RTyp::Bool => fmt.write_str("Bool") ?,
 
-          RTyp::Array(ref typ) => {
+          RTyp::Array { ref src, ref tgt } => {
             stack.push((typs, sep, end)) ;
             fmt.write_str("(Array") ? ;
-            stack.push((vec![& * typ], " ", ")")) ;
+            stack.push(
+              (vec![& * src as & RTyp, & * tgt].into_iter(), " ", ")")
+            ) ;
             continue 'stack
           },
         }
       }
+      fmt.write_str(end) ?
     }
 
     Ok(())

@@ -64,7 +64,7 @@ impl TheoSynth for RealSynth {
       typ::RTyp::Int => for (var, val) in sample.index_iter() {
         match val.get() {
           & val::RVal::R(ref r) => {
-            let val = Op::ToInt.eval( vec![ val::rat( r.clone() ) ] ) ? ;
+            let val = Op::ToInt.eval( vec![ val::real( r.clone() ) ] ) ? ;
             let prev = map.insert(
               term::to_int( term::var(var, typ::int()) ), val
             ) ;

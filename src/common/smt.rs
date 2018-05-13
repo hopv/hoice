@@ -449,7 +449,7 @@ where Br: BufRead {
         Ok( if ! pos { - rat } else { rat } )
       }
     ) ? {
-      let mut val = val::rat(val) ;
+      let mut val = val::real(val) ;
       Ok(val)
     } else {
       input.fail_with("unexpected value")

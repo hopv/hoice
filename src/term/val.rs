@@ -25,6 +25,7 @@ lazy_static! {
 /// A hash-consed type.
 pub type Val = HConsed<RVal> ;
 
+
 /// Creates a value.
 pub fn mk<V: Into<RVal>>(val: V) -> Val {
   factory.mk(val.into())
@@ -34,12 +35,26 @@ pub fn mk<V: Into<RVal>>(val: V) -> Val {
 pub fn bool(b: bool) -> Val {
   factory.mk(RVal::B(b))
 }
+/// Creates an array with a default value.
+///
+/// - `idx_typ` is the type of **the indices** of the array.
+pub fn array<Tgt: Into<Val>>(
+  idx_typ: Typ, default: Tgt
+) -> Val {
+  factory.mk(
+    RVal::Array {
+      idx_typ,
+      default: default.into(),
+      vals: Vec::new(),
+    }
+  )
+}
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
   factory.mk(RVal::I(i.into()))
 }
 /// Creates a rational value.
-pub fn rat<R: Into<Rat>>(r: R) -> Val {
+pub fn real<R: Into<Rat>>(r: R) -> Val {
   factory.mk(RVal::R(r.into()))
 }
 /// Creates a non-value for a type.
@@ -63,38 +78,37 @@ pub fn none(typ: Typ) -> Val {
 /// [equal]: #method.equal (equal method)
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum RVal {
+  /// No value.
+  N(Typ),
   /// Boolean value.
   B(bool),
   /// Integer value.
   I(Int),
   /// Real value (actually a rational).
   R(Rat),
-  // /// An array.
-  // Array(Vec<Val>),
-  /// No value (context was incomplete).
-  N(Typ),
-}
-
-lazy_static! {
-  /// Bool type.
-  static ref bool_ty: Typ = typ::bool() ;
-  /// Int type.
-  static ref int_ty: Typ = typ::int() ;
-  /// Real type.
-  static ref real_ty: Typ = typ::real() ;
-}
-
-impl RVal {
-  /// Returns the type of the value.
-  pub fn typ(& self) -> & Typ {
-    use self::RVal::* ;
-    match * self {
-      B(_) => & * bool_ty,
-      I(_) => & * int_ty,
-      R(_) => & * real_ty,
-      N(ref typ) => typ
-    }
-  }
+  /// An array is a total function.
+  ///
+  /// The `vals` field encodes a sequence of if-then-else's.
+  Array {
+    /// The type of **the indices** of the array.
+    ///
+    /// The actual type of the array is `array(idx_typ, default.typ())`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hoice::common::* ;
+    /// let array = val::array(
+    ///   typ::int(), val::real( Rat::new(9.into(), 7.into()) )
+    /// ) ;
+    /// assert_eq! { array.typ(), typ::array( typ::int(), typ::real() ) }
+    /// ```
+    idx_typ: Typ,
+    /// Default target value.
+    default: Val,
+    /// The values of the array.
+    vals: Vec<(Op, Val, Val)>
+  },
 }
 
 impl Into<Val> for RVal {
@@ -149,7 +163,7 @@ macro_rules! bin_op {
         RVal::N(ref typ) if typ.is_arith() => Ok(none(typ.clone())),
         RVal::I(ref rgt) => Ok( int(lft $op rgt) ),
         RVal::R(ref rgt) => Ok(
-          rat(Rat::new(lft.clone(), Int::one()) $op rgt)
+          real(Rat::new(lft.clone(), Int::one()) $op rgt)
         ),
         ref rgt => bail!(
           "expected compatible arith values, \
@@ -159,9 +173,9 @@ macro_rules! bin_op {
 
       RVal::R(ref lft) => match $rgt {
         RVal::N(ref typ) if typ.is_arith() => Ok(none(typ::real())),
-        RVal::R(ref rgt) => Ok( rat(lft $op rgt) ),
+        RVal::R(ref rgt) => Ok( real(lft $op rgt) ),
         RVal::I(ref rgt) => Ok(
-          rat(lft $op Rat::new(rgt.clone(), Int::one()))
+          real(lft $op Rat::new(rgt.clone(), Int::one()))
         ),
         ref rgt => bail!(
           "expected compatible arith values, \
@@ -232,6 +246,7 @@ macro_rules! arith_bin_rel {
   }) ;
 }
 
+/// Operations legal for all values.
 impl RVal {
   /// Returns true iff the value is not `RVal::N`.
   #[inline]
@@ -242,6 +257,20 @@ impl RVal {
     }
   }
 
+  /// Returns the type of the value.
+  pub fn typ(& self) -> Typ {
+    use self::RVal::* ;
+    match * self {
+      B(_) => typ::bool(),
+      I(_) => typ::int(),
+      R(_) => typ::real(),
+      Array { ref idx_typ, ref default, .. } => typ::array(
+        idx_typ.clone(), default.typ()
+      ),
+      N(ref typ) => typ.clone()
+    }
+  }
+
   /// Attempts to cast a value.
   pub fn cast(& self, typ: & ::term::Typ) -> Res<Val> {
     use num::One ;
@@ -249,10 +278,10 @@ impl RVal {
     match (self, typ.get()) {
       (& RVal::I(ref i), & RTyp::Int) => Ok( int(i.clone()) ),
       (& RVal::I(ref num), & RTyp::Real) => Ok(
-        rat( Rat::new(num.clone(), Int::one()) )
+        real( Rat::new(num.clone(), Int::one()) )
       ),
 
-      (& RVal::R(ref r), & RTyp::Real) => Ok( rat(r.clone()) ),
+      (& RVal::R(ref r), & RTyp::Real) => Ok( real(r.clone()) ),
 
       (& RVal::B(b), & RTyp::Bool) => Ok(
         bool(b)
@@ -297,7 +326,7 @@ impl RVal {
   /// Checks if two values are the semantically equal.
   ///
   /// Different from partial eq! Here, `N` is not equal to `N`.
-  pub fn equal_rat(& self, other: & Rat) -> bool {
+  pub fn equal_real(& self, other: & Rat) -> bool {
     if self.is_known() {
       if let RVal::R(ref r) = * self {
         r == other
@@ -324,11 +353,12 @@ impl RVal {
   pub fn to_bool(& self) -> Res<Option<bool>> {
     match self {
       & RVal::B(b) => Ok( Some(b) ),
-      & RVal::I(_) => bail!("expected boolean value, found integer"),
-      & RVal::R(_) => bail!("expected boolean value, found real"),
       & RVal::N(ref typ) if typ.is_bool() => Ok(None),
       & RVal::N(ref typ) => bail!(
         "expected boolean value, got non-value of type {}", typ
+      ),
+      _ => bail!(
+        "expected boolean value, found value of type {}", self.typ()
       ),
     }
   }
@@ -351,10 +381,12 @@ impl RVal {
       } else {
         bail!("expected integer value, found rational {}", r)
       },
-      & RVal::B(_) => bail!("expected integer value, found boolean"),
       & RVal::N(ref typ) if typ == & typ::int() => Ok(None),
       & RVal::N(ref typ) => bail!(
         "expected integer value, got no-value of type {}", typ
+      ),
+      _ => bail!(
+        "expected integer value, found value of type {}", self.typ()
       ),
     }
   }
@@ -364,58 +396,19 @@ impl RVal {
     match self {
       & RVal::R(ref r) => Ok( Some(r.clone()) ),
       & RVal::I(ref i) => Ok( Some( Rat::new(i.clone(), Int::one()) ) ),
-      & RVal::B(_) => bail!("expected rational value, found boolean"),
       & RVal::N(ref typ) if typ == & typ::real() => Ok(None),
       & RVal::N(ref typ) => bail!(
         "expected real value, got no-value of type {}", typ
       ),
+      _ => bail!(
+        "expected rational value, found value of type {}", self.typ()
+      ),
     }
   }
 
-  /// True if the two values have the same type, or if one of them is unknown.
+  /// True if the two values have the same type.
   pub fn same_type(& self, other: & Self) -> bool {
-    match (self, other) {
-      (& RVal::B(_), & RVal::B(_)) |
-      (& RVal::I(_), & RVal::I(_)) |
-      (& RVal::R(_), & RVal::R(_)) |
-      (& RVal::R(_), & RVal::I(_)) |
-      (& RVal::I(_), & RVal::R(_)) => true,
-      (& RVal::N(ref t_1), & RVal::N(ref t_2)) if t_1 == t_2 => true,
-      _ => false,
-    }
-  }
-
-  /// Checks if the value is zero (integer or rational).
-  pub fn is_zero(& self) -> bool {
-    use num::Zero ;
-    match * self {
-      RVal::I(ref i) => i.is_zero(),
-      RVal::R(ref r) => r.is_zero(),
-      RVal::B(_) |
-      RVal::N(_) => false,
-    }
-  }
-
-  /// Checks if the value is one (integer or rational).
-  pub fn is_one(& self) -> bool {
-    use num::One ;
-    match * self {
-      RVal::I(ref i) => i == & Int::one(),
-      RVal::R(ref r) => r == & Rat::one(),
-      RVal::B(_) |
-      RVal::N(_) => false,
-    }
-  }
-
-  /// Checks if the value is minus one (integer or rational).
-  pub fn is_minus_one(& self) -> bool {
-    use num::One ;
-    match * self {
-      RVal::I(ref i) => i == & - Int::one(),
-      RVal::R(ref r) => r == & - Rat::one(),
-      RVal::B(_) |
-      RVal::N(_) => false,
-    }
+    self.typ() == other.typ()
   }
 
   /// Transforms a value into a term.
@@ -425,130 +418,51 @@ impl RVal {
       RVal::R(ref r) => Some( ::term::real(r.clone()) ),
       RVal::B(b) => Some( ::term::bool(b) ),
       RVal::N(_) => None,
+      RVal::Array { .. } => unimplemented!(),
     }
   }
 
-  /// Conjunction.
-  ///
-  /// # Examples
-  ///
-  /// ```
-  /// use hoice::term::{ val, typ } ;
-  /// let (mut lft, mut rgt) = (val::mk(true), val::mk(false)) ;
-  /// let res = lft.and(& rgt).unwrap() ;
-  /// # println!("{} && {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(false) }
-  /// lft = val::none( typ::bool() ) ;
-  /// let res = lft.and(& rgt).unwrap() ;
-  /// # println!("{} && {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(false) }
-  /// rgt = val::mk(true) ;
-  /// let res = lft.and(& rgt).unwrap() ;
-  /// # println!("{} && {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::none( typ::bool() ) }
-  /// lft = val::mk(true) ;
-  /// let res = lft.and(& rgt).unwrap() ;
-  /// # println!("{} && {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(true) }
-  /// rgt = val::mk(7) ;
-  /// let res = lft.and(& rgt) ;
-  /// # println!("{} && {} = {:?}", lft, rgt, res) ;
-  /// assert!{ res.is_err() }
-  /// ```
-  pub fn and(& self, other: & Val) -> Res<Val> {
-    match (self, other.get()) {
-      (& RVal::B(false), _) |
-      (_, & RVal::B(false)) => Ok(bool(false)),
-      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
-        bool(b_1 && b_2)
-      ),
-
-      (& RVal::N(_), & RVal::B(_)) |
-      (& RVal::B(_), & RVal::N(_)) |
-      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
-
-      (lft, rgt) => bail!(
-        "expected boolean values, found {} and {}", lft, rgt
-      )
+  /// Compares two values.
+  pub fn cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
+    match (self, other) {
+      (& RVal::I(ref l), & RVal::I(ref r)) => Some( l.cmp(r) ),
+      (& RVal::R(ref l), & RVal::R(ref r)) => Some( l.cmp(r) ),
+      (& RVal::B(ref l), & RVal::B(ref r)) => Some( l.cmp(r) ),
+      _ => None,
     }
   }
+}
 
-  /// Disjunction.
-  ///
-  /// # Examples
-  ///
-  /// ```
-  /// use hoice::term::{ val, typ } ;
-  /// let (mut lft, mut rgt) = (val::mk(false), val::mk(true)) ;
-  /// let res = lft.or(& rgt).unwrap() ;
-  /// # println!("{} || {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(true) }
-  /// lft = val::none( typ::bool() ) ;
-  /// let res = lft.or(& rgt).unwrap() ;
-  /// # println!("{} || {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(true) }
-  /// rgt = val::mk(false) ;
-  /// let res = lft.or(& rgt).unwrap() ;
-  /// # println!("{} || {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::none( typ::bool() ) }
-  /// lft = val::mk(false) ;
-  /// let res = lft.or(& rgt).unwrap() ;
-  /// # println!("{} || {} = {}", lft, rgt, res) ;
-  /// assert_eq!{ res, val::mk(false) }
-  /// rgt = val::mk(7) ;
-  /// let res = lft.or(& rgt) ;
-  /// # println!("{} || {} = {:?}", lft, rgt, res) ;
-  /// assert!{ res.is_err() }
-  /// ```
-  pub fn or(& self, other: & Val) -> Res<Val> {
-    match (self, other.get()) {
-      (& RVal::B(true), _) |
-      (_, & RVal::B(true)) => Ok(bool(true)),
-      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
-        bool(b_1 || b_2)
-      ),
 
-      (& RVal::N(_), & RVal::B(_)) |
-      (& RVal::B(_), & RVal::N(_)) |
-      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
-
-      (lft, rgt) => bail!(
-        "expected boolean values, found {} and {}", lft, rgt
-      )
-    }
-  }
-  /// Negation.
-  ///
-  /// # Examples
-  ///
-  /// ```
-  /// use hoice::term::{ val, typ } ;
-  /// let mut buru = val::mk(true) ;
-  /// let res = buru.not().unwrap() ;
-  /// # println!("not {} = {}", buru, res) ;
-  /// assert_eq!{ res, val::mk(false) }
-  /// buru = val::mk(false) ;
-  /// let res = buru.not().unwrap() ;
-  /// # println!("not {} = {}", buru, res) ;
-  /// assert_eq!{ res, val::mk(true) }
-  /// buru = val::none( typ::bool() ) ;
-  /// let res = buru.not().unwrap() ;
-  /// # println!("not {} = {}", buru, res) ;
-  /// assert_eq!{ res, buru }
-  /// buru = val::mk(7) ;
-  /// let res = buru.not() ;
-  /// # println!("not {} = {:?}", buru, res) ;
-  /// assert!{ res.is_err() }
-  /// ```
-  pub fn not(& self) -> Res<Val> {
+/// Arithmetic operations.
+impl RVal {
+  /// Checks if the value is zero (integer or rational).
+  pub fn is_zero(& self) -> bool {
+    use num::Zero ;
     match * self {
-      RVal::B(b) => Ok( bool(! b) ),
-      RVal::N(ref typ) if typ.is_bool() => Ok(none(typ.clone())),
-      RVal::N(ref typ) => bail!(
-        "expected boolean value, found non-value of type {}", typ
-      ),
-      RVal::I(_) => bail!("expected boolean value, found integer"),
-      RVal::R(_) => bail!("expected boolean value, found real"),
+      RVal::I(ref i) => i.is_zero(),
+      RVal::R(ref r) => r.is_zero(),
+      _ => false,
+    }
+  }
+
+  /// Checks if the value is one (integer or rational).
+  pub fn is_one(& self) -> bool {
+    use num::One ;
+    match * self {
+      RVal::I(ref i) => i == & Int::one(),
+      RVal::R(ref r) => r == & Rat::one(),
+      _ => false,
+    }
+  }
+
+  /// Checks if the value is minus one (integer or rational).
+  pub fn is_minus_one(& self) -> bool {
+    use num::One ;
+    match * self {
+      RVal::I(ref i) => i == & - Int::one(),
+      RVal::R(ref r) => r == & - Rat::one(),
+      _ => false,
     }
   }
 
@@ -656,11 +570,11 @@ impl RVal {
         ) {
           (_, false) => Ok( none(typ.clone()) ),
           (true, true) => Ok( int(0) ),
-          (false, true) => Ok( rat( Rat::new(0.into(), 0.into())) ),
+          (false, true) => Ok( real( Rat::new(0.into(), 0.into())) ),
         },
         RVal::I(ref rgt) => Ok( int(lft * rgt) ),
         RVal::R(ref rgt) => Ok(
-          rat( Rat::new(lft * rgt.numer(), rgt.denom().clone()) )
+          real( Rat::new(lft * rgt.numer(), rgt.denom().clone()) )
         ),
         ref rgt => bail!(
           "expected arith values, found {} and {}", lft, rgt
@@ -669,11 +583,11 @@ impl RVal {
 
       RVal::R(ref lft) => match other.to_real() ? {
         None => if lft.is_zero() {
-          Ok( rat( Rat::new(0.into(), 1.into()) ) )
+          Ok( real( Rat::new(0.into(), 1.into()) ) )
         } else {
           Ok( none(typ::real()) )
         },
-        Some(rgt) => Ok( rat(lft * rgt) ),
+        Some(rgt) => Ok( real(lft * rgt) ),
       }
       ref lft => bail!(
         "expected arith values, found {} and {}", lft, other
@@ -685,7 +599,7 @@ impl RVal {
   pub fn minus(& self) -> Res<Val> {
     match * self {
       RVal::I(ref i) => Ok( int(- i) ),
-      RVal::R(ref r) => Ok( rat(- r) ),
+      RVal::R(ref r) => Ok( real(- r) ),
       RVal::N(ref typ) if typ.is_arith() => Ok( none(typ.clone()) ),
       _ => bail!(
         "expected arith value, found {} ({})", self, self.typ()
@@ -834,24 +748,278 @@ impl RVal {
   pub fn l_t(& self, other: & Val) -> Res<Val> {
     arith_bin_rel! { * self, lt, * other.get() }
   }
+}
 
-  /// Compares two values.
-  pub fn cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
-    match (self, other) {
-      (& RVal::I(ref l), & RVal::I(ref r)) => Some( l.cmp(r) ),
-      (& RVal::R(ref l), & RVal::R(ref r)) => Some( l.cmp(r) ),
-      (& RVal::B(ref l), & RVal::B(ref r)) => Some( l.cmp(r) ),
-      _ => None,
+
+
+/// Operations over booleans.
+impl RVal {
+
+  /// Conjunction.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val, typ } ;
+  /// let (mut lft, mut rgt) = (val::mk(true), val::mk(false)) ;
+  /// let res = lft.and(& rgt).unwrap() ;
+  /// # println!("{} && {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(false) }
+  /// lft = val::none( typ::bool() ) ;
+  /// let res = lft.and(& rgt).unwrap() ;
+  /// # println!("{} && {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(false) }
+  /// rgt = val::mk(true) ;
+  /// let res = lft.and(& rgt).unwrap() ;
+  /// # println!("{} && {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::none( typ::bool() ) }
+  /// lft = val::mk(true) ;
+  /// let res = lft.and(& rgt).unwrap() ;
+  /// # println!("{} && {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(true) }
+  /// rgt = val::mk(7) ;
+  /// let res = lft.and(& rgt) ;
+  /// # println!("{} && {} = {:?}", lft, rgt, res) ;
+  /// assert!{ res.is_err() }
+  /// ```
+  pub fn and(& self, other: & Val) -> Res<Val> {
+    match (self, other.get()) {
+      (& RVal::B(false), _) |
+      (_, & RVal::B(false)) => Ok(bool(false)),
+      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
+        bool(b_1 && b_2)
+      ),
+
+      (& RVal::N(_), & RVal::B(_)) |
+      (& RVal::B(_), & RVal::N(_)) |
+      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
+
+      (lft, rgt) => bail!(
+        "expected boolean values, found values of type {} and {}",
+        lft.typ(), rgt.typ()
+      )
+    }
+  }
+
+  /// Disjunction.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val, typ } ;
+  /// let (mut lft, mut rgt) = (val::mk(false), val::mk(true)) ;
+  /// let res = lft.or(& rgt).unwrap() ;
+  /// # println!("{} || {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(true) }
+  /// lft = val::none( typ::bool() ) ;
+  /// let res = lft.or(& rgt).unwrap() ;
+  /// # println!("{} || {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(true) }
+  /// rgt = val::mk(false) ;
+  /// let res = lft.or(& rgt).unwrap() ;
+  /// # println!("{} || {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::none( typ::bool() ) }
+  /// lft = val::mk(false) ;
+  /// let res = lft.or(& rgt).unwrap() ;
+  /// # println!("{} || {} = {}", lft, rgt, res) ;
+  /// assert_eq!{ res, val::mk(false) }
+  /// rgt = val::mk(7) ;
+  /// let res = lft.or(& rgt) ;
+  /// # println!("{} || {} = {:?}", lft, rgt, res) ;
+  /// assert!{ res.is_err() }
+  /// ```
+  pub fn or(& self, other: & Val) -> Res<Val> {
+    match (self, other.get()) {
+      (& RVal::B(true), _) |
+      (_, & RVal::B(true)) => Ok(bool(true)),
+      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
+        bool(b_1 || b_2)
+      ),
+
+      (& RVal::N(_), & RVal::B(_)) |
+      (& RVal::B(_), & RVal::N(_)) |
+      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
+
+      (lft, rgt) => bail!(
+        "expected boolean values, found values of type {} and {}",
+        lft.typ(), rgt.typ()
+      )
+    }
+  }
+  /// Negation.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val, typ } ;
+  /// let mut buru = val::mk(true) ;
+  /// let res = buru.not().unwrap() ;
+  /// # println!("not {} = {}", buru, res) ;
+  /// assert_eq!{ res, val::mk(false) }
+  /// buru = val::mk(false) ;
+  /// let res = buru.not().unwrap() ;
+  /// # println!("not {} = {}", buru, res) ;
+  /// assert_eq!{ res, val::mk(true) }
+  /// buru = val::none( typ::bool() ) ;
+  /// let res = buru.not().unwrap() ;
+  /// # println!("not {} = {}", buru, res) ;
+  /// assert_eq!{ res, buru }
+  /// buru = val::mk(7) ;
+  /// let res = buru.not() ;
+  /// # println!("not {} = {:?}", buru, res) ;
+  /// assert!{ res.is_err() }
+  /// ```
+  pub fn not(& self) -> Res<Val> {
+    match * self {
+      RVal::B(b) => Ok( bool(! b) ),
+      RVal::N(ref typ) if typ.is_bool() => Ok(none(typ.clone())),
+      RVal::N(ref typ) => bail!(
+        "expected boolean value, found non-value of type {}", typ
+      ),
+      _ => bail!(
+        "expected boolean value, found value of type {}", self.typ()
+      ),
     }
   }
 }
+
+
+
+/** Operations over arrays.
+
+# Examples
+
+```
+use hoice::term::{ val::*, typ } ;
+
+let first_array = array( typ::int(), int(0) ) ;
+assert_eq! {
+  & format!("{}", first_array), "(array (v_0 Int) 0)"
+}
+assert_eq! { first_array.select( int(7) ), int(0) }
+// Following works because `first_array` is constant.
+assert_eq! { first_array.select( none(typ::int()) ), int(0) }
+
+let array = first_array.store(int(7), int(0)) ;
+assert_eq! {
+  & format!("{}", array), "(array (v_0 Int) 0)"
+}
+assert_eq! { array, first_array }
+// `array` is the same because the value stored is the default one.
+
+let array = first_array.store(int(7), int(1)) ;
+assert_eq! {
+  & format!("{}", array), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
+}
+assert_eq! { array.select( int(7) ), int(1) }
+assert_eq! { array.select( int(5) ), int(0) }
+assert_eq! { array.select( int(0) ), int(0) }
+// Select on `none` does not work anymore, array is not constant.
+assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
+```
+*/
+impl RVal {
+  /// Store over arrays.
+  pub fn raw_store<V: Into<Val>>(& self, idx: V, val: V) -> Self {
+    let (idx, val) = ( idx.into(), val.into() ) ;
+    match * self {
+      RVal::Array { ref idx_typ, ref default, ref vals } => {
+        debug_assert_eq! { idx_typ, & idx.typ() }
+        debug_assert_eq! { default.typ(), val.typ() }
+
+        // If `idx` is none, just set the default to `val`.
+        if ! idx.is_known() {
+          return RVal::Array {
+            idx_typ: idx_typ.clone(), default: val, vals: vec![]
+          }
+        }
+
+        let (idx_typ, default, mut vals) = (
+          idx_typ.clone(), default.clone(), vals.clone()
+        ) ;
+        if default != val {
+          vals.push( (Op::Eql, idx, val) )
+        }
+
+        RVal::Array { idx_typ, default, vals }
+      },
+      _ => panic!(
+        "trying to store a value in a non-array value of type {}", self.typ()
+      ),
+    }
+  }
+
+  /// Store over arrays.
+  pub fn store<V: Into<Val>>(& self, idx: V, val: V) -> Val {
+    factory.mk( self.raw_store(idx, val) )
+  }
+
+  /// Select over arrays.
+  pub fn select<V: Into<Val>>(& self, idx: V) -> Val {
+    let idx = idx.into() ;
+    match * self {
+      RVal::Array { ref idx_typ, ref default, ref vals } => {
+        debug_assert_eq! { idx_typ, & idx.typ() }
+
+        // If the index is a non-value...
+        if ! idx.is_known() {
+          // and the array is constant, return that value.
+          if vals.is_empty() {
+            return default.clone()
+          } else {
+            return none( default.typ().clone() )
+          }
+        }
+
+        for (op, key, val) in vals {
+          match op.eval(vec![idx.clone(), key.clone()]).and_then(
+            |res| res.to_bool()
+          ) {
+            Ok( Some(true) ) => return val.clone(),
+            Ok( Some(false) ) => (),
+            Ok(None) => panic!(
+              "non-value array condition ({} {} {})", op, idx, key
+            ),
+            Err(e) => {
+              print_err(e) ;
+              panic!(
+                "while evaluating array condition ({} {} {})", op, idx, key
+              )
+            }
+          }
+        }
+
+        default.clone()
+      },
+      _ => panic!(
+        "trying to select a value from a non-array value of type {}",
+        self.typ()
+      ),
+    }
+  }
+}
+
+
+
+
 impl_fmt!{
   RVal(self, fmt) {
     match * self {
+      RVal::N(ref t) => write!(fmt, "_[{}]", t),
       RVal::I(ref i) => int_to_smt!(fmt, i),
       RVal::R(ref r) => rat_to_smt!(fmt, r),
       RVal::B(b) => write!(fmt, "{}", b),
-      RVal::N(ref t) => write!(fmt, "_[{}]", t),
+      RVal::Array { ref idx_typ, ref default, ref vals } => {
+        write!(fmt, "(array (v_0 {}) ", idx_typ) ? ;
+        for (op, key, val) in vals {
+          write!(fmt, "(ite ({} v_0 {}) {} ", op, key, val) ?
+        }
+        write!(fmt, "{}", default) ? ;
+        for _ in vals {
+          write!(fmt, ")") ?
+        }
+        write!(fmt, ")")
+      },
     }
   }
 }
