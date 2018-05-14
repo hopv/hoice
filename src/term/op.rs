@@ -471,23 +471,18 @@ impl Op {
 
       Eql => {
         let mem ;
-        let mut res = true ;
         for_first!{
           args.into_iter() => {
             |fst| mem = fst,
             then |nxt| {
-              // println!("{} != {} : {}", mem, nxt, mem != nxt) ;
-              if ! mem.same_type( & nxt ) {
-                return Ok(val::none(typ::bool()))
-              }
-              if mem != nxt {
-                res = false ;
-                break
+              let tmp = nxt.eql(& mem) ;
+              if tmp.to_bool() ? != Some(true) {
+                return Ok(tmp)
               }
             },
           } else unreachable!()
         }
-        Ok( val::bool(res) )
+        Ok( val::bool(true) )
       },
 
       Not => if args.len() != 1 {
@@ -503,35 +498,25 @@ impl Op {
       },
 
       And => {
-        let mut unknown = false ;
+        let mut res = val::bool(true) ;
         for arg in args {
-          match arg.to_bool() ? {
-            Some(false) => return Ok( val::bool(false) ),
-            None => unknown = true,
-            _ => ()
+          res = res.and(& arg) ? ;
+          if res.is_false() {
+            return Ok(res)
           }
         }
-        if unknown {
-          Ok( val::none(typ::bool()) )
-        } else {
-          Ok( val::bool(true) )
-        }
+        Ok(res)
       },
 
       Or => {
-        let mut unknown = false ;
+        let mut res = val::bool(false) ;
         for arg in args {
-          match arg.to_bool() ? {
-            Some(true) => return Ok( val::bool(true) ),
-            None => unknown = true,
-            _ => ()
+          res = res.or(& arg) ? ;
+          if res.is_true() {
+            return Ok(res)
           }
         }
-        if unknown {
-          Ok( val::none(typ::bool()) )
-        } else {
-          Ok( val::bool(false) )
-        }
+        Ok(res)
       },
 
       Impl => if args.len() != 2 {
@@ -577,7 +562,7 @@ impl Op {
       ToInt => if let Some(val) = args.pop() {
         if ! args.is_empty() {
           bail!(
-            "expected two arguments for `{}`, found {}", ToInt, args.len() + 1
+            "expected one arguments for `{}`, found {}", ToInt, args.len() + 1
           )
         }
         if let Some(rat) = val.to_real() ? {
@@ -597,7 +582,7 @@ impl Op {
       ToReal => if let Some(val) = args.pop() {
         if ! args.is_empty() {
           bail!(
-            "expected two arguments for `{}`, found {}", ToReal, args.len() + 1
+            "expected one arguments for `{}`, found {}", ToReal, args.len() + 1
           )
         }
         if let Some(i) = val.to_int() ? {

@@ -422,6 +422,15 @@ impl RVal {
     }
   }
 
+  /// Equal operator.
+  pub fn eql(& self, other: & Val) -> Val {
+    if ! self.is_known() || ! other.is_known() {
+      none(typ::bool())
+    } else {
+      bool(self == other.get())
+    }
+  }
+
   /// Compares two values.
   pub fn cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
     match (self, other) {
@@ -880,6 +889,16 @@ impl RVal {
         "expected boolean value, found value of type {}", self.typ()
       ),
     }
+  }
+
+  /// True iff the value is true.
+  pub fn is_true(& self) -> bool {
+    self == & RVal::B(true)
+  }
+
+  /// True iff the value is false.
+  pub fn is_false(& self) -> bool {
+    self == & RVal::B(false)
   }
 }
 
