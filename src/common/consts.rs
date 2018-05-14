@@ -134,6 +134,9 @@ pub mod keywords {
         to_real_ ("to_real", doc = "Conversion from `Int` to `Real`.")
 
         as_ ("as", doc = "As.")
+
+        store_ ("store", doc = "Updater for arrays.")
+        select_ ("select", doc = "Accessor for arrays.")
       }
     }
 

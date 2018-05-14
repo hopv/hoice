@@ -88,6 +88,10 @@ pub enum RTerm {
   Real(Rat),
   /// A boolean.
   Bool(bool),
+  /// A **constant** array.
+  ///
+  /// The type is the type of **the indices** of the arrays.
+  CArray { typ: Typ, term: Box<Term> },
   /// An operator application.
   App {
     /// Type of the application.
@@ -173,6 +177,7 @@ impl RTerm {
         RTerm::App { ref args, .. } => for term in args {
           stack.push(term)
         },
+        RTerm::CArray { ref term, .. } => stack.push(& * term),
         RTerm::Var(_, _) |
         RTerm::Int(_) |
         RTerm::Real(_) |
@@ -188,6 +193,9 @@ impl RTerm {
       RTerm::Int(_) => typ::int(),
       RTerm::Real(_) => typ::real(),
       RTerm::Bool(_) => typ::bool(),
+      RTerm::CArray { ref typ, ref term } => typ::array(
+        typ.clone(), term.typ()
+      ),
       RTerm::App { ref typ, .. } => typ.clone(),
     }
   }
@@ -224,9 +232,9 @@ impl RTerm {
     ] ;
     while let Some( (mut to_do, sep, end) ) = stack.pop() {
       use self::RTerm::* ;
-      if let Some(term) = to_do.pop() {
+      if let Some(this_term) = to_do.pop() {
         stack.push( (to_do, sep, end) ) ;
-        match * term {
+        match * this_term {
           Var(_, v) => {
             write!(w, "{}", sep) ? ;
             write_var(w, v) ?
@@ -240,6 +248,10 @@ impl RTerm {
             rat_to_smt!(w, r) ?
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
+          CArray { ref term, .. } => {
+            write!(w, "{}((as const {})", sep, this_term.typ()) ? ;
+            stack.push( (vec![term], " ", ")") )
+          },
           App { op, ref args, .. } => {
             write!(w, "{}({}", sep, op) ? ;
             stack.push(
@@ -461,6 +473,10 @@ impl RTerm {
 
 
   /// Term evaluation.
+  ///
+  /// # TODO
+  ///
+  /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
     use self::RTerm::* ;
     let mut current = self ;
@@ -484,6 +500,10 @@ impl RTerm {
         Int(ref i) => val::int( i.clone() ),
         Real(ref r) => val::real( r.clone() ),
         Bool(b) => val::bool(b),
+        CArray { ref typ, ref term } => {
+          let default = term.eval(model) ? ;
+          val::array(typ.clone(), default)
+        },
       } ;
 
       // Go up.
@@ -533,6 +553,7 @@ impl RTerm {
         RTerm::Int(_) |
         RTerm::Real(_) |
         RTerm::Bool(_) => (),
+        RTerm::CArray { ref term, .. } => to_do.push(& * term),
         RTerm::App{ ref args, .. } => for arg in args {
           to_do.push(arg)
         },
@@ -575,6 +596,10 @@ impl RTerm {
   /// `map`.
   ///
   /// The boolean returned is true if at least on substitution occured.
+  ///
+  /// # TODO
+  ///
+  /// - remove recursive call in the array case
   pub fn subst_custom<Map: VarIndexed<Term>>(
     & self, map: & Map, total: bool
   ) -> Option<(Term, bool)> {
@@ -604,7 +629,20 @@ impl RTerm {
           ) ;
           continue 'go_down
         },
-        _ => current.clone(),
+        RTerm::CArray { ref typ, ref term } => {
+          if let Some((term, changed)) = term.subst_custom(map, total) {
+            if changed {
+              subst_count += 1 ;
+            }
+            cst_array(typ.clone(), term)
+          } else {
+            return None
+          }
+
+        },
+        RTerm::Bool(_) |
+        RTerm::Real(_) |
+        RTerm::Int(_) => current.clone(),
       } ;
 
       // Go up.

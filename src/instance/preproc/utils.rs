@@ -293,7 +293,9 @@ pub fn terms_of_app(
             term::eq(var, trm)
           ) ;
         },
-        None => postponed.push( (index, arg) ),
+        None => {
+          postponed.push( (index, arg) )
+        },
       }
     }
   }

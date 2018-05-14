@@ -35,6 +35,7 @@ fn scan_vars(t: & Term) -> VarSet {
       RTerm::Int(_) => (),
       RTerm::Real(_) => (),
       RTerm::Bool(_) => (),
+      RTerm::CArray { ref term, .. } => to_do.push(& * term),
       RTerm::App{ ref args, .. } => for arg in args {
         to_do.push(arg)
       },
@@ -198,6 +199,14 @@ pub fn or(terms: Vec<Term>) -> Term {
 #[inline(always)]
 pub fn and(terms: Vec<Term>) -> Term {
   app(Op::And, terms)
+}
+
+/// Constant array.
+///
+/// The type is the type of **the indices** of the array.
+#[inline]
+pub fn cst_array(typ: Typ, default: Term) -> Term {
+  factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
 }
 
 /// Creates an operator application.
@@ -1039,7 +1048,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           },
 
           Op::IDiv | Op::Div | Op::Rem | Op::Mod |
-          Op::ToInt | Op::ToReal => (),
+          Op::ToInt | Op::ToReal | Op::Store | Op::Select => (),
 
           Op::Gt | Op::Ge | Op::Le | Op::Lt | Op::Eql |
           Op::Impl | Op::Not | Op::And | Op::Or => panic!(
@@ -1351,6 +1360,8 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       (op, args)
     },
 
+    Op::Store |
+    Op::Select |
     Op::Rem => (op, args),
 
   } ;

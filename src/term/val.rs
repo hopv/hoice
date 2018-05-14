@@ -938,7 +938,25 @@ assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
 ```
 */
 impl RVal {
-  /// Store over arrays.
+  /// Store over arrays, creates a `RVal`.
+  ///
+  /// Does not actually create a `Val`.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val::*, typ } ;
+  ///
+  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
+  /// assert_eq! {
+  ///   & format!("{}", arr), "(array (v_0 Int) 0)"
+  /// }
+  ///
+  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(1)) ;
+  /// assert_eq! {
+  ///   & format!("{}", arr), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
+  /// }
+  /// ```
   pub fn raw_store<V: Into<Val>>(& self, idx: V, val: V) -> Self {
     let (idx, val) = ( idx.into(), val.into() ) ;
     match * self {
@@ -969,11 +987,42 @@ impl RVal {
   }
 
   /// Store over arrays.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val::*, typ } ;
+  ///
+  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
+  /// assert_eq! {
+  ///   & format!("{}", arr), "(array (v_0 Int) 0)"
+  /// }
+  ///
+  /// let arr = array( typ::int(), int(0) ).store(int(7), int(1)) ;
+  /// assert_eq! {
+  ///   & format!("{}", arr), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
+  /// }
+  /// ```
   pub fn store<V: Into<Val>>(& self, idx: V, val: V) -> Val {
     factory.mk( self.raw_store(idx, val) )
   }
 
   /// Select over arrays.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use hoice::term::{ val::*, typ } ;
+  ///
+  /// let array = array( typ::int(), int(0) ).store(int(7), int(1)) ;
+  /// assert_eq! {
+  ///   & format!("{}", array), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
+  /// }
+  /// assert_eq! { array.select( int(7) ), int(1) }
+  /// assert_eq! { array.select( int(5) ), int(0) }
+  /// assert_eq! { array.select( int(0) ), int(0) }
+  /// assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
+  /// ```
   pub fn select<V: Into<Val>>(& self, idx: V) -> Val {
     let idx = idx.into() ;
     match * self {

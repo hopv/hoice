@@ -6,6 +6,7 @@ use check::* ;
 
 
 /// Parser.
+#[derive(Clone)]
 pub struct InParser<'a> {
   /// Predicate definitions.
   pub pred_defs: Vec<PredDef>,
@@ -280,22 +281,35 @@ impl<'a> InParser<'a> {
 
   /// Type or fails.
   fn typ(& mut self) -> Res<Typ> {
-    if let Some(t) = self.typ_opt() {
+    if let Some(t) = self.typ_opt() ? {
       Ok(t)
     } else {
       bail!("expected type")
     }
   }
   /// Type.
-  fn typ_opt(& mut self) -> Option<Typ> {
+  fn typ_opt(& mut self) -> Res<Option<Typ>> {
     if self.tag_opt("Bool") {
-      Some( "Bool".to_string() )
+      Ok( Some( "Bool".to_string() ) )
     } else if self.tag_opt("Int") {
-      Some( "Int".to_string() )
+      Ok( Some( "Int".to_string() ) )
     } else if self.tag_opt("Real") {
-      Some( "Real".to_string() )
+      Ok( Some( "Real".to_string() ) )
+    } else if self.tag_opt("(") {
+      self.ws_cmt() ;
+      if self.tag_opt("Array") {
+        self.ws_cmt() ;
+        let src = self.typ() ? ;
+        self.ws_cmt() ;
+        let tgt = self.typ() ? ;
+        self.ws_cmt() ;
+        self.tag(")") ? ;
+        Ok( Some( format!("(Array {} {})", src, tgt) ) )
+      } else {
+        bail!("expected type")
+      }
     } else {
-      None
+      Ok(None)
     }
   }
 
@@ -311,7 +325,7 @@ impl<'a> InParser<'a> {
     self.ws_cmt() ;
     let mut sig = vec![] ;
     loop {
-      if let Some(t) = self.typ_opt() {
+      if let Some(t) = self.typ_opt() ? {
         sig.push(t)
       } else {
         break

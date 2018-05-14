@@ -560,7 +560,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         res
       } else {
         bail!(
-          self.error_here("could not find closing `|` opened here")
+          self.error_here("could not find closing `|` opened")
         )
       }
     } else if self.tag_opt("\"") {
@@ -568,7 +568,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         res
       } else {
         bail!(
-          self.error_here("could not find closing `\"` opened here")
+          self.error_here("could not find closing `\"` opened")
         )
       }
     } else {
@@ -617,39 +617,122 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a sort or fails.
   fn sort(& mut self) -> Res<Typ> {
-    if let Some(sort) = self.sort_opt() {
+    if let Some(sort) = self.sort_opt() ? {
       Ok(sort)
     } else {
       bail!( self.error_here("expected sort (Int or Bool)") )
     }
   }
+
   /// Tries to parse a sort.
-  fn sort_opt(& mut self) -> Option<Typ> {
-    let start_pos = self.pos() ;
-    if self.tag_opt("Int") {
-      if ! self.legal_id_char() {
-        Some(typ::int())
-      } else {
-        self.backtrack_to(start_pos) ;
-        None
-      }
-    } else if self.tag_opt("Real") {
-      if ! self.legal_id_char() {
-        Some(typ::real())
-      } else {
-        self.backtrack_to(start_pos) ;
-        None
-      }
-    } else if self.tag_opt("Bool") {
-      if ! self.legal_id_char() {
-        Some(typ::bool())
-      } else {
-        self.backtrack_to(start_pos) ;
-        None
-      }
-    } else {
-      None
+  fn sort_opt(& mut self) -> Res<Option<Typ>> {
+    // Compound type under construction.
+    //
+    // The position is always that of the opening paren of the type.
+    enum CTyp {
+      // Array under construction, meaning we're parsing the index sort.
+      Array { pos: Pos },
+      // Array with a source, meaning we're parsing the target sort.
+      ArraySrc { pos: Pos, src: Typ },
     }
+
+    let mut stack = vec![] ;
+
+    let start_pos = self.pos() ;
+
+    'go_down: loop {
+      self.ws_cmt() ;
+      let current_pos = self.pos() ;
+
+      let mut typ = if self.tag_opt("(") {
+        self.ws_cmt() ;
+        // Parsing a compound type.
+
+        if self.tag_opt("Array") {
+          if ! self.legal_id_char() {
+            // We're parsing an array type.
+            stack.push( CTyp::Array { pos: current_pos } ) ;
+            continue 'go_down
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+
+      } else if self.tag_opt("Int") {
+        if ! self.legal_id_char() {
+          Some(typ::int())
+        } else {
+          None
+        }
+      } else if self.tag_opt("Real") {
+        if ! self.legal_id_char() {
+          Some(typ::real())
+        } else {
+          None
+        }
+      } else if self.tag_opt("Bool") {
+        if ! self.legal_id_char() {
+          Some(typ::bool())
+        } else {
+          None
+        }
+      } else {
+        None
+      } ;
+
+      'go_up: loop {
+
+        match stack.pop() {
+
+          Some(CTyp::Array { pos }) => if let Some(src) = typ {
+            stack.push( CTyp::ArraySrc { pos, src: src } ) ;
+            // Need to parse the domain now.
+            continue 'go_down
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this array sort").into()
+            ).chain_err(
+              || self.error(current_pos, "expected index sort")
+            ) ?
+          },
+
+          Some(CTyp::ArraySrc { pos, src }) => if let Some(tgt) = typ {
+            typ = Some( typ::array(src, tgt) ) ;
+
+            // Parse closing paren.
+            self.ws_cmt() ;
+            if ! self.tag_opt(")") {
+              Err::<_, Error>(
+                self.error(pos, "while parsing this array sort").into()
+              ).chain_err(
+                || self.error(
+                  current_pos, "expected expected closing paren"
+                )
+              ) ?
+            }
+
+            continue 'go_up
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this array sort").into()
+            ).chain_err(
+              || self.error(current_pos, "expected domain sort")
+            ) ?
+          },
+
+          None => if typ.is_none() {
+            self.backtrack_to(start_pos) ;
+            return Ok(None)
+          } else {
+            return Ok(typ)
+          }
+        }
+
+      }
+    }
+
   }
 
   /// Predicate declaration.
@@ -665,7 +748,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     let mut sorts = Vec::with_capacity(11) ;
     self.ws_cmt() ;
-    while let Some(ty) = self.sort_opt() {
+    while let Some(ty) = self.sort_opt() ? {
       self.ws_cmt() ;
       sorts.push(ty) ;
     }
@@ -968,7 +1051,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.error(
           pos[index], format!(
             "expected the expression starting here has sort {} \
-            which is illegal here", found
+            which is illegal", found
           )
         )
         => self.error(op_pos, "in this operator application")
@@ -1029,14 +1112,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(None)
   }
 
-  /// Parses an operator or fails.
-  fn op(& mut self) -> Res<Op> {
-    if let Some(op) = self.op_opt() ? {
-      Ok(op)
-    } else {
-      bail!( self.error_here("expected operator") )
-    }
-  }
+  // /// Parses an operator or fails.
+  // fn op(& mut self) -> Res<Op> {
+  //   if let Some(op) = self.op_opt() ? {
+  //     Ok(op)
+  //   } else {
+  //     bail!( self.error_here("expected operator") )
+  //   }
+  // }
+
   /// Tries to parse an operator.
   fn op_opt(& mut self) -> Res< Option<Op> > {
     macro_rules! none_if_ident_char_else {
@@ -1090,6 +1174,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else {
         None
       },
+
+      Some("s") => if self.tag_opt("tore") {
+        none_if_ident_char_else!(Op::Store)
+      } else if self.tag_opt("elect") {
+        none_if_ident_char_else!(Op::Select)
+      } else {
+        None
+      },
+
       Some("=") => if self.tag_opt(">") {
         Some(Op::Impl)
       } else {
@@ -1121,6 +1214,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses a single term.
+  ///
+  /// # TODO
+  ///
+  /// - remove the recursive call for arrays
   pub fn term_opt(
     & mut self,
     var_map: & VarInfos,
@@ -1177,16 +1274,65 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         self.ws_cmt() ;
         let op_pos = self.pos() ;
+
         if let Some(op) = self.op_opt() ? {
           let kid_pos = Vec::with_capacity(11) ;
           let kids = Vec::with_capacity(11) ;
           self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
           continue 'read_kids
+
+        } else if self.tag_opt("(") {
+
+          // Try to parse a constant array.
+          if self.tag_opt("as")
+          && { self.ws_cmt() ; self.tag_opt("const") } {
+            self.ws_cmt() ;
+            let sort_pos = self.pos() ;
+            let typ = self.sort() ? ;
+            let (src, tgt) = if let Some((src, tgt)) = typ.array_inspect() {
+              (src, tgt)
+            } else {
+              bail!(
+                self.error(sort_pos, "expected array sort")
+              )
+            } ;
+
+            self.ws_cmt() ;
+            self.tag(")") ? ;
+            self.ws_cmt() ;
+
+            let term_pos = self.pos() ;
+
+            // !!!! RECURSIVE CALL !!!!
+            if let Some(term) = self.term_opt(var_map, map, instance) ? {
+              if term.typ() != * tgt {
+                bail!(
+                  self.error(
+                    term_pos, format!(
+                      "expected term of type {}, got one of type {}",
+                      tgt, term.typ()
+                    )
+                  )
+                )
+              }
+              self.ws_cmt() ;
+              self.tag(")") ? ;
+              term::cst_array(src.clone(), term)
+            } else {
+              bail!(
+                self.error_here("expected term")
+              )
+            }
+
+          } else {
+            bail!( self.error_here("unexpected token") )
+          }
+
         } else if self.cxt.term_stack.is_empty() {
           break 'read_kids None
+
         } else {
-          self.op() ? ;
-          unreachable!()
+          bail!( self.error_here("unexpected token") )
         }
 
       } else {

@@ -44,12 +44,19 @@ pub enum Op {
   And,
   /// Disjunction.
   Or,
+
   /// If-then-else.
   Ite,
+
   /// Conversion from `Int` to `Real`.
   ToInt,
   /// Conversion from `Real` to `Int`.
   ToReal,
+
+  /// Updater for arrays.
+  Store,
+  /// Accessor for arrays.
+  Select,
 }
 impl Op {
   /// String representation.
@@ -77,6 +84,8 @@ impl Op {
       Ite => ite_,
       ToInt => to_int_,
       ToReal => to_real_,
+      Store => store_,
+      Select => select_,
     }
   }
 
@@ -86,8 +95,8 @@ impl Op {
   /// Checks that a potentially incomplete list of types makes sense for an
   /// operator.
   ///
-  /// If there is an error, returns the type the last argument should have (if
-  /// this type it should have is known) and the one found.
+  /// If there is an error, returns the type the spurious argument should have
+  /// (if it is known) and the one found.
   pub fn type_check(
     & self, args: & Vec<Term>
   ) -> Result<
@@ -101,12 +110,12 @@ impl Op {
       ) ;
 
       (rgt $($lft:tt)*) => (
-        return Err( Either::Right($($lft)*) )
+        return Err( Either::Right( format!($($lft)*)) )
       ) ;
 
       (nullary) => (
         err!(rgt
-          format!("illegal nullary application of `{}`", self)
+          "illegal nullary application of `{}`", self
         )
       ) ;
     }
@@ -115,10 +124,8 @@ impl Op {
       ( [ $min:tt, . ] => $e:expr ) => (
         if args_iter.len() < $min {
           err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args_iter.len(), $min
-            )
+            "illegal application of `{}` to {} arguments (> {})",
+            self, args_iter.len(), $min
           )
         } else {
           $e
@@ -128,10 +135,8 @@ impl Op {
       ( [ $min:tt, $max:tt ] => $e:expr ) => (
         if args_iter.len() > $max {
           err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args_iter.len(), $max
-            )
+            "illegal application of `{}` to {} arguments (> {})",
+            self, args_iter.len(), $max
           )
         } else {
           arity_check!( [ $min, .] => $e )
@@ -228,6 +233,38 @@ impl Op {
           all_same!()
         } else {
           err!(nullary)
+        }
+      ),
+
+      Store => arity_check!(
+        [ 3, 3 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
+          if args[1].typ() != * src {
+            err!(
+              lft ( Some(src.clone()), (args[1].typ(), 1) )
+            )
+          } else if args[2].typ() != * tgt {
+            err!(
+              lft ( Some(tgt.clone()), (args[2].typ(), 2) )
+            )
+          } else {
+            args[0].typ()
+          }
+        } else {
+          err!(lft (None, (args[0].typ(), 0)))
+        }
+      ),
+
+      Select => arity_check!(
+        [ 2, 2 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
+          if args[1].typ() != * src {
+            err!(
+              lft ( Some(src.clone()), (args[1].typ(), 1) )
+            )
+          } else {
+            tgt.clone()
+          }
+        } else {
+          err!(lft (None, (args[0].typ(), 0)))
         }
       ),
     } ;
@@ -562,7 +599,7 @@ impl Op {
       ToInt => if let Some(val) = args.pop() {
         if ! args.is_empty() {
           bail!(
-            "expected one arguments for `{}`, found {}", ToInt, args.len() + 1
+            "expected one arguments for `{}`, found {}", self, args.len() + 1
           )
         }
         if let Some(rat) = val.to_real() ? {
@@ -576,13 +613,13 @@ impl Op {
           Ok(val::none(typ::int()))
         }
       } else {
-        bail!("expected one argument for `{}`, found none", ToInt)
+        bail!("expected one argument for `{}`, found none", self)
       },
 
       ToReal => if let Some(val) = args.pop() {
         if ! args.is_empty() {
           bail!(
-            "expected one arguments for `{}`, found {}", ToReal, args.len() + 1
+            "expected one arguments for `{}`, found {}", self, args.len() + 1
           )
         }
         if let Some(i) = val.to_int() ? {
@@ -591,8 +628,29 @@ impl Op {
           Ok(val::none(typ::real()))
         }
       } else {
-        bail!("expected one argument for `{}`, found none", ToReal)
+        bail!("expected one argument for `{}`, found none", self)
       },
+
+      Store => if args.len() == 3 {
+        let (val, idx, array) = (
+          args.pop().unwrap(),
+          args.pop().unwrap(),
+          args.pop().unwrap()
+        ) ;
+        Ok( array.store(idx, val) )
+      } else {
+        bail!("expected three arguments for `{}`, found {}", self, args.len())
+      },
+
+      Select => if args.len() != 2 {
+        let (idx, array) = (
+          args.pop().unwrap(),
+          args.pop().unwrap()
+        ) ;
+        Ok( array.select(idx) )
+      } else {
+        bail!("expected two arguments for `{}`, found {}", self, args.len())
+      }
 
     }
   }

@@ -27,6 +27,7 @@ pub type Typ = String ;
 pub type Sig = Vec<Typ> ;
 
 /// A predicate declaration.
+#[derive(Clone)]
 pub struct PredDec {
   /// Predicate.
   pub pred: Pred,
@@ -44,6 +45,7 @@ pub type Args = Vec<(Ident, Typ)> ;
 pub type Term = String ;
 
 /// A predicate definition.
+#[derive(Clone)]
 pub struct PredDef {
   /// Predicate.
   pub pred: Pred,
@@ -54,6 +56,7 @@ pub struct PredDef {
 }
 
 /// A clause.
+#[derive(Clone)]
 pub struct Clause {
   /// Arguments.
   pub args: Args,
