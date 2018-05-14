@@ -418,7 +418,7 @@ impl RVal {
       RVal::R(ref r) => Some( ::term::real(r.clone()) ),
       RVal::B(b) => Some( ::term::bool(b) ),
       RVal::N(_) => None,
-      RVal::Array { .. } => unimplemented!(),
+      RVal::Array { .. } => unimplemented!("support for arrays"),
     }
   }
 

@@ -1066,7 +1066,7 @@ impl NuQuals {
             },
             typ::RTyp::Bool => (),
 
-            typ::RTyp::Array { .. } => unimplemented!(),
+            typ::RTyp::Array { .. } => unimplemented!("support for arrays"),
           }
         }
       }

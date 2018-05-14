@@ -136,7 +136,9 @@ impl RTyp {
       RTyp::Real => term::real( Rat::zero() ),
       RTyp::Int => term::int( Int::zero() ),
       RTyp::Bool => term::bool( true ),
-      RTyp::Array { .. } => unimplemented!(),
+      RTyp::Array { ref src, ref tgt } => term::cst_array(
+        src.clone(), tgt.default_term()
+      ),
     }
   }
 }
