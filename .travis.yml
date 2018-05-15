@@ -6,7 +6,7 @@ branches:
 
 os:
   - linux
-  - osx
+  # - osx
 
 rust:
   - stable
@@ -16,7 +16,7 @@ sudo: false
 
 env:
   global:
-  - RUSTFLAGS="-C link-dead-code -lresolv"
+  - RUSTFLAGS="-C link-dead-code"
 
 cache: cargo
 
