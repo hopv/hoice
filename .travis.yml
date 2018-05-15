@@ -16,7 +16,7 @@ sudo: false
 
 env:
   global:
-  - RUSTFLAGS="-C link-dead-code"
+  - RUSTFLAGS="-C link-dead-code -lresolv"
 
 cache: cargo
 
