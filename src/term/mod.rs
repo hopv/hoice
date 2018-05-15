@@ -976,6 +976,10 @@ impl TTerm {
   pub fn fls() -> Self {
     TTerm::T( term::fls() )
   }
+  /// The true top term.
+  pub fn tru() -> Self {
+    TTerm::T( term::tru() )
+  }
 
   /// Type of the top term.
   ///

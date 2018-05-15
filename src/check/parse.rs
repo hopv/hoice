@@ -12,6 +12,8 @@ pub struct InParser<'a> {
   pub pred_defs: Vec<PredDef>,
   /// Predicate declarations.
   pub pred_decs: Vec<PredDec>,
+  /// Function definitions.
+  pub fun_defs: Vec<FunDef>,
   /// Clauses.
   pub clauses: Vec<Clause>,
   /// Characters.
@@ -23,7 +25,8 @@ impl<'a> InParser<'a> {
   /// Constructor.
   pub fn new(s: & 'a str) -> Self {
     InParser {
-      pred_defs: vec![], pred_decs: vec![], clauses: vec![],
+      pred_defs: vec![], pred_decs: vec![], fun_defs: vec![],
+      clauses: vec![],
       chars: s.chars(), buf: vec![]
     }
   }
@@ -453,6 +456,8 @@ impl<'a> InParser<'a> {
         ()
       } else if self.declare_fun() ? {
         ()
+      } else if self.define_fun() ? {
+        ()
       } else if self.assert() ? {
         ()
       } else if self.tag_opt("check-sat") {
@@ -493,13 +498,17 @@ impl<'a> InParser<'a> {
     }
 
     Ok(
-      Input { pred_decs: self.pred_decs, clauses: self.clauses }
+      Input {
+        pred_decs: self.pred_decs,
+        fun_defs: self.fun_defs,
+        clauses: self.clauses,
+      }
     )
   }
 
 
   /// Define-fun.
-  fn define_fun(& mut self) -> Res<bool> {
+  fn define_pred(& mut self) -> Res<bool> {
     if ! self.tag_opt("define-fun") {
       return Ok(false)
     }
@@ -522,6 +531,36 @@ impl<'a> InParser<'a> {
     self.ws_cmt() ;
     self.pred_defs.push(
       PredDef { pred, args, body }
+    ) ;
+
+    Ok(true)
+  }
+
+
+  /// Define-fun.
+  fn define_fun(& mut self) -> Res<bool> {
+    if ! self.tag_opt("define-fun") {
+      return Ok(false)
+    }
+    self.ws_cmt() ;
+    let name = self.ident().chain_err(
+      || "while parsing symbol"
+    ) ? ;
+    self.ws_cmt() ;
+    let args = self.args().chain_err(
+      || "while parsing arguments"
+    ) ? ;
+    self.ws_cmt() ;
+    let typ = self.typ().chain_err(
+      || "while parsing return type"
+    ) ? ;
+    self.ws_cmt() ;
+    let body = self.sexpr().chain_err(
+      || "while parsing body"
+    ) ? ;
+    self.ws_cmt() ;
+    self.fun_defs.push(
+      FunDef { name, args, typ, body }
     ) ;
 
     Ok(true)
@@ -550,7 +589,7 @@ impl<'a> InParser<'a> {
     while self.char_opt('(') {
       self.ws_cmt() ;
 
-      if self.define_fun().chain_err(
+      if self.define_pred().chain_err(
         || "while parsing a define-fun"
       ) ? {
         ()

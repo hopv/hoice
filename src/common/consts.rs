@@ -110,6 +110,8 @@ pub mod keywords {
       }
 
       keys {
+        distinct_ ("distinct", doc = "Distinct.")
+
         eq_   ("=", doc = "Equal.")
         not_  ("not", doc = "Not.")
         and_  ("and", doc = "And.")

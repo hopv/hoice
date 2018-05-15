@@ -431,6 +431,19 @@ impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
     )
   }
 }
+impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    if self.len() < * var {
+      None
+    } else {
+      if let Ok(res) = self[var].to_term() {
+        res
+      } else {
+        None
+      }
+    }
+  }
+}
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
   fn var_get(& self, var: VarIdx) -> Option<Elem> {

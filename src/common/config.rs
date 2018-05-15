@@ -169,6 +169,7 @@ impl SmtConf {
     ).to_string() ;
     let mut conf = SolverConf::z3() ;
     conf.cmd( z3_cmd ) ;
+    conf.models() ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 

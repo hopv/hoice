@@ -77,6 +77,9 @@ pub struct Instance {
   /// automatically sets it to the clause kept.
   split: Option<ClsIdx>,
 
+  /// Define-funs parsed.
+  define_funs: HashMap<String, (VarInfos, ::instance::parse::PTTerms)>,
+
   /// Maps **original** clause indexes to their optional name.
   old_names: ClsHMap<String>,
 }
@@ -102,6 +105,7 @@ impl Instance {
       imp_clauses: ClsSet::new(),
       is_finalized: false,
       split: None,
+      define_funs: HashMap::new(),
       old_names: ClsHMap::with_capacity(clause_capa),
     }
   }
@@ -133,6 +137,7 @@ impl Instance {
       imp_clauses: ClsSet::new(),
       is_finalized: false,
       split: Some(clause),
+      define_funs: self.define_funs.clone(),
       old_names: self.old_names.clone(),
     }
   }
@@ -224,6 +229,19 @@ impl Instance {
   #[inline]
   pub fn is_known(& self, pred: PrdIdx) -> bool {
     self.pred_terms[pred].is_some()
+  }
+
+  /// Adds a define fun.
+  pub fn add_define_fun<S: Into<String>>(
+    & mut self, name: S, sig: VarInfos, body: ::instance::parse::PTTerms
+  ) -> Option<(VarInfos, ::instance::parse::PTTerms)> {
+    self.define_funs.insert(name.into(), (sig, body))
+  }
+  /// Retrieves a define fun.
+  pub fn get_define_fun(
+    & self, name: & str
+  ) -> Option<& (VarInfos, ::instance::parse::PTTerms)> {
+    self.define_funs.get(name)
   }
 
   /// Returns the model corresponding to the input predicates and the forced

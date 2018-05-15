@@ -26,6 +26,20 @@ pub type Typ = String ;
 /// A signature.
 pub type Sig = Vec<Typ> ;
 
+
+/// A function definition.
+#[derive(Clone)]
+pub struct FunDef {
+  /// Name.
+  pub name: String,
+  /// Arguments.
+  pub args: Args,
+  /// Return type.
+  pub typ: Typ,
+  /// Body.
+  pub body: Term,
+}
+
 /// A predicate declaration.
 #[derive(Clone)]
 pub struct PredDec {
@@ -68,6 +82,8 @@ pub struct Clause {
 pub struct Input {
   /// Predicate declarations.
   pub pred_decs: Vec<PredDec>,
+  /// Function definitions.
+  pub fun_defs: Vec<FunDef>,
   /// Clauses.
   pub clauses: Vec<Clause>,
 }
@@ -202,8 +218,17 @@ impl Data {
     for & Clause {
       ref args, ref body // ref lets, ref lhs, ref rhs
     } in & self.input.clauses {
-      count += 1 ;
       solver.reset() ? ;
+
+      // Define all functions.
+      for & FunDef {
+        ref name, ref args, ref typ, ref body
+      } in & self.input.fun_defs {
+        solver.define_fun(
+          name, args, typ, body
+        ) ?
+      }
+
       // Define all predicates.
       for & PredDef {
         ref pred, ref args, ref body
@@ -267,6 +292,8 @@ impl Data {
           "clause {}'s check resulted in unknown, assuming it's fine", count
         )
       }
+
+      count += 1 ;
     }
 
     if ! okay {

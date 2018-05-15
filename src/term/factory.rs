@@ -1050,7 +1050,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           Op::IDiv | Op::Div | Op::Rem | Op::Mod |
           Op::ToInt | Op::ToReal | Op::Store | Op::Select => (),
 
-          Op::Gt | Op::Ge | Op::Le | Op::Lt | Op::Eql |
+          Op::Gt | Op::Ge | Op::Le | Op::Lt | Op::Eql | Op::Distinct |
           Op::Impl | Op::Not | Op::And | Op::Or => panic!(
             "illegal c_mul application {}", term
           ),
@@ -1360,6 +1360,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       (op, args)
     },
 
+    Op::Distinct |
     Op::Store |
     Op::Select |
     Op::Rem => (op, args),

@@ -47,6 +47,8 @@ pub enum Op {
 
   /// If-then-else.
   Ite,
+  /// Distinct.
+  Distinct,
 
   /// Conversion from `Int` to `Real`.
   ToInt,
@@ -58,6 +60,9 @@ pub enum Op {
   /// Accessor for arrays.
   Select,
 }
+
+
+
 impl Op {
   /// String representation.
   pub fn as_str(& self) -> & str {
@@ -86,6 +91,7 @@ impl Op {
       ToReal => to_real_,
       Store => store_,
       Select => select_,
+      Distinct => distinct_,
     }
   }
 
@@ -211,6 +217,8 @@ impl Op {
           typ::bool()
         }
       ),
+
+      Distinct |
       Eql => {
         all_same!() ;
         typ::bool()
@@ -504,6 +512,17 @@ impl Op {
 
       Lt => arith_app! {
         relation l_t "<" => args
+      },
+
+      Distinct => {
+        while let Some(arg) = args.pop() {
+          for other in & args {
+            if arg.eql(& other).to_bool() ? != Some(true) {
+              return Ok( val::bool(false) )
+            }
+          }
+        }
+        Ok( val::bool(true) )
       },
 
       Eql => {

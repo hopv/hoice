@@ -1066,7 +1066,15 @@ impl NuQuals {
             },
             typ::RTyp::Bool => (),
 
-            typ::RTyp::Array { .. } => unimplemented!("support for arrays"),
+            typ::RTyp::Array { .. } => {
+              quals.insert(
+                term::eq(
+                  term::var(var, typ.clone()),
+                  typ.default_term()
+                ),
+                pred_info.idx
+              ) ? ;
+            },
           }
         }
       }
