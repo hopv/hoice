@@ -7,7 +7,7 @@ pub mod args ;
 pub mod sample ;
 pub mod constraint ;
 pub mod unsat_core ;
-use self::unsat_core::SampleGraph ;
+use ::unsat_core::sample_graph::SampleGraph ;
 mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
@@ -309,7 +309,7 @@ impl Data {
         let mut lhs = PrdHMap::with_capacity(1) ;
         let prev = lhs.insert(pred, vec![ args.clone() ]) ;
         debug_assert! { prev.is_none() }
-        graph.add_neg(pred, args.clone(), clause, lhs)
+        graph.add_neg(clause, lhs)
       }
       true
     } else {
@@ -797,18 +797,9 @@ impl Data {
         bail!("constructing unsat core, but sample dependency graph is `None`")
       } ;
       if let Some((pred, args)) = rhs {
-        graph.add(
-          pred, args, clause, lhs
-        )
+        graph.add(pred, args, clause, lhs)
       } else {
-        for (pred, argss) in & lhs {
-          for args in argss {
-            let mut lhs = lhs.clone() ;
-            graph.add_neg(
-              * pred, args.clone(), clause, lhs
-            )
-          }
-        }
+        graph.add_neg(clause, lhs)
       }
     }
 
@@ -1295,7 +1286,7 @@ impl<'a> PebcakFmt<'a> for Data {
     }
     write!(w, ")\n") ? ;
     if let Some(graph) = self.graph.as_ref() {
-      graph.write_graph(w, "", & self.instance) ? ;
+      graph.write(w, "", & self.instance) ? ;
     }
     Ok(())
   }

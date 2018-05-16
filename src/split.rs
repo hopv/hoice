@@ -3,7 +3,7 @@
 //! Used to reason separately on each positive/negative clause.
 
 use common::* ;
-use data::unsat_core::UnsatRes ;
+use unsat_core::SampleGraph ;
 
 
 
@@ -19,7 +19,7 @@ use data::unsat_core::UnsatRes ;
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
   real_instance: Arc<Instance>, _profiler: & Profiler
-) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
+) -> Res< Option< Either<ConjCandidates, Option<SampleGraph>> > > {
   let mut model = ConjCandidates::new() ;
 
   macro_rules! model {
@@ -115,8 +115,7 @@ pub fn work(
         }
         model!(add this_model) ;
         // let mut model = real_instance.extend_model(model.clone()) ? ;
-        // let stdout = & mut ::std::io::stdout() ;
-        // real_instance.write_model(& model, stdout) ?
+        // real_instance.write_model(& model, & mut stdout()) ?
       },
 
       Either::Right(reason) => return Ok( Some( Either::Right(reason) ) ),
@@ -136,7 +135,7 @@ pub fn work(
 pub fn run_teacher(
   instance: Arc<Instance>,
   model: & ConjCandidates,
-) -> Res< Either<Candidates, UnsatRes> > {
+) -> Res< Either<Candidates, Option<SampleGraph>> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
     & instance, model, & teacher_profiler

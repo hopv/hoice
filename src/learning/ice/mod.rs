@@ -76,7 +76,7 @@ pub struct IceLearner<'core> {
   /// Branches to construct later, used when constructing a decision tree.
   unfinished: Vec< (Branch, CData) >,
   /// Classifier for constraint data.
-  classifier: HConMap<Args, bool>,
+  classifier: ArgsMap<bool>,
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,

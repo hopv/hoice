@@ -10,6 +10,7 @@
     (=> true (mc_91_in m))
   ) :named a_1)
 )
+
 (assert
   (! (forall ((n Int))
     (=>
@@ -18,6 +19,7 @@
     )
   ) :named a_2)
 )
+
 (assert
   (! (forall ( (n Int) (tmp Int) (res Int) )
     (=>
@@ -39,6 +41,7 @@
     )
   ) :named a_4)
 )
+
 (assert
   (! (forall ( (n Int) (tmp Int) (res Int) )
     (=>
@@ -52,6 +55,7 @@
     )
   ) :named a_5)
 )
+
 (assert
   (! (forall ( (m Int) (res Int) )
     (=>

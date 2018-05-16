@@ -35,6 +35,7 @@ pub mod teacher ;
 pub mod learning ;
 pub mod check ;
 pub mod split ;
+pub mod unsat_core ;
 
 #[cfg( all(test, not(windows)) )]
 mod tests ;
@@ -191,11 +192,7 @@ pub fn read_and_work<R: ::std::io::Read>(
             println!("sat")
           } else {
             println!("unsat") ;
-            unsat = Some(
-              Some(
-                (::common::data::unsat_core::SampleGraph::new(), vec![])
-              )
-            )
+            unimplemented!("unsat core from preproc")
           }
           maybe_model
         } else {
@@ -254,9 +251,7 @@ pub fn read_and_work<R: ::std::io::Read>(
 
 
       // Print unsat core if available.
-      Parsed::GetUnsatCore => match unsat.as_ref().map(
-        |core| core.as_ref()
-      ) {
+      Parsed::GetUnsatCore => match unsat {
         Some(None) | None => println!(
           "({} \"\n  \
             unsat cores are only available {},\n  \
@@ -265,8 +260,8 @@ pub fn read_and_work<R: ::std::io::Read>(
           ", conf.bad("error"), conf.emph("after an unsat result"),
           conf.emph("`(set-option :produce-unsat-cores true)`")
         ),
-        Some(Some(& (ref graph, ref source))) => graph.write_core(
-          & mut ::std::io::stdout(), & instance, source
+        Some(Some(ref mut graph)) => graph.write_core(
+          & mut stdout(), & instance
         ) ?,
       }
 
@@ -275,7 +270,7 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::GetModel => if let Some(model) = model.as_mut() {
         // Simplify model before writing it.
         // instance.simplify_pred_defs(model) ? ;
-        let stdout = & mut ::std::io::stdout() ;
+        let stdout = & mut stdout() ;
         instance.write_model(& model, stdout) ?
       } else {
         bail!("no model available")

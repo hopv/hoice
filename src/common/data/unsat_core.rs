@@ -52,9 +52,9 @@ pub type UnsatCore = Vec<(ClsIdx, VarHMap<Val>)> ;
 pub struct SampleGraph {
   /// Maps samples to the clause and the samples for this clause they come
   /// from.
-  graph: PrdHMap< HConMap<Args, Vec<Origin>> >,
+  graph: PrdHMap< ArgsMap<Vec<Origin>> >,
   /// Negative samples.
-  neg: PrdHMap<HConMap<Args, Vec<Origin>>>
+  neg: PrdHMap<ArgsMap<Vec<Origin>>>
 }
 
 impl SampleGraph {
@@ -70,7 +70,7 @@ impl SampleGraph {
 
     for (pred, map) in graph {
       let pred_target = self.graph.entry(pred).or_insert_with(
-        || HConMap::with_capacity(map.len())
+        || ArgsMap::with_capacity(map.len())
       ) ;
       for (args, origins) in map {
         let target = pred_target.entry(args).or_insert_with(
@@ -86,7 +86,7 @@ impl SampleGraph {
 
     for (pred, map) in neg {
       let pred_target = self.neg.entry(pred).or_insert_with(
-        || HConMap::with_capacity(map.len())
+        || ArgsMap::with_capacity(map.len())
       ) ;
       for (args, origins) in map {
         let target = pred_target.entry(args).or_insert_with(
@@ -121,7 +121,7 @@ impl SampleGraph {
       log! { @3 "}}" }
     }
     self.graph.entry(prd).or_insert_with(
-      || HConMap::new()
+      || ArgsMap::new()
     ).entry(args).or_insert_with(
       || vec![]
     ).push( (cls, samples) )
@@ -133,7 +133,7 @@ impl SampleGraph {
     cls: ClsIdx, samples: PrdHMap<Vec<Args>>
   ) -> () {
     self.neg.entry(prd).or_insert_with(
-      || HConMap::new()
+      || ArgsMap::new()
     ).entry(args).or_insert_with(
       || vec![]
     ).push( (cls, samples) )
@@ -378,7 +378,7 @@ impl SampleGraph {
   ) -> Res<()> {
     log! { @debug "retrieving core..." }
     if_log! { @3
-      self.write_graph(& mut ::std::io::stdout(), ";     ", instance) ?
+      self.write_graph(& mut stdout(), ";     ", instance) ?
     }
     let core = self.unsat_core_for(instance, source) ? ;
 
