@@ -322,6 +322,7 @@ impl Data {
           argss.iter().next().unwrap().clone(), args
         ) ;
         debug_assert! { prev.is_none() }
+
         let prev = lhs.insert(pred, farg_map) ;
         debug_assert! { prev.is_none() }
         graph.add_neg(clause, lhs)

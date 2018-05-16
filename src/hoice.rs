@@ -117,6 +117,8 @@ pub fn read_and_work<R: ::std::io::Read>(
   // - `Some(None)`       if unsat but no core
   // - `Some(Some(core))` otherwise
   let mut unsat = None ;
+  // Original instance, for unsat core extraction.
+  let mut original_instance = None ;
 
   'parse_work: loop {
     use instance::parse::Parsed ;
@@ -165,6 +167,10 @@ pub fn read_and_work<R: ::std::io::Read>(
       Parsed::CheckSat => {
 
         log! { @info "Running top pre-processing" }
+
+        if conf.unsat_cores() {
+          original_instance = Some( instance.clone() )
+        }
 
         let preproc_profiler = Profiler::new() ;
         match profile! {
@@ -260,9 +266,15 @@ pub fn read_and_work<R: ::std::io::Read>(
           ", conf.bad("error"), conf.emph("after an unsat result"),
           conf.emph("`(set-option :produce-unsat-cores true)`")
         ),
-        Some(Some(ref mut graph)) => graph.write_core(
-          & mut stdout(), & instance
-        ) ?,
+        Some(
+          Some(ref mut graph)
+        ) => if let Some(i) = original_instance.as_ref() {
+          graph.write_core(
+            & mut stdout(), & instance, i
+          ) ?
+        } else {
+          bail!("unsat core available, but no original instance available")
+        },
       }
 
 

@@ -23,6 +23,7 @@ pub use self::pre_instance::PreInstance ;
 ///
 /// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
 /// do this is to never access an instance's fields directly from the outside.
+#[derive(Clone)]
 pub struct Instance {
   /// Predicates.
   preds: PrdInfos,
