@@ -6,7 +6,6 @@ use learning::ice::data::CData ;
 pub mod args ;
 pub mod sample ;
 pub mod constraint ;
-pub mod unsat_core ;
 use ::unsat_core::sample_graph::SampleGraph ;
 mod info ;
 

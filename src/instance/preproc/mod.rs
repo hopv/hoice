@@ -775,19 +775,20 @@ impl RedStrat for SimpleOneRhs {
         log! { @verb
           "unfolding {}", conf.emph(& instance[pred].name)
         }
+
         use self::ExtractRes::* ;
         match res {
           Trivial => {
             log! { @ 4 "=> trivial" }
-            red_info += instance.force_false(pred) ?
+            red_info += instance.force_false(pred, Some(clause)) ?
           },
           SuccessTrue => {
             log! { @ 4 "=> true" }
-            red_info += instance.force_true(pred) ?
+            red_info += instance.force_true(pred, Some(clause)) ?
           },
           SuccessFalse => {
             log! { @ 4 "=> false" }
-            red_info += instance.force_false(pred) ?
+            red_info += instance.force_false(pred, Some(clause)) ?
           },
           Success( (qvars, tterms) ) => {
             debug_assert! { qvars.is_empty() } ;
@@ -804,7 +805,7 @@ impl RedStrat for SimpleOneRhs {
               }
             }
             red_info += instance.force_pred_left(
-              pred, qvars, tterms
+              pred, qvars, tterms, clause
             ) ?
           },
           // Failed is caught before this match.
@@ -953,21 +954,21 @@ impl RedStrat for SimpleOneLhs {
       match res {
         SuccessTrue => {
           log! { @4 "=> true" }
-          red_info += instance.force_true(pred) ?
+          red_info += instance.force_true(pred, Some(clause_idx)) ?
         },
         SuccessFalse => {
           log! { @4 "=> false" }
-          red_info += instance.force_false(pred) ?
+          red_info += instance.force_false(pred, Some(clause_idx)) ?
         },
         Trivial => {
           log! { @4 "=> trivial" }
-          red_info += instance.force_true(pred) ?
+          red_info += instance.force_true(pred, Some(clause_idx)) ?
         },
         Success((qualfed, pred_app, tterms)) => {
           debug_assert! { qualfed.is_empty() }
           if pred_app.is_none() && tterms.is_empty() {
             log! { @4 "=> false" }
-            red_info += instance.force_false(pred) ?
+            red_info += instance.force_false(pred, Some(clause_idx)) ?
           } else {
             if_not_bench!{
               log!{ @4"  => (or" }
@@ -996,7 +997,7 @@ impl RedStrat for SimpleOneLhs {
               }
             }
             red_info += instance.force_pred_right(
-              pred, qualfed, pred_app, tterms
+              pred, qualfed, pred_app, tterms, clause_idx
             ) ?
           }
 
@@ -1111,15 +1112,15 @@ impl RedStrat for OneRhs {
         match res {
           Trivial => {
             log_info!("  => trivial") ;
-            red_info += instance.force_false(pred) ?
+            red_info += instance.force_false(pred, Some(clause)) ?
           },
           SuccessTrue => {
             log_info!("  => true") ;
-            red_info += instance.force_true(pred) ? ;
+            red_info += instance.force_true(pred, Some(clause)) ? ;
           },
           SuccessFalse => {
             log_info!("  => false") ;
-            red_info += instance.force_false(pred) ? ;
+            red_info += instance.force_false(pred, Some(clause)) ? ;
           },
           Success( (qvars, tterms) ) => {
             if_not_bench! {
@@ -1137,7 +1138,7 @@ impl RedStrat for OneRhs {
               }
             }
             red_info += instance.force_pred_left(
-              pred, qvars, tterms
+              pred, qvars, tterms, clause
             ) ? ;
 
 
@@ -1289,15 +1290,15 @@ impl RedStrat for OneLhs {
       match res {
         SuccessTrue => {
           log_info!("  => true") ;
-          red_info += instance.force_true(pred) ?
+          red_info += instance.force_true(pred, Some(clause_idx)) ?
         },
         SuccessFalse => {
           log_info!("  => false") ;
-          red_info += instance.force_false(pred) ?
+          red_info += instance.force_false(pred, Some(clause_idx)) ?
         },
         Trivial => {
           log_info!("  => trivial") ;
-          red_info += instance.force_true(pred) ?
+          red_info += instance.force_true(pred, Some(clause_idx)) ?
         },
         Success((qvars, pred_app, tterms)) => {
           if_not_bench!{
@@ -1327,7 +1328,7 @@ impl RedStrat for OneLhs {
             }
           }
           red_info += instance.force_pred_right(
-            pred, qvars, pred_app, tterms
+            pred, qvars, pred_app, tterms, clause_idx
           ) ? ;
 
           instance.check("after unfolding") ?

@@ -869,7 +869,7 @@ impl Instance {
     info: & 'static str
   ) -> Res< Option<ClsIdx> > {
     let idx = self.clauses.next_index() ;
-    let clause = Clause::new(vars, lhs, rhs, info, idx) ;
+    let clause = clause::new(vars, lhs, rhs, info, idx) ;
     self.push_clause(clause)
   }
 
@@ -1669,8 +1669,13 @@ impl Instance {
       write!(w, "\n; Clause #{}\n", idx) ? ;
 
       // Print source.
-      write!(w, ";   from #{}", clause.from()) ? ;
-      if let Some(name) = self.old_names.get(& clause.from()) {
+      let (from, from_set) = clause.from() ;
+      write!(w, ";   from: #{} {{", from) ? ;
+      for cls in from_set {
+        write!(w, " #{}", cls) ?
+      }
+      write!(w, " }}") ? ;
+      if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
       write!(w, "\n") ? ;
@@ -1965,8 +1970,13 @@ impl<'a> PebcakFmt<'a> for Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      write!(w, "; from #{}", clause.from()) ? ;
-      if let Some(name) = self.old_names.get(& clause.from()) {
+      let (from, from_set) = clause.from() ;
+      write!(w, ";   from: #{} {{", from) ? ;
+      for cls in from_set {
+        write!(w, " #{}", cls) ?
+      }
+      write!(w, " }}") ? ;
+      if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
       write!(w, "\n") ? ;

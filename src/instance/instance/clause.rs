@@ -3,6 +3,26 @@
 use common::* ;
 use instance::info::VarInfo ;
 
+/// Creates a clause.
+///
+/// Only accessible from the instance.
+pub fn new(
+  vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
+  info: & 'static str, cls: ClsIdx,
+) -> Clause {
+  let from = (cls, ClsSet::new()) ;
+  let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
+  let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
+  let mut clause = Clause {
+    vars, lhs_terms, lhs_preds, rhs,
+    terms_changed: true, from_unrolling: false,
+    info, from
+  } ;
+  for tterm in lhs { clause.lhs_insert(tterm) ; }
+  clause
+}
+
+
 /// A clause.
 ///
 /// Fields are public because a clause is important only if it's in the
@@ -37,25 +57,9 @@ pub struct Clause {
   pub info: & 'static str,
 
   /// Index of the original clause this comes from.
-  from: ClsIdx,
+  from: (ClsIdx, ClsSet),
 }
 impl Clause {
-  /// Creates a clause.
-  pub fn new(
-    vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
-    info: & 'static str, cls: ClsIdx,
-  ) -> Self {
-    let from = cls ;
-    let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
-    let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
-    let mut clause = Clause {
-      vars, lhs_terms, lhs_preds, rhs,
-      terms_changed: true, from_unrolling: false,
-      info, from
-    } ;
-    for tterm in lhs { clause.lhs_insert(tterm) ; }
-    clause
-  }
 
   /// Checks if two clauses are the same.
   pub fn same_as(& self, other: & Self) -> bool {
@@ -475,11 +479,29 @@ impl Clause {
   //   self.from.insert(cls)
   // }
 
+
+  /// Augments the sources of a clause.
+  ///
+  /// The sources of a clause are the original clauses it comes from.
+  pub fn add_sources(& mut self, sources: & ClsSet) {
+    self.from.1.extend(
+      sources.iter().map(|c| * c)
+    )
+  }
+
+  /// Returns all the clause's sources.
+  pub fn sources(& self) -> ClsSet {
+    let mut res = self.from.1.clone() ;
+    res.insert(self.from.0) ;
+    res
+  }
+
   /// Returns the source clauses.
   ///
   /// Source clauses are original clauses this clause stems from.
-  pub fn from(& self) -> ClsIdx {
-    self.from
+  pub fn from(& self) -> (ClsIdx, & ClsSet) {
+    let (cls, ref cls_set) = self.from ;
+    (cls, cls_set)
   }
 
   /// Clones a clause without the lhs predicate applications.
@@ -717,7 +739,12 @@ impl Clause {
       ",
       inactive, self.from_unrolling, self.terms_changed, self.info
     ) ? ;
-    writeln!(w, "  ; from: {}", self.from()) ? ;
+    let (from, from_set) = self.from() ;
+    write!(w, "  ; from: #{} |", from) ? ;
+    for cls in from_set {
+      write!(w, " #{}", cls) ?
+    }
+    writeln!(w, "") ? ;
 
     let lhs_len = self.lhs_len() ;
 
