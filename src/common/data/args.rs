@@ -13,11 +13,6 @@ use common::* ;
 
 
 
-
-
-
-/// Factory for hash consed arguments.
-pub type ArgFactory = Arc< RwLock<HashConsign<RArgs>> > ;
 /// Factory for hash consed arguments.
 pub type Factory = RwLock<HashConsign<RArgs>> ;
 
@@ -46,18 +41,6 @@ pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
   }
   mk(map)
 }
-
-/// Creates an argument factory.
-pub fn new_factory() -> ArgFactory {
-  Arc::new(
-    RwLock::new(
-      HashConsign::with_capacity(211)
-    )
-  )
-}
-
-
-
 
 
 

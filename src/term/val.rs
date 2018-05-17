@@ -8,8 +8,6 @@
 
 use hashconsing::{ HashConsign, HConser, HConsed } ;
 
-use common::{ Int, Rat, Signed } ;
-
 use common::* ;
 
 /// Type of the term factory.

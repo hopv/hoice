@@ -10,7 +10,7 @@ use ::unsat_core::sample_graph::SampleGraph ;
 mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
-use self::args::{ SubsumeExt, ArgFactory, new_factory } ;
+use self::args::SubsumeExt ;
 pub use self::sample::{ Sample } ;
 pub use self::constraint::Constraint ;
 use self::info::CstrInfo ;
@@ -35,8 +35,7 @@ pub struct Data {
 
   /// Map from samples to constraints.
   map: PrdMap< ArgsMap<CstrSet> >,
-  /// Argument factory.
-  factory: ArgFactory,
+
   /// Stores pos/neg samples temporarily before they're added.
   staged: Staged,
   /// Constraint info.
@@ -58,7 +57,7 @@ impl Clone for Data {
       neg: self.neg.clone(),
       constraints: self.constraints.clone(),
       map: self.map.clone(),
-      factory: self.factory.clone(),
+
       staged: self.staged.clone(), // Empty anyway.
       cstr_info: self.cstr_info.clone(),
       graph: None,
@@ -103,7 +102,6 @@ impl Data {
     let constraints = CstrMap::with_capacity(103) ;
     Data {
       instance, pos, neg, constraints, map,
-      factory: new_factory(),
       staged: Staged::with_capacity(pred_count),
       cstr_info: CstrInfo::new(),
       graph: if conf.track_samples() {
@@ -678,8 +676,7 @@ impl Data {
   fn mk_sample(
     & mut self, args: RArgs
   ) -> (Args, bool) {
-    use hashconsing::HConser ;
-    self.factory.mk_is_new( args.into() )
+    args::mk_is_new(args)
   }
 
 
