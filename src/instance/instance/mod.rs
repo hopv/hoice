@@ -1,7 +1,7 @@
 //! Actual instance structure.
 
 use common::* ;
-use common::data::RArgs ;
+
 use instance::info::* ;
 use learning::ice::quals::NuQuals ;
 
@@ -1322,7 +1322,7 @@ impl Instance {
 
   /// Turns some teacher counterexamples into learning data.
   pub fn cexs_to_data(
-    & self, data: & mut ::common::data::Data, cexs: Cexs
+    & self, data: & mut ::data::Data, cexs: Cexs
   ) -> Res<bool> {
     macro_rules! fix_cex {
       ($clause:expr, $cex:expr, $args:expr) => ({

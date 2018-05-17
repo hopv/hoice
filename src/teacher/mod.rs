@@ -8,14 +8,16 @@
 //! [teach]: fn.teach.html
 //! (Teacher's teach function)
 
-use common::* ;
-use common::data::Data ;
-use common::msg::* ;
-use common::smt::{ SmtTerm, FullParser as Parser } ;
+use common::{
+  *,
+  msg::*,
+  smt::{ SmtTerm, FullParser as Parser },
+} ;
+use unsat_core::UnsatRes ;
+use data::Data ;
 
 pub mod assistant ;
 use self::assistant::Assistant ;
-use unsat_core::UnsatRes ;
 
 /// Starts the teaching process.
 ///

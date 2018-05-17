@@ -1,7 +1,9 @@
 //! Contains stuff related to ICE's projected data representation.
 
 use common::* ;
-use common::data::{ Data, Sample } ;
+use data::{
+  Data, Sample,
+} ;
 
 
 /// Projected data to classify.

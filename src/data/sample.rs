@@ -1,6 +1,6 @@
 use common::* ;
 
-use common::data::args::SubsumeExt ;
+use data::args::SubsumeExt ;
 
 /// A sample is some values for a predicate.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

@@ -1,11 +1,13 @@
 //! ICE learner.
 
-use common::* ;
-use common::data::Data ;
-use common::msg::* ;
-use common::smt::{
-  SmtSample, SmtConstraint, SmtActSamples
+use common::{
+  *,
+  msg::*,
+  smt::{
+    SmtSample, SmtConstraint, SmtActSamples
+  },
 } ;
+use data::Data ;
 
 pub mod quals ;
 pub mod synth ;

@@ -9,7 +9,7 @@ use instance::* ;
 pub mod utils ;
 use self::utils::{ ExtractRes } ;
 pub mod graph ;
-pub mod args ;
+pub mod arg_red ;
 
 use self::graph::Graph ;
 

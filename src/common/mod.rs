@@ -37,14 +37,15 @@ mod wrappers ;
 #[macro_use]
 pub mod macros ;
 pub mod config ;
-pub mod data ;
+
 #[macro_use]
 pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
 
-pub use self::data::{ RArgs, Args, ArgsSet, ArgsMap } ;
+pub use data::{ RArgs, Args, ArgsSet, ArgsMap } ;
+
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;

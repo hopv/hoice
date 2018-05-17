@@ -1,13 +1,17 @@
 //! SMT-related zero-cost wrappers.
 
-use std::str::FromStr ;
-use std::io::BufRead ;
+use std::{
+  str::FromStr,
+  io::BufRead,
+} ;
 
-use rsmt2::print::* ;
-use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
+use rsmt2::{
+  print::*,
+  parse::{ IdentParser, ValueParser, SmtParser },
+} ;
 
 use common::* ;
-use common::data::Constraint ;
+use data::Constraint ;
 
 
 /// SMT-prints a term using the default var writer.

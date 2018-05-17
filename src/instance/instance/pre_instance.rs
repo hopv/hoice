@@ -1478,7 +1478,8 @@ impl<'a> PreInstance<'a> {
 
   /// Removes irrelevant predicate arguments.
   pub fn arg_reduce(& mut self) -> Res<RedInfo> {
-    let to_keep = ::instance::preproc::args::to_keep(self) ? ;
+    use instance::preproc::arg_red ;
+    let to_keep = arg_red::to_keep(self) ? ;
     self.rm_args(to_keep)
   }
 

@@ -3,7 +3,7 @@
 use rsmt2::print::Expr2Smt ;
 
 use common::* ;
-use common::data::{ Data, Sample } ;
+use data::{ Data, Sample } ;
 
 
 /// Propagates examples, tries to break implication constraints.

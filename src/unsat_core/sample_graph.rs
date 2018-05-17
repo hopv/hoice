@@ -176,7 +176,7 @@ impl KnownSamples {
   pub fn add_pos(
     & mut self, pred: PrdIdx, fargs: HTArgs, args: Args, origin: Origin
   ) -> Option<Args> {
-    use common::data::args::SubsumeExt ;
+    use data::args::SubsumeExt ;
 
     let res = self.neg.get(& pred).and_then(
       |map| map.keys().find(
@@ -201,7 +201,7 @@ impl KnownSamples {
     & mut self, pred: PrdIdx, args: Args,
     rhs: Rhs, origin: Origin
   ) -> Option<Args> {
-    use common::data::args::SubsumeExt ;
+    use data::args::SubsumeExt ;
 
     let res = self.pos.get(& pred).and_then(
       |map| map.keys().find(

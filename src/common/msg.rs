@@ -3,10 +3,12 @@
 use std::sync::mpsc::channel ;
 use std::cell::RefCell ;
 
-use common::* ;
-use common::data::Data ;
+use common::{
+  *,
+  profiling::Profiler,
+} ;
 
-use common::profiling::Profiler ;
+use data::Data ;
 
 
 /// Sender / receiver pair alias type.
