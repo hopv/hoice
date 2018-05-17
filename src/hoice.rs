@@ -162,8 +162,6 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Check-sat, start class.
       Parsed::CheckSat => {
 
-        println!("cores: {}, proofs: {}", conf.unsat_cores(), conf.proofs()) ;
-
         log! { @info "Running top pre-processing" }
 
         let preproc_profiler = Profiler::new() ;
