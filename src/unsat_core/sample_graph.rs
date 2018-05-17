@@ -610,12 +610,6 @@ This is maintained by the teacher when unsat core production is active and is
 returned in case of an unsat result. The graph allows to retrieve values for
 the original clauses that explain why some sample needs to be both true and
 false at the same time.
-
-
-# TODO
-
-- there's no need to clone the sample graph currently, but still the
-  teacher will do it when communicating data to the learner(s)
 */
 #[derive(Clone, Debug)]
 pub struct SampleGraph {

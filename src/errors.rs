@@ -93,6 +93,11 @@ error_chain!{
       description("unsat")
       display("unsat")
     }
+    #[doc = "Not really an error, unsat early return because of some clause."]
+    UnsatFrom(clause: ClsIdx) {
+      description("unsat")
+      display("unsat by #{}", clause)
+    }
     #[doc = "Not really an error, exit early return."]
     Exit {
       description("exit")
@@ -114,9 +119,19 @@ impl Error {
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,
+      ErrorKind::UnsatFrom(_) => true,
       _ => false,
     }
   }
+
+  /// Returns the clause explaining an unsat result if any.
+  pub fn unsat_cause(& self) -> Option<ClsIdx> {
+    match * self.kind() {
+      ErrorKind::UnsatFrom(clause) => Some(clause),
+      _ => None,
+    }
+  }
+
 
   /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
   ///

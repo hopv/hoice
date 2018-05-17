@@ -63,7 +63,6 @@ impl SampleGraph {
     SampleGraph { graph: PrdHMap::new(), neg: PrdHMap::new() }
   }
 
-
   /// Merges two graphs.
   pub fn merge(& mut self, other : Self) {
     let SampleGraph { graph, neg } = other ;

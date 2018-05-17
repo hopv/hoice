@@ -162,6 +162,8 @@ pub fn read_and_work<R: ::std::io::Read>(
       // Check-sat, start class.
       Parsed::CheckSat => {
 
+        println!("cores: {}, proofs: {}", conf.unsat_cores(), conf.proofs()) ;
+
         log! { @info "Running top pre-processing" }
 
         let preproc_profiler = Profiler::new() ;
@@ -177,6 +179,13 @@ pub fn read_and_work<R: ::std::io::Read>(
               print_stats("top", profiler) ;
               ::std::process::exit(0)
             }
+          } else if e.is_unsat() {
+            if let Some(clause) = e.unsat_cause() {
+              unsat = Some( unsat_core::UnsatRes::Clause(clause) )
+            } else {
+              unsat = Some( unsat_core::UnsatRes::None )
+            }
+            ()
           } else {
             bail!(e)
           },
@@ -190,10 +199,12 @@ pub fn read_and_work<R: ::std::io::Read>(
             println!("sat")
           } else {
             println!("unsat") ;
-            if conf.unsat_cores() || conf.proofs() {
+            if unsat.as_ref().map(
+              |unsat| unsat.is_none()
+            ).unwrap_or(true) && (
+              conf.unsat_cores() || conf.proofs()
+            ) {
               bail!("unsat cores/proofs from preprocessing")
-            } else {
-              unsat = Some(unsat_core::UnsatRes::None)
             }
           }
           maybe_model

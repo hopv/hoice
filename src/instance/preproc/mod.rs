@@ -24,12 +24,9 @@ use self::graph::Graph ;
 pub fn work(
   instance: & mut Instance, profiler: & Profiler,
 ) -> Res<()> {
-  let res = if conf.preproc.active && ! conf.unsat_cores() {
+  let res = {
     let instance = PreInstance::new(instance) ? ;
-
     run(instance, profiler, true)
-  } else {
-    Ok(())
   } ;
   finalize(res, instance, profiler)
 }
@@ -73,10 +70,12 @@ fn finalize(
   }
 
   match res {
-    Err(ref e) if e.is_unsat() => {
-      instance.set_unsat()
+    Err(e) => {
+      if e.is_unsat() {
+        instance.set_unsat()
+      }
+      bail!(e)
     },
-    Err(e) => bail!(e),
     Ok(()) => ()
   }
 
@@ -464,6 +463,10 @@ impl<'a> Reductor<'a> {
 
     if simplify_first {
       run! { simplify } ;
+    }
+
+    if ! conf.preproc.active || conf.unsat_cores() || conf.proofs() {
+      return Ok(())
     }
 
     // Used to avoid running cfg reduction if nothing has changed since the

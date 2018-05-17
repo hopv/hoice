@@ -23,7 +23,6 @@ use self::info::CstrInfo ;
 ///
 /// Cannot create new samples as it does not contain the factory. This is the
 /// structure manipulated by learners.
-#[derive(Clone)]
 pub struct Data {
   /// Instance, only used for printing.
   pub instance: Arc<Instance>,
@@ -49,6 +48,23 @@ pub struct Data {
 
   /// Profiler.
   _profiler: Profiler,
+}
+
+impl Clone for Data {
+  fn clone(& self) -> Self {
+    Data {
+      instance: self.instance.clone(),
+      pos: self.pos.clone(),
+      neg: self.neg.clone(),
+      constraints: self.constraints.clone(),
+      map: self.map.clone(),
+      factory: self.factory.clone(),
+      staged: self.staged.clone(), // Empty anyway.
+      cstr_info: self.cstr_info.clone(),
+      graph: None,
+      _profiler: Profiler::new(),
+    }
+  }
 }
 
 

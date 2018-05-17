@@ -1,5 +1,6 @@
 (set-logic HORN)
 
+(set-option :produce-proofs true)
 (set-option :produce-unsat-cores true)
 
 (declare-fun mc_91_in (Int) Bool)
@@ -68,3 +69,4 @@
 (check-sat)
 
 (get-unsat-core)
+(get-proof)

@@ -382,9 +382,9 @@ impl<'a> PreInstance<'a> {
   ///
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
-  fn is_clause_trivial(& mut self, clause: ClsIdx) -> Res<bool> {
+  fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
     let mut lhs: Vec<Term> = Vec::with_capacity(17) ;
-    let clause = & self.instance[clause] ;
+    let clause = & self.instance[clause_idx] ;
 
     for term in clause.lhs_terms() {
       match term.bool() {
@@ -413,10 +413,11 @@ impl<'a> PreInstance<'a> {
         return Ok(true)
       } else {
         log_debug!{
-          "unsat because of {}",
-          clause.to_string_info( self.instance.preds() ) ?
+          "unsat because of {}", clause.to_string_info(
+            self.instance.preds()
+          ) ?
         }
-        unsat!()
+        bail!( ErrorKind::UnsatFrom(clause_idx) )
       }
 
     } else {

@@ -15,6 +15,8 @@ pub enum UnsatRes {
   Graph(SampleGraph),
   /// A proof, obtained from a graph.
   Proof(UnsatProof),
+  /// An unsat result from a single clause.
+  Clause(ClsIdx),
 }
 impl UnsatRes {
   /// Constructor.
@@ -24,6 +26,11 @@ impl UnsatRes {
     } else {
       UnsatRes::None
     }
+  }
+
+  /// True if none.
+  pub fn is_none(& self) -> bool {
+    match self { UnsatRes::None => true, _ => false }
   }
 
   /// Retrieves the unsat core.
@@ -40,6 +47,11 @@ impl UnsatRes {
         ( UnsatRes::Proof(proof), core )
       },
       UnsatRes::Proof(proof) => return Ok( proof.core() ),
+      UnsatRes::Clause(clause) => {
+        let mut set = ClsSet::new() ;
+        set.insert(* clause) ;
+        return Ok(set)
+      },
     } ;
 
     * self = nu_self ;
@@ -62,7 +74,7 @@ impl UnsatRes {
     Ok(())
   }
 
-  /// Writes the unsat core.
+  /// Writes an unsat proof.
   pub fn write_proof<W: Write>(
     & mut self, w: & mut W, instance: & Instance
   ) -> Res<()> {
@@ -83,6 +95,10 @@ impl UnsatRes {
       },
       UnsatRes::Proof(proof) => {
         proof.write(w, instance) ? ;
+        return Ok(())
+      },
+      UnsatRes::Clause(_) => {
+        writeln!(w, "( () () () )") ? ;
         return Ok(())
       },
     } ;

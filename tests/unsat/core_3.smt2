@@ -9,6 +9,7 @@
   let main i = k 0
 ")
 
+(set-option :produce-proofs true)
 (set-option :produce-unsat-cores true)
 
 (set-logic HORN)
@@ -144,6 +145,7 @@
 (check-sat)
 
 (get-unsat-core)
+(get-proof)
 
 (exit)
 
