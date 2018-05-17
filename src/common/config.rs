@@ -998,6 +998,10 @@ pub struct Config {
   ///
   /// Can only be set by `(set-option :produce-unsat-cores true)`.
   unsat_cores: Arc<RwLock<bool>>,
+  /// Unsat core production.
+  ///
+  /// Can only be set by `(set-option :produce-proofs true)`.
+  proofs: Arc<RwLock<bool>>,
 
   /// Instance and factory configuration.
   pub instance: InstanceConf,
@@ -1028,6 +1032,7 @@ impl Config {
   pub fn init(& self) {
     self.set_print_success(::common::consts::values::default::print_success) ;
     self.set_unsat_cores(::common::consts::values::default::unsat_cores) ;
+    self.set_proofs(::common::consts::values::default::proofs) ;
     ()
   }
 
@@ -1064,6 +1069,22 @@ impl Config {
       panic!("failed to retrieve unsat-cores conf flag")
     }
   }
+  /// Sets proofs flag.
+  pub fn set_proofs(& self, b: bool) {
+    if let Ok(mut flag) = self.proofs.write() {
+      * flag = b
+    } else {
+      panic!("failed to set proofs conf flag")
+    }
+  }
+  /// Unsat-cores flag.
+  pub fn proofs(& self) -> bool {
+    if let Ok(flag) = self.proofs.read() {
+      * flag
+    } else {
+      panic!("failed to retrieve proofs conf flag")
+    }
+  }
 
   /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
   /// an error.
@@ -1085,6 +1106,9 @@ impl Config {
         Self::bool_of_str(& val).chain_err(flag_err) ?
       ),
       "produce-unsat-cores" => self.set_unsat_cores(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      "produce-proofs" => self.set_proofs(
         Self::bool_of_str(& val).chain_err(flag_err) ?
       ),
       _ => warn!(
@@ -1232,6 +1256,11 @@ impl Config {
       unsat_cores: Arc::new(
         RwLock::new(
           ::common::consts::values::default::unsat_cores
+        )
+      ),
+      proofs: Arc::new(
+        RwLock::new(
+          ::common::consts::values::default::proofs
         )
       ),
       instance, preproc, solver, ice, teacher,

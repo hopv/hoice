@@ -3,7 +3,7 @@
 //! Used to reason separately on each positive/negative clause.
 
 use common::* ;
-use data::unsat_core::UnsatRes ;
+use unsat_core::UnsatRes ;
 
 
 
@@ -115,8 +115,7 @@ pub fn work(
         }
         model!(add this_model) ;
         // let mut model = real_instance.extend_model(model.clone()) ? ;
-        // let stdout = & mut ::std::io::stdout() ;
-        // real_instance.write_model(& model, stdout) ?
+        // real_instance.write_model(& model, & mut stdout()) ?
       },
 
       Either::Right(reason) => return Ok( Some( Either::Right(reason) ) ),

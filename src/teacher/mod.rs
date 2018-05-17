@@ -15,7 +15,7 @@ use common::smt::{ SmtTerm, FullParser as Parser } ;
 
 pub mod assistant ;
 use self::assistant::Assistant ;
-use data::unsat_core::UnsatRes ;
+use unsat_core::UnsatRes ;
 
 /// Starts the teaching process.
 ///
@@ -45,7 +45,7 @@ pub fn start_class(
             unsat core will not be available\n\
             please consider contacting the developer"
           }
-          let core = teacher.unsat_core() ? ;
+          let core = teacher.unsat_core() ;
           return Ok( Either::Right(core) )
         },
         _ => ()
@@ -193,7 +193,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
           },
           Err(e) => {
             if e.is_unsat() {
-              return Ok( Either::Right(teacher.unsat_core() ?) )
+              return Ok( Either::Right(teacher.unsat_core()) )
             } else {
               bail!(e)
             }
@@ -570,7 +570,7 @@ impl<'a> Teacher<'a> {
           }
         },
 
-        MsgKind::Unsat => return Ok(Either::Right(self.unsat_core() ?)),
+        MsgKind::Unsat => return Ok(Either::Right(self.unsat_core())),
 
       }
 
@@ -578,16 +578,8 @@ impl<'a> Teacher<'a> {
   }
 
   /// Retrieves the unsat core, if any.
-  pub fn unsat_core(& mut self) -> Res<UnsatRes> {
-    if let Some(unsat) = self.data.is_unsat() {
-      let res = self.data.sample_graph().map(|graph| (graph, unsat)) ;
-      Ok(res)
-    } else {
-      bail!(
-        "failed to retrieve unsat result\ndata:\n{}",
-        self.data.to_string_info(& ()) ?
-      )
-    }
+  pub fn unsat_core(& mut self) -> UnsatRes {
+    UnsatRes::new( self.data.sample_graph() )
   }
 
   /// Initial check, where all candidates are `true`.

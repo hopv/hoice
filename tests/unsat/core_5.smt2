@@ -22,6 +22,14 @@
   ) :named a_2)
 )
 (assert
+  (! (forall ( (n Int) )
+    (=>
+      (< n 0)
+      (>= n 0)
+    )
+  ) :named dumb_unsat_clause)
+)
+(assert
   (! (forall ( (m Int) (res Int) )
     (=>
       (and (<= m 101) (mc_91_out m res))

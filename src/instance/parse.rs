@@ -15,6 +15,8 @@ pub enum Parsed {
   GetModel,
   /// Get unsat core.
   GetUnsatCore,
+  /// Get unsat proof.
+  GetProof,
   /// Exit.
   Exit,
   /// Only parsed some item(s), no query.
@@ -2229,6 +2231,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Parses a get-proof.
+  fn get_proof(& mut self) -> bool {
+    if self.tag_opt(keywords::cmd::get_proof) {
+      true
+    } else {
+      false
+    }
+  }
+
   /// Parses an exit command.
   fn exit(& mut self) -> bool {
     if self.tag_opt(keywords::cmd::exit) {
@@ -2291,6 +2302,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Parsed::GetModel
       } else if self.get_unsat_core() {
         Parsed::GetUnsatCore
+      } else if self.get_proof() {
+        Parsed::GetProof
       } else if self.exit() {
         Parsed::Exit
       } else if self.reset() {

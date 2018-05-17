@@ -1,8 +1,64 @@
+/*! Concrete arguments for predicate applications.
+
+# TODO
+
+- factor the hashcons factory like term, val, typ...
+*/
+
 use std::cmp::Ordering ;
 
-use hashconsing::{ HashConsign, HConsed } ;
+use hashconsing::{ HashConsign, HConsed, HConser } ;
 
 use common::* ;
+
+
+
+
+
+
+/// Factory for hash consed arguments.
+pub type ArgFactory = Arc< RwLock<HashConsign<RArgs>> > ;
+/// Factory for hash consed arguments.
+pub type Factory = RwLock<HashConsign<RArgs>> ;
+
+lazy_static! {
+  /// Term factory.
+  static ref factory: Factory = RwLock::new(
+    HashConsign::with_capacity( conf.instance.term_capa )
+  ) ;
+}
+
+/// Creates hashconsed arguments.
+pub fn mk<RA: Into<RArgs>>(args: RA) -> Args {
+  factory.mk( args.into() )
+}
+/// Creates hashconsed arguments, returns `true` if the arguments are new.
+pub fn mk_is_new<RA: Into<RArgs>>(args: RA) -> (Args, bool) {
+  factory.mk_is_new( args.into() )
+}
+/// Creates hashconsed arguments from iterators.
+pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
+  args: A
+) -> Args {
+  let mut map = VarMap::new() ;
+  for val in args.into_iter() {
+    map.push( val.into() )
+  }
+  mk(map)
+}
+
+/// Creates an argument factory.
+pub fn new_factory() -> ArgFactory {
+  Arc::new(
+    RwLock::new(
+      HashConsign::with_capacity(211)
+    )
+  )
+}
+
+
+
+
 
 
 /// Mapping from variables to values, used for learning data.
@@ -104,49 +160,11 @@ impl RArgs {
 
 
 
-/// Factory for hash consed arguments.
-pub type ArgFactory = Arc< RwLock<HashConsign<RArgs>> > ;
-/// Creates an argument factory.
-pub fn new_factory() -> ArgFactory {
-  Arc::new(
-    RwLock::new(
-      HashConsign::with_capacity(211)
-    )
-  )
-}
-
-
-
 /// Hash consed arguments.
 pub type Args = HConsed<RArgs> ;
 
 /// A set of hashconsed arguments.
-// #[derive(Debug, Clone)]
 pub type ArgsSet = HConSet<Args> ;
-//   /// Set of arguments.
-//   set: HConSet<Args>,
-// }
-// impl ::std::ops::Deref for ArgsSet {
-//   type Target = HConSet<Args> ;
-//   fn deref(& self) -> & HConSet<Args> {
-//     & self.set
-//   }
-// }
-// impl ::std::ops::DerefMut for ArgsSet {
-//   fn deref_mut(& mut self) -> & mut HConSet<Args> {
-//     & mut self.set
-//   }
-// }
-// impl ArgsSet {
-//   /// Constructor.
-//   pub fn new() -> Self {
-//     ArgsSet { set: HConSet::new() }
-//   }
-//   /// Constructor with a capacity.
-//   pub fn with_capacity(capa: usize) -> Self {
-//     ArgsSet { set: HConSet::with_capacity(capa) }
-//   }
-// }
 
 /// A map from hashconsed arguments to something.
 pub type ArgsMap<T> = HConMap<Args, T> ;
@@ -169,6 +187,13 @@ pub trait SubsumeExt {
   ///
   /// Returns an error if `self` and `other` do not have the same length.
   fn compare(& self, other: & Self) -> Option<Ordering> ;
+
+  /// Returns true if the two samples are related.
+  ///
+  /// Two samples are related if they're equal or one subsumes the other.
+  fn is_related_to(& self, other: & Self) -> bool {
+    self.compare(other).is_some()
+  }
 
   /// True iff `self` subsumes or is equal to `other`.
   fn subsumes(& self, other: & Self) -> bool {

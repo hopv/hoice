@@ -6,8 +6,7 @@ use learning::ice::data::CData ;
 pub mod args ;
 pub mod sample ;
 pub mod constraint ;
-pub mod unsat_core ;
-use self::unsat_core::SampleGraph ;
+use ::unsat_core::sample_graph::SampleGraph ;
 mod info ;
 
 pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
@@ -24,7 +23,6 @@ use self::info::CstrInfo ;
 ///
 /// Cannot create new samples as it does not contain the factory. This is the
 /// structure manipulated by learners.
-#[derive(Clone)]
 pub struct Data {
   /// Instance, only used for printing.
   pub instance: Arc<Instance>,
@@ -50,6 +48,23 @@ pub struct Data {
 
   /// Profiler.
   _profiler: Profiler,
+}
+
+impl Clone for Data {
+  fn clone(& self) -> Self {
+    Data {
+      instance: self.instance.clone(),
+      pos: self.pos.clone(),
+      neg: self.neg.clone(),
+      constraints: self.constraints.clone(),
+      map: self.map.clone(),
+      factory: self.factory.clone(),
+      staged: self.staged.clone(), // Empty anyway.
+      cstr_info: self.cstr_info.clone(),
+      graph: None,
+      _profiler: Profiler::new(),
+    }
+  }
 }
 
 
@@ -278,7 +293,10 @@ impl Data {
   ) -> bool {
     if self.add_pos_untracked(pred, args.clone()) {
       if let Some(graph) = self.graph.as_mut() {
-        graph.add(pred, args.clone(), clause, PrdHMap::new())
+        graph.add(
+          pred, self.instance[clause].rhs().unwrap().1.clone(),
+          args.clone(), clause, PrdHMap::new()
+        )
       }
       true
     } else {
@@ -307,9 +325,22 @@ impl Data {
     if self.add_neg_untracked(pred, args.clone()) {
       if let Some(graph) = self.graph.as_mut() {
         let mut lhs = PrdHMap::with_capacity(1) ;
-        let prev = lhs.insert(pred, vec![ args.clone() ]) ;
+        let mut farg_map = HConMap::new() ;
+        debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
+
+        let (
+          p, argss
+        ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
+        debug_assert_eq! { pred, * p }
+        debug_assert_eq! { 1, argss.len() }
+        let prev = farg_map.insert(
+          argss.iter().next().unwrap().clone(), args
+        ) ;
         debug_assert! { prev.is_none() }
-        graph.add_neg(pred, args.clone(), clause, lhs)
+
+        let prev = lhs.insert(pred, farg_map) ;
+        debug_assert! { prev.is_none() }
+        graph.add_neg(clause, lhs)
       }
       true
     } else {
@@ -796,19 +827,34 @@ impl Data {
       } else {
         bail!("constructing unsat core, but sample dependency graph is `None`")
       } ;
+
+      let mut full_lhs = PrdHMap::with_capacity(lhs.len()) ;
+
+      let clause_preds = self.instance[clause].lhs_preds() ;
+
+      debug_assert_eq! { lhs.len(), clause_preds.len() }
+
+      for (
+        (c_pred, c_argss), (pred, argss)
+      ) in clause_preds.iter().zip( lhs.into_iter() ) {
+        let mut this_pred = HConMap::new() ;
+        debug_assert_eq! { * c_pred, pred }
+        debug_assert_eq! { c_argss.len(), argss.len() }
+        for (f_args, c_args) in c_argss.iter().zip( argss.into_iter() ) {
+          let prev = this_pred.insert(f_args.clone(), c_args) ;
+          debug_assert! { prev.is_none() }
+        }
+        let prev = full_lhs.insert(pred, this_pred) ;
+        debug_assert! { prev.is_none() }
+      }
+
       if let Some((pred, args)) = rhs {
         graph.add(
-          pred, args, clause, lhs
+          pred, self.instance[clause].rhs().unwrap().1.clone(),
+          args, clause, full_lhs
         )
       } else {
-        for (pred, argss) in & lhs {
-          for args in argss {
-            let mut lhs = lhs.clone() ;
-            graph.add_neg(
-              * pred, args.clone(), clause, lhs
-            )
-          }
-        }
+        graph.add_neg(clause, full_lhs)
       }
     }
 
@@ -1295,7 +1341,7 @@ impl<'a> PebcakFmt<'a> for Data {
     }
     write!(w, ")\n") ? ;
     if let Some(graph) = self.graph.as_ref() {
-      graph.write_graph(w, "", & self.instance) ? ;
+      graph.write(w, "", & self.instance) ? ;
     }
     Ok(())
   }

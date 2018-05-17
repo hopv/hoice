@@ -382,9 +382,9 @@ impl<'a> PreInstance<'a> {
   ///
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
-  fn is_clause_trivial(& mut self, clause: ClsIdx) -> Res<bool> {
+  fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
     let mut lhs: Vec<Term> = Vec::with_capacity(17) ;
-    let clause = & self.instance[clause] ;
+    let clause = & self.instance[clause_idx] ;
 
     for term in clause.lhs_terms() {
       match term.bool() {
@@ -413,10 +413,11 @@ impl<'a> PreInstance<'a> {
         return Ok(true)
       } else {
         log_debug!{
-          "unsat because of {}",
-          clause.to_string_info( self.instance.preds() ) ?
+          "unsat because of {}", clause.to_string_info(
+            self.instance.preds()
+          ) ?
         }
-        unsat!()
+        bail!( ErrorKind::UnsatFrom(clause_idx) )
       }
 
     } else {
@@ -568,7 +569,9 @@ impl<'a> PreInstance<'a> {
   /// Forces some predicate to false.
   ///
   /// Simplifies all clauses impacted.
-  pub fn force_false(& mut self, pred: PrdIdx) -> Res<RedInfo> {
+  pub fn force_false(
+    & mut self, pred: PrdIdx,
+  ) -> Res<RedInfo> {
     self.check("before force false") ? ;
 
     let mut info = RedInfo::new() ;
@@ -607,7 +610,9 @@ impl<'a> PreInstance<'a> {
   /// Forces some predicates to true.
   ///
   /// Simplifies all clauses impacted.
-  pub fn force_true(& mut self, pred: PrdIdx) -> Res<RedInfo> {
+  pub fn force_true(
+    & mut self, pred: PrdIdx,
+  ) -> Res<RedInfo> {
     self.check("before force true") ? ;
 
     let mut info = RedInfo::new() ;
@@ -628,7 +633,8 @@ impl<'a> PreInstance<'a> {
       pred, & mut self.clauses_to_simplify
     ) ;
     for clause in & self.clauses_to_simplify {
-      let prev = self.instance.clauses[* clause].drop_lhs_pred(pred) ;
+      let clause = * clause ;
+      let prev = self.instance.clauses[clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
     }
 
@@ -1929,10 +1935,14 @@ impl ClauseSimplifier {
               // Different rep.
               (Some(rep_1), Some(rep_2)) => {
                 // We keep `rep_1`.
-                let set_2 = if let Some(set) = self.rep_to_vars.remove(& rep_2) {
+                let set_2 = if let Some(set) = self.rep_to_vars.remove(
+                  & rep_2
+                ) {
                   set
                 } else { bail!("simplification error (1)") } ;
-                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(
+                  & rep_1
+                ) {
                   set
                 } else { bail!("simplification error (2)") } ;
                 // Drain `set_2`: update `var_to_rep` and `set_1`.
@@ -1953,7 +1963,9 @@ impl ClauseSimplifier {
               },
               // Only `v_1` has a rep.
               (Some(rep_1), None) => {
-                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(& rep_1) {
+                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(
+                  & rep_1
+                ) {
                   set
                 } else { panic!("simplification error (3)") } ;
                 let _is_new = set_1.insert(v_2) ;

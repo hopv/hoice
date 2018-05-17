@@ -267,9 +267,7 @@ impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<Args>> {
     Ok(())
   }
 }
-impl<'a, T> Expr2Smt<()> for SmtActSamples<
-  & 'a HConMap<Args, T>
-> {
+impl<'a, T> Expr2Smt<()> for SmtActSamples< & 'a ArgsMap<T> > {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {

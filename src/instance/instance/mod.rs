@@ -23,6 +23,7 @@ pub use self::pre_instance::PreInstance ;
 ///
 /// So, `pred_to_clauses` has to be carefully maintained, the easiest way to
 /// do this is to never access an instance's fields directly from the outside.
+#[derive(Clone)]
 pub struct Instance {
   /// Predicates.
   preds: PrdInfos,
@@ -37,12 +38,12 @@ pub struct Instance {
   old_var_maps: PrdMap<VarMap<Term>>,
   /// Predicates for which a suitable term has been found.
   pred_terms: PrdMap< Option< TTerms > >,
+
   /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
   ///
   /// Populated by the `finalize` function.
   sorted_pred_terms: Vec<PrdIdx>,
-  /// Max arity of the predicates.
-  pub max_pred_arity: Arity,
+
   /// Clauses.
   clauses: ClsMap<Clause>,
   /// Maps predicates to the clauses where they appear in the lhs and rhs
@@ -94,7 +95,7 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
-      max_pred_arity: 0.into(),
+
       clauses: ClsMap::with_capacity(clause_capa),
       // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
@@ -127,7 +128,7 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(self.old_preds.len()),
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
-      max_pred_arity: self.max_pred_arity.clone(),
+
       clauses: self.clauses.clone(),
       pred_to_clauses: self.pred_to_clauses.clone(),
       is_unsat: false,
@@ -467,14 +468,11 @@ impl Instance {
 
     // Populate `tmp`.
     let mut known_preds = PrdSet::with_capacity( self.preds.len() ) ;
-    self.max_pred_arity = 0.into() ;
+
     for pred in self.pred_indices() {
       if let Some(ref tterms) = self.pred_terms[pred] {
         tmp.push( (pred, tterms.preds()) )
       } else {
-        self.max_pred_arity = ::std::cmp::max(
-          self.max_pred_arity, (self[pred].sig.len() + 1).into()
-        ) ;
         known_preds.insert(pred) ;
       }
     }
@@ -754,9 +752,6 @@ impl Instance {
   pub fn push_pred(
     & mut self, name: String, sig: Sig
   ) -> PrdIdx {
-    self.max_pred_arity = ::std::cmp::max(
-      self.max_pred_arity, (sig.len() + 1).into()
-    ) ;
     let idx = self.preds.next_index() ;
     let mut var_map = VarMap::with_capacity( sig.len() ) ;
     for (var, _) in sig.index_iter() {
@@ -874,7 +869,7 @@ impl Instance {
     info: & 'static str
   ) -> Res< Option<ClsIdx> > {
     let idx = self.clauses.next_index() ;
-    let clause = Clause::new(vars, lhs, rhs, info, idx) ;
+    let clause = clause::new(vars, lhs, rhs, info, idx) ;
     self.push_clause(clause)
   }
 
@@ -1674,8 +1669,9 @@ impl Instance {
       write!(w, "\n; Clause #{}\n", idx) ? ;
 
       // Print source.
-      write!(w, ";   from #{}", clause.from()) ? ;
-      if let Some(name) = self.old_names.get(& clause.from()) {
+      let from = clause.from() ;
+      write!(w, ";   from: #{}", from) ? ;
+      if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
       write!(w, "\n") ? ;
@@ -1970,8 +1966,9 @@ impl<'a> PebcakFmt<'a> for Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      write!(w, "; from #{}", clause.from()) ? ;
-      if let Some(name) = self.old_names.get(& clause.from()) {
+      let from = clause.from() ;
+      write!(w, ";   from: #{}", from) ? ;
+      if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
       write!(w, "\n") ? ;

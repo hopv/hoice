@@ -44,7 +44,7 @@ pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
 
-pub use self::data::{ RArgs, Args, ArgsSet } ;
+pub use self::data::{ RArgs, Args, ArgsSet, ArgsMap } ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -64,6 +64,9 @@ lazy_static!{
 
 
 // |===| Helpers.
+
+/// Stdout.
+pub use ::std::io::stdout ;
 
 /// Resets whatever flags, set-option and such need resetting.
 pub fn reset() {

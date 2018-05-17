@@ -3,6 +3,26 @@
 use common::* ;
 use instance::info::VarInfo ;
 
+/// Creates a clause.
+///
+/// Only accessible from the instance.
+pub fn new(
+  vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
+  info: & 'static str, cls: ClsIdx,
+) -> Clause {
+  let from = cls ;
+  let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
+  let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
+  let mut clause = Clause {
+    vars, lhs_terms, lhs_preds, rhs,
+    terms_changed: true, from_unrolling: false,
+    info, from
+  } ;
+  for tterm in lhs { clause.lhs_insert(tterm) ; }
+  clause
+}
+
+
 /// A clause.
 ///
 /// Fields are public because a clause is important only if it's in the
@@ -40,22 +60,6 @@ pub struct Clause {
   from: ClsIdx,
 }
 impl Clause {
-  /// Creates a clause.
-  pub fn new(
-    vars: VarInfos, lhs: Vec<TTerm>, rhs: Option<PredApp>,
-    info: & 'static str, cls: ClsIdx,
-  ) -> Self {
-    let from = cls ;
-    let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
-    let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
-    let mut clause = Clause {
-      vars, lhs_terms, lhs_preds, rhs,
-      terms_changed: true, from_unrolling: false,
-      info, from
-    } ;
-    for tterm in lhs { clause.lhs_insert(tterm) ; }
-    clause
-  }
 
   /// Checks if two clauses are the same.
   pub fn same_as(& self, other: & Self) -> bool {
@@ -468,13 +472,6 @@ impl Clause {
     & self.vars
   }
 
-  // /// Adds a source clause.
-  // ///
-  // /// Source clauses are original clauses this clause stems from.
-  // pub fn add_from(& mut self, cls: ClsIdx) -> bool {
-  //   self.from.insert(cls)
-  // }
-
   /// Returns the source clauses.
   ///
   /// Source clauses are original clauses this clause stems from.
@@ -717,7 +714,7 @@ impl Clause {
       ",
       inactive, self.from_unrolling, self.terms_changed, self.info
     ) ? ;
-    writeln!(w, "  ; from: {}", self.from()) ? ;
+    writeln!(w, "  ; from: #{}", self.from) ? ;
 
     let lhs_len = self.lhs_len() ;
 
