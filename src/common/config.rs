@@ -1086,6 +1086,13 @@ impl Config {
     }
   }
 
+  /// True if the teacher needs to maintain a sample graph (unsat
+  /// cores/proofs).
+  pub fn track_samples(& self) -> bool {
+    self.unsat_cores() || self.proofs()
+  }
+
+
   /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
   /// an error.
   fn bool_of_str(s: & str) -> Res<bool> {

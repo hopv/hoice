@@ -37,8 +37,8 @@ impl UnsatRes {
   fn get_core(& mut self, instance: & Instance) -> Res<ClsSet> {
     let (nu_self, res) = match self {
       UnsatRes::None => bail!(
-        "cannot produce unsat cores without {}",
-        conf.emph("`(set-option :produce-unsat-cores true)`")
+        "cannot produce unsat cores without `{}`",
+        conf.emph("(set-option :produce-unsat-cores true)")
       ),
       UnsatRes::Graph(graph) => {
         let proof = graph.get_proof(instance) ? ;
@@ -64,6 +64,12 @@ impl UnsatRes {
     & mut self, w: & mut W, instance: & Instance
   ) -> Res<()> {
     let core = self.get_core(& instance) ? ;
+    if ! conf.unsat_cores() {
+      bail!(
+        "cannot produce unsat cores without `{}`",
+        conf.emph("(set-option :produce-unsat-cores true)")
+      )
+    }
     write!(w, "(") ? ;
     for clause in core {
       if let Some(name) = instance.name_of_old_clause(clause) {
@@ -80,8 +86,8 @@ impl UnsatRes {
   ) -> Res<()> {
     let err = || ErrorKind::from(
       format!(
-        "cannot produce proof without {}",
-        conf.emph("`(set-option :produce-proofs true)`")
+        "cannot produce proof without `{}`",
+        conf.emph("(set-option :produce-proofs true)")
       )
     ) ;
     let nu_self = match self {

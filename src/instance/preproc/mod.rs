@@ -465,7 +465,7 @@ impl<'a> Reductor<'a> {
       run! { simplify } ;
     }
 
-    if ! conf.preproc.active || conf.unsat_cores() || conf.proofs() {
+    if ! conf.preproc.active || conf.track_samples() {
       return Ok(())
     }
 

@@ -106,7 +106,7 @@ impl Data {
       factory: new_factory(),
       staged: Staged::with_capacity(pred_count),
       cstr_info: CstrInfo::new(),
-      graph: if conf.unsat_cores() {
+      graph: if conf.track_samples() {
         Some( SampleGraph::new() )
       } else {
         None

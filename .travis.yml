@@ -53,7 +53,7 @@ script:
   - cargo build --verbose
   - cargo build --verbose --release
   - cargo build --verbose --release --features bench
-  - cargo test --verbose
+  - RUST_TEST_THREADS=1 RUST_TEST_TASKS=1 cargo test --verbose
 
 after_success:
 - |
