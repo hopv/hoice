@@ -1,8 +1,8 @@
 use common::* ;
+use var::vals::VarValsSet ;
 
+use super::Sample ;
 
-use super::{ ArgsSet, Sample } ;
-use super::args::* ;
 
 /// Constraints using hashconsed samples.
 ///
@@ -15,7 +15,7 @@ use super::args::* ;
 ///
 /// - `lhs.is_none() => rhs.is_none()`
 /// - constraints cannot contain partial samples
-/// - `lhs` cannot map to an empty `ArgsSet` (Hence, do not access `lhs`
+/// - `lhs` cannot map to an empty `VarValsSet` (Hence, do not access `lhs`
 ///   directly for sample removal. Use [`lhs_rm`][lhs rm].)
 /// - `lhs` cannot contain a sample that subsumes `rhs`.
 ///
@@ -23,7 +23,7 @@ use super::args::* ;
 #[derive(Clone, Debug)]
 pub struct Constraint {
   /// Left-hand side.
-  lhs: Option< PrdHMap< ArgsSet > >,
+  lhs: Option< PrdHMap< VarValsSet > >,
   /// Right-hand side.
   rhs: Option< Sample >,
 }
@@ -35,7 +35,7 @@ impl Constraint {
   ///
   /// - `lhs.is_empty` and `rhs.is_empty()`
   pub fn new(
-    lhs: PrdHMap< ArgsSet >, rhs: Option<Sample>
+    lhs: PrdHMap< VarValsSet >, rhs: Option<Sample>
   ) -> Constraint {
     Constraint { lhs: Some(lhs), rhs }
   }
@@ -95,7 +95,7 @@ impl Constraint {
   }
 
   /// Lhs accessor.
-  pub fn lhs(& self) -> Option<& PrdHMap<ArgsSet>> {
+  pub fn lhs(& self) -> Option<& PrdHMap<VarValsSet>> {
     self.lhs.as_ref()
   }
   /// Rhs accessor.
@@ -107,9 +107,9 @@ impl Constraint {
   ///
   /// Returns the number of sample removed.
   ///
-  /// This function guarantees that `lhs` does not map to an empty `ArgsSet`,
+  /// This function guarantees that `lhs` does not map to an empty `VarValsSet`,
   /// so please use this. Do not access `lhs` directly for sample removal.
-  fn lhs_rm(& mut self, pred: PrdIdx, args: & Args) -> usize {
+  fn lhs_rm(& mut self, pred: PrdIdx, args: & VarVals) -> usize {
     self.lhs.as_mut().map(
       |lhs| {
         let (pred_rm, rmed) = if let Some(argss) = lhs.get_mut(& pred) {
@@ -136,7 +136,7 @@ impl Constraint {
   ///
   /// Applies `f` to all samples.
   pub fn tautologize<F>(& mut self, mut f: F) -> Res<()>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let mut rhs = None ;
     ::std::mem::swap(& mut rhs, & mut self.rhs) ;
     if let Some(Sample { pred, args }) = rhs {
@@ -239,9 +239,9 @@ impl Constraint {
   ///
   /// Error if the sample was not there.
   pub fn force_sample<F>(
-    & mut self, pred: PrdIdx, args: & Args, pos: bool, if_tautology: F
+    & mut self, pred: PrdIdx, args: & VarVals, pos: bool, if_tautology: F
   ) -> Res<bool>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let rmed = self.lhs_rm(pred, args) ;
     if rmed > 0 && ! pos {
       self.tautologize(if_tautology) ? ;
@@ -283,7 +283,7 @@ impl Constraint {
   pub fn force<F>(
     & mut self, pred: PrdIdx, pos: bool, if_tautology: F
   ) -> Res<bool>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let mut tautology = false ;
     if self.rhs.as_ref().map(
       |& Sample { pred: p, .. }| p == pred

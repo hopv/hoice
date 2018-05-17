@@ -29,7 +29,11 @@ extern crate isatty ;
 pub mod errors ;
 #[macro_use]
 pub mod common ;
+
+pub mod val ;
 pub mod term ;
+pub mod var ;
+
 pub mod data ;
 pub mod instance ;
 pub mod teacher ;

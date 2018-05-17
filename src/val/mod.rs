@@ -478,7 +478,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(35), val::mk(7)) ;
   /// let res = lft.add(& rgt).unwrap() ;
   /// # println!("{} + {} = {}", lft, rgt, res) ;
@@ -500,7 +501,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(49), val::mk(7)) ;
   /// # println!("{} - {} = {}", lft, rgt, lft.sub(& rgt).unwrap()) ;
   /// assert_eq!{ lft.sub(& rgt).unwrap(), val::mk(42) }
@@ -519,7 +521,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(6), val::mk(7)) ;
   /// let res = lft.mul(& rgt).unwrap() ;
   /// # println!("{} * {} = {}", lft, rgt, res) ;
@@ -619,7 +622,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(3), val::mk(42)) ;
   /// let res = lft.g_t(& rgt).unwrap() ;
   /// # println!("{} > {} = {}", lft, rgt, res) ;
@@ -655,7 +659,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(3), val::mk(42)) ;
   /// let res = lft.g_e(& rgt).unwrap() ;
   /// # println!("{} >= {} = {}", lft, rgt, res) ;
@@ -690,7 +695,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(42), val::mk(3)) ;
   /// let res = lft.l_e(& rgt).unwrap() ;
   /// # println!("{} <= {} = {}", lft, rgt, res) ;
@@ -726,7 +732,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(42), val::mk(3)) ;
   /// let res = lft.l_t(& rgt).unwrap() ;
   /// # println!("{} <= {} = {}", lft, rgt, res) ;
@@ -767,7 +774,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(true), val::mk(false)) ;
   /// let res = lft.and(& rgt).unwrap() ;
   /// # println!("{} && {} = {}", lft, rgt, res) ;
@@ -813,7 +821,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let (mut lft, mut rgt) = (val::mk(false), val::mk(true)) ;
   /// let res = lft.or(& rgt).unwrap() ;
   /// # println!("{} || {} = {}", lft, rgt, res) ;
@@ -858,7 +867,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val ;
   /// let mut buru = val::mk(true) ;
   /// let res = buru.not().unwrap() ;
   /// # println!("not {} = {}", buru, res) ;
@@ -907,7 +917,8 @@ impl RVal {
 # Examples
 
 ```
-use hoice::term::{ val::*, typ } ;
+use hoice::term::typ ;
+use hoice::val::* ;
 
 let first_array = array( typ::int(), int(0) ) ;
 assert_eq! {
@@ -943,7 +954,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val::*, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val::* ;
   ///
   /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
   /// assert_eq! {
@@ -989,7 +1001,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val::*, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val::* ;
   ///
   /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
   /// assert_eq! {
@@ -1010,7 +1023,8 @@ impl RVal {
   /// # Examples
   ///
   /// ```
-  /// use hoice::term::{ val::*, typ } ;
+  /// use hoice::term::typ ;
+  /// use hoice::val::* ;
   ///
   /// let array = array( typ::int(), int(0) ).store(int(7), int(1)) ;
   /// assert_eq! {

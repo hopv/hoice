@@ -14,7 +14,7 @@ use common::* ;
 
 
 /// Factory for hash consed arguments.
-pub type Factory = RwLock<HashConsign<RArgs>> ;
+pub type Factory = RwLock<HashConsign<RVarVals>> ;
 
 lazy_static! {
   /// Term factory.
@@ -24,17 +24,17 @@ lazy_static! {
 }
 
 /// Creates hashconsed arguments.
-pub fn mk<RA: Into<RArgs>>(args: RA) -> Args {
+pub fn mk<RA: Into<RVarVals>>(args: RA) -> VarVals {
   factory.mk( args.into() )
 }
 /// Creates hashconsed arguments, returns `true` if the arguments are new.
-pub fn mk_is_new<RA: Into<RArgs>>(args: RA) -> (Args, bool) {
+pub fn mk_is_new<RA: Into<RVarVals>>(args: RA) -> (VarVals, bool) {
   factory.mk_is_new( args.into() )
 }
 /// Creates hashconsed arguments from iterators.
 pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
   args: A
-) -> Args {
+) -> VarVals {
   let mut map = VarMap::new() ;
   for val in args.into_iter() {
     map.push( val.into() )
@@ -46,29 +46,29 @@ pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
 
 /// Mapping from variables to values, used for learning data.
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
-pub struct RArgs {
+pub struct RVarVals {
   /// Internal map.
   map: VarMap<Val>,
 }
 
 impl_fmt! {
-  RArgs(self, fmt) {
+  RVarVals(self, fmt) {
     self.map.fmt(fmt)
   }
 }
-impl ::std::ops::Deref for RArgs {
+impl ::std::ops::Deref for RVarVals {
   type Target = VarMap<Val> ;
   fn deref(& self) -> & VarMap<Val> { & self.map }
 }
-impl ::std::ops::DerefMut for RArgs {
+impl ::std::ops::DerefMut for RVarVals {
   fn deref_mut(& mut self) -> & mut VarMap<Val> { & mut self.map }
 }
-impl From< VarMap<Val> > for RArgs {
+impl From< VarMap<Val> > for RVarVals {
   fn from(map: VarMap<Val>) -> Self {
-    RArgs::new(map)
+    RVarVals::new(map)
   }
 }
-impl Evaluator for RArgs {
+impl Evaluator for RVarVals {
   #[inline]
   fn get(& self, var: VarIdx) -> & Val {
     & self.map[var]
@@ -77,10 +77,10 @@ impl Evaluator for RArgs {
   fn len(& self) -> usize { VarMap::len(& self.map) }
 }
 
-impl RArgs {
+impl RVarVals {
   /// Constructor.
   pub fn new(map: VarMap<Val>) -> Self {
-    RArgs { map }
+    RVarVals { map }
   }
 
   /// Constructor with some capacity.
@@ -112,7 +112,7 @@ impl RArgs {
     model: Vec<(VarIdx, T, Val)>,
     partial: bool,
   ) -> Res<Self> {
-    let mut slf = RArgs::new(
+    let mut slf = RVarVals::new(
       info.iter().map(
         |info| if partial {
           val::none(info.typ.clone())
@@ -144,17 +144,17 @@ impl RArgs {
 
 
 /// Hash consed arguments.
-pub type Args = HConsed<RArgs> ;
+pub type VarVals = HConsed<RVarVals> ;
 
 /// A set of hashconsed arguments.
-pub type ArgsSet = HConSet<Args> ;
+pub type VarValsSet = HConSet<VarVals> ;
 
 /// A map from hashconsed arguments to something.
-pub type ArgsMap<T> = HConMap<Args, T> ;
+pub type VarValsMap<T> = HConMap<VarVals, T> ;
 
 
 
-/// Helper functions for `Args`.
+/// Helper functions for `VarVals`.
 pub trait SubsumeExt {
   /// Type of the sets we want to check for subsumption.
   type Set ;
@@ -207,8 +207,8 @@ pub trait SubsumeExt {
   /// Same as `set_subsumed_rm`, but does remove anything.
   fn set_subsumed(& self, set: & Self::Set) -> bool ;
 }
-impl SubsumeExt for Args {
-  type Set = ArgsSet ;
+impl SubsumeExt for VarVals {
+  type Set = VarValsSet ;
   fn compare(& self, other: & Self) -> Option<Ordering> {
     debug_assert_eq! { self.len(), other.len() }
 
@@ -255,7 +255,7 @@ impl SubsumeExt for Args {
   }
 
   fn set_subsumed_rm(
-    & self, set: & mut ArgsSet
+    & self, set: & mut VarValsSet
   ) -> (bool, usize) {
     if ! conf.teacher.partial {
       (set.contains(self), 0)

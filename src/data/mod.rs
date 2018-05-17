@@ -2,15 +2,15 @@
 
 use common::* ;
 use learning::ice::data::CData ;
+use unsat_core::sample_graph::SampleGraph ;
+use var::vals::{
+  RVarVals, VarValsSet, VarValsMap
+} ;
 
-pub mod args ;
 pub mod sample ;
 pub mod constraint ;
-use ::unsat_core::sample_graph::SampleGraph ;
 mod info ;
 
-pub use self::args::{ RArgs, Args, ArgsSet, ArgsMap } ;
-use self::args::SubsumeExt ;
 pub use self::sample::{ Sample } ;
 pub use self::constraint::Constraint ;
 use self::info::CstrInfo ;
@@ -27,14 +27,14 @@ pub struct Data {
   /// Instance, only used for printing.
   pub instance: Arc<Instance>,
   /// Positive examples.
-  pub pos: PrdMap< ArgsSet >,
+  pub pos: PrdMap< VarValsSet >,
   /// Negative examples.
-  pub neg: PrdMap< ArgsSet >,
+  pub neg: PrdMap< VarValsSet >,
   /// Constraints.
   pub constraints: CstrMap<Constraint>,
 
   /// Map from samples to constraints.
-  map: PrdMap< ArgsMap<CstrSet> >,
+  map: PrdMap< VarValsMap<CstrSet> >,
 
   /// Stores pos/neg samples temporarily before they're added.
   staged: Staged,
@@ -94,9 +94,9 @@ impl Data {
       PrdMap::with_capacity(pred_count)
     ) ;
     for _ in instance.preds() {
-      map.push( ArgsMap::with_capacity(103) ) ;
-      pos.push( ArgsSet::with_capacity(103) ) ;
-      neg.push( ArgsSet::with_capacity(103) ) ;
+      map.push( VarValsMap::with_capacity(103) ) ;
+      pos.push( VarValsSet::with_capacity(103) ) ;
+      neg.push( VarValsSet::with_capacity(103) ) ;
     }
 
     let constraints = CstrMap::with_capacity(103) ;
@@ -114,7 +114,7 @@ impl Data {
   }
 
   /// Accessor for the map from samples to constraints.
-  pub fn map(& self) -> & PrdMap< ArgsMap<CstrSet> > {
+  pub fn map(& self) -> & PrdMap< VarValsMap<CstrSet> > {
     & self.map
   }
 
@@ -259,7 +259,7 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_raw_pos(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: RArgs
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
   ) -> () {
     let (args, _) = self.mk_sample(args) ;
     self.add_pos(clause, pred, args.clone()) ;
@@ -272,7 +272,7 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_raw_neg(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: RArgs
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
   ) -> () {
     let (args, _) = self.mk_sample(args) ;
     self.add_neg(clause, pred, args.clone()) ;
@@ -287,7 +287,7 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_pos(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: Args
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
     if self.add_pos_untracked(pred, args.clone()) {
       if let Some(graph) = self.graph.as_mut() {
@@ -307,7 +307,7 @@ impl Data {
   ///
   /// Used by the learner(s).
   pub fn add_pos_untracked(
-    & mut self, pred: PrdIdx, args: Args
+    & mut self, pred: PrdIdx, args: VarVals
   ) -> bool {
     self.staged.add_pos(pred, args)
   }
@@ -318,7 +318,7 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_neg(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: Args
+    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
     if self.add_neg_untracked(pred, args.clone()) {
       if let Some(graph) = self.graph.as_mut() {
@@ -351,7 +351,7 @@ impl Data {
   ///
   /// Used by the learner(s).
   pub fn add_neg_untracked(
-    & mut self, pred: PrdIdx, args: Args
+    & mut self, pred: PrdIdx, args: VarVals
   ) -> bool {
     self.staged.add_neg(pred, args)
   }
@@ -404,8 +404,8 @@ impl Data {
 
   /// Function used when tautologizing a constraint, to forget the samples.
   fn tauto_fun(
-    map: & mut PrdMap< ArgsMap<CstrSet> >, constraint: CstrIdx,
-    pred: PrdIdx, args: Args
+    map: & mut PrdMap< VarValsMap<CstrSet> >, constraint: CstrIdx,
+    pred: PrdIdx, args: VarVals
   ) -> Res<()> {
     let mut remove = false ;
     let was_there = map[pred].get_mut(& args).map(
@@ -445,7 +445,7 @@ impl Data {
 
   /// Retrieves all args `s` from `self.map` such that `args.subsumes(s)`
   fn remove_subs(
-    & mut self, pred: PrdIdx, args: & Args
+    & mut self, pred: PrdIdx, args: & VarVals
   ) -> Option<CstrSet> {
     if ! conf.teacher.partial || ! args.is_partial() {
       return self.map[pred].remove(args)
@@ -470,7 +470,7 @@ impl Data {
 
   /// Checks whether the data is contradictory.
   pub fn is_unsat(& self) -> Option<
-    Vec<(PrdIdx, Args)>
+    Vec<(PrdIdx, VarVals)>
   > {
     for (pred, samples) in self.pos.index_iter() {
       for sample in samples {
@@ -674,20 +674,10 @@ impl Data {
 
   /// Creates a new sample. Returns true if it's new.
   fn mk_sample(
-    & mut self, args: RArgs
-  ) -> (Args, bool) {
-    args::mk_is_new(args)
+    & mut self, args: RVarVals
+  ) -> (VarVals, bool) {
+    var::vals::mk_is_new(args)
   }
-
-
-  // /// Checks whether a constraint is redundant.
-  // ///
-  // /// Removes all constraints for which this constraint is more general.
-  // fn cstr_redundant_rm(
-  //   & mut self, constraint: CstrIdx
-  // ) -> bool {
-
-  // }
 
 
   /// Adds a constraint.
@@ -701,7 +691,7 @@ impl Data {
   /// - propagates staged samples beforehand
   pub fn add_cstr(
     & mut self, clause: ClsIdx,
-    lhs: Vec<(PrdIdx, RArgs)>, rhs: Option<(PrdIdx, RArgs)>
+    lhs: Vec<(PrdIdx, RVarVals)>, rhs: Option<(PrdIdx, RVarVals)>
   ) -> Res< bool > {
     profile!(
       self wrap { self.propagate() }
@@ -758,7 +748,7 @@ impl Data {
       }
 
       let set = nu_lhs.entry(pred).or_insert_with(
-        || ArgsSet::new()
+        || VarValsSet::new()
       ) ;
 
       // Partial samples are not allowed in constraints, no subsumption
@@ -1350,8 +1340,8 @@ impl<'a> PebcakFmt<'a> for Data {
 /// Tiny internal structure storing samples for future propagation.
 #[derive(Clone)]
 struct Staged {
-  pos: PrdHMap<ArgsSet>,
-  neg: PrdHMap<ArgsSet>,
+  pos: PrdHMap<VarValsSet>,
+  neg: PrdHMap<VarValsSet>,
 }
 impl Staged {
   /// Constructor.
@@ -1387,7 +1377,7 @@ impl Staged {
   /// Returns some staged arguments for a predicate.
   ///
   /// The boolean indicates whether the sample is positive.
-  pub fn pop(& mut self) -> Option<(PrdIdx, ArgsSet, bool)> {
+  pub fn pop(& mut self) -> Option<(PrdIdx, VarValsSet, bool)> {
     if let Some((pred, pos)) = self.get_pred() {
       if let Some(argss) = {
         if pos {
@@ -1408,7 +1398,7 @@ impl Staged {
   }
 
   /// Adds a sample.
-  pub fn add(& mut self, pred: PrdIdx, args: Args, pos: bool) -> bool {
+  pub fn add(& mut self, pred: PrdIdx, args: VarVals, pos: bool) -> bool {
     let map = if pos {
       & mut self.pos
     } else {
@@ -1431,13 +1421,13 @@ impl Staged {
 
   /// Adds a positive sample.
   #[inline]
-  pub fn add_pos(& mut self, pred: PrdIdx, args: Args) -> bool {
+  pub fn add_pos(& mut self, pred: PrdIdx, args: VarVals) -> bool {
     self.add(pred, args, true)
   }
 
   /// Adds a negative sample.
   #[inline]
-  pub fn add_neg(& mut self, pred: PrdIdx, args: Args) -> bool {
+  pub fn add_neg(& mut self, pred: PrdIdx, args: VarVals) -> bool {
     self.add(pred, args, false)
   }
 }

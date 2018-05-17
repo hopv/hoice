@@ -796,7 +796,7 @@ impl<'a> Teacher<'a> {
           log_debug! { "  getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
-          let cex = RArgs::of_model(
+          let cex = Cex::of_model(
             clause!().vars(), model, partial
           ) ? ;
           profile!{ self mark "cexs", "model" }

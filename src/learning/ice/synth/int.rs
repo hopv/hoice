@@ -37,7 +37,7 @@ impl TheoSynth for IntSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    & mut self, f: F, sample: & VarVals, others: & mut TermVals,
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
@@ -63,7 +63,7 @@ impl TheoSynth for IntSynth {
 
   /// Only generates reals for now (using `to_real`).
   fn project(
-    & self, sample: & Args, typ: & Typ, map: & mut TermVals
+    & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
     match ** typ {
       typ::RTyp::Real => for (var, val) in sample.index_iter() {
@@ -94,7 +94,7 @@ impl TheoSynth for IntSynth {
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_int_synth<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -130,7 +130,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 1 for int synthesis.
 pub fn int_synth_1<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -170,7 +170,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 2 for int synthesis.
 pub fn int_synth_2<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(

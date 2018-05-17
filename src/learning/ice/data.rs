@@ -10,18 +10,18 @@ use data::{
 #[derive(Clone)]
 pub struct CData {
   /// Positive samples.
-  pos: Vec<Args>,
+  pos: Vec<VarVals>,
   /// Negative samples.
-  neg: Vec<Args>,
+  neg: Vec<VarVals>,
   /// Unclassified samples.
-  unc: Vec<Args>,
+  unc: Vec<VarVals>,
   /// Total number of samples.
   len: f64,
 }
 impl CData {
   /// Constructor.
   #[inline]
-  pub fn new(pos: Vec<Args>, neg: Vec<Args>, unc: Vec<Args>) -> Self {
+  pub fn new(pos: Vec<VarVals>, neg: Vec<VarVals>, unc: Vec<VarVals>) -> Self {
     let len = (
       pos.len() + neg.len() + unc.len()
     ) as f64 ;
@@ -40,43 +40,43 @@ impl CData {
 
   /// Destroys the data.
   #[inline]
-  pub fn destroy(self) -> (Vec<Args>, Vec<Args>, Vec<Args>) {
+  pub fn destroy(self) -> (Vec<VarVals>, Vec<VarVals>, Vec<VarVals>) {
     (self.pos, self.neg, self.unc)
   }
 
   /// Adds a positive sample.
   #[inline]
-  pub fn add_pos(& mut self, pos: Args) {
+  pub fn add_pos(& mut self, pos: VarVals) {
     self.len += 1. ;
     self.pos.push(pos)
   }
   /// Positive samples.
   #[inline]
-  pub fn pos(& self) -> & Vec<Args> {
+  pub fn pos(& self) -> & Vec<VarVals> {
     & self.pos
   }
 
   /// Adds a negative sample.
   #[inline]
-  pub fn add_neg(& mut self, neg: Args) {
+  pub fn add_neg(& mut self, neg: VarVals) {
     self.len += 1. ;
     self.neg.push(neg)
   }
   /// Negative samples.
   #[inline]
-  pub fn neg(& self) -> & Vec<Args> {
+  pub fn neg(& self) -> & Vec<VarVals> {
     & self.neg
   }
 
   /// Adds a unclassified sample.
   #[inline]
-  pub fn add_unc(& mut self, unc: Args) {
+  pub fn add_unc(& mut self, unc: VarVals) {
     self.len += 1. ;
     self.unc.push(unc)
   }
   /// Unclassified samples.
   #[inline]
-  pub fn unc(& self) -> & Vec<Args> {
+  pub fn unc(& self) -> & Vec<VarVals> {
     & self.unc
   }
 
@@ -89,7 +89,7 @@ impl CData {
   /// - nowhere if `f(e).is_some()`.
   #[inline]
   pub fn classify<F>(& mut self, mut f: F)
-  where F: FnMut(& Args) -> Option<bool> {
+  where F: FnMut(& VarVals) -> Option<bool> {
     let mut cnt = 0 ;
     while cnt < self.unc.len() {
       if let Some(pos) = f(& self.unc[cnt]) {
@@ -440,12 +440,12 @@ impl CData {
 
 /// Iterator over CData.
 pub struct CDataIter<'a> {
-  pos: ::std::slice::Iter<'a, Args>,
-  neg: ::std::slice::Iter<'a, Args>,
-  unc: Option<::std::slice::Iter<'a, Args>>,
+  pos: ::std::slice::Iter<'a, VarVals>,
+  neg: ::std::slice::Iter<'a, VarVals>,
+  unc: Option<::std::slice::Iter<'a, VarVals>>,
 }
 impl<'a> ::std::iter::Iterator for CDataIter<'a> {
-  type Item = & 'a Args ;
+  type Item = & 'a VarVals ;
   fn next(& mut self) -> Option<Self::Item> {
     let next = self.pos.next() ;
     if next.is_some() { return next }
@@ -485,7 +485,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & Data, prd: PrdIdx, sample: & Args
+    & mut self, data: & Data, prd: PrdIdx, sample: & VarVals
   ) -> Res<()> {
     let degree = Self::degree(data, prd, sample) ? ;
     self.den += 1 ;
@@ -529,7 +529,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & Data, prd: PrdIdx, sample: & Args
+    data: & Data, prd: PrdIdx, sample: & VarVals
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,
@@ -581,3 +581,4 @@ impl EntropyBuilder {
     Ok(res)
   }
 }
+

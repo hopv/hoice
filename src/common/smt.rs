@@ -11,6 +11,7 @@ use rsmt2::{
 } ;
 
 use common::* ;
+use var::vals::{ VarValsMap, VarValsSet } ;
 use data::Constraint ;
 
 
@@ -143,11 +144,11 @@ pub struct SmtSample<'a> {
   /// Predicate index.
   pub pred: PrdIdx,
   /// Reference to a sample.
-  pub smpl: & 'a Args,
+  pub smpl: & 'a VarVals,
 }
 impl<'a> SmtSample<'a> {
   /// Constructor.
-  pub fn new(pred: PrdIdx, smpl: & 'a Args) -> Self {
+  pub fn new(pred: PrdIdx, smpl: & 'a VarVals) -> Self {
     SmtSample { pred, smpl }
   }
 }
@@ -251,7 +252,7 @@ impl<Samples> SmtActSamples<Samples> {
     Ok(())
   }
 }
-impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<Args>> {
+impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<VarVals>> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
@@ -271,7 +272,7 @@ impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<Args>> {
     Ok(())
   }
 }
-impl<'a, T> Expr2Smt<()> for SmtActSamples< & 'a ArgsMap<T> > {
+impl<'a, T> Expr2Smt<()> for SmtActSamples< & 'a VarValsMap<T> > {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
@@ -301,13 +302,13 @@ pub struct EqConj<'a> {
   /// Terms.
   pub terms: & 'a Vec<Term>,
   /// Values.
-  pub vals: & 'a Args,
+  pub vals: & 'a VarVals,
 }
 impl<'a> EqConj<'a> {
   /// Constructor.
   ///
   /// Both lists must have the same length.
-  pub fn new(terms: & 'a Vec<Term>, vals: & 'a Args) -> Self {
+  pub fn new(terms: & 'a Vec<Term>, vals: & 'a VarVals) -> Self {
     debug_assert_eq! { terms.len(), vals.len() }
 
     EqConj { terms, vals }
@@ -350,7 +351,7 @@ pub struct DisjArgs<'a> {
   /// Arguments.
   pub args: & 'a HTArgs,
   /// Values to force the arguments to.
-  pub vals: & 'a ArgsSet,
+  pub vals: & 'a VarValsSet,
 }
 impl<'a> DisjArgs<'a> {
   /// Constructor.
@@ -358,7 +359,7 @@ impl<'a> DisjArgs<'a> {
   /// Error if `args` or `vals` is empty.
   #[inline]
   pub fn new(
-    args: & 'a HTArgs, vals: & 'a ArgsSet
+    args: & 'a HTArgs, vals: & 'a VarValsSet
   ) -> Res<Self> {
     if args.is_empty() {
       bail!("can't create a `DisjArgs` with empty `args`")

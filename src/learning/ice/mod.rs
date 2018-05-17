@@ -8,6 +8,7 @@ use common::{
   },
 } ;
 use data::Data ;
+use var::vals::VarValsMap ;
 
 pub mod quals ;
 pub mod synth ;
@@ -78,7 +79,7 @@ pub struct IceLearner<'core> {
   /// Branches to construct later, used when constructing a decision tree.
   unfinished: Vec< (Branch, CData) >,
   /// Classifier for constraint data.
-  classifier: ArgsMap<bool>,
+  classifier: VarValsMap<bool>,
   /// Declaration memory: used when declaring samples in the solver to
   /// remember what's already declared. The `u64` is the sample's uid.
   dec_mem: PrdMap< HashSet<u64> >,
@@ -1021,7 +1022,7 @@ impl<'core> IceLearner<'core> {
   /// the data will be forced to be positive / negative in the solver
   /// automatically. Otherwise, the actlit is deactivated.
   pub fn is_legal(
-    & mut self, pred: PrdIdx, unc: & Vec<Args>, pos: bool
+    & mut self, pred: PrdIdx, unc: & Vec<VarVals>, pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
     profile!{ self tick "learning", "smt", "legal" }

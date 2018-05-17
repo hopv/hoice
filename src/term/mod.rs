@@ -64,7 +64,7 @@ use common::* ;
 mod op ;
 pub use self::op::* ;
 mod factory ;
-pub mod val ;
+
 pub mod simplify ;
 pub mod typ ;
 #[cfg(test)]
@@ -73,7 +73,6 @@ mod test ;
 pub mod args ;
 
 pub use self::factory::* ;
-pub use self::val::Val ;
 pub use self::typ::Typ ;
 
 

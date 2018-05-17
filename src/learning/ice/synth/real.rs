@@ -37,7 +37,7 @@ impl TheoSynth for RealSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    & mut self, f: F, sample: & VarVals, others: & mut TermVals,
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
@@ -58,7 +58,7 @@ impl TheoSynth for RealSynth {
 
   /// Only generates ints for now (using `to_int`).
   fn project(
-    & self, sample: & Args, typ: & Typ, map: & mut TermVals
+    & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
     match ** typ {
       typ::RTyp::Int => for (var, val) in sample.index_iter() {
@@ -89,7 +89,7 @@ impl TheoSynth for RealSynth {
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_real_synth<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
@@ -125,7 +125,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 1 for real synthesis.
 pub fn real_synth_1<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(

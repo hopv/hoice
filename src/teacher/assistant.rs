@@ -217,7 +217,7 @@ impl Assistant {
   /// - `Right` of a sample which, when forced negative, will force the input
   ///   sample to be classified negative.
   pub fn try_force(
-    & mut self, _data: & Data, pred: PrdIdx, vals: & Args
+    & mut self, _data: & Data, pred: PrdIdx, vals: & VarVals
   ) -> Res< Option< Either<(Sample, ClsIdx), (Sample, ClsIdx)> > > {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
@@ -356,11 +356,11 @@ pub struct ArgValEq<'a> {
   /// Arguments.
   args: & 'a HTArgs,
   /// Values.
-  vals: & 'a Args,
+  vals: & 'a VarVals,
 }
 impl<'a> ArgValEq<'a> {
   /// Constructor.
-  pub fn new(args: & 'a HTArgs, vals: & 'a Args) -> Self {
+  pub fn new(args: & 'a HTArgs, vals: & 'a VarVals) -> Self {
     debug_assert_eq! { args.len(), vals.len() }
     ArgValEq { args, vals }
   }

@@ -33,7 +33,7 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & Args, & mut TermVals, & Profiler) -> Res<bool>
+  fn synth<F>(& mut self, F, & VarVals, & mut TermVals, & Profiler) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
@@ -41,7 +41,7 @@ pub trait TheoSynth {
   ///
   /// [term val]: struct.TermVal.html
   /// (TermVal struct)
-  fn project(& self, & Args, & Typ, & mut TermVals) -> Res<()> ;
+  fn project(& self, & VarVals, & Typ, & mut TermVals) -> Res<()> ;
 }
 
 use self::int::IntSynth ;
@@ -92,7 +92,7 @@ impl SynthSys {
   ///
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(
-    & mut self, sample: & Args, mut f: F, _profiler: & Profiler
+    & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
 

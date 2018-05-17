@@ -7,7 +7,7 @@ pub use std::sync::mpsc::{ Receiver, Sender } ;
 
 pub use mylib::common::hash::* ;
 
-pub use hashconsing::HashConsign ;
+pub use hashconsing::{ HashConsign, HashConsed } ;
 pub use hashconsing::coll::* ;
 
 pub use rsmt2::{ SmtRes, Solver } ;
@@ -22,13 +22,22 @@ pub use term ;
 pub use term::{
   RTerm, Term, TTerm,
   TTermSet, TTerms,
-  Val, Op, Typ, Quant,
+  Op, Typ, Quant,
+  args::{
+    HTArgs, HTArgss
+  },
+  typ,
 } ;
-pub use term::typ ;
-pub use term::val ;
-pub use term::args::{
-  HTArgs, HTArgss
+
+pub use val ;
+pub use val::Val ;
+
+pub use var ;
+pub use var::{
+  VarVals,
+  vals::SubsumeExt,
 } ;
+
 pub use instance::Instance ;
 pub use common::consts::keywords ;
 
@@ -43,8 +52,6 @@ pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
-
-pub use data::{ RArgs, Args, ArgsSet, ArgsMap } ;
 
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
@@ -177,7 +184,7 @@ pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = RArgs ;
+pub type Cex = var::vals::RVarVals ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap< Vec<Cex> > ;
 

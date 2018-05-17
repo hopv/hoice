@@ -1,7 +1,6 @@
 //! Actual instance structure.
 
 use common::* ;
-
 use instance::info::* ;
 use learning::ice::quals::NuQuals ;
 
@@ -1370,7 +1369,7 @@ impl Instance {
 
               let modded_cex = fix_cex!(clause, cex, args) ;
 
-              let mut values = RArgs::with_capacity( args.len() ) ;
+              let mut values = Cex::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 values.push(
                   arg.eval(& modded_cex).chain_err(
@@ -1392,7 +1391,7 @@ impl Instance {
         // debug! { "    working on rhs..." }
         let consequent = if let Some((pred, args)) = clause.rhs() {
           // debug! { "        ({} {})", self[pred], args }
-          let mut values = RArgs::with_capacity( args.len() ) ;
+          let mut values = Cex::with_capacity( args.len() ) ;
           let modded_cex = fix_cex!(clause, cex, args) ;
           'pred_args: for arg in args.iter() {
             values.push(

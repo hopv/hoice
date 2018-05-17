@@ -4,9 +4,9 @@ use std::borrow::Borrow ;
 
 use common::{
   *,
-  smt::FullParser as Parser
+  smt::FullParser as Parser,
+  var::vals::{ VarValsMap, VarValsSet },
 } ;
-use data::Args ;
 use unsat_core::* ;
 use term::args::HTArgs ;
 
@@ -17,12 +17,12 @@ use term::args::HTArgs ;
 
 
 /// Maps formal arguments to actual arguments.
-pub type FArgMap = HConMap<HTArgs, Args> ;
+pub type FArgMap = HConMap<HTArgs, VarVals> ;
 /// Maps formal arguments to Origins.
 pub type OFArgMap = HConMap<HTArgs, Vec<Origin>> ;
 
 /// An optional rhs.
-pub type Rhs = Option<(PrdIdx, HTArgs, Args)> ;
+pub type Rhs = Option<(PrdIdx, HTArgs, VarVals)> ;
 
 
 /// The origin of a sample is a clause and some samples for activating the rhs.
@@ -57,9 +57,9 @@ impl_fmt! {
 /// Known samples: positive or negative.
 pub struct KnownSamples {
   /// Positive samples.
-  pos: PrdHMap< ArgsMap<(HTArgs, Origin)> >,
+  pos: PrdHMap< VarValsMap<(HTArgs, Origin)> >,
   /// Negative samples.
-  neg: PrdHMap< ArgsMap<(Rhs, Origin)> >,
+  neg: PrdHMap< VarValsMap<(Rhs, Origin)> >,
 }
 impl KnownSamples {
   /// Constructor.
@@ -122,7 +122,7 @@ impl KnownSamples {
 
   /// Gets the origin of a positive sample.
   pub fn get_pos<P: Borrow<PrdIdx>>(
-    & self, pred: P, args: & Args
+    & self, pred: P, args: & VarVals
   ) -> Option<& (HTArgs, Origin)> {
     self.pos.get( pred.borrow() ).and_then(
       |map| map.get(args)
@@ -130,14 +130,14 @@ impl KnownSamples {
   }
   /// True if the sample is known to be positive.
   pub fn is_pos<P: Borrow<PrdIdx>>(
-    & self, pred: P, args: & Args
+    & self, pred: P, args: & VarVals
   ) -> bool {
     self.get_pos(pred, args).is_some()
   }
 
   /// Gets the origin of a negative sample.
   pub fn get_neg<P: Borrow<PrdIdx>>(
-    & self, pred: P, args: & Args
+    & self, pred: P, args: & VarVals
   ) -> Option<& (Rhs, Origin)> {
     self.neg.get( pred.borrow() ).and_then(
       |map| map.get(args)
@@ -145,14 +145,14 @@ impl KnownSamples {
   }
   /// True if the sample is known to be negative.
   pub fn is_neg<P: Borrow<PrdIdx>>(
-    & self, pred: P, args: & Args
+    & self, pred: P, args: & VarVals
   ) -> bool {
     self.get_neg(pred, args).is_some()
   }
 
   /// Gets the orign of a sample.
   pub fn get<P: Borrow<PrdIdx>>(
-    & self, polarity: Polarity, pred: P, args: & Args
+    & self, polarity: Polarity, pred: P, args: & VarVals
   ) -> Option<(Rhs, Origin)> {
     if polarity.is_pos() {
       self.get_pos(pred.borrow(), args).map(
@@ -174,10 +174,8 @@ impl KnownSamples {
   /// If the sample is already registered as positive, overwrites the old
   /// origin.
   pub fn add_pos(
-    & mut self, pred: PrdIdx, fargs: HTArgs, args: Args, origin: Origin
-  ) -> Option<Args> {
-    use data::args::SubsumeExt ;
-
+    & mut self, pred: PrdIdx, fargs: HTArgs, args: VarVals, origin: Origin
+  ) -> Option<VarVals> {
     let res = self.neg.get(& pred).and_then(
       |map| map.keys().find(
         |other| other.is_related_to(& args)
@@ -185,7 +183,7 @@ impl KnownSamples {
     ).map(|other| other.clone()) ;
 
     self.pos.entry(pred).or_insert_with(
-      || ArgsMap::new()
+      || VarValsMap::new()
     ).insert(args, (fargs, origin)) ;
 
     res
@@ -198,11 +196,9 @@ impl KnownSamples {
   /// If the sample is already registered as negative, overwrites the old
   /// origin.
   pub fn add_neg(
-    & mut self, pred: PrdIdx, args: Args,
+    & mut self, pred: PrdIdx, args: VarVals,
     rhs: Rhs, origin: Origin
-  ) -> Option<Args> {
-    use data::args::SubsumeExt ;
-
+  ) -> Option<VarVals> {
     let res = self.pos.get(& pred).and_then(
       |map| map.keys().find(
         |other| other.is_related_to(& args)
@@ -210,7 +206,7 @@ impl KnownSamples {
     ).map(|other| other.clone()) ;
 
     self.neg.entry(pred).or_insert_with(
-      || ArgsMap::new()
+      || VarValsMap::new()
     ).insert(args, (rhs, origin)) ;
 
     res
@@ -218,11 +214,11 @@ impl KnownSamples {
 
 
   pub fn update(
-    & mut self, rhs: Option<(PrdIdx, & HTArgs, & Args)>,
+    & mut self, rhs: Option<(PrdIdx, & HTArgs, & VarVals)>,
     lhs: & PrdHMap<FArgMap>,
     clause: ClsIdx,
   ) -> Either<
-    Option<bool>, (PrdIdx, Args, Args)
+    Option<bool>, (PrdIdx, VarVals, VarVals)
   > {
     macro_rules! done {
       (trivial) => ({
@@ -375,7 +371,7 @@ pub struct TraceFrame {
   /// Predicate.
   pub pred: PrdIdx,
   /// Arguments.
-  pub args: Args,
+  pub args: VarVals,
   /// Optional rhs.
   pub rhs: Rhs,
   /// Antecedents.
@@ -390,7 +386,7 @@ impl TraceFrame {
     values: VarHMap<Val>,
     polarity: Polarity,
     pred: PrdIdx,
-    args: Args,
+    args: VarVals,
     rhs: Rhs,
     lhs: PrdHMap<FArgMap>,
   ) -> Self {
@@ -542,9 +538,9 @@ pub struct UnsatProof {
   /// Predicate.
   pred: PrdIdx,
   /// Positive sample.
-  pos: Args,
+  pos: VarVals,
   /// Negative sample.
-  neg: Args,
+  neg: VarVals,
   /// Derivation for `pos`.
   pos_trace: Trace,
   /// Derivation for `neg`.
@@ -615,7 +611,7 @@ false at the same time.
 pub struct SampleGraph {
   /// Maps samples to the clause and the samples for this clause they come
   /// from.
-  graph: PrdHMap< ArgsMap< OFArgMap > >,
+  graph: PrdHMap< VarValsMap< OFArgMap > >,
   /// Negative samples.
   neg: Vec<Origin>,
 }
@@ -633,7 +629,7 @@ impl SampleGraph {
 
     for (pred, map) in graph {
       let pred_target = self.graph.entry(pred).or_insert_with(
-        || ArgsMap::with_capacity(map.len())
+        || VarValsMap::with_capacity(map.len())
       ) ;
       for (args, origins) in map {
         let target = pred_target.entry(args).or_insert_with(
@@ -661,7 +657,7 @@ impl SampleGraph {
 
   /// Adds traceability for a sample.
   pub fn add(
-    & mut self, prd: PrdIdx, fargs: HTArgs, args: Args,
+    & mut self, prd: PrdIdx, fargs: HTArgs, args: VarVals,
     cls: ClsIdx, samples: PrdHMap<FArgMap>,
   ) {
     if_log! { @3
@@ -678,7 +674,7 @@ impl SampleGraph {
       log! { @3 "}}" }
     }
     self.graph.entry(prd).or_insert_with(
-      || ArgsMap::new()
+      || VarValsMap::new()
     ).entry(args).or_insert_with(
       || OFArgMap::new()
     ).entry(fargs).or_insert_with(
@@ -705,7 +701,7 @@ impl SampleGraph {
   /// - the related positive and negative samples
   /// - known samples (pos/neg)
   fn find_contradiction(& mut self) -> Option<
-    (PrdIdx, Args, Args, KnownSamples)
+    (PrdIdx, VarVals, VarVals, KnownSamples)
   > {
 
     // Known samples (positive/negative) and their relevant origin.
@@ -823,7 +819,7 @@ impl SampleGraph {
   /// - should not be public
   fn trace<'a>(
     & 'a self,
-    pred: PrdIdx, args: & Args,
+    pred: PrdIdx, args: & VarVals,
     polarity: Polarity,
     known: & KnownSamples,
     solver: & mut Solver<Parser>,
@@ -831,7 +827,7 @@ impl SampleGraph {
   ) -> Res<Trace> {
 
     // Samples for which we already have an explanation for.
-    let mut explained = PrdHMap::<ArgsSet>::new() ;
+    let mut explained = PrdHMap::<VarValsSet>::new() ;
 
     // Checks whether a sample is explained or inserts a sample in explained
     // samples.
@@ -846,7 +842,7 @@ impl SampleGraph {
       // Adds a sample as explained.
       (insert $pred:expr, $args:expr) => ({
         let is_new = explained.entry($pred).or_insert_with(
-          || ArgsSet::new()
+          || VarValsSet::new()
         ).insert($args) ;
         debug_assert! { is_new }
       }) ;
@@ -1097,7 +1093,7 @@ impl SampleGraph {
 
   // /// Retrieves an unsat core from a sample expected to be false.
   // pub fn unsat_core_for(
-  //   & self, instance: & Instance, samples: & Vec<(PrdIdx, Args)>
+  //   & self, instance: & Instance, samples: & Vec<(PrdIdx, VarVals)>
   // ) -> Res<UnsatCore> {
   //   use common::smt::{
   //     FullParser as Parser, SmtConj, EqConj
