@@ -3,7 +3,7 @@
 //! Used to reason separately on each positive/negative clause.
 
 use common::* ;
-use unsat_core::SampleGraph ;
+use unsat_core::UnsatRes ;
 
 
 
@@ -19,7 +19,7 @@ use unsat_core::SampleGraph ;
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
   real_instance: Arc<Instance>, _profiler: & Profiler
-) -> Res< Option< Either<ConjCandidates, Option<SampleGraph>> > > {
+) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
   let mut model = ConjCandidates::new() ;
 
   macro_rules! model {
@@ -135,7 +135,7 @@ pub fn work(
 pub fn run_teacher(
   instance: Arc<Instance>,
   model: & ConjCandidates,
-) -> Res< Either<Candidates, Option<SampleGraph>> > {
+) -> Res< Either<Candidates, UnsatRes> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
     & instance, model, & teacher_profiler

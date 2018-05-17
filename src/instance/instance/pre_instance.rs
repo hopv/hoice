@@ -65,11 +65,11 @@ impl<'a> PreInstance<'a> {
           if self.instance.pred_to_clauses[pred].1.is_empty() {
             info.preds += 1 ;
             fixed_point = false ;
-            info += self.force_false(pred, None) ?
+            info += self.force_false(pred) ?
           } else if self.instance.pred_to_clauses[pred].0.is_empty() {
             info.preds += 1 ;
             fixed_point = false ;
-            info += self.force_true(pred, None) ?
+            info += self.force_true(pred) ?
           }
         }
 
@@ -84,7 +84,7 @@ impl<'a> PreInstance<'a> {
           && clause.lhs_preds().iter().all(  // ...with all arguments different
             |(_, argss)| argss.iter().all(|args| args.are_diff_vars())
           ) {
-            force = Some((false, * neg_clause)) ;
+            force = Some(false) ;
             break
           }
         }
@@ -98,18 +98,18 @@ impl<'a> PreInstance<'a> {
           && clause.rhs().map(
             |(_, args)| args.are_diff_vars() // All vars are different.
           ).unwrap_or(true) {
-            force = Some((true, * pos_clause)) ;
+            force = Some(true) ;
             break
           }
         }
 
-        if let Some((pos, c)) = force {
+        if let Some(pos) = force {
           info.preds += 1 ;
           fixed_point = false ;
           if pos {
-            info += self.force_true(pred, Some(c)) ?
+            info += self.force_true(pred) ?
           } else {
-            info += self.force_false(pred, Some(c)) ?
+            info += self.force_false(pred) ?
           }
         }
       }
@@ -567,14 +567,11 @@ impl<'a> PreInstance<'a> {
 
   /// Forces some predicate to false.
   ///
-  /// Simplifies all clauses impacted. `because` is the index of the clause
-  /// that let to forcing `pred` false.
+  /// Simplifies all clauses impacted.
   pub fn force_false(
-    & mut self, pred: PrdIdx, because: Option<ClsIdx>
+    & mut self, pred: PrdIdx,
   ) -> Res<RedInfo> {
     self.check("before force false") ? ;
-
-    let sources = because.map(|c| self[c].sources()) ;
 
     let mut info = RedInfo::new() ;
 
@@ -595,9 +592,6 @@ impl<'a> PreInstance<'a> {
     ) ;
     for clause in & self.clauses_to_simplify {
       let clause = * clause ;
-      if let Some(ref sources) = sources {
-        self.instance[clause].add_sources(& sources)
-      }
       debug_assert_eq! {
         self.instance.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
       }
@@ -614,14 +608,11 @@ impl<'a> PreInstance<'a> {
 
   /// Forces some predicates to true.
   ///
-  /// Simplifies all clauses impacted. `because` is the index of the clause
-  /// that let to forcing `pred` false.
+  /// Simplifies all clauses impacted.
   pub fn force_true(
-    & mut self, pred: PrdIdx, because: Option<ClsIdx>
+    & mut self, pred: PrdIdx,
   ) -> Res<RedInfo> {
     self.check("before force true") ? ;
-
-    let sources = because.map(|c| self[c].sources()) ;
 
     let mut info = RedInfo::new() ;
 
@@ -642,9 +633,6 @@ impl<'a> PreInstance<'a> {
     ) ;
     for clause in & self.clauses_to_simplify {
       let clause = * clause ;
-      if let Some(ref sources) = sources {
-        self.instance[clause].add_sources(& sources)
-      }
       let prev = self.instance.clauses[clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
     }
@@ -671,8 +659,6 @@ impl<'a> PreInstance<'a> {
   ///
   /// Otherwise, it will return an error.
   ///
-  /// `because` is the index of the clause that let to forcing `pred` false.
-  ///
   /// # Consequences
   ///
   /// - forgets the one clause `pred` is in the rhs of
@@ -687,7 +673,6 @@ impl<'a> PreInstance<'a> {
     & mut self, pred: PrdIdx,
     qvars: Quantfed,
     tterm_set: TTermSet,
-    because: ClsIdx,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_left`") ? ;
 
@@ -698,10 +683,8 @@ impl<'a> PreInstance<'a> {
     // }
 
     if tterm_set.is_empty() {
-      return self.force_true(pred, Some(because))
+      return self.force_true(pred)
     }
-
-    let sources = self[because].sources() ;
 
     let mut info = RedInfo::new() ;
 
@@ -720,7 +703,6 @@ impl<'a> PreInstance<'a> {
 
     'clause_iter: for clause in & self.clauses_to_simplify {
       let clause = * clause ;
-      self.instance[clause].add_sources(& sources) ;
       log_debug! {
         "    - working on lhs of clause {}",
         self.instance[clause].to_string_info(
@@ -996,7 +978,7 @@ impl<'a> PreInstance<'a> {
     ).collect() ;
 
     if def.is_empty() {
-      return self.force_false(pred, None)
+      return self.force_false(pred)
     }
 
     let mut info = RedInfo::new() ;
@@ -1153,8 +1135,6 @@ impl<'a> PreInstance<'a> {
   ///
   /// Otherwise, it will return an error.
   ///
-  /// `because` is the index of the clause that let to forcing `pred` false.
-  ///
   /// # Consequences
   ///
   /// - forgets the one clause `pred` is in the lhs of
@@ -1169,13 +1149,10 @@ impl<'a> PreInstance<'a> {
     qvars: Quantfed,
     pred_app: Option< (PrdIdx, HTArgs) >,
     negated: TTermSet,
-    because: ClsIdx,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_right`") ? ;
 
     let mut info = RedInfo::new() ;
-
-    let sources = self[because].sources() ;
 
     let quant = Quant::forall( qvars ) ;
 
@@ -1197,8 +1174,6 @@ impl<'a> PreInstance<'a> {
           self.instance.preds()
         ).unwrap()
       }
-
-      self.instance[clause].add_sources(& sources) ;
 
       let rhs = self.instance.clauses[clause].unset_rhs() ;
 

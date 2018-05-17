@@ -1669,12 +1669,8 @@ impl Instance {
       write!(w, "\n; Clause #{}\n", idx) ? ;
 
       // Print source.
-      let (from, from_set) = clause.from() ;
-      write!(w, ";   from: #{} {{", from) ? ;
-      for cls in from_set {
-        write!(w, " #{}", cls) ?
-      }
-      write!(w, " }}") ? ;
+      let from = clause.from() ;
+      write!(w, ";   from: #{}", from) ? ;
       if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
@@ -1970,12 +1966,8 @@ impl<'a> PebcakFmt<'a> for Instance {
 
     for (idx, clause) in self.clauses.index_iter() {
       write!(w, "\n; Clause #{}\n", idx) ? ;
-      let (from, from_set) = clause.from() ;
-      write!(w, ";   from: #{} {{", from) ? ;
-      for cls in from_set {
-        write!(w, " #{}", cls) ?
-      }
-      write!(w, " }}") ? ;
+      let from = clause.from() ;
+      write!(w, ";   from: #{}", from) ? ;
       if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }

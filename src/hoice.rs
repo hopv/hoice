@@ -114,11 +114,7 @@ pub fn read_and_work<R: ::std::io::Read>(
   // Unsat core.
   //
   // - `None`             if not unsat
-  // - `Some(None)`       if unsat but no core
-  // - `Some(Some(core))` otherwise
   let mut unsat = None ;
-  // Original instance, for unsat core extraction.
-  let mut original_instance = None ;
 
   'parse_work: loop {
     use instance::parse::Parsed ;
@@ -168,10 +164,6 @@ pub fn read_and_work<R: ::std::io::Read>(
 
         log! { @info "Running top pre-processing" }
 
-        if conf.unsat_cores() {
-          original_instance = Some( instance.clone() )
-        }
-
         let preproc_profiler = Profiler::new() ;
         match profile! {
           |profiler| wrap {
@@ -198,7 +190,11 @@ pub fn read_and_work<R: ::std::io::Read>(
             println!("sat")
           } else {
             println!("unsat") ;
-            unimplemented!("unsat core from preproc")
+            if conf.unsat_cores() || conf.proofs() {
+              bail!("unsat cores/proofs from preprocessing")
+            } else {
+              unsat = Some(unsat_core::UnsatRes::None)
+            }
           }
           maybe_model
         } else {
@@ -233,7 +229,11 @@ pub fn read_and_work<R: ::std::io::Read>(
               None
             }
             Err(ref e) if e.is_unsat() => {
-              unsat = Some(None) ;
+              unsat = Some(unsat_core::UnsatRes::None) ;
+              warn!(
+                "unsat was obtained by a legacy mechanism, \
+                core/proof will not be available"
+              ) ;
               println!("unsat") ;
               None
             },
@@ -257,25 +257,25 @@ pub fn read_and_work<R: ::std::io::Read>(
 
 
       // Print unsat core if available.
-      Parsed::GetUnsatCore => match unsat {
-        Some(None) | None => println!(
-          "({} \"\n  \
-            unsat cores are only available {},\n  \
-            and if the command {}\n  \
-            was issued at the beginning of the script\n\")\
-          ", conf.bad("error"), conf.emph("after an unsat result"),
-          conf.emph("`(set-option :produce-unsat-cores true)`")
-        ),
-        Some(
-          Some(ref mut graph)
-        ) => if let Some(i) = original_instance.as_ref() {
-          graph.write_core(
-            & mut stdout(), & instance, i
-          ) ?
-        } else {
-          bail!("unsat core available, but no original instance available")
-        },
-      }
+      Parsed::GetUnsatCore => if let Some(ref mut unsat) = unsat {
+        unsat.write_core(& mut stdout(), & instance) ?
+      } else {
+        bail!(
+          "unsat cores are only available {}",
+          conf.emph("after an unsat result"),
+        )
+      },
+
+
+      // Print unsat core if available.
+      Parsed::GetProof => if let Some(ref mut unsat) = unsat {
+        unsat.write_proof(& mut stdout(), & instance) ?
+      } else {
+        bail!(
+          "unsat proofs are only available {}",
+          conf.emph("after an unsat result"),
+        )
+      },
 
 
       // Print model if available.

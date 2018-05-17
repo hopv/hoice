@@ -11,6 +11,11 @@ use unsat_core::* ;
 use term::args::HTArgs ;
 
 
+
+
+
+
+
 /// Maps formal arguments to actual arguments.
 pub type FArgMap = HConMap<HTArgs, Args> ;
 /// Maps formal arguments to Origins.
@@ -227,7 +232,7 @@ impl KnownSamples {
         return Either::Left( Some(true) )
       }) ;
       (not changed) => ({
-        return Either::Left( Some(true) )
+        return Either::Left( Some(false) )
       }) ;
       (adding pos $pred:expr, $fargs:expr, $args:expr, $origin:expr) => ({
         if let Some(neg) = self.add_pos(
@@ -398,7 +403,7 @@ impl TraceFrame {
   ) -> Res<()> {
     let clause = & instance[self.clause] ;
 
-    let original_clause_index = clause.from().0 ;
+    let original_clause_index = clause.from() ;
 
     let original_clause_name = if let Some(name) = instance.name_of_old_clause(
       original_clause_index
@@ -522,8 +527,79 @@ impl Trace {
     Ok(())
   }
 
+  /// Returns all clauses mentioned in this trace.
+  pub fn all_clauses(& self, set: & mut ClsSet) {
+    for frame in & self.frames {
+      set.insert(frame.clause) ;
+    }
+  }
+
 }
 
+
+/// A proof: an explanation of an unsat result.
+pub struct UnsatProof {
+  /// Predicate.
+  pred: PrdIdx,
+  /// Positive sample.
+  pos: Args,
+  /// Negative sample.
+  neg: Args,
+  /// Derivation for `pos`.
+  pos_trace: Trace,
+  /// Derivation for `neg`.
+  neg_trace: Trace,
+}
+impl UnsatProof {
+  /// Retrieves the unsat core.
+  pub fn core(& self) -> ClsSet {
+    let mut res = ClsSet::new() ;
+    self.pos_trace.all_clauses(& mut res) ;
+    self.neg_trace.all_clauses(& mut res) ;
+    res
+  }
+
+
+  /// Writes itself.
+  pub fn write<W: Write>(
+    & self, w: & mut W, instance: & Instance
+  ) -> Res<()> {
+
+    writeln!(w, "(") ? ;
+
+    writeln!(w, "  ; Contradiction:") ? ;
+    writeln!(w,
+      "  ( and ({} {}) (not ({} {})) )",
+      instance[self.pred], self.pos, instance[self.pred], self.neg
+    ) ? ;
+
+    writeln!(w, "") ? ;
+    writeln!(
+      w, "  ( ; Derivation for ({} {}):", instance[self.pred], self.pos
+    ) ? ;
+
+    self.pos_trace.write_as_derivation(
+      w, "    ", instance
+    ) ? ;
+
+    writeln!(w, "  )") ? ;
+
+    writeln!(w, "") ? ;
+    writeln!(
+      w, "  ( ; Derivation for (not ({} {})):", instance[self.pred], self.neg
+    ) ? ;
+
+    self.neg_trace.write_as_derivation(
+      w, "    ", instance
+    ) ? ;
+
+    writeln!(w, "  )") ? ;
+
+    write!(w, ")") ? ;
+
+    Ok(())
+  }
+}
 
 
 
@@ -534,37 +610,6 @@ This is maintained by the teacher when unsat core production is active and is
 returned in case of an unsat result. The graph allows to retrieve values for
 the original clauses that explain why some sample needs to be both true and
 false at the same time.
-
-
-# Examples
-
-```
-use hoice::{
-  common::*,
-  common::data::args::*,
-  unsat_core::*,
-} ;
-
-let factory = new_factory() ;
-fn mk<V: Into<Val>, A: IntoIter<Item = V>>(
-  args: A
-) -> Args {
-  let map = VarMap::new() ;
-  for val in args.into_iter() {
-    map.push( val.into() )
-  }
-  factory::mk( RArgs::new(map) )
-}
-
-let mut graph = SampleGraph::new() ;
-
-let args = mk( vec![0, 0, 0] ) ;
-
-println!("args: {}") ;
-
-panic!("aaa")
-```
-
 
 
 # TODO
@@ -644,16 +689,14 @@ impl SampleGraph {
       || OFArgMap::new()
     ).entry(fargs).or_insert_with(
       || vec![]
-    ).push( (cls, samples) ) ;
-    self.check().unwrap()
+    ).push( (cls, samples) )
   }
 
   /// Adds traceability for a negative sample.
   pub fn add_neg(
     & mut self, cls: ClsIdx, samples: PrdHMap<FArgMap>
   ) {
-    self.neg.push( (cls, samples) ) ;
-    self.check().unwrap()
+    self.neg.push( (cls, samples) )
   }
 
 
@@ -791,7 +834,6 @@ impl SampleGraph {
     known: & KnownSamples,
     solver: & mut Solver<Parser>,
     instance: & Instance,
-    original_instance: & Instance,
   ) -> Res<Trace> {
 
     // Samples for which we already have an explanation for.
@@ -915,71 +957,6 @@ impl SampleGraph {
 
       }
 
-      // Check with original instance.
-      {
-        let clause_idx = clause ;
-        let clause = & instance[clause_idx] ;
-        let sources = clause.sources() ;
-        let original_clause = & original_instance[ clause.from().0 ] ;
-
-        for (pred, argss) in original_clause.lhs_preds() {
-          if let Some(map) = lhs.get(pred) {
-            if argss.iter().any(
-              |args| map.get(args).is_none()
-            ) {
-              bail!(
-                "lhs for clause #{} is missing some arguments \
-                for predicate {}", clause_idx, instance[* pred]
-              )
-            }
-            if map.keys().any(
-              |args| ! argss.contains(args)
-            ) {
-              bail!(
-                "lhs for clause #{} has additional arguments \
-                for predicate {}", clause_idx, instance[* pred]
-              )
-            }
-          } else {
-            warn! {
-              "predicate {} is missing in unsat core in lhs for clause #{}",
-              instance[* pred], clause_idx
-            }
-
-            log! { @0 "sources {{" }
-            for source in & sources {
-              log! { @0 "  #{}", source }
-            }
-            log! { @0 "}}" }
-
-            log! { @0 "trying to recover arguments" }
-
-            for args in argss {
-              log! { @0 "  working on {}", args }
-
-              let mut model = VarMap::new() ;
-
-              for (var, info) in clause.vars.index_iter() {
-                if let Some(val) = map.get(& var) {
-                  model.push( val.clone() )
-                } else {
-                  model.push( val::none( info.typ.clone() ) )
-                }
-              }
-
-              log! { @0 "  3" }
-              let mut concrete_args = VarMap::with_capacity( args.len() ) ;
-
-              log! { @0 "  4" }
-              for arg in args.iter() {
-                concrete_args.push( arg.eval(& model).unwrap() )
-              }
-              log! { @0 "  -> {}", concrete_args }
-            }
-          }
-        }
-      }
-
       // Append to result.
       res.push(
         TraceFrame::new(
@@ -1000,16 +977,10 @@ impl SampleGraph {
 
 
 
-  /// Extracts a contradiction and relevant traces from the graph.
-  ///
-  /// `None` if there's no contradiction.
-  pub fn get_traces(
-    & mut self, instance: & Instance, original_instance: & Instance
-  ) -> Res<
-    (PrdIdx, (Args, Trace), (Args, Trace))
-  > {
+  /// Extracts a proof for unsat.
+  pub fn get_proof(& mut self, instance: & Instance) -> Res<UnsatProof> {
     let (
-      pred, pos_args, neg_args, known
+      pred, pos, neg, known
     ) = if let Some(contradiction) = self.find_contradiction() {
       contradiction
     } else {
@@ -1020,96 +991,19 @@ impl SampleGraph {
       "core_extraction", Parser, & instance
     ) ? ;
     let pos_trace = self.trace(
-      pred, & pos_args, Polarity::pos(), & known, & mut solver,
-      instance, original_instance
+      pred, & pos, Polarity::pos(), & known, & mut solver,
+      instance
     ) ? ;
     let neg_trace = self.trace(
-      pred, & neg_args, Polarity::neg(), & known, & mut solver,
-      instance, original_instance
+      pred, & neg, Polarity::neg(), & known, & mut solver,
+      instance
     ) ? ;
 
-    Ok( (pred, (pos_args, pos_trace), (neg_args, neg_trace)) )
-  }
-
-
-
-
-  /// Retrieves the core and writes it.
-  pub fn write_core<W: Write>(
-    & mut self, w: & mut W, instance: & Instance, original_instance: & Instance
-  ) -> Res<()> {
-    let (
-      pred, (pos, pos_trace), (neg, neg_trace)
-    ) = self.get_traces(instance, original_instance) ? ;
-
-    writeln!(w, "(") ? ;
-    writeln!(w, "") ? ;
-
-    writeln!(w, "  ; Contradiction:") ? ;
-    writeln!(w,
-      "  ( and ({} {}) (not ({} {})) )",
-      instance[pred], pos, instance[pred], neg
-    ) ? ;
-
-    writeln!(w, "") ? ;
-    writeln!(w, "  ( ; Derivation for ({} {}):", instance[pred], pos) ? ;
-
-    pos_trace.write_as_derivation(
-      w, "    ", instance
-    ) ? ;
-
-    writeln!(w, "  )") ? ;
-
-    writeln!(w, "") ? ;
-    writeln!(w, "  ( ; Derivation for (not ({} {})):", instance[pred], neg) ? ;
-
-    neg_trace.write_as_derivation(
-      w, "    ", instance
-    ) ? ;
-
-    writeln!(w, "  )") ? ;
-
-    writeln!(w, "") ? ;
-    write!(w, ")") ? ;
-
-    Ok(())
-  }
-
-
-
-
-
-
-  /// Checks that the sample graph is legal.
-  ///
-  /// Only active in debug.
-  #[cfg(debug_assertions)]
-  pub fn check(& self) -> Res<()> {
-    for args in self.graph.values() {
-      for origins in args.values() {
-        for origins in origins.values() {
-          for & (_, ref samples) in origins {
-            for (pred, argss) in samples {
-              for args in argss.values() {
-                if self.graph.get(pred).and_then(
-                  |map| map.get(args)
-                ).is_none() {
-                  bail!("inconsistent sample graph state...")
-                }
-              }
-            }
-          }
-        }
+    Ok(
+      UnsatProof {
+        pred, pos, neg, pos_trace, neg_trace
       }
-    }
-    Ok(())
-  }
-  /// Checks that the sample graph is legal.
-  ///
-  /// Only active in debug.
-  #[cfg(not(debug_assertions))]
-  pub fn check(& self) -> Res<()> {
-    Ok(())
+    )
   }
 
 

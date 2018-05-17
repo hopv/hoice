@@ -15,7 +15,7 @@ use common::smt::{ SmtTerm, FullParser as Parser } ;
 
 pub mod assistant ;
 use self::assistant::Assistant ;
-use unsat_core::SampleGraph ;
+use unsat_core::UnsatRes ;
 
 /// Starts the teaching process.
 ///
@@ -25,7 +25,7 @@ pub fn start_class(
   instance: & Arc<Instance>,
   partial_model: & ConjCandidates,
   profiler: & Profiler
-) -> Res< Either<Candidates, Option<SampleGraph>> > {
+) -> Res< Either<Candidates, UnsatRes> > {
   let instance = instance.clone() ;
   log! { @debug
     "starting the learning process" ;
@@ -63,7 +63,7 @@ pub fn start_class(
 
 /// Teaching to the learners.
 pub fn teach(teacher: & mut Teacher) -> Res<
-  Either<Candidates, Option<SampleGraph>>
+  Either<Candidates, UnsatRes>
 >{
 
   log_debug!{ "spawning ice learner..." }
@@ -447,7 +447,7 @@ impl<'a> Teacher<'a> {
   /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
     & mut self, drain: bool
-  ) -> Res< Either<(LrnIdx, Candidates), Option<SampleGraph>> > {
+  ) -> Res< Either<(LrnIdx, Candidates), UnsatRes> > {
     macro_rules! all_dead {
       () => ( bail!("all learners are dead") ) ;
     }
@@ -578,8 +578,8 @@ impl<'a> Teacher<'a> {
   }
 
   /// Retrieves the unsat core, if any.
-  pub fn unsat_core(& mut self) -> Option<SampleGraph> {
-    self.data.sample_graph()
+  pub fn unsat_core(& mut self) -> UnsatRes {
+    UnsatRes::new( self.data.sample_graph() )
   }
 
   /// Initial check, where all candidates are `true`.

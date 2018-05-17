@@ -70,6 +70,8 @@ pub mod values {
   pub mod default {
     /// Generate unsat cores?
     pub const unsat_cores: bool = false ;
+    /// Generate proofs?
+    pub const proofs: bool = false ;
     /// Print success?
     pub const print_success: bool = false ;
   }
@@ -160,6 +162,7 @@ pub mod keywords {
         check_sat ("check-sat", doc = "Check-sat keyword.")
         get_model ("get-model", doc = "Get-model keyword.")
         get_unsat_core ("get-unsat-core", doc = "Get-unsat-core keyword.")
+        get_proof ("get-proof", doc = "Get-proof keyword.")
 
         reset ("reset", doc = "Reset keyword.")
         exit  ("exit", doc = "Exit keyword.")
