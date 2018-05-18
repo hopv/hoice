@@ -48,18 +48,20 @@ pub fn work(
   let mut splitter = Splitter::new(& real_instance) ;
 
   'split_loop: while let Some(preproc_res) = {
-    if let Some((clause, handled, total)) = splitter.info() {
-      log! { conf.stats || conf.split_step, || @info
-        "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
-        conf.emph("|"),
-        conf.happy("="),
-        conf.sad("="),
-        conf.happy("="),
-        conf.emph("|"),
-        clause, handled + 1, total
-      }
-      if conf.split_step {
-        pause("to start sub-preprocessing", _profiler) ;
+    if_not_bench! {
+      if let Some((clause, handled, total)) = splitter.info() {
+        log! { conf.stats || conf.split_step, || @info
+          "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
+          conf.emph("|"),
+          conf.happy("="),
+          conf.sad("="),
+          conf.happy("="),
+          conf.emph("|"),
+          clause, handled + 1, total
+        }
+        if conf.split_step {
+          pause("to start sub-preprocessing", _profiler) ;
+        }
       }
     }
     splitter.next_instance(& _profiler)
