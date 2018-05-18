@@ -1125,23 +1125,6 @@ impl Config {
     Ok(())
   }
 
-
-
-  /// True if minimal mode.
-  #[inline]
-  pub fn minimal(& self) -> bool {
-    self.verb >= 1
-  }
-  /// True if verbose mode.
-  #[inline]
-  pub fn verbose(& self) -> bool {
-    self.verb >= 2
-  }
-  /// True if debug mode.
-  #[inline]
-  pub fn debug(& self) -> bool {
-    self.verb >= 3
-  }
   /// Input file.
   #[inline]
   pub fn in_file(& self) -> Option<& String> {

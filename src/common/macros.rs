@@ -120,9 +120,9 @@ macro_rules! log {
     format!("; {:width$}", "", width = ($int - 1) * 2)
   ) ;
 
-  (|cond_of| debug) => (conf.debug()) ;
-  (|cond_of| verb) => (conf.verbose()) ;
-  (|cond_of| info) => (conf.minimal()) ;
+  (|cond_of| debug) => (conf.verb >= 3) ;
+  (|cond_of| verb) => (conf.verb >= 2) ;
+  (|cond_of| info) => (conf.verb >= 1) ;
   (|cond_of| 0) => (true) ;
   (|cond_of| $int:expr) => (conf.verb >= $int) ;
 
@@ -321,9 +321,7 @@ macro_rules! msg {
     $slf.msg( format!( $($tt)* ) ) ? ;
   ) ;
   ( $core:expr => $e:expr ) => (
-    if conf.debug() {
-      $core.msg($e) ? ;
-    }
+    if_debug!( $core.msg($e) ? )
   ) ;
   ( $slf:expr => $($tt:tt)* ) => (
     msg!{ $slf => format!( $($tt)* ) }

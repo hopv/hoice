@@ -297,9 +297,9 @@ impl Graph {
     lft: & Vec<(Quantfed, TTermSet)>,
     rgt: & Vec<(Quantfed, TTermSet)>
   ) -> Res< Vec<(Quantfed, TTermSet)> > {
-    log_debug! { "    merging..." }
+    log! { @4 "merging..." }
     let first_index = instance.original_sig_of(pred).next_index() ;
-    log_debug! { "    first index: {}", first_index }
+    log! { @4 "first index: {}", first_index }
 
     let mut result = Vec::with_capacity( lft.len() * rgt.len() ) ;
 
@@ -309,10 +309,10 @@ impl Graph {
 
       if_debug! {
         for (idx, _) in r_qvars {
-          log_debug! { "    - rgt qvar {}", idx }
+          log! { @5 "- rgt qvar {}", idx }
           if * idx >= first_index { first_index = (1 + ** idx).into() }
         }
-        log_debug! { "    first legal index: {}", first_index }
+        log! { @5 "first legal index: {}", first_index }
       }
 
       // Generate map for substitution and update left qvars.
@@ -333,17 +333,17 @@ impl Graph {
           curr_qvar.inc()
         }
 
-        if_debug! {
-          log_debug! { "map {{" }
+        if_log! { @5
+          log! { @5 "map {{" }
           for (var, term) in & map {
-            log_debug! { "  {} -> {}", var.default_str(), term }
+            log! { @5 "  {} -> {}", var.default_str(), term }
           }
-          log_debug! { "}}" }
-          log_debug! { "qvars {{" }
+          log! { @5 "}}" }
+          log! { @5 "qvars {{" }
           for (var, typ) in & qvars {
-            log_debug! { "  {}: {}", var.default_str(), typ }
+            log! { @5 "  {}: {}", var.default_str(), typ }
           }
-          log_debug! { "}}" }
+          log! { @5 "}}" }
         }
 
         conf.check_timeout() ? ;
@@ -419,10 +419,10 @@ impl Graph {
       }
 
       let pred = if let Some(p) = pred { p } else {
-        log! { @debug "  no predicate illeligible for inlining" }
+        log_debug! { "no predicate illeligible for inlining" }
         break 'construct
       } ;
-      log! { @debug "  inlining {}", instance[pred] }
+      log_debug! { "inlining {}", instance[pred] }
 
       // read_line("to continue...") ;
 
@@ -545,12 +545,7 @@ impl Graph {
                   instance, pred, & argss, p_def, & curr
                 ) ?
               }
-              // if_debug! {
-              //   log_debug! { "  finally {{" }
-              //   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-              //   log_debug! { "    {}", TTerms::dnf(dnf) }
-              //   log_debug! { "  }}" }
-              // }
+
               for pair in curr {
                 def.push(pair)
               }
@@ -614,8 +609,8 @@ impl Graph {
       } else {
 
         if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
-          log_verb! {
-            "  blow-up prediction for {}: {} + {} = {} / {}",
+          log_debug! {
+            "blow-up prediction for {}: {} + {} = {} / {}",
             instance[pred], this_pred_increase, increase,
             sum_increase, upper_bound
           }
@@ -787,7 +782,7 @@ impl Graph {
       let is_new = set.insert(rep) ;
       debug_assert!( is_new ) ;
 
-      log_debug! { "  " }
+      log_debug! { "" }
     }
 
     set.shrink_to_fit() ;

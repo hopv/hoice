@@ -538,14 +538,16 @@ impl<'a> Reductor<'a> {
       added += added_pre ;
       r_added += r_added_pre ;
 
-      log_verb! {
-        "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
-      }
-      log_verb! {
-        "           bakward {} ({})", r_added, r_added_pre
-      }
-      log_verb! {
-        "             total {} / {}", added + r_added, max_clause_add
+      if_verb! { 
+        log_verb! {
+          "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
+        }
+        log_verb! {
+          "           bakward {} ({})", r_added, r_added_pre
+        }
+        log_verb! {
+          "             total {} / {}", added + r_added, max_clause_add
+        }
       }
 
       if (
@@ -1064,8 +1066,8 @@ impl RedStrat for OneRhs {
       conf.check_timeout() ? ;
 
       if instance.clauses_of(pred).1.len() == 1 {
-        log_debug! {
-          "  looking at {} ({}, {})",
+        log! { @4
+          "looking at {} ({}, {})",
           instance[pred],
           instance.clauses_of(pred).0.len(),
           instance.clauses_of(pred).1.len(),
@@ -1078,7 +1080,7 @@ impl RedStrat for OneRhs {
           continue 'all_preds
         }
 
-        log_debug!{
+        log!{ @5
           "trying to unfold {}", instance[pred]
         }
 
@@ -1232,7 +1234,7 @@ impl RedStrat for OneLhs {
       } ;
 
       log_debug! {
-        "  looking at {} ({}, {})",
+        "looking at {} ({}, {})",
         instance[pred],
         instance.clauses_of(pred).0.len(),
         instance.clauses_of(pred).1.len(),
@@ -1305,30 +1307,32 @@ impl RedStrat for OneLhs {
         },
         Success((qvars, pred_app, tterms)) => {
           if_debug! {
-            log_debug!("  {} quantified variables", qvars.len()) ;
+            log_debug!("{} quantified variables", qvars.len()) ;
             for (var, typ) in & qvars {
-              log_debug!("  - v_{}: {}", var, typ)
+              log_debug!("- v_{}: {}", var, typ)
             }
-            log_debug!{ "  => (or" }
+            log_debug!{ "=> (or" }
             if let Some((pred, ref args)) = pred_app {
               let mut s = format!("({}", instance[pred]) ;
               for arg in args.iter() {
                 s = format!("{} {}", s, arg)
               }
-              log_debug!{ "    {})", s }
+              log_debug!{ "  {})", s }
             }
-            log_debug!{ "    (not" }
-            log_debug!{ "      (and" }
+            log_debug!{ "  (not" }
+            log_debug!{ "    (and" }
             for (pred, args) in tterms.preds() {
               let mut s = format!("({}", instance[* pred]) ;
               for arg in args {
                 s = format!("{} {}", s, arg)
               }
-              log_debug!{ "        {})", s }
+              log_debug!{ "      {})", s }
             }
             for term in tterms.terms() {
-              log_debug!{ "        {}", term }
+              log_debug!{ "      {}", term }
             }
+            log_debug!{ "    )" }
+            log_debug!{ "  )" }
           }
           red_info += instance.force_pred_right(
             pred, qvars, pred_app, tterms

@@ -695,7 +695,6 @@ impl<'a> Teacher<'a> {
     macro_rules! run {
       ($clause:expr, $bias:expr) => (
         if ! clauses_to_ignore.contains($clause) {
-          // log_debug!{ "  looking for a cex for clause {}", clause }
           let cexs = self.get_cex(
             * $clause, & true_preds, & false_preds, $bias
           ).chain_err(
@@ -791,7 +790,7 @@ impl<'a> Teacher<'a> {
 
       (@$sat:ident $($stuff:tt)*) => ({ // Works on the check-sat result.
         if $sat {
-          log_debug! { "  getting cex for clause #{}", clause_idx }
+          log_debug! { "getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model_const() ? ;
           let cex = Cex::of_model(
@@ -813,7 +812,7 @@ impl<'a> Teacher<'a> {
 
       ($actlit:expr ; $blah:expr) => ( // Check modulo actlit, if any.
         if let Some(actlit) = $actlit {
-          log_debug! { "  checksat for {}", $blah }
+          log_debug! { "checksat for {}", $blah }
           profile!{ self tick "cexs", "biased check-sat" }
           let sat = self.solver.check_sat_act(
             Some(& actlit)
