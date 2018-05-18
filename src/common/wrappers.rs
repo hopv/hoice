@@ -5,7 +5,10 @@ use std::fmt ;
 
 use rsmt2::print::* ;
 
-use common::{ SmtRes, VarIndexed } ;
+use common::{
+  SmtRes, VarIndexed, VarTerms,
+  var_to,
+} ;
 use term::Term ;
 
 wrap_usize!{
@@ -48,9 +51,9 @@ impl VarIdx {
   }
 }
 
-impl Into< ::common::HTArgs > for VarMap<::term::Term> {
-  fn into(self) -> ::common::HTArgs {
-    ::term::args::new(self)
+impl Into< VarTerms > for VarMap<::term::Term> {
+  fn into(self) -> VarTerms {
+    var_to::terms::new(self)
   }
 }
 
@@ -59,7 +62,7 @@ impl VarMap< Term > {
   ///
   /// This is used when useless arguments are detected, to slice predicate
   /// applications.
-  pub fn remove(& self, to_keep: & VarSet) -> ::common::HTArgs {
+  pub fn remove(& self, to_keep: & VarSet) -> VarTerms {
     debug_assert! { self.len() >= to_keep.len() }
     debug_assert! {{
       let mut okay = true ;

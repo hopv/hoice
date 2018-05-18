@@ -10,8 +10,10 @@ use rsmt2::{
   parse::{ IdentParser, ValueParser, SmtParser },
 } ;
 
-use common::* ;
-use var::vals::{ VarValsMap, VarValsSet } ;
+use common::{
+  *,
+  var_to::vals::{ VarValsMap, VarValsSet }
+} ;
 use data::Constraint ;
 
 
@@ -349,7 +351,7 @@ impl<'a> Expr2Smt<()> for EqConj<'a> {
 /// Corresponds to the disjunction of `(= args v)` for `v` in `vals`.
 pub struct DisjArgs<'a> {
   /// Arguments.
-  pub args: & 'a HTArgs,
+  pub args: & 'a VarTerms,
   /// Values to force the arguments to.
   pub vals: & 'a VarValsSet,
 }
@@ -359,7 +361,7 @@ impl<'a> DisjArgs<'a> {
   /// Error if `args` or `vals` is empty.
   #[inline]
   pub fn new(
-    args: & 'a HTArgs, vals: & 'a VarValsSet
+    args: & 'a VarTerms, vals: & 'a VarValsSet
   ) -> Res<Self> {
     if args.is_empty() {
       bail!("can't create a `DisjArgs` with empty `args`")

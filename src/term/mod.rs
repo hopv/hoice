@@ -59,6 +59,7 @@
 use hashconsing::* ;
 
 use common::* ;
+use var_to::terms::VarTermsSet ;
 
 #[macro_use]
 mod op ;
@@ -69,8 +70,6 @@ pub mod simplify ;
 pub mod typ ;
 #[cfg(test)]
 mod test ;
-
-pub mod args ;
 
 pub use self::factory::* ;
 pub use self::typ::Typ ;
@@ -965,7 +964,7 @@ pub enum TTerm {
     /// Predicate applied.
     pred: PrdIdx,
     /// The arguments.
-    args: HTArgs,
+    args: VarTerms,
   },
   /// Just a term.
   T(Term),
@@ -1034,7 +1033,7 @@ impl TTerm {
   }
 
   /// The arguments of a top term if it's a predicate application.
-  pub fn args(& self) -> Option<& HTArgs> {
+  pub fn args(& self) -> Option<& VarTerms> {
     match * self {
       TTerm::P { ref args, .. } => Some(args),
       _ => None,
@@ -1043,7 +1042,7 @@ impl TTerm {
 
   /// Applies some treatment if the top term is a predicate application.
   pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
-  where F: Fn(T, PrdIdx, & mut HTArgs) -> T {
+  where F: Fn(T, PrdIdx, & mut VarTerms) -> T {
     if let TTerm::P { pred, ref mut args } = * self {
       f(init, pred, args)
     } else {
@@ -1125,7 +1124,7 @@ impl TTerm {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     use self::TTerm::* ;
     match * self {
       P { pred, ref args } => write_prd(w, pred, args),
@@ -1140,7 +1139,7 @@ impl TTerm {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
@@ -1171,7 +1170,7 @@ pub struct TTermSet {
   /// Set of terms.
   terms: HConSet<Term>,
   /// Predicate applications.
-  preds: PrdHMap< HTArgss >,
+  preds: PrdHMap< VarTermsSet >,
 }
 impl TTermSet {
   /// Creates a new top term set with some capacity
@@ -1193,7 +1192,7 @@ impl TTermSet {
 
   /// Destroys the set.
   #[inline]
-  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<HTArgss>) {
+  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<VarTermsSet>) {
     (self.terms, self.preds)
   }
 
@@ -1240,7 +1239,7 @@ impl TTermSet {
   }
   /// Predicate applications.
   #[inline]
-  pub fn preds(& self) -> & PrdHMap< HTArgss > {
+  pub fn preds(& self) -> & PrdHMap< VarTermsSet > {
     & self.preds
   }
 
@@ -1251,7 +1250,7 @@ impl TTermSet {
   }
   /// Predicate applications (mutable version).
   #[inline]
-  pub fn preds_mut(& mut self) -> & mut PrdHMap< HTArgss > {
+  pub fn preds_mut(& mut self) -> & mut PrdHMap< VarTermsSet > {
     & mut self.preds
   }
 
@@ -1287,9 +1286,9 @@ impl TTermSet {
 
     let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
     for (pred, argss) in self.preds.iter() {
-      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
       for args in argss {
-        let args = term::args::new( args.subst(map) ) ;
+        let args = var_to::terms::new( args.subst(map) ) ;
         nu_argss.insert(args) ;
       }
       preds.insert(* pred, nu_argss) ;
@@ -1300,9 +1299,9 @@ impl TTermSet {
 
   /// Inserts a predicate application.
   #[inline]
-  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
+  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
     self.preds.entry(pred).or_insert_with(
-      || HTArgss::new()
+      || VarTermsSet::new()
     ).insert(args)
   }
   /// Inserts some predicate applications.
@@ -1310,12 +1309,12 @@ impl TTermSet {
     & mut self, pred: PrdIdx, argss: TArgss
   )
   where
-  Iter: Iterator<Item = HTArgs> + ExactSizeIterator,
-  TArgss: IntoIterator<Item = HTArgs, IntoIter = Iter> {
+  Iter: Iterator<Item = VarTerms> + ExactSizeIterator,
+  TArgss: IntoIterator<Item = VarTerms, IntoIter = Iter> {
     let argss = argss.into_iter() ;
     if argss.len() == 0 { return () }
     self.preds.entry(pred).or_insert_with(
-      || HTArgss::new()
+      || VarTermsSet::new()
     ).extend( argss )
   }
 
@@ -1392,7 +1391,7 @@ impl TTermSet {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     // Don't print the separator the first time.
     let mut separate = false ;
     macro_rules! write_sep {
@@ -1481,7 +1480,7 @@ impl ::std::cmp::PartialOrd for TTermSet {
 
 /// Removes some arguments from some predicate applications.
 fn remove_vars_from_pred_apps(
-  apps: & mut PrdHMap< HTArgss >, to_keep: & PrdHMap<VarSet>
+  apps: & mut PrdHMap< VarTermsSet >, to_keep: & PrdHMap<VarSet>
 ) {
   for (pred, argss) in apps.iter_mut() {
     let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
@@ -1489,7 +1488,7 @@ fn remove_vars_from_pred_apps(
     } else {
       continue
     } ;
-    let mut old_argss = HTArgss::with_capacity( argss.len() ) ;
+    let mut old_argss = VarTermsSet::with_capacity( argss.len() ) ;
     ::std::mem::swap( & mut old_argss, argss ) ;
     for args in old_argss {
       argss.insert( args.remove( vars_to_keep ) ) ;
@@ -1514,7 +1513,7 @@ pub enum TTerms {
   Disj {
     quant: Option<Quant>,
     tterms: TTermSet,
-    neg_preds: PrdHMap< HTArgss >,
+    neg_preds: PrdHMap< VarTermsSet >,
   },
   /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
   Dnf {
@@ -1655,9 +1654,9 @@ impl TTerms {
 
         let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
         for (pred, argss) in neg_preds.iter() {
-          let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+          let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
           for args in argss {
-            let args = term::args::new( args.subst(map) ) ;
+            let args = var_to::terms::new( args.subst(map) ) ;
             nu_argss.insert(args) ;
           }
           preds.insert(* pred, nu_argss) ;
@@ -1703,7 +1702,7 @@ impl TTerms {
 
   /// Constructs a disjuction.
   pub fn disj(
-    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<HTArgss>
+    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<VarTermsSet>
   ) -> Self {
     TTerms::Disj { quant, tterms, neg_preds }.simplify()
   }
@@ -1712,7 +1711,7 @@ impl TTerms {
   ///
   /// This special format is exactly the one used by preprocessing.
   pub fn disj_of_pos_neg(
-    quant: Option<Quant>, pos: Option<(PrdIdx, HTArgs)>, neg: TTermSet
+    quant: Option<Quant>, pos: Option<(PrdIdx, VarTerms)>, neg: TTermSet
   ) -> Self {
     let TTermSet { terms, preds: neg_preds } = neg ;
     let mut tterms = TTermSet::with_capacities(terms.len(), 1) ;
@@ -2175,7 +2174,7 @@ impl TTerms {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
 
     macro_rules! write_conj {
       ($quant:expr, $tterms:expr) => ({
@@ -2265,7 +2264,7 @@ impl TTerms {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )

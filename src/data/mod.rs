@@ -1,11 +1,13 @@
-// use hashconsing::{ HConsed } ;
+//! Sample storage used by the teacher and the learner(s).
 
-use common::* ;
+use common::{
+  *,
+  var_to::vals::{
+    RVarVals, VarValsSet, VarValsMap
+  },
+} ;
 use learning::ice::data::CData ;
 use unsat_core::sample_graph::SampleGraph ;
-use var::vals::{
-  RVarVals, VarValsSet, VarValsMap
-} ;
 
 pub mod sample ;
 pub mod constraint ;
@@ -20,9 +22,6 @@ use self::info::CstrInfo ;
 
 
 /// Structure manipulating unprojected learning data.
-///
-/// Cannot create new samples as it does not contain the factory. This is the
-/// structure manipulated by learners.
 pub struct Data {
   /// Instance, only used for printing.
   pub instance: Arc<Instance>,
@@ -261,7 +260,7 @@ impl Data {
   pub fn add_raw_pos(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
   ) -> () {
-    let (args, _) = self.mk_sample(args) ;
+    let args = var_to::vals::new(args) ;
     self.add_pos(clause, pred, args.clone()) ;
     ()
   }
@@ -274,7 +273,7 @@ impl Data {
   pub fn add_raw_neg(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
   ) -> () {
-    let (args, _) = self.mk_sample(args) ;
+    let args = var_to::vals::new(args) ;
     self.add_neg(clause, pred, args.clone()) ;
     ()
   }
@@ -672,13 +671,6 @@ impl Data {
     }
   }
 
-  /// Creates a new sample. Returns true if it's new.
-  fn mk_sample(
-    & mut self, args: RVarVals
-  ) -> (VarVals, bool) {
-    var::vals::mk_is_new(args)
-  }
-
 
   /// Adds a constraint.
   ///
@@ -726,7 +718,7 @@ impl Data {
 
     // Look at the lhs and remove stuff we know is true.
     'lhs_iter: for & (pred, ref args) in & lhs {
-      let (args, is_new) = self.mk_sample( args.clone() ) ;
+      let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
       // Remember stuff for the unsat core.
       final_lhs.as_mut().map(
         |lhs| lhs.entry(pred).or_insert_with(
@@ -760,7 +752,7 @@ impl Data {
     let nu_rhs = if let Some(& (pred, ref args)) = rhs.as_ref() {
       // Not a look, just makes early return easier thanks to breaking.
       'get_rhs: loop {
-        let (args, is_new) = self.mk_sample( args.clone() ) ;
+        let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
         // Remember stuff for the unsat core.
         final_rhs.as_mut().map(
           |opt| {
@@ -877,14 +869,14 @@ impl Data {
         // The data isn't unsat at this point, need to add something so that
         // it's unsat.
         if let Some((pred, args)) = rhs {
-          let args = self.mk_sample(args).0 ;
+          let args = var_to::vals::new(args) ;
           self.add_pos_untracked(pred, args) ;
         } else {
           // The whole lhs is true, and implies false. Let's just add one of
           // the samples in the lhs.
           let mut lhs = lhs ;
           if let Some((pred, args)) = lhs.pop() {
-            let args = self.mk_sample(args).0 ;
+            let args = var_to::vals::new(args) ;
             self.add_neg_untracked(pred, args) ;
           } else {
             bail!("data was asked to add a `true => false` constraint")

@@ -1,4 +1,4 @@
-//! The teacher. Queries an SMT-solver to check candidates.
+//! Checks candidates and sends data to learner(s).
 //! 
 //! # TODO
 //!
@@ -92,10 +92,9 @@ pub fn teach(teacher: & mut Teacher) -> Res<
   // None at the beginning (broadcast).
   let mut learner: Option<LrnIdx> = None ;
 
-  log_debug!{ "  starting teaching loop" }
   'teach: loop {
 
-    info!{
+    log_verb! {
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
@@ -146,7 +145,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
               )
             }
           }
-          log!(@info "" )
+          log_verb! { "" }
         }
 
         if conf.teacher.step {
@@ -401,7 +400,7 @@ impl<'a> Teacher<'a> {
   pub fn broadcast(& self) -> bool {
     profile!{ self tick "sending" }
     let mut one_alive = false ;
-    log_info!{ "broadcasting..." }
+    log_verb! { "broadcasting..." }
     for & (ref sender, ref name, _) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
         if let Err(_) = sender.send(
@@ -413,8 +412,8 @@ impl<'a> Teacher<'a> {
         }
       }
     }
-    log_info!{ "done broadcasting..." }
-    profile!{ self mark "sending" }
+    log_verb! { "done broadcasting..." }
+    profile! { self mark "sending" }
     one_alive
   }
 
@@ -625,10 +624,10 @@ impl<'a> Teacher<'a> {
     }
 
     if_verb! {
-      log! { @info "  initial candidates:" }
+      log_verb! { "  initial candidates:" }
       for (pred, cand) in cands.index_iter() {
         if let Some(cand) = cand.as_ref() {
-          log! { @info
+          log_verb! {
             "    {}: {}", self.instance[pred], cand
           }
         }
@@ -740,9 +739,8 @@ impl<'a> Teacher<'a> {
     }
 
     if map.is_empty() {
-      info! {
-        "looking for counterexamples in implication clauses..."
-      }
+      log_verb! { "looking for counterexamples in implication clauses..." }
+
       for clause in instance.imp_clauses() {
         run!(clause, true)
       }

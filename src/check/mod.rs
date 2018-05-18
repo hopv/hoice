@@ -92,7 +92,7 @@ impl Input {
   pub fn of_file<P: AsRef<::std::path::Path>>(file: P) -> Res<Self> {
     use std::fs::OpenOptions ;
     let file = file.as_ref() ;
-    info!{
+    log_info!{
       "loading horn clause file {}...", conf.emph(file.to_string_lossy())
     }
     let mut buff = String::new() ;
@@ -122,7 +122,7 @@ impl Output {
   /// Loads some input data from a file.
   pub fn of_file(file: & str) -> Res<Self> {
     use std::fs::OpenOptions ;
-    info!{ "loading hoice output file {}...", conf.emph(file) }
+    log_info!{ "loading hoice output file {}...", conf.emph(file) }
     let mut buff = String::new() ;
     OpenOptions::new().read(true).open(file).chain_err(
       || format!( "while opening file {}", conf.emph(file) )
@@ -139,7 +139,7 @@ impl Output {
   /// Checks the signature of the predicates match the declarations of an input
   /// `smt2` file. Also checks that all predicates are defined *once*.
   pub fn check_consistency(& mut self, input: & Input) -> Res<()> {
-    info!{ "checking predicate signature consistency..." }
+    log_info!{ "checking predicate signature consistency..." }
     let mut map = HashMap::with_capacity( self.pred_defs.len() ) ;
     for & PredDef { ref pred, ref args, .. } in & self.pred_defs {
       let prev = map.insert(pred.clone(), args.clone()) ;
@@ -286,7 +286,7 @@ impl Data {
         println!("\")") ;
         println!("")
       } else if let & Some(false) = & res {
-        info!("clause {} is fine", count)
+        log_info!("clause {} is fine", count)
       } else {
         warn!(
           "clause {}'s check resulted in unknown, assuming it's fine", count

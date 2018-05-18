@@ -2,6 +2,7 @@
 //! between predicates.
 
 use common::* ;
+use var_to::terms::VarTermsSet ;
 use instance::preproc::utils ;
 
 /// Maps predicates to the predicates they depend on.
@@ -266,9 +267,9 @@ impl Graph {
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
         if_debug! {
-          log_debug! { "    following {}", _instance[pred] } ;
+          log_debug! { "following {}", _instance[pred] } ;
           for pred in tgts {
-            log_debug! { "    - {}", _instance[* pred] }
+            log_debug! { "- {}", _instance[* pred] }
           }
         }
 
@@ -292,7 +293,7 @@ impl Graph {
   /// Renames the quantified variables so that they don't clash.
   fn merge(
     instance: & Instance, pred: PrdIdx,
-    substs: & HTArgss,
+    substs: & VarTermsSet,
     lft: & Vec<(Quantfed, TTermSet)>,
     rgt: & Vec<(Quantfed, TTermSet)>
   ) -> Res< Vec<(Quantfed, TTermSet)> > {
@@ -305,11 +306,14 @@ impl Graph {
     'merge: for & (ref r_qvars, ref r_conj) in rgt {
       // Retrieve first legal index for new quantified variables.
       let mut first_index = first_index ;
-      for (idx, _) in r_qvars {
-        log_debug! { "    - rgt qvar {}", idx }
-        if * idx >= first_index { first_index = (1 + ** idx).into() }
+
+      if_debug! {
+        for (idx, _) in r_qvars {
+          log_debug! { "    - rgt qvar {}", idx }
+          if * idx >= first_index { first_index = (1 + ** idx).into() }
+        }
+        log_debug! { "    first legal index: {}", first_index }
       }
-      log_debug! { "    first legal index: {}", first_index }
 
       // Generate map for substitution and update left qvars.
       let mut map = VarHMap::with_capacity(0) ;
@@ -328,17 +332,18 @@ impl Graph {
           debug_assert!( prev.is_none() ) ;
           curr_qvar.inc()
         }
+
         if_debug! {
-          log_debug! { "    map {{" }
+          log_debug! { "map {{" }
           for (var, term) in & map {
-            log_debug! { "      {} -> {}", var.default_str(), term }
+            log_debug! { "  {} -> {}", var.default_str(), term }
           }
-          log_debug! { "    }}" }
-          log_debug! { "    qvars {{" }
+          log_debug! { "}}" }
+          log_debug! { "qvars {{" }
           for (var, typ) in & qvars {
-            log_debug! { "      {}: {}", var.default_str(), typ }
+            log_debug! { "  {}: {}", var.default_str(), typ }
           }
-          log_debug! { "    }}" }
+          log_debug! { "}}" }
         }
 
         conf.check_timeout() ? ;
@@ -351,7 +356,7 @@ impl Graph {
             conj.insert_term( term ) ;
           }
           for (pred, argss) in l_conj.preds() {
-            let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+            let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
             for args in argss {
               let mut nu_args = VarMap::with_capacity( args.len() ) ;
               for arg in args.iter() {
@@ -428,7 +433,7 @@ impl Graph {
 
       'clause_iter: for clause in clauses {
         let mut to_merge: Vec<(
-          PrdIdx, HTArgss, & Vec<(Quantfed, TTermSet)>
+          PrdIdx, VarTermsSet, & Vec<(Quantfed, TTermSet)>
         )> = Vec::with_capacity(7) ;
 
         let clause = & instance[* clause] ;
@@ -444,9 +449,10 @@ impl Graph {
           pred, args
         ) ? {
           utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log! { @debug
+            log_debug! {
               "from clause {}", clause.to_string_info(& instance.preds()) ?
             }
+
             if ! forced_inlining && ! tterms.preds().is_empty() {
               for (pred, def) in & res {
                 if tterms.preds().is_empty() { break }
@@ -473,21 +479,21 @@ impl Graph {
             } else {
 
               if_debug! {
-                log_debug! { "  qvars {{" }
+                log_debug! { "qvars {{" }
                 for (var, typ) in & qvars {
-                  log_debug! { "    {}: {}", var.default_str(), typ }
+                  log_debug! { "  {}: {}", var.default_str(), typ }
                 }
-                log_debug! { "  }}" }
-                log_debug! { "  conj {{" }
+                log_debug! { "}}" }
+                log_debug! { "conj {{" }
                 for term in tterms.terms() {
-                  log_debug! { "    {}", term }
+                  log_debug! { "  {}", term }
                 }
                 for (pred, argss) in tterms.preds() {
                   for args in argss {
-                    log_debug! { "    ({} {})", instance[* pred], args }
+                    log_debug! { "  ({} {})", instance[* pred], args }
                   }
                 }
-                log_debug! { "  }}" }
+                log_debug! { "}}" }
               }
 
               let mut curr = vec![ (qvars, tterms) ] ;
@@ -496,44 +502,44 @@ impl Graph {
                 conf.check_timeout() ? ;
                 if_debug! {
                   let mut first = true ;
-                  log_debug! { "  args for {} {{", instance[_this_pred] }
+                  log_debug! { "args for {} {{", instance[_this_pred] }
                   for (var, arg) in args.index_iter() {
-                    log_debug! { "    {} -> {}", var.default_str(), arg }
+                    log_debug! { "  {} -> {}", var.default_str(), arg }
                   }
-                  log_debug! { "  }}" }
-                  log_debug! { "  curr {{" }
+                  log_debug! { "}}" }
+                  log_debug! { "curr {{" }
                   for & (ref qv, ref tterms) in & curr {
                     if first { first = false } else { log_debug! { " " } }
                     for (var, typ) in qv {
-                      log_debug! { "    {}: {}", var.default_str(), typ }
+                      log_debug! { "  {}: {}", var.default_str(), typ }
                     }
                     for term in tterms.terms() {
-                      log_debug! { "    {}", term }
+                      log_debug! { "  {}", term }
                     }
                     for (pred, argss) in tterms.preds() {
                       for args in argss {
-                        log_debug! { "    ({} {})", instance[* pred], args }
+                        log_debug! { "  ({} {})", instance[* pred], args }
                       }
                     }
                   }
-                  log_debug! { "  }}" }
-                  log_debug! { "  def {{" }
+                  log_debug! { "}}" }
+                  log_debug! { "def {{" }
                   first = true ;
                   for & (ref qv, ref tterms) in p_def {
                     if first { first = false } else { log_debug! { " " } }
                     for (var, typ) in qv {
-                      log_debug! { "    {}: {}", var.default_str(), typ }
+                      log_debug! { "  {}: {}", var.default_str(), typ }
                     }
                     for term in tterms.terms() {
-                      log_debug! { "    {}", term }
+                      log_debug! { "  {}", term }
                     }
                     for (pred, argss) in tterms.preds() {
                       for args in argss {
-                        log_debug! { "    ({} {})", instance[* pred], args }
+                        log_debug! { "  ({} {})", instance[* pred], args }
                       }
                     }
                   }
-                  log_debug! { "  }}" }
+                  log_debug! { "}}" }
                 }
                 curr = Self::merge(
                   instance, pred, & argss, p_def, & curr
@@ -608,16 +614,16 @@ impl Graph {
       } else {
 
         if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
-          log_info! {
+          log_verb! {
             "  blow-up prediction for {}: {} + {} = {} / {}",
             instance[pred], this_pred_increase, increase,
             sum_increase, upper_bound
           }
           if sum_increase >= upper_bound {
-            log_info! { "  -> blows up" }
+            log_verb! { "  -> blows up" }
             keep_and_continue! { pred }
           } else {
-            log_info! { "  -> inlining" }
+            log_verb! { "  -> inlining" }
             increase = sum_increase ;
             let prev = res.insert( pred, def ) ;
             debug_assert! { prev.is_none() }

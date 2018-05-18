@@ -1,8 +1,10 @@
 //! A pre-instance wraps an instance and provides functionalities used by the
 //! pre-processing.
 
-use common::* ;
-use common::smt::{ SmtConj, SmtImpl } ;
+use common::{
+  *,
+  smt::{ SmtConj, SmtImpl },
+} ;
 use instance::Clause ;
 
 
@@ -1015,7 +1017,7 @@ impl<'a> PreInstance<'a> {
     for clause in clauses_to_rm {
       info.clauses_rmed += 1 ;
 
-      let pred_argss: Vec< HTArgs > = if let Some(
+      let pred_argss: Vec< VarTerms > = if let Some(
         argss
       ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
         argss.iter().map(|a| a.clone()).collect()
@@ -1148,7 +1150,7 @@ impl<'a> PreInstance<'a> {
   pub fn force_pred_right(
     & mut self, pred: PrdIdx,
     qvars: Quantfed,
-    pred_app: Option< (PrdIdx, HTArgs) >,
+    pred_app: Option< (PrdIdx, VarTerms) >,
     negated: TTermSet,
   ) -> Res<RedInfo> {
     self.check("before `force_pred_right`") ? ;
@@ -1314,7 +1316,7 @@ impl<'a> PreInstance<'a> {
     let mut to_add = Vec::with_capacity(17) ;
     let fls = term::fls() ;
 
-    info! {
+    log_verb! {
       "  {} appears in {} clause's lhs",
       conf.emph(& self[pred].name),
       self.instance.pred_to_clauses[pred].0.len()
@@ -1377,7 +1379,7 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    info! { "  adding {} clauses", to_add.len() }
+    log_verb! { "  adding {} clauses", to_add.len() }
 
     for mut clause in to_add {
       if let Some(index) = self.instance.push_clause(clause) ? {
@@ -2154,11 +2156,12 @@ impl ClauseSimplifier {
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
       debug_assert!( _prev.is_none() )
     }
-    // if_debug!{
-    //   for (rep, term) in & self.rep_to_stable_term {
-    //     log_debug!{ "    {} -> {}", rep, term }
-    //   }
-    // }
+
+    if_log!{ @4
+      for (rep, term) in & self.rep_to_stable_term {
+        log!{ @4 "    {} -> {}", rep, term }
+      }
+    }
 
     // Note that clause variable de-activation is done in this loop.
     // log_debug!{ "  completing substitution" }
@@ -2180,11 +2183,11 @@ impl ClauseSimplifier {
         }
       }
     }
-    // if_debug!{
-    //   for (rep, term) in & self.rep_to_stable_term {
-    //     log_debug!{ "    {} -> {}", rep, term }
-    //   }
-    // }
+    if_log!{ @4
+      for (rep, term) in & self.rep_to_stable_term {
+        log!{ @4 "    {} -> {}", rep, term }
+      }
+    }
 
     for term in self.terms_to_add.drain(0..) {
       clause.insert_term(term) ;

@@ -1,7 +1,8 @@
 //! Macros.
 
 
-/// If the input is an error, prints it and panics.
+/// If the input is an error, prints it SMT-LIB-style and panics.
+#[macro_export]
 macro_rules! expect {
   ($e:expr => |$err:pat| $($action:tt)*) => (
     match $e {
@@ -20,7 +21,9 @@ macro_rules! expect {
     }
   ) ;
 }
-/// Fails with some message.
+
+/// Fails with some message, SMT-LIB-style.
+#[macro_export]
 macro_rules! fail_with {
   ( $($head:expr),* $(,)* $( ; $($blah:expr),* $(,)* )* $(;)* ) => ({
     let err: Res<()> = Err(
@@ -38,6 +41,9 @@ macro_rules! fail_with {
 
 
 /// Bails with unsat.
+///
+/// Logs unsat (`@info`) and the input message if any (`@debug`).
+#[macro_export]
 macro_rules! unsat {
   ($($stuff:tt)*) => ({
     log! { @info "unsat" } ;
@@ -49,6 +55,7 @@ macro_rules! unsat {
 
 
 /// Wraps stuff in a block, usually to please borrow-checking.
+#[macro_export]
 macro_rules! scoped {
   ($($tokens:tt)*) => ({
     $($tokens)*
@@ -56,6 +63,7 @@ macro_rules! scoped {
 }
 
 /// Chains some errors and bails.
+#[macro_export]
 macro_rules! err_chain {
   ($head:expr $(=> $tail:expr)*) => ({
     let mut err: Error = $head.into() ;
@@ -67,17 +75,41 @@ macro_rules! err_chain {
 }
 
 
-/// Guards something by the log level.
+/// Guards something by a log level, inactive in bench mode.
+#[cfg(not(feature = "bench"))]
+#[macro_export]
 macro_rules! if_log {
-  (@$flag:tt $($stuff:tt)*) => (
-    if log!(|cond_of| $flag) {
-      $($stuff)*
-    }
+  ( @$flag:tt then { $($then:tt)* } else { $($else:tt)* } ) => (
+    if log!(|cond_of| $flag) { $($then)* } else { $($else)* }
   ) ;
+
+  (@$flag:tt $($stuff:tt)*) => (
+    if_log! { @$flag then { $($stuff)* } else { () } }
+  ) ;
+}
+#[cfg(feature = "bench")]
+#[macro_export]
+macro_rules! if_log {
+  ( @$flag:tt then { $($then:tt)* } else { $($else:tt)* } ) => (
+    $($else)*
+  ) ;
+  (@$flag:tt $($stuff:tt)*) => (()) ;
 }
 
 
-/// Logging macro.
+/** Logging macro, inactive in bench mode.
+
+| Log level | active when...     | prefix (`_` are spaces)             |
+|-----------|--------------------|:------------------------------------|
+| `@0`      | `true`             | `";_"`                              |
+| `@info`   | `conf.verb >= 1`   | `";_"`                              |
+| `@verb`   | `conf.verb >= 2`   | `";___"`                            |
+| `@debug`  | `conf.verb >= 3`   | `";_____"`                          |
+| `@<i>`    | `conf.verb >= <i>` | `";_"` followed by `<i> * 2` spaces |
+
+*/
+#[macro_export]
+#[cfg(not(feature = "bench"))]
 macro_rules! log {
 
   (|pref_of| debug) => (";     ") ;
@@ -130,22 +162,43 @@ macro_rules! log {
     ()
   }) ;
 }
+#[cfg(feature = "bench")]
+macro_rules! log {
+  (|pref_of| $($stuff:tt)*) => ("") ;
+  (|cond_of| $($stuff:tt)*) => (false) ;
+  ($($stuff:tt)*) => (()) ;
+}
 
 
-/// In verbose mode, same as `println` but with a "; " prefix.
-macro_rules! info {
+/// Same as `log! { @verb ... }`.
+#[macro_export]
+macro_rules! log_verb {
   ( $($stuff:tt)* ) => (
     log! { @verb $($stuff)* }
   ) ;
 }
-/// In debug mode, same as `println` but with a "; " prefix.
+/// Same as `log! { @info ... }`.
+#[macro_export]
+macro_rules! log_info {
+  ( $($stuff:tt)* ) => (
+    log! { @info $($stuff)* }
+  ) ;
+}
+/// Same as `log! { @debug ... }`.
+#[macro_export]
 #[allow(unused_macros)]
-macro_rules! debug {
+macro_rules! log_debug {
   ( $($stuff:tt)* ) => (
     log! { @debug $($stuff)* }
   ) ;
 }
-/// Formats a warning.
+
+
+
+/// Prints a warning SMT-LIB-style.
+///
+/// **Active in bench mode.**
+#[macro_export]
 macro_rules! warn {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     println!(
@@ -160,31 +213,6 @@ macro_rules! warn {
 }
 
 
-
-/// `Int` printer.
-macro_rules! int_to_smt {
-  ($writer:expr, $i:expr) => (
-    if $i.is_negative() {
-      write!($writer, "(- {})", - $i)
-    } else {
-      write!($writer, "{}", $i)
-    }
-  )
-}
-/// `Rat` printer.
-macro_rules! rat_to_smt {
-  ($writer:expr, $r:expr) => ({
-    let (num, den) = ( $r.numer(), $r.denom() ) ;
-    debug_assert!( ! den.is_negative() ) ;
-    if ! num.is_negative() {
-      write!($writer, "(/ {} {})", num, den)
-    } else {
-      write!($writer, "(- (/ {} {}))", - num, den)
-    }
-  })
-}
-
-
 /// Does something if not in bench mode.
 #[macro_export]
 #[cfg(not (feature = "bench") )]
@@ -192,79 +220,37 @@ macro_rules! if_not_bench {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
     $($then)*
   ) ;
-  ($($blah:tt)*) => ($($blah)*) ;
+  ($($stuff:tt)*) => (
+    if_not_bench! {
+      then { $($stuff)* } else { () }
+    }
+  ) ;
 }
+/// Does something if not in bench mode.
 #[cfg(feature = "bench")]
 macro_rules! if_not_bench {
   ( then { $($then:tt)* } else { $($else:tt)* } ) => (
     $($else)*
   ) ;
-  ($($blah:tt)*) => (()) ;
+  ($($stuff:tt)*) => (()) ;
 }
 
 
-/// Guards something by an `if conf.verbose()`. Inactive in bench mode.
+/// Same as `if_log! { @verb ... }`.
 #[macro_export]
-#[cfg(not(feature = "bench"))]
 macro_rules! if_verb {
-  ($($blah:tt)*) => (
-    if conf.verbose() {
-      $($blah)*
-    }
-  ) ;
-}
-#[cfg(feature = "bench")]
-macro_rules! if_verb {
-  ($($blah:tt)*) => (()) ;
+  ($($stuff:tt)*) => ( if_log! { @verb $($stuff)* } ) ;
 }
 
 
-/// Logs at info level using `info!`. Inactive in bench mode.
-#[cfg(feature = "bench")]
-macro_rules! log_info {
-  ($($tt:tt)*) => (()) ;
-}
-#[cfg(not(feature = "bench"))]
-macro_rules! log_info {
-  ($($tt:tt)*) => ( info!{$($tt)*} ) ;
-}
-
-
-/// Logs at debug level using `debug!`. Inactive in bench mode.
-#[cfg( feature = "bench" )]
-macro_rules! log_debug {
-  ($($tt:tt)*) => (()) ;
-}
-#[cfg( not(feature = "bench") )]
-macro_rules! log_debug {
-  ($($tt:tt)*) => ( debug!{$($tt)*} ) ;
-}
-
-
-/// Does something if in debug mode.
+/// Same as `if_log! { @debug ... }` .
 #[macro_export]
-#[cfg( not(feature = "bench") )]
 macro_rules! if_debug {
-  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
-    $($then)*
-  ) ;
-  ($($blah:tt)*) => (
-    if conf.debug() {
-      $($blah)*
-    }
-  ) ;
-}
-#[cfg(feature = "bench")]
-#[allow(unused_macros)]
-macro_rules! if_debug {
-  ( then { $($then:tt)* } else { $($else:tt)* } ) => (
-    $($else)*
-  ) ;
-  ($($blah:tt)*) => (()) ;
+  ($($stuff:tt)*) => ( if_log! { @debug $($stuff)* } ) ;
 }
 
 
-/// Profiling macro.
+/// Profiling macro, inactive in  bench mode.
 ///
 /// If passed `self`, assumes `self` has a `_profiler` field.
 #[macro_export]
@@ -314,13 +300,9 @@ macro_rules! profile {
 }
 
 
-/// Messaging macro, compiled to nothing in `release`.
-#[macro_export]
-#[cfg( feature = "bench" )]
-macro_rules! msg {
-  ( $($tt:tt)* ) => (()) ;
-}
+/// Messaging macro, compiled to nothing in bench mode.
 #[cfg( not(feature = "bench") )]
+#[macro_export]
 macro_rules! msg {
   ( @$flag:tt $slf:expr => $($tt:tt)* ) => (
     if log!(|cond_of| $flag) {
@@ -346,6 +328,11 @@ macro_rules! msg {
   ( $slf:expr => $($tt:tt)* ) => (
     msg!{ $slf => format!( $($tt)* ) }
   ) ;
+}
+#[macro_export]
+#[cfg( feature = "bench" )]
+macro_rules! msg {
+  ( $($tt:tt)* ) => (()) ;
 }
 
 
@@ -399,6 +386,34 @@ macro_rules! preproc_dump {
       $instance.dump_as_smt2(& mut file, $blah)
     } else { Ok(()) }
   ) ;
+}
+
+
+
+/// `Int` writer.
+#[macro_export]
+macro_rules! int_to_smt {
+  ($writer:expr, $i:expr) => (
+    if $i.is_negative() {
+      write!($writer, "(- {})", - $i)
+    } else {
+      write!($writer, "{}", $i)
+    }
+  )
+}
+
+/// `Rat` writer.
+#[macro_export]
+macro_rules! rat_to_smt {
+  ($writer:expr, $r:expr) => ({
+    let (num, den) = ( $r.numer(), $r.denom() ) ;
+    debug_assert!( ! den.is_negative() ) ;
+    if ! num.is_negative() {
+      write!($writer, "(/ {} {})", num, den)
+    } else {
+      write!($writer, "(- (/ {} {}))", - num, den)
+    }
+  })
 }
 
 

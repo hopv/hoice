@@ -41,72 +41,60 @@ impl Cxt {
 
   /// Log-debugs cvar_to_pvar.
   #[cfg(feature = "bench")]
-  pub fn log_debug_internal(
+  fn log_debug_internal(
     & self, _: & Instance,
     _: & ::instance::instance::Clause, _: & str
   ) {}
   #[cfg(not (feature = "bench") )]
-  pub fn log_debug_internal(
+  fn log_debug_internal(
     & self, instance: & Instance,
     clause: & ::instance::instance::Clause, pref: & str
   ) {
     if_debug! {
-      macro_rules! logd {
-        ($s:expr) => ( logd! { $s, } ) ;
-        ($s:expr, $($tt:tt)*) => (
-          log_debug! { $s, pref, $($tt)* }
-        ) ;
-      }
-      logd! { "{}cvar_to_pvar {{" }
+      log_debug! { "{}cvar_to_pvar {{", pref }
       for (cvar, map) in & self.cvar_to_pvar {
-        logd! { "{}  {} {{", clause.vars[* cvar] }
+        log_debug! { "{}  {} {{", pref, clause.vars[* cvar] }
         for (pred, vars) in map {
           let mut s = String::new() ;
           for var in vars {
             s.push_str( & format!(" {}", var.default_str()) )
           }
-          logd! { "{}    {}:{}", instance[* pred], s }
+          log_debug! { "{}    {}:{}", pref, instance[* pred], s }
         }
-        logd! { "{}  }}" }
+        log_debug! { "{}  }}", pref }
       }
-      logd! { "{}}}" }
+      log_debug! { "{}}}", pref }
     }
   }
 
   /// Log-debugs the context.
   #[cfg(feature = "bench")]
-  pub fn log_debug(& self, _: & Instance, _: & str) {}
+  fn log_debug(& self, _: & Instance, _: & str) {}
   #[cfg(not (feature = "bench") )]
-  pub fn log_debug(& self, instance: & Instance, pref: & str) {
+  fn log_debug(& self, instance: & Instance, pref: & str) {
     if_debug! {
-      macro_rules! logd {
-        ($s:expr) => ( logd! { $s, } ) ;
-        ($s:expr, $($tt:tt)*) => (
-          log_debug! { $s, pref, $($tt)* }
-        ) ;
-      }
-      logd! { "{}dep {{" }
+      log_debug! { "{}dep {{", pref }
       for class in & self.dep {
-        logd! { "{}  {{" }
+        log_debug! { "{}  {{", pref }
         for (pred, vars) in class {
           let mut s = String::new() ;
           for var in vars {
             s.push_str( & format!(" {}", var.default_str()) )
           }
-          logd! { "{}    {}:{}", instance[* pred], s }
+          log_debug! { "{}    {}:{}", pref, instance[* pred], s }
         }
-        logd! { "{}  }}" }
+        log_debug! { "{}  }}", pref }
       }
-      logd! { "{}}}" }
-      logd! { "{}to_keep {{" }
+      log_debug! { "{}}}", pref }
+      log_debug! { "{}to_keep {{", pref }
       for (pred, vars) in & self.keep {
         let mut s = String::new() ;
         for var in vars {
           s.push_str( & format!(" {}", var.default_str()) )
         }
-        logd! { "{} {}:{}", instance[* pred], s }
+        log_debug! { "{} {}:{}", pref, instance[* pred], s }
       }
-      logd! { "{}}}" }
+      log_debug! { "{}}}", pref }
     }
   }
 
@@ -372,16 +360,16 @@ impl Cxt {
     }
 
     if_debug! {
-      log_debug! { "  extraction result {{" }
+      log_debug! { "extraction result {{" }
       for (pred, vars) in & res {
         let mut s = String::new() ;
         for var in vars {
           s.push_str(" ") ;
           s.push_str( & var.default_str() )
         }
-        log_debug! { "    {}:{}", instance[* pred], s }
+        log_debug! { "  {}:{}", instance[* pred], s }
       }
-      log_debug! { "  }}" }
+      log_debug! { "}}" }
     }
 
     Ok(res)
@@ -431,13 +419,13 @@ pub fn to_keep(
     }
     cxt.check(instance) ? ;
 
-    // cxt.log_debug_internal(instance, clause, "    ") ;
+    cxt.log_debug_internal(instance, clause, "  ") ;
 
     cxt.commit() ;
 
     conf.check_timeout() ? ;
 
-    // cxt.log_debug(instance, "    ")
+    cxt.log_debug(instance, "  ")
   }
 
   // println!("dependencies:") ;

@@ -75,7 +75,7 @@ pub fn work(
         "by preprocessing"
       },
       Either::Right(Some(this_model)) => {
-        log! { @info "sat by preproc\n\n" }
+        log_info! { "sat by preproc\n\n" }
         model! { add this_model }
 
         continue 'split_loop
@@ -86,7 +86,7 @@ pub fn work(
       if conf.split_step {
         pause("to continue", _profiler) ;
       } else {
-        log! { @info "Skipping learning..." }
+        log_info! { "Skipping learning..." }
       }
 
       continue 'split_loop
@@ -94,7 +94,7 @@ pub fn work(
     } else if conf.split_step {
       pause("to start solving", _profiler) ;
     } else {
-      log! { @info "Starting learning..." }
+      log_info! { "Starting learning..." }
     }
 
     let res = profile!(
@@ -105,7 +105,7 @@ pub fn work(
 
     match res {
       Either::Left(candidates) => {
-        log! { @info "sat\n\n" }
+        log_info! { "sat\n\n" }
         let mut this_model = instance.model_of(candidates) ? ;
         // profile! { |_profiler| tick "waiting" }
         // while Arc::strong_count(& instance) != 1 {}
@@ -211,12 +211,12 @@ impl Splitter {
 
       if_verb! {
         if conf.preproc.split_sort {
-          log! { @verb
+          log_verb! {
             "sorted clauses:"
           }
           for & (clause, count) in clauses.iter() {
-            log! { @verb "#{} ({})", clause, count }
-            log! { @debug
+            log_verb! { "#{} ({})", clause, count }
+            log_debug! {
               "{}", instance[clause].to_string_info(instance.preds()).unwrap()
             }
           }

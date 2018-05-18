@@ -1,8 +1,4 @@
-/*! Concrete arguments for predicate applications.
-
-# TODO
-
-- factor the hashcons factory like term, val, typ...
+/*! Hashconsed maps from variables to terms.
 */
 
 use std::cmp::Ordering ;
@@ -24,11 +20,12 @@ lazy_static! {
 }
 
 /// Creates hashconsed arguments.
-pub fn mk<RA: Into<RVarVals>>(args: RA) -> VarVals {
+pub fn new<RA: Into<RVarVals>>(args: RA) -> VarVals {
   factory.mk( args.into() )
 }
-/// Creates hashconsed arguments, returns `true` if the arguments are new.
-pub fn mk_is_new<RA: Into<RVarVals>>(args: RA) -> (VarVals, bool) {
+/// Creates hashconsed arguments, returns `true` if the arguments are actually
+/// new.
+pub fn new_is_new<RA: Into<RVarVals>>(args: RA) -> (VarVals, bool) {
   factory.mk_is_new( args.into() )
 }
 /// Creates hashconsed arguments from iterators.
@@ -39,7 +36,7 @@ pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
   for val in args.into_iter() {
     map.push( val.into() )
   }
-  mk(map)
+  new(map)
 }
 
 
@@ -65,7 +62,7 @@ impl ::std::ops::DerefMut for RVarVals {
 }
 impl From< VarMap<Val> > for RVarVals {
   fn from(map: VarMap<Val>) -> Self {
-    RVarVals::new(map)
+    RVarVals { map }
   }
 }
 impl Evaluator for RVarVals {
@@ -78,14 +75,10 @@ impl Evaluator for RVarVals {
 }
 
 impl RVarVals {
-  /// Constructor.
-  pub fn new(map: VarMap<Val>) -> Self {
-    RVarVals { map }
-  }
 
   /// Constructor with some capacity.
   pub fn with_capacity(capa: usize) -> Self {
-    Self::new( VarMap::with_capacity(capa) )
+    Self { map: VarMap::with_capacity(capa) }
   }
 
   /// True if at least one value is `Val::N`.
@@ -112,8 +105,8 @@ impl RVarVals {
     model: Vec<(VarIdx, T, Val)>,
     partial: bool,
   ) -> Res<Self> {
-    let mut slf = RVarVals::new(
-      info.iter().map(
+    let mut slf = RVarVals {
+      map: info.iter().map(
         |info| if partial {
           val::none(info.typ.clone())
         } else {
@@ -121,7 +114,7 @@ impl RVarVals {
           default
         }
       ).collect()
-    ) ;
+    } ;
     for (var, _, val) in model {
       slf[var] = val.cast(& info[var].typ) ? ;
     }

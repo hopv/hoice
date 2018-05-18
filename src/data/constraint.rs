@@ -1,5 +1,5 @@
 use common::* ;
-use var::vals::VarValsSet ;
+use var_to::vals::VarValsSet ;
 
 use super::Sample ;
 

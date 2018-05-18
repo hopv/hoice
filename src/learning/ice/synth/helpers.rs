@@ -19,7 +19,6 @@ macro_rules! apply {
 /// - `t_1 = t_2`, `t_1 = - t_2`,
 /// - `t_1 + t_2 >= n`, `t_1 + t_2 <= n`,
 /// - `t_1 - t_2 >= n`, `t_1 - t_2 <= n`,
-#[macro_export]
 macro_rules! simple_arith_synth {
   ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
 
@@ -83,7 +82,6 @@ macro_rules! simple_arith_synth {
 }
 
 /// Non-linear arithmetic synthesis for integer terms.
-#[macro_export]
 macro_rules! arith_synth_non_lin {
   ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
     let zero: Int = 0.into() ;
@@ -137,7 +135,6 @@ macro_rules! arith_synth_non_lin {
 /// - `- t_1 + t_2 - t_3 <op> n`
 /// - `- t_1 - t_2 + t_3 <op> n`
 /// - `- t_1 - t_2 - t_3 <op> n`
-#[macro_export]
 macro_rules! arith_synth_three_terms {
   ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
     {

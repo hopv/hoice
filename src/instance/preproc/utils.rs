@@ -1,6 +1,7 @@
 //! Helper types and functions for preprocessing.
 
 use common::* ;
+use var_to::terms::VarTermsSet ;
 
 
 /// Result of extracting the terms for a predicate application in a clause.
@@ -83,10 +84,10 @@ pub enum TExtractRes<T> {
 /// needed but `quantifiers` is false.
 fn args_of_pred_app(
   quantifiers: bool, var_info: & VarInfos,
-  args: & HTArgs,
+  args: & VarTerms,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes<HTArgs> > {
+) -> Res< TExtractRes<VarTerms> > {
   log! { @6 "args_of_pred_app ({})", quantifiers }
   let mut nu_args = VarMap::with_capacity( args.len() ) ;
   for arg in args.iter() {
@@ -116,7 +117,7 @@ fn terms_of_pred_apps<'a>(
   pred: PrdIdx, app_vars: & mut VarSet,
   map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx
-) -> Res< TExtractRes< Option<& 'a HTArgss > > > {
+) -> Res< TExtractRes< Option<& 'a VarTermsSet > > > {
   log! { @6 "terms_of_pred_apps" }
   let mut res = None ;
   for (prd, argss) in src {
@@ -264,7 +265,7 @@ F: Fn(Term) -> Term {
 /// - more doc with examples
 pub fn terms_of_app(
   quantifiers: bool, var_info: & VarInfos,
-  instance: & Instance, pred: PrdIdx, args: & HTArgs,
+  instance: & Instance, pred: PrdIdx, args: & VarTerms,
   fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
 ) -> Res<
   Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
@@ -336,8 +337,8 @@ pub fn terms_of_app(
 pub fn terms_of_lhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  rhs: Option<(PrdIdx, & HTArgs)>,
-  pred: PrdIdx, args: & HTArgs,
+  rhs: Option<(PrdIdx, & VarTerms)>,
+  pred: PrdIdx, args: & VarTerms,
 ) -> Res<
   ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
 > {
@@ -458,7 +459,7 @@ pub fn terms_of_lhs_app(
 pub fn terms_of_rhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarInfos,
   lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
-  pred: PrdIdx, args: & HTArgs,
+  pred: PrdIdx, args: & VarTerms,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log! { @4 "terms of rhs app on {} {}", instance[pred], args }
 

@@ -1,6 +1,7 @@
 //! Contains the clause structure for encapsulation.
 
 use common::* ;
+use var_to::terms::VarTermsSet ;
 use instance::info::VarInfo ;
 
 /// Creates a clause.
@@ -211,7 +212,7 @@ impl Clause {
   #[inline]
   pub fn drop_lhs_pred(
     & mut self, pred: PrdIdx
-  ) -> Option< HTArgss > {
+  ) -> Option< VarTermsSet > {
     self.lhs_preds.remove(& pred)
   }
 
@@ -220,7 +221,7 @@ impl Clause {
   /// Returns true if the predicate application is new.
   #[inline]
   pub fn insert_pred_app(
-    & mut self, pred: PrdIdx, args: HTArgs
+    & mut self, pred: PrdIdx, args: VarTerms
   ) -> bool {
     self.lhs_preds.insert_pred_app(pred, args)
   }
@@ -345,22 +346,22 @@ impl Clause {
   #[inline]
   pub fn drain_lhs_preds(
     & mut self
-  ) -> ::std::collections::hash_map::Drain<PrdIdx, HTArgss> {
+  ) -> ::std::collections::hash_map::Drain<PrdIdx, VarTermsSet> {
     self.lhs_preds.drain()
   }
 
   /// LHS accessor for a predicate, mutable.
   #[inline]
-  pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut HTArgss > {
+  pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut VarTermsSet > {
     self.lhs_preds.get_mut(& pred)
   }
 
   /// Maps over the arguments of a predicate in the lhs.
   #[inline]
   pub fn lhs_map_args_of<F>(& mut self, pred: PrdIdx, mut f: F)
-  where F: FnMut(& HTArgs) -> HTArgs {
+  where F: FnMut(& VarTerms) -> VarTerms {
     if let Some(argss) = self.lhs_preds.get_mut(& pred) {
-      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
       for args in argss.iter() {
         nu_argss.insert( f(args) ) ;
       }
@@ -379,7 +380,7 @@ impl Clause {
 
   /// RHS accessor.
   #[inline]
-  pub fn rhs(& self) -> Option<(PrdIdx, & HTArgs)> {
+  pub fn rhs(& self) -> Option<(PrdIdx, & VarTerms)> {
     if let Some((prd, ref args)) = self.rhs {
       Some((prd, args))
     } else {
@@ -388,7 +389,7 @@ impl Clause {
   }
   /// RHS accessor, mutable.
   #[inline]
-  pub fn rhs_mut(& mut self) -> Option<(PrdIdx, & mut HTArgs)> {
+  pub fn rhs_mut(& mut self) -> Option<(PrdIdx, & mut VarTerms)> {
     if let Some(& mut (pred, ref mut args)) = self.rhs.as_mut() {
       Some((pred, args))
     } else {
@@ -398,7 +399,7 @@ impl Clause {
   /// Map over the arguments of a predicate in the rhs.
   #[inline]
   pub fn rhs_map_args<F>(& mut self, mut f: F)
-  where F: FnMut(PrdIdx, & HTArgs) -> (PrdIdx, HTArgs) {
+  where F: FnMut(PrdIdx, & VarTerms) -> (PrdIdx, VarTerms) {
     if let Some(& mut (ref mut pred, ref mut args)) = self.rhs.as_mut() {
       let (nu_pred, mut nu_args) = f(* pred, args) ;
       * args = nu_args ;
@@ -408,7 +409,7 @@ impl Clause {
 
   /// Iterator over all predicate applications (including the rhs).
   pub fn all_pred_apps_do<F>(& self, mut f: F) -> Res<()>
-  where F: FnMut(PrdIdx, & HTArgs) -> Res<()> {
+  where F: FnMut(PrdIdx, & VarTerms) -> Res<()> {
     for (pred, argss) in & self.lhs_preds {
       for args in argss {
         f(* pred, args) ?
@@ -435,7 +436,7 @@ impl Clause {
 
   /// Forces the RHS of a clause.
   #[inline]
-  pub fn set_rhs(& mut self, pred: PrdIdx, args: HTArgs) -> Res<()> {
+  pub fn set_rhs(& mut self, pred: PrdIdx, args: VarTerms) -> Res<()> {
     let mut vars = VarSet::new() ;
     for arg in args.iter() {
       term::map_vars(arg, |v| { vars.insert(v) ; () })
@@ -606,7 +607,7 @@ impl Clause {
       changed = changed || b
     }
     for (_, argss) in & mut self.lhs_preds {
-      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
       debug_assert!( nu_argss.is_empty() ) ;
       for args in argss.iter() {
         let mut nu_args = VarMap::with_capacity( args.len() ) ;
@@ -693,7 +694,7 @@ impl Clause {
   pub fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
-  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
 
     write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
     let mut inactive = 0 ;

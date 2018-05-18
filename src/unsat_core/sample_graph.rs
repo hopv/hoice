@@ -5,28 +5,23 @@ use std::borrow::Borrow ;
 use common::{
   *,
   smt::FullParser as Parser,
-  var::vals::{ VarValsMap, VarValsSet },
+  var_to::vals::{ VarValsMap, VarValsSet },
 } ;
+
 use unsat_core::* ;
-use term::args::HTArgs ;
 
 
-
-
-
-
-
-/// Maps formal arguments to actual arguments.
-pub type FArgMap = HConMap<HTArgs, VarVals> ;
-/// Maps formal arguments to Origins.
-pub type OFArgMap = HConMap<HTArgs, Vec<Origin>> ;
+/// Maps term arguments to concrete ones.
+pub type TArgMap = HConMap<VarTerms, VarVals> ;
+/// Maps term arguments to Origins.
+pub type OTArgMap = HConMap<VarTerms, Vec<Origin>> ;
 
 /// An optional rhs.
-pub type Rhs = Option<(PrdIdx, HTArgs, VarVals)> ;
+pub type Rhs = Option<(PrdIdx, VarTerms, VarVals)> ;
 
 
 /// The origin of a sample is a clause and some samples for activating the rhs.
-type Origin = (ClsIdx, PrdHMap< FArgMap >) ;
+type Origin = (ClsIdx, PrdHMap< TArgMap >) ;
 
 
 
@@ -57,7 +52,7 @@ impl_fmt! {
 /// Known samples: positive or negative.
 pub struct KnownSamples {
   /// Positive samples.
-  pos: PrdHMap< VarValsMap<(HTArgs, Origin)> >,
+  pos: PrdHMap< VarValsMap<(VarTerms, Origin)> >,
   /// Negative samples.
   neg: PrdHMap< VarValsMap<(Rhs, Origin)> >,
 }
@@ -123,7 +118,7 @@ impl KnownSamples {
   /// Gets the origin of a positive sample.
   pub fn get_pos<P: Borrow<PrdIdx>>(
     & self, pred: P, args: & VarVals
-  ) -> Option<& (HTArgs, Origin)> {
+  ) -> Option<& (VarTerms, Origin)> {
     self.pos.get( pred.borrow() ).and_then(
       |map| map.get(args)
     )
@@ -174,7 +169,7 @@ impl KnownSamples {
   /// If the sample is already registered as positive, overwrites the old
   /// origin.
   pub fn add_pos(
-    & mut self, pred: PrdIdx, fargs: HTArgs, args: VarVals, origin: Origin
+    & mut self, pred: PrdIdx, fargs: VarTerms, args: VarVals, origin: Origin
   ) -> Option<VarVals> {
     let res = self.neg.get(& pred).and_then(
       |map| map.keys().find(
@@ -214,8 +209,8 @@ impl KnownSamples {
 
 
   pub fn update(
-    & mut self, rhs: Option<(PrdIdx, & HTArgs, & VarVals)>,
-    lhs: & PrdHMap<FArgMap>,
+    & mut self, rhs: Option<(PrdIdx, & VarTerms, & VarVals)>,
+    lhs: & PrdHMap<TArgMap>,
     clause: ClsIdx,
   ) -> Either<
     Option<bool>, (PrdIdx, VarVals, VarVals)
@@ -375,7 +370,7 @@ pub struct TraceFrame {
   /// Optional rhs.
   pub rhs: Rhs,
   /// Antecedents.
-  pub lhs: PrdHMap<FArgMap>,
+  pub lhs: PrdHMap<TArgMap>,
 }
 
 impl TraceFrame {
@@ -388,7 +383,7 @@ impl TraceFrame {
     pred: PrdIdx,
     args: VarVals,
     rhs: Rhs,
-    lhs: PrdHMap<FArgMap>,
+    lhs: PrdHMap<TArgMap>,
   ) -> Self {
     TraceFrame { clause, values, polarity, pred, args, rhs, lhs }
   }
@@ -611,7 +606,7 @@ false at the same time.
 pub struct SampleGraph {
   /// Maps samples to the clause and the samples for this clause they come
   /// from.
-  graph: PrdHMap< VarValsMap< OFArgMap > >,
+  graph: PrdHMap< VarValsMap< OTArgMap > >,
   /// Negative samples.
   neg: Vec<Origin>,
 }
@@ -633,7 +628,7 @@ impl SampleGraph {
       ) ;
       for (args, origins) in map {
         let target = pred_target.entry(args).or_insert_with(
-          || OFArgMap::with_capacity(origins.len())
+          || OTArgMap::with_capacity(origins.len())
         ) ;
         for (fargs, origins) in origins {
           let target = target.entry(fargs).or_insert_with(
@@ -657,8 +652,8 @@ impl SampleGraph {
 
   /// Adds traceability for a sample.
   pub fn add(
-    & mut self, prd: PrdIdx, fargs: HTArgs, args: VarVals,
-    cls: ClsIdx, samples: PrdHMap<FArgMap>,
+    & mut self, prd: PrdIdx, fargs: VarTerms, args: VarVals,
+    cls: ClsIdx, samples: PrdHMap<TArgMap>,
   ) {
     if_log! { @3
       log! { @3
@@ -676,7 +671,7 @@ impl SampleGraph {
     self.graph.entry(prd).or_insert_with(
       || VarValsMap::new()
     ).entry(args).or_insert_with(
-      || OFArgMap::new()
+      || OTArgMap::new()
     ).entry(fargs).or_insert_with(
       || vec![]
     ).push( (cls, samples) )
@@ -684,7 +679,7 @@ impl SampleGraph {
 
   /// Adds traceability for a negative sample.
   pub fn add_neg(
-    & mut self, cls: ClsIdx, samples: PrdHMap<FArgMap>
+    & mut self, cls: ClsIdx, samples: PrdHMap<TArgMap>
   ) {
     self.neg.push( (cls, samples) )
   }
@@ -1041,128 +1036,5 @@ impl SampleGraph {
 
     writeln!(w, "{}}}", pref)
   }
-
-
-
-  // /// Writes an unsat core.
-  // pub fn write_core<W: Write>(
-  //   & self, w: & mut W, instance: & Instance, source: & UnsatSource
-  // ) -> Res<()> {
-  //   log! { @debug "retrieving core..." }
-  //   if_log! { @3
-  //     self.write(& mut stdout(), ";     ", instance) ?
-  //   }
-  //   let core = self.unsat_core_for(instance, source) ? ;
-
-  //   log! { @debug "core length is {}", core.len() }
-
-  //   log! { @debug "retrieving definitions..." }
-  //   let empty_candidates = PrdHMap::with_capacity( instance.preds().len() ) ;
-  //   let definitions = instance.extend_model(empty_candidates) ? ;
-
-  //   writeln!(w, "(") ? ;
-
-  //   // Write definitions.
-  //   writeln!(w, "  ( ; Predicate definitions, obtained by pre-processing.") ? ;
-  //   instance.write_definitions(w, "    ", & definitions) ? ;
-  //   writeln!(w, "  )") ? ;
-
-  //   // Write the core itself.
-  //   writeln!(w, "  ( ; Trace of clauses explaining the contradiction.") ? ;
-  //   for (clause, vals) in core {
-  //     let original_clause = instance[clause].from() ;
-  //     if let Some(name) = instance.name_of_old_clause(original_clause) {
-  //       writeln!(w, "    ({} (", name) ? ;
-  //       for (var, val) in vals {
-  //         writeln!(
-  //           w, "      (define-fun {} () {} {})",
-  //           instance[clause][var], instance[clause][var].name, val
-  //         ) ?
-  //       }
-  //       writeln!(w, "    ) )") ?
-  //     }
-  //   }
-  //   writeln!(w, "  )") ? ;
-
-  //   writeln!(w, ")") ? ;
-
-  //   Ok(())
-  // }
-
-
-
-  // /// Retrieves an unsat core from a sample expected to be false.
-  // pub fn unsat_core_for(
-  //   & self, instance: & Instance, samples: & Vec<(PrdIdx, VarVals)>
-  // ) -> Res<UnsatCore> {
-  //   use common::smt::{
-  //     FullParser as Parser, SmtConj, EqConj
-  //   } ;
-
-  //   log! { @4 "retrieving trace..." }
-  //   let trace = self.trace(samples) ? ;
-
-  //   let mut core = Vec::with_capacity( trace.len() ) ;
-
-  //   let mut solver = conf.solver.spawn(
-  //     "core_extraction", Parser, & instance
-  //   ) ? ;
-
-  //   log! { @4 "extracting quantified variables' values..." }
-
-  //   for (clause_idx, pred, rhs_sample, lhs) in trace {
-  //     log! { @4 "working on clause #{}", clause_idx }
-  //     let clause = & instance[clause_idx] ;
-  //     solver.comment(
-  //       & format!("Working on clause #{}", clause_idx)
-  //     ) ? ;
-
-  //     solver.push(1) ? ;
-
-  //     clause.declare(& mut solver) ? ;
-
-  //     let conj = SmtConj::new(clause.lhs_terms()) ;
-
-  //     solver.assert(& conj) ? ;
-
-  //     debug_assert_eq! { clause.lhs_preds().len(), lhs.len() }
-
-  //     for (
-  //       (pred, argss), (other_pred, samples)
-  //     ) in clause.lhs_preds().iter().zip( lhs.iter() ) {
-  //       debug_assert_eq! { pred, other_pred }
-  //       debug_assert_eq! { argss.len(), samples.len() }
-  //       for (args, sample) in argss.iter().zip( samples.iter() ) {
-  //         let eq_conj = EqConj::new(args, sample) ;
-  //         solver.assert(& eq_conj) ?
-  //       }
-  //     }
-
-  //     if let Some((rhs_pred, rhs_args)) = clause.rhs() {
-  //       debug_assert_eq! { pred, rhs_pred }
-  //       debug_assert_eq! { rhs_sample.len(), rhs_args.len() }
-  //       let eq_conj = EqConj::new(rhs_args, & rhs_sample) ;
-  //       solver.assert(& eq_conj) ?
-  //     }
-
-  //     if ! solver.check_sat() ? {
-  //       bail!("error retrieving unsat core, trace is not feasible")
-  //     }
-
-  //     let model = solver.get_model() ? ;
-
-  //     solver.pop(1) ? ;
-
-  //     let mut map = VarHMap::with_capacity(model.len()) ;
-  //     for (var, _, _, val) in model {
-  //       let prev = map.insert(var, val) ;
-  //       debug_assert_eq! { prev, None }
-  //     }
-
-  //     core.push((clause_idx, map))
-  //   }
-
-  //   Ok(core)
-  // }
 
 }

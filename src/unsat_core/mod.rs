@@ -1,4 +1,4 @@
-//! Unsat cores related types.
+//! Unsat core extraction.
 
 use common::* ;
 

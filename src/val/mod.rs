@@ -1,4 +1,4 @@
-//! Values used in evaluation.
+//! Hashconsed concrete values.
 //!
 //! Values can be automatically created (using `into`) to
 //!

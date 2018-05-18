@@ -32,7 +32,7 @@ pub mod common ;
 
 pub mod val ;
 pub mod term ;
-pub mod var ;
+pub mod var_to ;
 
 pub mod data ;
 pub mod instance ;
@@ -82,7 +82,7 @@ pub fn work() -> Res<()> {
 
 
 
-/// Reads from a `Read`er.
+/// Reads a script from a `Read`er and works.
 ///
 /// Arguments:
 /// 

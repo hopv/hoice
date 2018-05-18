@@ -1,4 +1,5 @@
-//! Hash-consed arguments for predicate applications.
+/*! Hashconsed maps from variables to terms.
+*/
 
 use hashconsing::HConsed ;
 
@@ -15,12 +16,12 @@ lazy_static! {
 }
 
 /// Hashconsed arguments for predicate applications.
-pub type HTArgs = HConsed< VarMap<Term> > ;
+pub type VarTerms = HConsed< VarMap<Term> > ;
 /// Set of hashconsed arguments for predicate applications.
-pub type HTArgss = HConSet<HTArgs> ;
+pub type VarTermsSet = HConSet<VarTerms> ;
 
 /// Creates some new arguments.
-pub fn new(args: VarMap<Term>) -> HTArgs {
+pub fn new(args: VarMap<Term>) -> VarTerms {
   use hashconsing::HConser ;
   factory.mk(args)
 }

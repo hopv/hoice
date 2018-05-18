@@ -354,13 +354,13 @@ impl<'a> ::rsmt2::print::Expr2Smt<()> for ConjWrap<'a> {
 /// Used to assert `(= arg[i] val[i])`.
 pub struct ArgValEq<'a> {
   /// Arguments.
-  args: & 'a HTArgs,
+  args: & 'a VarTerms,
   /// Values.
   vals: & 'a VarVals,
 }
 impl<'a> ArgValEq<'a> {
   /// Constructor.
-  pub fn new(args: & 'a HTArgs, vals: & 'a VarVals) -> Self {
+  pub fn new(args: & 'a VarTerms, vals: & 'a VarVals) -> Self {
     debug_assert_eq! { args.len(), vals.len() }
     ArgValEq { args, vals }
   }

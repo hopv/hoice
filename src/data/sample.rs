@@ -1,5 +1,7 @@
-use common::* ;
-use var::vals::VarValsSet ;
+use common::{
+  *,
+  var_to::vals::VarValsSet,
+} ;
 
 /// A sample is some values for a predicate.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

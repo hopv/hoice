@@ -23,18 +23,15 @@ pub use term::{
   RTerm, Term, TTerm,
   TTermSet, TTerms,
   Op, Typ, Quant,
-  args::{
-    HTArgs, HTArgss
-  },
   typ,
 } ;
 
 pub use val ;
 pub use val::Val ;
 
-pub use var ;
-pub use var::{
-  VarVals,
+pub use var_to ;
+pub use var_to::{
+  VarVals, VarTerms,
   vals::SubsumeExt,
 } ;
 
@@ -147,19 +144,19 @@ pub type Rat = ::num::BigRational ;
 pub type Sig = VarMap<Typ> ;
 
 /// A predicate application.
-pub type PredApp = (PrdIdx, HTArgs) ;
+pub type PredApp = (PrdIdx, VarTerms) ;
 
 /// Some predicate applications.
-pub type PredApps = PrdHMap< HTArgss > ;
+pub type PredApps = PrdHMap< var_to::terms::VarTermsSet > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
-  fn insert_pred_app(& mut self, PrdIdx, HTArgs) -> bool ;
+  fn insert_pred_app(& mut self, PrdIdx, VarTerms) -> bool ;
 }
 impl PredAppsExt for PredApps {
-  fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
     self.entry(pred).or_insert_with(
-      || HTArgss::with_capacity(4)
+      || var_to::terms::VarTermsSet::with_capacity(4)
     ).insert(args)
   }
 }
@@ -184,7 +181,7 @@ pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = var::vals::RVarVals ;
+pub type Cex = var_to::vals::RVarVals ;
 /// Alias type for a counterexample for a sequence of clauses.
 pub type Cexs = ClsHMap< Vec<Cex> > ;
 
@@ -412,7 +409,7 @@ impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
     }
   }
 }
-impl VarIndexed<Term> for HTArgs {
+impl VarIndexed<Term> for VarTerms {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
       Some( self[var].clone() )

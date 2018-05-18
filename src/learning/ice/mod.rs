@@ -6,9 +6,9 @@ use common::{
   smt::{
     SmtSample, SmtConstraint, SmtActSamples
   },
+  var_to::vals::VarValsMap,
 } ;
 use data::Data ;
-use var::vals::VarValsMap ;
 
 pub mod quals ;
 pub mod synth ;
@@ -122,14 +122,7 @@ impl<'core> IceLearner<'core> {
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |core._profiler| mark "mining" }
-    // if_verb!{
-    //   log_info!{ "qualifiers:" } ;
-    //   for quals in qualifiers.qualifiers() {
-    //     for (qual, _) in quals {
-    //       log_info!("- {}", qual)
-    //     }
-    //   }
-    // }
+
     let dec_mem = vec![
       HashSet::with_capacity(103) ; instance.preds().len()
     ].into() ;
