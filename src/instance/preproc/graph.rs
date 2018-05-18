@@ -307,13 +307,13 @@ impl Graph {
       // Retrieve first legal index for new quantified variables.
       let mut first_index = first_index ;
 
-      if_debug! {
-        for (idx, _) in r_qvars {
-          log! { @5 "- rgt qvar {}", idx }
-          if * idx >= first_index { first_index = (1 + ** idx).into() }
+      for (idx, _) in r_qvars {
+        log! { @5 "- rgt qvar {}", idx }
+        if * idx >= first_index {
+          first_index = (1 + ** idx).into()
         }
-        log! { @5 "first legal index: {}", first_index }
       }
+      log! { @5 "first legal index: {}", first_index }
 
       // Generate map for substitution and update left qvars.
       let mut map = VarHMap::with_capacity(0) ;
@@ -541,6 +541,7 @@ impl Graph {
                   }
                   log_debug! { "}}" }
                 }
+
                 curr = Self::merge(
                   instance, pred, & argss, p_def, & curr
                 ) ?

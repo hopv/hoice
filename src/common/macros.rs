@@ -112,17 +112,17 @@ macro_rules! if_log {
 #[cfg(not(feature = "bench"))]
 macro_rules! log {
 
-  (|pref_of| debug) => (";     ") ;
-  (|pref_of| verb)  => (";   ") ;
-  (|pref_of| info)  => ("; ") ;
+  (|pref_of| debug) => ( log!(|pref_of| 2) ) ;
+  (|pref_of| verb)  => ( log!(|pref_of| 1) ) ;
+  (|pref_of| info)  => ( log!(|pref_of| 0) ) ;
   (|pref_of| 0) => ( format!("; ") ) ;
   (|pref_of| $int:expr) => (
     format!("; {:width$}", "", width = ($int - 1) * 2)
   ) ;
 
-  (|cond_of| debug) => (conf.verb >= 3) ;
-  (|cond_of| verb) => (conf.verb >= 2) ;
-  (|cond_of| info) => (conf.verb >= 1) ;
+  (|cond_of| debug) => ( log!(|cond_of| 3) ) ;
+  (|cond_of| verb)  => ( log!(|cond_of| 2) ) ;
+  (|cond_of| info)  => ( log!(|cond_of| 1) ) ;
   (|cond_of| 0) => (true) ;
   (|cond_of| $int:expr) => (conf.verb >= $int) ;
 
