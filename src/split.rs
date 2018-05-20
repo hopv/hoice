@@ -69,7 +69,7 @@ pub fn work(
     if let Some(prof) = splitter.profiler() {
       print_stats("sub-preproc", prof)
     }
-    profile! { |_profiler| "sub-systems" => add 1 }
+    profile! { |_profiler| "sub-system(s)" => add 1 }
 
     let mut instance = match preproc_res {
       Either::Left(instance) => instance,

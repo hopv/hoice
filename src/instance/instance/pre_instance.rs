@@ -121,6 +121,19 @@ impl<'a> PreInstance<'a> {
 
 
 
+  /// Number of strict negative clauses.
+  pub fn strict_neg_clauses(& self) -> impl Iterator<Item = & Clause> {
+    self.clauses.iter().filter(
+      |clause| clause.rhs().is_none() && clause.lhs_preds().len() == 1 && (
+        clause.lhs_preds().iter().next().map(
+          |(_, apps)| apps.len() == 1
+        ).unwrap_or(false)
+      )
+    )
+  }
+
+
+
   /// Simplifies all the clauses.
   pub fn simplify_all(& mut self) -> Res<RedInfo> {
     let mut info = RedInfo::new() ; // self.force_trivial() ? ;

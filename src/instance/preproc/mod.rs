@@ -261,6 +261,8 @@ pub struct Reductor<'a> {
   one_lhs: Option<OneLhs>,
   /// Optional cfg pre-processor.
   cfg_red: Option<CfgRed>,
+  // /// Optional biased unroller.
+  // biased_unroll: Option<BiasedUnroll>,
   /// Optional unroller.
   unroll: Option<Unroll>,
   /// Optional reverse-unroller.
@@ -304,14 +306,17 @@ impl<'a> Reductor<'a> {
 
     let cfg_red = some_new! { CfgRed if cfg_red } ;
 
+    // let biased_unroll = Some( BiasedUnroll::new(& instance) ) ;
     let unroll = some_new! { Unroll if unroll } ;
-    let runroll = some_new! { RUnroll if unroll } ;
+    let runroll = Some( RUnroll::new(& instance) ) ;
 
     Ok(
       Reductor {
         instance, simplify, arg_red,
         s_one_rhs, s_one_lhs, one_rhs, one_lhs,
-        cfg_red, unroll, runroll
+        cfg_red,
+        // biased_unroll,
+        unroll, runroll,
       }
     )
   }
@@ -526,14 +531,29 @@ impl<'a> Reductor<'a> {
     } else {
       0
     } ;
+
+    let strict_neg_count = self.instance.strict_neg_clauses().fold(
+      0, |acc, _| acc + 1
+    ) ;
+
     let (
       mut added, mut r_added,
       mut added_pre, mut r_added_pre,
-    ) = (
-      0, 0,
-      run!(runroll info).clause_diff(),
-      run!(unroll info).clause_diff(),
-    ) ;
+    ) = if conf.preproc.unroll {
+      (
+        0, 0, run!(runroll info).clause_diff(), run!(unroll info).clause_diff()
+      )
+    } else if strict_neg_count <= 1
+    && self.instance.split().is_none() {
+      // This is a special case, triggered one the first preproc run (split is
+      // none) and if there's only one negative clause. In this case, force run
+      // reverse unroll so that we can split later.
+      (0, 0, run!(runroll info).clause_diff(), 0)
+    } else {
+      (0, 0, 0, 0)
+    } ;
+
+
     loop {
       added += added_pre ;
       r_added += r_added_pre ;
@@ -1375,7 +1395,6 @@ impl RedStrat for CfgRed {
       upper_bound: {
         let clause_count = instance.clauses().len() ;
         let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
-        // println!("adjusted: {}", adjusted) ;
         ::std::cmp::min(
           clause_count, (
             adjusted
@@ -1510,6 +1529,190 @@ impl RedStrat for CfgRed {
 }
 
 
+// /// Unrolls negative and positive constraints with a bias.
+// pub struct BiasedUnroll {
+//   in_pos_clauses: PrdSet,
+//   in_neg_clauses: PrdSet,
+//   not_in_pos_clauses: PrdSet,
+//   not_in_neg_clauses: PrdSet,
+// }
+
+// impl BiasedUnroll {
+//   /// Sets up the unroller by scanning the instance.
+//   fn setup<'a>(& mut self, instance: & PreInstance<'a>) {
+//     for (pred, _) in instance.preds().index_iter() {
+//       let (lhs_clauses, rhs_clauses) = instance.clauses_of(pred) ;
+
+//       let mut in_pos = false ;
+//       for clause in rhs_clauses {
+//         if instance[* clause].lhs_pred_apps_len() == 0 {
+//           in_pos = true ;
+//           break
+//         }
+//       }
+//       if in_pos {
+//         let is_new = self.in_pos_clauses.insert(pred) ;
+//         debug_assert! { is_new }
+//       } else {
+//         let is_new = self.not_in_pos_clauses.insert(pred) ;
+//         debug_assert! { is_new }
+//       }
+
+//       let mut in_neg = false ;
+//       for clause in lhs_clauses {
+//         if instance[* clause].rhs().is_none()
+//         && instance[* clause].lhs_pred_apps_len() == 1 {
+//           in_neg = true ;
+//           break
+//         }
+//       }
+//       if in_neg {
+//         let is_new = self.in_neg_clauses.insert(pred) ;
+//         debug_assert! { is_new }
+//       } else {
+//         let is_new = self.not_in_neg_clauses.insert(pred) ;
+//         debug_assert! { is_new }
+//       }
+//     }
+//   }
+
+//   fn unroll_pos<'a>(
+//     instance: & mut PreInstance<'a>, clause: ClsIdx
+//   ) -> Res<RedInfo> {
+//     let mut info = RedInfo::new() ;
+
+//     Ok(info)
+//   }
+
+//   /// Tries to generate a positive clause for a predicate.
+//   fn generate_pos_clause_for<'a>(
+//     & self, pred: PrdIdx, instance: & mut PreInstance<'a>
+//   ) -> Res<RedInfo> {
+//     let mut info = RedInfo::new() ;
+
+//     'all_clauses: for rhs_clause in instance.clauses_of(pred).1 {
+//       for (pred, _) in instance[* rhs_clause].lhs_preds() {
+//         if ! self.in_pos_clauses.contains(pred) {
+//           continue 'all_clauses
+//         }
+//       }
+
+//       print!("all okay (pos):") ;
+//       for (pred, _) in instance[* rhs_clause].lhs_preds() {
+//         print!(" {}", instance[* pred])
+//       }
+//       println!("") ;
+//       println!(
+//         "{}", instance[* rhs_clause].to_string_info(instance.preds()).unwrap()
+//       ) ;
+//       println!("")
+//     }
+
+//     Ok(info)
+//   }
+
+//   /// Tries to generate a negative clause for a predicate.
+//   fn generate_neg_clause_for<'a>(
+//     & self, pred: PrdIdx, instance: & mut PreInstance<'a>
+//   ) -> Res<RedInfo> {
+//     let mut info = RedInfo::new() ;
+
+//     'all_clauses: for lhs_clause in instance.clauses_of(pred).0 {
+//       for (p, _) in instance[* lhs_clause].lhs_preds() {
+//         if p != & pred {
+//           if ! self.in_pos_clauses.contains(p) {
+//             continue 'all_clauses
+//           }
+//         }
+//       }
+
+//       if let Some((pred, _)) = instance[* lhs_clause].rhs() {
+//         if ! self.in_neg_clauses.contains(& pred) {
+//           continue 'all_clauses
+//         }
+//       }
+
+//       print!("all okay (neg):") ;
+//       for (pred, _) in instance[* lhs_clause].lhs_preds() {
+//         print!(" {}", instance[* pred])
+//       }
+//       println!("") ;
+//       println!(
+//         "{}", instance[* lhs_clause].to_string_info(instance.preds()).unwrap()
+//       ) ;
+//       println!("")
+//     }
+
+//     Ok(info)
+//   }
+// }
+
+// impl RedStrat for BiasedUnroll {
+//   fn name(& self) -> & 'static str { "biased unroll" }
+
+//   fn new(_: & Instance) -> Self {
+//     let (
+//       in_pos_clauses, in_neg_clauses,
+//       not_in_pos_clauses, not_in_neg_clauses,
+//     ) = (
+//       PrdSet::new(), PrdSet::new(),
+//       PrdSet::new(), PrdSet::new(),
+//     ) ;
+
+//     BiasedUnroll {
+//       in_pos_clauses, in_neg_clauses,
+//       not_in_pos_clauses, not_in_neg_clauses,
+//     }
+//   }
+
+//   fn apply<'a>(
+//     & mut self, instance: & mut PreInstance<'a>
+//   ) -> Res<RedInfo> {
+//     let mut info = RedInfo::new() ;
+
+//     self.setup(instance) ;
+
+//     println!("in pos clauses {{") ;
+//     for pred in & self.in_pos_clauses {
+//       println!("  {}", instance[* pred])
+//     }
+//     println!("}}") ;
+
+//     println!("in neg clauses {{") ;
+//     for pred in & self.in_neg_clauses {
+//       println!("  {}", instance[* pred])
+//     }
+//     println!("}}") ;
+
+//     for pred in & self.not_in_pos_clauses {
+//       let pred = * pred ;
+//       println! { "working on {}", instance[pred] }
+//       let this_info = self.generate_pos_clause_for(pred, instance) ? ;
+//       if this_info.non_zero() {
+//         println! { "-> success" }
+//       } else {
+//         println! { "-> failure" }
+//       }
+//       info += this_info
+//     }
+
+//     for pred in & self.not_in_neg_clauses {
+//       let pred = * pred ;
+//       println! { "working on {}", instance[pred] }
+//       let this_info = self.generate_neg_clause_for(pred, instance) ? ;
+//       if this_info.non_zero() {
+//         println! { "-> success" }
+//       } else {
+//         println! { "-> failure" }
+//       }
+//       info += this_info
+//     }
+
+//     Ok(info)
+//   }
+// }
+
+
 
 /// Unrolls positive constraints once.
 pub struct Unroll {
@@ -1522,7 +1725,9 @@ impl RedStrat for Unroll {
 
   fn new(instance: & Instance) -> Self {
     Unroll {
-      max_new_clauses: instance.clauses().len() * 5 / 100 + 1,
+      max_new_clauses: ::std::cmp::max(
+        5, instance.preds().len() + instance.clauses().len() * 5 / 100
+      ),
       ignore: PrdSet::new(),
     }
   }
@@ -1621,7 +1826,9 @@ impl RedStrat for RUnroll {
 
   fn new(instance: & Instance) -> Self {
     RUnroll {
-      max_new_clauses: instance.clauses().len() * 5 / 100 + 1,
+      max_new_clauses: ::std::cmp::max(
+        5, instance.preds().len() + instance.clauses().len() * 5 / 100
+      ),
       ignore: PrdSet::new(),
     }
   }
@@ -1730,14 +1937,16 @@ impl RedStrat for RUnroll {
     for (pred, terms) in prd_map {
       // Anticipate blowup.
       let appearances = instance.clauses_of(pred).0.len() ;
-      if terms.len() * appearances >= self.max_new_clauses {
+      if appearances >= self.max_new_clauses {
         let is_new = self.ignore.insert(pred) ;
         debug_assert! { is_new }
         log_verb! {
-          "not r_unrolling {}, {} variant(s), estimation: {} new clauses",
+          "not r_unrolling {}, {} occurence(s), \
+          estimation: {} new clauses (>= {})",
           conf.emph(& instance[pred].name),
-          terms.len(),
-          terms.len() * appearances
+          appearances,
+          terms.len() * appearances,
+          self.max_new_clauses,
         }
       } else {
         log_verb! {
