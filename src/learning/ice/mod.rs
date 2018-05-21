@@ -16,6 +16,7 @@ pub mod data ;
 
 use self::quals::NuQuals ;
 use self::data::CData ;
+use self::synth::SynthSys ;
 
 
 /// Launcher.
@@ -68,6 +69,8 @@ pub struct IceLearner<'core> {
   pub instance: Arc<Instance>,
   /// Qualifiers for the predicates.
   pub qualifiers: NuQuals,
+  /// Synthesizer.
+  synth_sys: PrdMap<SynthSys>,
   /// Current data.
   data: Data,
   /// Solver used to check if the constraints are respected.
@@ -129,9 +132,15 @@ impl<'core> IceLearner<'core> {
     let candidate = vec![ None ; instance.preds().len() ].into() ;
     let predicates = Vec::with_capacity( instance.preds().len() ) ;
 
+    let mut synth_sys = PrdMap::with_capacity( instance.preds().len() ) ;
+    for (pred, _) in instance.preds().index_iter() {
+      synth_sys.push( SynthSys::new( & instance[pred].sig ) )
+    }
+
     Ok(
       IceLearner {
         instance, qualifiers, data, solver, // synth_solver,
+        synth_sys,
         core,
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
@@ -901,17 +910,15 @@ impl<'core> IceLearner<'core> {
   }
 
   /// Qualifier synthesis.
-  ///
-  /// Returns `None` if it received `Exit`.
   pub fn synthesize(
-    & mut self, pred: PrdIdx, data: & CData, best: & mut Option<(Term, f64)>,
-    simple: bool
+    & mut self, pred: PrdIdx, data: & CData,
+    best: & mut Option<(Term, f64)>, simple: bool,
   ) -> Res< Option<()> > {
 
     scoped! {
       let self_data = & self.data ;
       let quals = & mut self.qualifiers ;
-      let instance = & self.instance ;
+
       let self_core = & self.core ;
       let known_quals = & mut self.known_quals ;
       let gain_pivot_synth = self.gain_pivot_synth ;
@@ -983,21 +990,20 @@ impl<'core> IceLearner<'core> {
         }
       } ;
 
-      use self::synth::SynthSys ;
-      let mut synth_sys = SynthSys::new( & instance[pred].sig ) ;
+      self.synth_sys[pred].restart() ;
 
       'synth: loop {
 
         for sample in data.iter(! simple) {
           self_core.check_exit() ? ;
-          let done = synth_sys.sample_synth(
+          let done = self.synth_sys[pred].sample_synth(
             sample, & mut treatment, & self_core._profiler
           ) ? ;
           if done { break }
         }
 
-        synth_sys.increment() ;
-        if synth_sys.is_done() {
+        self.synth_sys[pred].increment() ;
+        if self.synth_sys[pred].is_done() {
           break 'synth
         }
 

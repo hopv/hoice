@@ -86,6 +86,12 @@ impl SynthSys {
     self.real.as_mut().map(|r| r.increment()) ;
   }
 
+  /// Restarts all synthesizers.
+  pub fn restart(& mut self) {
+    self.int.as_mut().map(|i| i.restart()) ;
+    self.real.as_mut().map(|r| r.restart()) ;
+  }
+
 
   /// Synthesizes qualifiers for a sample, stops if input function returns
   /// `true`.

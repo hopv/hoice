@@ -1,6 +1,9 @@
 //! Macros factoring code for the synthesis process.
 
 
+use common::* ;
+
+
 /// Applies `$f` to `$term`.
 ///
 /// Early returns if the application is an error. Early returns `Ok(true)` if
@@ -256,20 +259,159 @@ macro_rules! arith_synth_three_terms {
     let term = term::app(
       Op::Ge, vec![ $lhs.clone(), $rhs.clone() ]
     ) ;
-    // println!() ;
-    // println!("> {}", term) ;
     apply! { $f to term }
     let term = term::app(
       Op::Le, vec![ $lhs.clone(), $rhs.clone() ]
     ) ;
-    // println!() ;
-    // println!("> {}", term) ;
     apply! { $f to term }
     let term = term::app(
       Op::Eql, vec![ $lhs.clone(), $rhs.clone() ]
     ) ;
-    // println!() ;
-    // println!("> {}", term) ;
     apply! { $f to term }
   }) ;
 }
+
+
+/// Bitvecs.
+pub struct Bitvec {
+  value: u64,
+}
+impl Bitvec {
+  /// Constructor.
+  pub fn zero() -> Self {
+    Bitvec { value: 0 }
+  }
+
+  /// Increases the value.
+  pub fn inc(& mut self) {
+    self.value += 1
+  }
+
+  /// Retrieves the (inverted) boolean at some index.
+  pub fn index(& self, index: usize) -> bool {
+    if index < 64 {
+      self.value & (1 << index) == 0
+    } else {
+      panic!("requesting synthesis over more than 64 variables")
+    }
+  }
+}
+
+
+
+/// Arith sum/diff synth.
+pub fn sum_diff_synth<F>(
+  term: & (Term, Val), others: & Vec<(Term, Val)>,
+  len: usize, mut f: F,
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut stack = vec![ ( term, others.iter() ) ] ;
+
+  loop {
+
+    while stack.len() < len {
+      if let Some((pair, others)) = stack.last_mut().and_then(
+        |(_, others)| others.next().map(
+          |pair| ( pair, others.clone() )
+        )
+      ) {
+        stack.push( (pair, others) )
+      } else if let Some(_) = stack.pop() {
+        ()
+      } else {
+        return Ok(false)
+      }
+    }
+
+    let done = iter_sum_diff_synth(& stack, & mut f) ? ;
+
+    if done {
+      return Ok(true)
+    }
+
+    let _ = stack.pop() ;
+    ()
+
+  }
+}
+
+
+/// Arith sum/diff synth.
+fn iter_sum_diff_synth<F, T>(
+  terms: & Vec<(& (Term, Val), T)>, mut f: F
+) -> Res<bool>
+where F : FnMut(Term) -> Res<bool> {
+  if terms.is_empty() {
+    return Ok(false)
+  }
+
+  let mut bitvec = Bitvec::zero() ;
+  let max = 2u64.pow( ( terms.len() - 1 ) as u32 ) ;
+
+  for _ in 0 .. max {
+    let (
+      mut sum, mut val, mut cnt
+    ): (Vec<Term>, Option<Val>, usize) = (
+      Vec::with_capacity( terms.len() ), None, 0
+    ) ;
+
+    for ( (term, term_val), _ ) in terms {
+      let pos = bitvec.index(cnt) ;
+
+      val = if let Some(val) = val {
+        if pos {
+          Some( val.add(term_val) ? )
+        } else {
+          Some( val.sub(term_val) ? )
+        }
+      } else if pos {
+        Some( term_val.clone() )
+      } else {
+        Some( term_val.minus() ? )
+      } ;
+
+      if pos {
+        sum.push( term.clone() )
+      } else {
+        sum.push( term::u_minus(term.clone()) )
+      }
+
+      cnt += 1
+    }
+
+    let val = if let Some(val) = val.and_then(
+      |val| val.to_term()
+    ) {
+      val
+    } else {
+      bail!("unexpected non-value in synthesis")
+    } ;
+
+    let sum = term::add(sum) ;
+
+    let done = f(
+      term::eq( sum.clone(), val.clone() )
+    ) ? ;
+    if done {
+      return Ok(true)
+    }
+
+    let done = f(
+      term::ge( sum.clone(), val.clone() )
+    ) ? ;
+    if done {
+      return Ok(true)
+    }
+
+    let done = f(
+      term::gt(sum, val)
+    ) ? ;
+    if done {
+      return Ok(true)
+    }
+
+    bitvec.inc()
+  }
+  Ok(false)
+}
+

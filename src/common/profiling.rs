@@ -369,10 +369,24 @@ impl Profiler {
 
   /// Adds an other (not a sub) profiler to this profiler.
   #[cfg( not(feature = "bench") )]
+  pub fn drain_subs(
+    & self,
+  ) -> Vec<(String, Profiler)> {
+    let mut res = vec![] ;
+    ::std::mem::swap(
+      & mut res, & mut * self.subs.borrow_mut()
+    ) ;
+    res
+  }
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
   pub fn add_other<S: Into<String>>(
     & self, name: S, other: Self
   ) -> () {
-    self.others.borrow_mut().push((name.into(), other))
+    self.others.borrow_mut().push(
+      (name.into(), other)
+    )
   }
   #[cfg(feature = "bench")]
   pub fn add_other<S>(

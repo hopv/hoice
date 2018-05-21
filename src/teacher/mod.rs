@@ -36,9 +36,7 @@ pub fn start_class(
   let mut teacher = Teacher::new(instance.clone(), profiler, partial_model) ? ;
 
   let res = match teach(& mut teacher) {
-
     Ok(res) => Ok(res),
-
     Err(e) => {
       match e.kind() {
         & ErrorKind::Unsat => {
@@ -48,14 +46,11 @@ pub fn start_class(
             please consider contacting the developer"
           }
           let core = teacher.unsat_core() ;
-          return Ok( Either::Right(core) )
+          Ok( Either::Right(core) )
         },
-        _ => ()
+        _ => Err(e)
       }
-
-      return Err(e)
-    }
-
+    },
   } ;
 
   teacher.finalize() ? ;
@@ -66,7 +61,7 @@ pub fn start_class(
 /// Teaching to the learners.
 pub fn teach(teacher: & mut Teacher) -> Res<
   Either<Candidates, UnsatRes>
->{
+> {
 
   log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
@@ -362,7 +357,9 @@ impl<'a> Teacher<'a> {
     while let Ok(_) = self.get_candidates(true) {}
 
     if conf.stats {
-      self._profiler.add_sub("data", self.data.destroy())
+      self._profiler.add_sub(
+        "data", self.data.destroy()
+      )
     }
     Ok(())
   }
