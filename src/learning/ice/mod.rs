@@ -271,13 +271,13 @@ impl<'core> IceLearner<'core> {
 
     if self.count % conf.ice.gain_pivot_mod == 0 {
       self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
-      if self.gain_pivot > 1.0 {
-        self.gain_pivot = 1.0
+      if self.gain_pivot > 0.999 {
+        self.gain_pivot = 0.999
       }
       if let Some(gain_pivot_synth) = self.gain_pivot_synth.as_mut() {
         * gain_pivot_synth = * gain_pivot_synth + conf.ice.gain_pivot_inc ;
-        if * gain_pivot_synth > 1.0 {
-          * gain_pivot_synth = 1.0
+        if * gain_pivot_synth > 0.999 {
+          * gain_pivot_synth = 0.999
         }
       }
     }

@@ -2,6 +2,7 @@
 
 
 use common::* ;
+use super::TermVals ;
 
 
 /// Applies `$f` to `$term`.
@@ -12,76 +13,6 @@ macro_rules! apply {
   ($f:ident to $term:expr) => (
     if $f($term) ? { return Ok(true) }
   ) ;
-}
-
-/// Simple arithmetic synthesis.
-///
-/// All `t*` are terms. Synthesizes qualifiers of the form
-///
-/// - `t = n`, `t <= n`, `t >= n`,
-/// - `t_1 = t_2`, `t_1 = - t_2`,
-/// - `t_1 + t_2 >= n`, `t_1 + t_2 <= n`,
-/// - `t_1 - t_2 >= n`, `t_1 - t_2 <= n`,
-macro_rules! simple_arith_synth {
-  ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
-
-    let val_term = term::$constructor( $val.clone() ) ;
-    let term = term::app(
-      Op::Ge, vec![ $term.clone(), val_term.clone() ]
-    ) ;
-    apply! { $f to term }
-    let term = term::app(
-      Op::Le, vec![ $term.clone(), val_term.clone() ]
-    ) ;
-    apply! { $f to term }
-    let term = term::app(
-      Op::Eql, vec![ $term.clone(), val_term ]
-    ) ;
-    apply! { $f to term }
-
-    for & (ref other_term, ref other_val) in & $previous {
-      if $val == other_val {
-        let term = term::eq(
-          $term.clone(), other_term.clone()
-        ) ;
-        apply! { $f to term }
-      }
-      if - $val == * other_val {
-        let term = term::eq(
-          $term.clone(), term::sub( vec![ other_term.clone() ] )
-        ) ;
-        apply! { $f to term }
-      }
-
-      let add = term::app(
-        Op::Add, vec![ $term.clone(), other_term.clone() ]
-      ) ;
-      let add_val = term::$constructor( $val + other_val ) ;
-      let term = term::app(
-        Op::Ge, vec![ add.clone(), add_val.clone() ]
-      ) ;
-      apply! { $f to term }
-      let term = term::app(
-        Op::Le, vec![ add, add_val ]
-      ) ;
-      apply! { $f to term }
-
-      let sub = term::app(
-        Op::Sub, vec![ $term.clone(), other_term.clone() ]
-      ) ;
-      let sub_val = term::$constructor( $val - other_val ) ;
-      let term = term::app(
-        Op::Ge, vec![ sub.clone(), sub_val.clone() ]
-      ) ;
-      apply! { $f to term }
-      let term = term::app(
-        Op::Le, vec![ sub, sub_val ]
-      ) ;
-      apply! { $f to term }
-    }
-
-    $previous.push( ($term, $val.clone()) )
-  }) ;
 }
 
 /// Non-linear arithmetic synthesis for integer terms.
@@ -125,152 +56,6 @@ macro_rules! arith_synth_non_lin {
   }) ;
 }
 
-/// Arithmetic synthesis over three terms.
-///
-/// All `t*` are terms, `<op>` is `=`, `ge` or `le. Synthesizes qualifiers
-/// of the form
-///
-/// - `+ t_1 + t_2 + t_3 <op> n`
-/// - `+ t_1 + t_2 - t_3 <op> n`
-/// - `+ t_1 - t_2 + t_3 <op> n`
-/// - `+ t_1 - t_2 - t_3 <op> n`
-/// - `- t_1 + t_2 + t_3 <op> n`
-/// - `- t_1 + t_2 - t_3 <op> n`
-/// - `- t_1 - t_2 + t_3 <op> n`
-/// - `- t_1 - t_2 - t_3 <op> n`
-macro_rules! arith_synth_three_terms {
-  ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
-    {
-      let mut previous = $previous.iter() ;
-
-      while let Some(
-        & (ref other_term, ref other_val)
-      ) = previous.next() {
-        for & (ref another_term, ref another_val) in previous.clone() {
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::add(
-                vec![ $term.clone(), other_term.clone(), another_term.clone() ]
-              ),
-              term::$constructor( $val + other_val + another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::add(
-                vec![
-                  $term.clone(),
-                  other_term.clone(),
-                  term::sub( vec![ another_term.clone() ] ),
-                ]
-              ),
-              term::$constructor( $val + other_val - another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::add(
-                vec![
-                  $term.clone(),
-                  term::sub( vec![ other_term.clone() ] ),
-                  another_term.clone(),
-                ]
-              ),
-              term::$constructor( $val - other_val + another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::sub(
-                vec![
-                  $term.clone(), other_term.clone(), another_term.clone()
-                ]
-              ),
-              term::$constructor( $val - other_val - another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::add(
-                vec![
-                  term::sub( vec![ $term.clone() ] ),
-                  other_term.clone(),
-                  another_term.clone()
-                ]
-              ),
-              term::$constructor( (- $val) + other_val + another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::sub(
-                vec![
-                  other_term.clone(),
-                  $term.clone(),
-                  another_term.clone()
-                ]
-              ),
-              term::$constructor( (- $val) + other_val - another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::sub(
-                vec![
-                  another_term.clone(),
-                  $term.clone(),
-                  other_term.clone(),
-                ]
-              ),
-              term::$constructor( (- $val) - other_val + another_val )
-            )
-          }
-
-          arith_synth_three_terms! { @internal
-            $f(
-              term::sub(
-                vec![
-                  term::add(
-                    vec![
-                      $term.clone(),
-                      other_term.clone(),
-                      another_term.clone()
-                    ]
-                  )
-                ]
-              ),
-              term::$constructor( (- $val) - other_val - another_val )
-            )
-          }
-
-        }
-      }
-    }
-    $previous.push( ($term, $val.clone()) )
-  }) ;
-  (@internal $f:tt($lhs:expr, $rhs:expr)) => ({
-    let term = term::app(
-      Op::Ge, vec![ $lhs.clone(), $rhs.clone() ]
-    ) ;
-    apply! { $f to term }
-    let term = term::app(
-      Op::Le, vec![ $lhs.clone(), $rhs.clone() ]
-    ) ;
-    apply! { $f to term }
-    let term = term::app(
-      Op::Eql, vec![ $lhs.clone(), $rhs.clone() ]
-    ) ;
-    apply! { $f to term }
-  }) ;
-}
-
 
 /// Bitvecs.
 pub struct Bitvec {
@@ -296,6 +81,55 @@ impl Bitvec {
     }
   }
 }
+
+
+
+
+/// N-term arithmetic synthesis.
+pub fn n_term_arith_synth<F>(
+  sample: & VarVals, others: & mut TermVals,
+  typ: & Typ, len: usize, mut f: F,
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous: Vec<(Term, Val)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    if val.typ() == * typ && val.is_known() {
+      let var = term::var(var_idx, typ::int()) ;
+
+      let done = ::learning::ice::synth::helpers::sum_diff_synth(
+        & ( var.clone(), val.clone() ), & previous,
+        len, |term| f(term)
+      ) ? ;
+
+      if done {
+        return Ok(true)
+      }
+
+      previous.push((var, val.clone()))
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    let done = sum_diff_synth(
+      & ( term.clone(), val.clone() ), & previous,
+      len, |term| f(term)
+    ) ? ;
+
+    if done {
+      return Ok(true)
+    }
+
+    previous.push( (term.clone(), val.clone()) )
+  }
+
+  Ok(false)
+}
+
 
 
 

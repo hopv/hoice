@@ -693,7 +693,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("5").takes_value(
+      ).default_value("99").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 

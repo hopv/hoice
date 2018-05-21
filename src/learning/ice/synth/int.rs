@@ -2,6 +2,7 @@
 
 use common::* ;
 
+use super::helpers::n_term_arith_synth ;
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -44,7 +45,7 @@ impl TheoSynth for IntSynth {
     match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
-          int_synth_n(sample, others, 1, f)
+          n_term_arith_synth(sample, others, & self.typ, 1, f)
         } "learning", "qual", "synthesis", "int", "level 0"
       ),
       1 => profile!(
@@ -54,17 +55,17 @@ impl TheoSynth for IntSynth {
       ),
       2 => profile!(
         |_profiler| wrap {
-          int_synth_n(sample, others, 2, f)
+          n_term_arith_synth(sample, others, & self.typ, 2, f)
         } "learning", "qual", "synthesis", "int", "level 2"
       ),
       3 => profile!(
         |_profiler| wrap {
-          int_synth_n(sample, others, 3, f)
+          n_term_arith_synth(sample, others, & self.typ, 3, f)
         } "learning", "qual", "synthesis", "int", "level 3"
       ),
       4 => profile!(
         |_profiler| wrap {
-          int_synth_n(sample, others, 4, f)
+          n_term_arith_synth(sample, others, & self.typ, 4, f)
         } "learning", "qual", "synthesis", "int", "level 4"
       ),
       _ => Ok(false),
@@ -133,93 +134,3 @@ where F: FnMut(Term) -> Res<bool> {
 
   Ok(false)
 }
-
-
-/// Level 2 for int synthesis.
-pub fn int_synth_2<F>(
-  sample: & VarVals, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
-    sample.len()
-  ) ;
-
-  // Iterate over the sample.
-  for (var_idx, val) in sample.index_iter() {
-    match val.get() {
-      & val::RVal::I(ref val) => {
-        let var = term::var(var_idx, typ::int()) ;
-        arith_synth_three_terms! {
-          previous_int, f, int | var = ( val.clone() )
-        }
-      },
-      _ => (),
-    }
-  }
-
-  // Iterate over the cross-theory terms.
-  for (term, val) in others.drain() {
-    match val.get() {
-      & val::RVal::I(ref val) => {
-        arith_synth_three_terms! {
-          previous_int, f, int | term = val
-        }
-      }
-      val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
-      )
-    }
-  }
-
-  Ok(false)
-}
-
-
-/// N-term integer synthesis.
-pub fn int_synth_n<F>(
-  sample: & VarVals, others: & mut TermVals, len: usize, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Val)> = Vec::with_capacity(
-    sample.len()
-  ) ;
-
-  // Iterate over the sample.
-  for (var_idx, val) in sample.index_iter() {
-    match val.get() {
-      & val::RVal::I(_) => {
-        let var = term::var(var_idx, typ::int()) ;
-
-        let done = ::learning::ice::synth::helpers::sum_diff_synth(
-          & ( var.clone(), val.clone() ), & previous_int,
-          len, |term| f(term)
-        ) ? ;
-
-        if done {
-          return Ok(true)
-        }
-
-        previous_int.push((var, val.clone()))
-      },
-      _ => (),
-    }
-  }
-
-  // Iterate over the cross-theory terms.
-  for (term, val) in others.drain() {
-    let done = ::learning::ice::synth::helpers::sum_diff_synth(
-      & ( term.clone(), val.clone() ), & previous_int,
-      len, |term| f(term)
-    ) ? ;
-
-    if done {
-      return Ok(true)
-    }
-
-    previous_int.push( (term.clone(), val.clone()) )
-  }
-
-  Ok(false)
-}
-
-
