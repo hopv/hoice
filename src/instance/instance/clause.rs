@@ -87,6 +87,15 @@ impl Clause {
     self.shrink_vars()
   }
 
+  /// True if the clause is a strictly negative clause.
+  pub fn is_strict_neg(& self) -> bool {
+    self.rhs.is_none()
+    && self.lhs_preds.len() == 1
+    && self.lhs_preds().iter().next().map(
+      |(_, argss)| argss.len() == 1
+    ).unwrap_or(false)
+  }
+
   /// True iff some terms have been added since the last call to
   /// [`lhs_terms_checked`][checked].
   ///

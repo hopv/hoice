@@ -739,7 +739,7 @@ impl<'core> IceLearner<'core> {
         profile!{ self tick "learning", "qual", "simple gain" }
         let res = self.qualifiers.maximize(
           pred, |qual| {
-            let res = data.simple_gain(qual) ? ;
+            let res = data.simple_gain(qual, false) ? ;
             if conf.ice.qual_step {
               let _ = core.msg(
                 format!(
@@ -939,7 +939,7 @@ impl<'core> IceLearner<'core> {
           Ok(false)
         } else if let Some(gain) = {
           if simple {
-            data.simple_gain(& term) ?
+            data.simple_gain(& term, false) ?
           } else {
             data.gain(
               pred, self_data, & term, & self_core._profiler, false

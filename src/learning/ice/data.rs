@@ -120,7 +120,7 @@ impl CData {
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
   pub fn simple_gain<Trm: CanBEvaled>(
-    & self, qual: & Trm
+    & self, qual: & Trm, verb: bool
   ) -> Res< Option<f64> > {
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
@@ -155,6 +155,15 @@ impl CData {
         Self::shannon_entropy( q_pos,  q_neg),
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
+
+      if verb {
+        println!("   q_pos: {}",  q_pos) ;
+        println!("   q_neg: {}",  q_neg) ;
+        println!("  nq_pos: {}", nq_pos) ;
+        println!("  nq_neg: {}", nq_neg) ;
+        println!("   q_entropy: {}", q_entropy) ;
+        println!("  nq_entropy: {}", nq_entropy) ;
+      }
 
       // Entropy can be 0 because we're in simple gain, which ignores
       // unclassified data.

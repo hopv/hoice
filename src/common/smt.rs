@@ -461,3 +461,75 @@ where Br: BufRead {
     }
   }
 }
+
+
+
+
+
+/// Extends a solver so that it's able to check clause triviality.
+pub trait ClauseTrivialExt {
+  /// Checks whether a clause is trivial.
+  fn is_clause_trivial(
+    & mut self, & mut ::instance::Clause
+  ) -> Res< Option<bool> > ;
+}
+
+impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
+  fn is_clause_trivial(
+    & mut self, clause: & mut ::instance::Clause
+  ) -> Res< Option<bool> > {
+    let mut lhs: Vec<Term> = Vec::with_capacity(17) ;
+
+    for term in clause.lhs_terms() {
+      match term.bool() {
+        Some(true) => (),
+        Some(false) => return Ok( Some(true) ),
+        _ => {
+          let neg = term::not( term.clone() ) ;
+          for term in & lhs {
+            if neg == * term {
+              return Ok( Some(true) )
+            }
+          }
+          lhs.push( term.clone() )
+        },
+      }
+    }
+
+    let conj = SmtConj::new( lhs.iter() ) ;
+
+    if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+
+      // Either it is trivial, or falsifiable regardless of the predicates.
+      if conj.is_unsat(
+        self, clause.vars()
+      ) ? {
+        return Ok( Some(true) )
+      } else {
+        return Ok(None)
+      }
+
+    } else {
+
+      if let Some((pred, args)) = clause.rhs() {
+        if clause.lhs_preds().get(& pred).map(
+          |set| set.contains(args)
+        ).unwrap_or(false) {
+          return Ok( Some(true) )
+        }
+      }
+
+      if lhs.is_empty() {
+        Ok( Some(false) )
+      } else {
+        clause.lhs_terms_checked() ;
+        conj.is_unsat(
+          self, clause.vars()
+        ).map(
+          |res| Some(res)
+        )
+      }
+
+    }
+  }
+}

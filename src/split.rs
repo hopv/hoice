@@ -160,6 +160,8 @@ pub struct Splitter {
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
   /// will return `self.instance` if `! once` and `None` otherwise.
   clauses: Either<Vec<ClsIdx>, bool>,
+  /// Total number of clauses considered.
+  clause_count: usize,
   /// Negative clauses for which we already have a solution.
   prev_clauses: ClsSet,
   /// Profiler.
@@ -169,7 +171,7 @@ impl Splitter {
 
   /// Constructor.
   pub fn new(instance: & Arc<Instance>) -> Self {
-    let clauses = if conf.split
+    let (clauses, clause_count) = if conf.split
     && instance.neg_clauses().len() > 1 {
       // We want the predicates that appear in the most lhs last (since
       // we're popping).
@@ -208,7 +210,23 @@ impl Splitter {
       ).collect() ;
 
       clauses.sort_unstable_by(
-        |& (_, count_1), & (_, count_2)| count_1.cmp(& count_2)
+        |& (c_1, count_1), & (c_2, count_2)|
+        if instance[c_1].is_strict_neg()
+        && ! instance[c_2].is_strict_neg() {
+          ::std::cmp::Ordering::Greater
+        } else
+        if ! instance[c_1].is_strict_neg()
+        && instance[c_2].is_strict_neg() {
+          ::std::cmp::Ordering::Less
+        } else if instance[c_1].from_unrolling
+        && ! instance[c_2].from_unrolling {
+          ::std::cmp::Ordering::Greater
+        } else if ! instance[c_1].from_unrolling
+        && instance[c_2].from_unrolling {
+          ::std::cmp::Ordering::Less
+        } else {
+          count_1.cmp(& count_2)
+        }
       ) ;
 
       if_verb! {
@@ -225,14 +243,28 @@ impl Splitter {
         }
       }
 
-      Either::Left(clauses.into_iter().map(|(c,_)| c).collect())
+      let clauses: Vec<_> = clauses.into_iter().filter_map(
+        |(c,_)| if instance[c].from_unrolling {
+          Some(c)
+        } else {
+          Some(c)
+        }
+      ).collect() ;
+
+      let len = clauses.len() ;
+      if len <= 1 {
+        (Either::Right(false), len)
+      } else {
+        (Either::Left(clauses), len)
+      }
     } else {
-      Either::Right(false)
+      (Either::Right(false), 1)
     } ;
+
     let instance = instance.clone() ;
     // let model = Vec::new() ;
     Splitter {
-      instance, clauses,
+      instance, clauses, clause_count,
       prev_clauses: ClsSet::new(), _profiler: None,
     }
   }
@@ -250,7 +282,7 @@ impl Splitter {
     match self.clauses {
       Either::Left(ref clauses) => {
         if let Some(clause) = clauses.last() {
-          let total = self.instance.neg_clauses().len() ;
+          let total = self.clause_count ;
           let count = total - clauses.len() ;
           Some((* clause, count, total))
         } else {

@@ -86,6 +86,8 @@ fn finalize(
 /// Runs pre-processing on a split version of the input instance.
 ///
 /// Fails if `to_keep` is not a negative clause in `instance`.
+///
+/// Does **not** remove clauses that are tagged as being from unrolling.
 pub fn work_on_split(
   instance: & Instance, to_keep: ClsIdx,
   ignore: & ClsSet, profiler: & Profiler
@@ -96,7 +98,11 @@ pub fn work_on_split(
   let mut split_instance = instance.clone_with_clauses(to_keep) ;
 
   let mut to_forget: Vec<_> = instance.neg_clauses().iter().filter_map(
-    |c| if * c != to_keep { Some(* c) } else { None }
+    |c| if c == & to_keep /* || instance[* c].from_unrolling */ {
+      None
+    } else {
+      Some(* c)
+    }
   ).collect() ;
 
   let mut strict_neg_clauses = Vec::with_capacity(
@@ -261,12 +267,8 @@ pub struct Reductor<'a> {
   one_lhs: Option<OneLhs>,
   /// Optional cfg pre-processor.
   cfg_red: Option<CfgRed>,
-  // /// Optional biased unroller.
-  // biased_unroll: Option<BiasedUnroll>,
-  /// Optional unroller.
-  unroll: Option<Unroll>,
-  /// Optional reverse-unroller.
-  runroll: Option<RUnroll>,
+  /// Optional biased unroller.
+  biased_unroll: Option<BiasedUnroll>,
 }
 impl<'a> Reductor<'a> {
   /// Constructor.
@@ -306,17 +308,16 @@ impl<'a> Reductor<'a> {
 
     let cfg_red = some_new! { CfgRed if cfg_red } ;
 
-    // let biased_unroll = Some( BiasedUnroll::new(& instance) ) ;
-    let unroll = some_new! { Unroll if unroll } ;
-    let runroll = Some( RUnroll::new(& instance) ) ;
+    let biased_unroll = some_new! {
+      BiasedUnroll if unroll
+    } ;
 
     Ok(
       Reductor {
         instance, simplify, arg_red,
         s_one_rhs, s_one_lhs, one_rhs, one_lhs,
         cfg_red,
-        // biased_unroll,
-        unroll, runroll,
+        biased_unroll,
       }
     )
   }
@@ -520,69 +521,79 @@ impl<'a> Reductor<'a> {
 
     conf.check_timeout() ? ;
 
-    let max_clause_add = if conf.preproc.mult_unroll
-    && ! self.instance.clauses().is_empty() {
-      let clause_count = self.instance.clauses().len() ;
-      ::std::cmp::min(
-        clause_count, (
-          50. * ( clause_count as f64 ).log(2.)
-        ).round() as usize
-      )
-    } else {
-      0
-    } ;
-
-    let strict_neg_count = self.instance.strict_neg_clauses().fold(
-      0, |acc, _| acc + 1
-    ) ;
-
-    let (
-      mut added, mut r_added,
-      mut added_pre, mut r_added_pre,
-    ) = if conf.preproc.unroll {
-      (
-        0, 0, run!(runroll info).clause_diff(), run!(unroll info).clause_diff()
-      )
-    } else if strict_neg_count <= 1
-    && self.instance.split().is_none() {
-      // This is a special case, triggered one the first preproc run (split is
-      // none) and if there's only one negative clause. In this case, force run
-      // reverse unroll so that we can split later.
-      (0, 0, run!(runroll info).clause_diff(), 0)
-    } else {
-      (0, 0, 0, 0)
-    } ;
+    // let max_clause_add = if conf.preproc.mult_unroll
+    // && ! self.instance.clauses().is_empty() {
+    //   let clause_count = self.instance.clauses().len() ;
+    //   ::std::cmp::min(
+    //     clause_count, (
+    //       50. * ( clause_count as f64 ).log(2.)
+    //     ).round() as usize
+    //   )
+    // } else {
+    //   0
+    // } ;
 
 
-    loop {
-      added += added_pre ;
-      r_added += r_added_pre ;
-
-      if_verb! { 
-        log_verb! {
-          "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
-        }
-        log_verb! {
-          "           bakward {} ({})", r_added, r_added_pre
-        }
-        log_verb! {
-          "             total {} / {}", added + r_added, max_clause_add
-        }
-      }
-
-      if (
-        added_pre == 0 && r_added_pre == 0
-      ) || added + r_added > max_clause_add {
-        // (R)Unrolling is not producing anything anymore or has gone above the
-        // threshold.
-        break
-      } else if added_pre == 0 || added > r_added {
-        // Unrolling is stuck or has produced more clauses than runrolling.
-        r_added_pre = run!(runroll info).clause_diff()
-      } else {
-        added_pre = run!(unroll info).clause_diff()
+    if self.instance.split().is_none() {
+      let biased_info = run!(biased_unroll info) ;
+      if biased_info.non_zero() {
+        run! { simplify } ;
       }
     }
+
+
+
+    // let strict_neg_count = self.instance.strict_neg_clauses().fold(
+    //   0, |acc, _| acc + 1
+    // ) ;
+
+    // let (
+    //   mut added, mut r_added,
+    //   mut added_pre, mut r_added_pre,
+    // ) = if conf.preproc.unroll {
+    //   (
+    //     0, 0, run!(runroll info).clause_diff(), run!(unroll info).clause_diff()
+    //   )
+    // } else if strict_neg_count <= 1
+    // && self.instance.split().is_none() {
+    //   // This is a special case, triggered one the first preproc run (split is
+    //   // none) and if there's only one negative clause. In this case, force run
+    //   // reverse unroll so that we can split later.
+    //   (0, 0, run!(runroll info).clause_diff(), 0)
+    // } else {
+    //   (0, 0, 0, 0)
+    // } ;
+
+
+    // loop {
+    //   added += added_pre ;
+    //   r_added += r_added_pre ;
+
+    //   if_verb! { 
+    //     log_verb! {
+    //       "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
+    //     }
+    //     log_verb! {
+    //       "           bakward {} ({})", r_added, r_added_pre
+    //     }
+    //     log_verb! {
+    //       "             total {} / {}", added + r_added, max_clause_add
+    //     }
+    //   }
+
+    //   if (
+    //     added_pre == 0 && r_added_pre == 0
+    //   ) || added + r_added > max_clause_add {
+    //     // (R)Unrolling is not producing anything anymore or has gone above the
+    //     // threshold.
+    //     break
+    //   } else if added_pre == 0 || added > r_added {
+    //     // Unrolling is stuck or has produced more clauses than runrolling.
+    //     r_added_pre = run!(runroll info).clause_diff()
+    //   } else {
+    //     added_pre = run!(unroll info).clause_diff()
+    //   }
+    // }
 
     preproc_dump!(
       self.instance =>
@@ -1529,188 +1540,857 @@ impl RedStrat for CfgRed {
 }
 
 
-// /// Unrolls negative and positive constraints with a bias.
-// pub struct BiasedUnroll {
-//   in_pos_clauses: PrdSet,
-//   in_neg_clauses: PrdSet,
-//   not_in_pos_clauses: PrdSet,
-//   not_in_neg_clauses: PrdSet,
-// }
+/// Unrolls negative and positive constraints with a bias.
+///
+/// # TODO
+///
+/// - when creating new clauses for `p`, remember that `p` has new pos/neg
+///   definitions ; then, only check clauses that mention new predicates (old
+///   ones have already been tried)
+pub struct BiasedUnroll {
+  in_pos_clauses: PrdSet,
+  in_neg_clauses: PrdSet,
+  not_in_pos_clauses: PrdSet,
+  not_in_neg_clauses: PrdSet,
+  pos_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  neg_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  pos_new_preds: PrdHMap<(PrdSet, PrdSet)>,
+  neg_new_preds: PrdHMap<(PrdSet, PrdSet)>,
+  dummy_prof: Profiler,
+}
 
-// impl BiasedUnroll {
-//   /// Sets up the unroller by scanning the instance.
-//   fn setup<'a>(& mut self, instance: & PreInstance<'a>) {
-//     for (pred, _) in instance.preds().index_iter() {
-//       let (lhs_clauses, rhs_clauses) = instance.clauses_of(pred) ;
+impl BiasedUnroll {
+  /// Prints itself.
+  #[allow(dead_code)]
+  fn print(& self, instance: & Instance) {
+    println!("pos {{") ;
+    for pred in & self.in_pos_clauses {
+      println!("  + {}", instance[* pred])
+    }
+    for pred in & self.not_in_pos_clauses {
+      println!("  - {}", instance[* pred])
+    }
+    println!("}}") ;
+    println!("neg {{") ;
+    for pred in & self.in_neg_clauses {
+      println!("  + {}", instance[* pred])
+    }
+    for pred in & self.not_in_neg_clauses {
+      println!("  - {}", instance[* pred])
+    }
+    println!("}}") ;
 
-//       let mut in_pos = false ;
-//       for clause in rhs_clauses {
-//         if instance[* clause].lhs_pred_apps_len() == 0 {
-//           in_pos = true ;
-//           break
-//         }
-//       }
-//       if in_pos {
-//         let is_new = self.in_pos_clauses.insert(pred) ;
-//         debug_assert! { is_new }
-//       } else {
-//         let is_new = self.not_in_pos_clauses.insert(pred) ;
-//         debug_assert! { is_new }
-//       }
+    for (pred, defs) in & self.pos_defs {
+      if ! defs.is_empty() {
+        println!("+ {} {{", instance[* pred]) ;
+        for (qvars, terms) in defs {
+          let (pref, end) = if qvars.is_empty() {
+            ("", "")
+          } else {
+            print!("  (exists (") ;
+            for (qvar, typ) in qvars {
+              print!(" ({} {})", qvar.default_str(), typ)
+            }
+            println!(" )") ;
+            ("  ", "  )\n")
+          } ;
+          print!("  {}(and", pref) ;
+          for term in terms {
+            print!(" {}", term)
+          }
+          println!(")") ;
+          print!("{}", end)
+        }
+        println!("}}")
+      }
+    }
 
-//       let mut in_neg = false ;
-//       for clause in lhs_clauses {
-//         if instance[* clause].rhs().is_none()
-//         && instance[* clause].lhs_pred_apps_len() == 1 {
-//           in_neg = true ;
-//           break
-//         }
-//       }
-//       if in_neg {
-//         let is_new = self.in_neg_clauses.insert(pred) ;
-//         debug_assert! { is_new }
-//       } else {
-//         let is_new = self.not_in_neg_clauses.insert(pred) ;
-//         debug_assert! { is_new }
-//       }
-//     }
-//   }
+    for (pred, defs) in & self.neg_defs {
+      if ! defs.is_empty() {
+        println!("- {} {{", instance[* pred]) ;
+        for (qvars, terms) in defs {
+          let (pref, end) = if qvars.is_empty() {
+            ("", "")
+          } else {
+            print!("  (forall (") ;
+            for (qvar, typ) in qvars {
+              print!(" ({} {})", qvar.default_str(), typ)
+            }
+            println!(" )") ;
+            ("  ", "  )\n")
+          } ;
+          print!("  {}(not (and", pref) ;
+          for term in terms {
+            print!(" {}", term)
+          }
+          println!(") )") ;
+          print!("{}", end)
+        }
+        println!("}}")
+      }
+    }
 
-//   fn unroll_pos<'a>(
-//     instance: & mut PreInstance<'a>, clause: ClsIdx
-//   ) -> Res<RedInfo> {
-//     let mut info = RedInfo::new() ;
+    println!("pos_new_preds {{") ;
+    for (pred, (pos, neg)) in & self.pos_new_preds {
+      print!("  {} +{{", instance[* pred]) ;
+      for p in pos {
+        print!(" {}", instance[* p])
+      }
+      print!(" }}, -{{") ;
+      for p in neg {
+        print!(" {}", instance[* p])
+      }
+      println!(" }}")
+    }
+    println!("}}") ;
 
-//     Ok(info)
-//   }
+    println!("neg_new_preds {{") ;
+    for (pred, (pos, neg)) in & self.neg_new_preds {
+      print!("  {} +{{", instance[* pred]) ;
+      for p in pos {
+        print!(" {}", instance[* p])
+      }
+      print!(" }}, -{{") ;
+      for p in neg {
+        print!(" {}", instance[* p])
+      }
+      println!(" }}")
+    }
+    println!("}}") ;
+    println!("") ;
+    println!("") ;
+    println!("") ;
+  }
 
-//   /// Tries to generate a positive clause for a predicate.
-//   fn generate_pos_clause_for<'a>(
-//     & self, pred: PrdIdx, instance: & mut PreInstance<'a>
-//   ) -> Res<RedInfo> {
-//     let mut info = RedInfo::new() ;
 
-//     'all_clauses: for rhs_clause in instance.clauses_of(pred).1 {
-//       for (pred, _) in instance[* rhs_clause].lhs_preds() {
-//         if ! self.in_pos_clauses.contains(pred) {
-//           continue 'all_clauses
-//         }
-//       }
+  /// Sets up the unroller by scanning the instance.
+  ///
+  /// Returns `true` if there's nothing to do.
+  fn setup<'a>(
+    & mut self, instance: & PreInstance<'a>
+  ) -> Res<bool> {
+    for (pred, _) in instance.preds().index_iter() {
+      if instance.is_known(pred) { continue }
+      let (lhs_clauses, rhs_clauses) = instance.clauses_of(pred) ;
 
-//       print!("all okay (pos):") ;
-//       for (pred, _) in instance[* rhs_clause].lhs_preds() {
-//         print!(" {}", instance[* pred])
-//       }
-//       println!("") ;
-//       println!(
-//         "{}", instance[* rhs_clause].to_string_info(instance.preds()).unwrap()
-//       ) ;
-//       println!("")
-//     }
+      let mut in_pos = false ;
+      for clause in rhs_clauses {
+        if instance[* clause].lhs_pred_apps_len() == 0 {
+          in_pos = true ;
+          break
+        }
+      }
+      if in_pos {
+        let is_new = self.in_pos_clauses.insert(pred) ;
+        debug_assert! { is_new }
+      } else {
+        let is_new = self.not_in_pos_clauses.insert(pred) ;
+        debug_assert! { is_new }
+      }
 
-//     Ok(info)
-//   }
+      let mut in_neg = false ;
+      for clause in lhs_clauses {
+        if instance[* clause].rhs().is_none()
+        && instance[* clause].lhs_pred_apps_len() == 1 {
+          in_neg = true ;
+          break
+        }
+      }
+      if in_neg {
+        let is_new = self.in_neg_clauses.insert(pred) ;
+        debug_assert! { is_new }
+      } else {
+        let is_new = self.not_in_neg_clauses.insert(pred) ;
+        debug_assert! { is_new }
+      }
+    }
 
-//   /// Tries to generate a negative clause for a predicate.
-//   fn generate_neg_clause_for<'a>(
-//     & self, pred: PrdIdx, instance: & mut PreInstance<'a>
-//   ) -> Res<RedInfo> {
-//     let mut info = RedInfo::new() ;
+    let do_nothing = self.not_in_pos_clauses.is_empty(
+    ) && self.not_in_neg_clauses.is_empty() ;
 
-//     'all_clauses: for lhs_clause in instance.clauses_of(pred).0 {
-//       for (p, _) in instance[* lhs_clause].lhs_preds() {
-//         if p != & pred {
-//           if ! self.in_pos_clauses.contains(p) {
-//             continue 'all_clauses
-//           }
-//         }
-//       }
+    if ! do_nothing {
+      self.retrieve_all_pos_defs(instance) ? ;
+      self.retrieve_all_neg_defs(instance) ? ;
 
-//       if let Some((pred, _)) = instance[* lhs_clause].rhs() {
-//         if ! self.in_neg_clauses.contains(& pred) {
-//           continue 'all_clauses
-//         }
-//       }
+      let pos_neg = (
+        self.in_pos_clauses.clone(), self.in_neg_clauses.clone()
+      ) ;
 
-//       print!("all okay (neg):") ;
-//       for (pred, _) in instance[* lhs_clause].lhs_preds() {
-//         print!(" {}", instance[* pred])
-//       }
-//       println!("") ;
-//       println!(
-//         "{}", instance[* lhs_clause].to_string_info(instance.preds()).unwrap()
-//       ) ;
-//       println!("")
-//     }
+      for pred in & self.not_in_pos_clauses {
+        self.pos_new_preds.entry(* pred).or_insert_with(
+          || pos_neg.clone()
+        ) ;
+      }
 
-//     Ok(info)
-//   }
-// }
+      for pred in & self.not_in_neg_clauses {
+        self.neg_new_preds.entry(* pred).or_insert_with(
+          || pos_neg.clone()
+        ) ;
+      }
+    }
 
-// impl RedStrat for BiasedUnroll {
-//   fn name(& self) -> & 'static str { "biased unroll" }
+    Ok(do_nothing)
+  }
 
-//   fn new(_: & Instance) -> Self {
-//     let (
-//       in_pos_clauses, in_neg_clauses,
-//       not_in_pos_clauses, not_in_neg_clauses,
-//     ) = (
-//       PrdSet::new(), PrdSet::new(),
-//       PrdSet::new(), PrdSet::new(),
-//     ) ;
 
-//     BiasedUnroll {
-//       in_pos_clauses, in_neg_clauses,
-//       not_in_pos_clauses, not_in_neg_clauses,
-//     }
-//   }
+  /// Retrieves a predicate positive definition from some clause.
+  ///
+  /// The clause has to be positive.
+  pub fn retrieve_pos_def(
+    & mut self, instance: & Instance, pred: PrdIdx, clause: & Clause
+  ) -> Res<()> {
+    // Check what we're asked to do makes sense.
+    let args = if let Some((p, args)) = clause.rhs() {
+      if p != pred {
+        bail!(
+          "trying to retrieve_pos for {} in clause with different rhs",
+          instance[pred]
+        )
+      }
+      args
+    } else {
+      bail!(
+        "trying to retrieve_pos for {} in non-positive clause (rhs)",
+        instance[pred]
+      )
+    } ;
+    if ! clause.lhs_preds().is_empty() {
+      bail!(
+        "trying to retrieve_pos for {} in non-positive clause (lhs)",
+        instance[pred]
+      )
+    }
 
-//   fn apply<'a>(
-//     & mut self, instance: & mut PreInstance<'a>
-//   ) -> Res<RedInfo> {
-//     let mut info = RedInfo::new() ;
 
-//     self.setup(instance) ;
+    match utils::terms_of_rhs_app(
+      true, instance, clause.vars(),
+      clause.lhs_terms(), clause.lhs_preds(),
+      pred, args
+    ) ? {
+      ExtractRes::Failed => bail!(
+        "term extraction failed for {}", instance[pred]
+      ),
+      ExtractRes::Trivial |
+      ExtractRes::SuccessTrue |
+      ExtractRes::SuccessFalse => bail!(
+        "unexpected result for term extraction for {}", instance[pred]
+      ),
+      ExtractRes::Success((qvars, tterms)) => {
+        let (terms, preds) = tterms.destroy() ;
+        debug_assert! { preds.is_empty() }
+        self.pos_defs.entry(pred).or_insert_with(
+          || vec![]
+        ).push( (qvars, terms) )
+      },
+    }
 
-//     println!("in pos clauses {{") ;
-//     for pred in & self.in_pos_clauses {
-//       println!("  {}", instance[* pred])
-//     }
-//     println!("}}") ;
+    Ok(())
+  }
 
-//     println!("in neg clauses {{") ;
-//     for pred in & self.in_neg_clauses {
-//       println!("  {}", instance[* pred])
-//     }
-//     println!("}}") ;
+  /// Retrieves all the partial positive definitions for some predicate.
+  fn retrieve_pos_defs(
+    & mut self, instance: & Instance, pred: PrdIdx,
+  ) -> Res<usize> {
+    let mut count = 0 ;
+    for clause in instance.clauses_of(pred).1 {
+      let clause = & instance[* clause] ;
+      if clause.lhs_preds().is_empty() {
+        self.retrieve_pos_def(instance, pred, clause) ? ;
+        count += 1
+      }
+    }
+    Ok(count)
+  }
 
-//     for pred in & self.not_in_pos_clauses {
-//       let pred = * pred ;
-//       println! { "working on {}", instance[pred] }
-//       let this_info = self.generate_pos_clause_for(pred, instance) ? ;
-//       if this_info.non_zero() {
-//         println! { "-> success" }
-//       } else {
-//         println! { "-> failure" }
-//       }
-//       info += this_info
-//     }
+  /// Retrieves all partial positive definitions.
+  fn retrieve_all_pos_defs(
+    & mut self, instance: & Instance
+  ) -> Res<()> {
+    log! { @4 "retrieve all positive definitions" }
+    for pred in self.in_pos_clauses.clone() {
+      log! { @4 "-> {}", instance[pred] }
+      let count = self.retrieve_pos_defs(instance, pred) ? ;
+      if count == 0 {
+        bail!("failed to retrieve positive definition for {}", instance[pred])
+      }
+    }
+    Ok(())
+  }
 
-//     for pred in & self.not_in_neg_clauses {
-//       let pred = * pred ;
-//       println! { "working on {}", instance[pred] }
-//       let this_info = self.generate_neg_clause_for(pred, instance) ? ;
-//       if this_info.non_zero() {
-//         println! { "-> success" }
-//       } else {
-//         println! { "-> failure" }
-//       }
-//       info += this_info
-//     }
 
-//     Ok(info)
-//   }
-// }
+  /// Retrieves a predicate negative definition from some clause.
+  ///
+  /// The clause has to be strictly negative.
+  pub fn retrieve_neg_def(
+    & mut self, instance: & Instance, pred: PrdIdx, clause: & Clause
+  ) -> Res<()> {
+    // Check what we're asked to do makes sense.
+    if clause.rhs().is_some() {
+      bail! (
+        "trying to retrieve_neg for {} in non-negative clause (rhs)",
+        instance[pred]
+      )
+    }
+    let args = {
+      let mut preds = clause.lhs_preds().iter() ;
+      let mut argss = if let Some((p, argss)) = preds.next() {
+        debug_assert_eq! { p, & pred }
+        if preds.next().is_some() {
+          bail!(
+            "trying to retrieve_neg for {} in a non-strict clause (preds)",
+            instance[pred]
+          )
+        }
+        argss.iter()
+      } else {
+        bail!(
+          "trying to retrieve_neg for {} in empty clause",
+          instance[pred]
+        )
+      } ;
+
+      if let Some(args) = argss.next() {
+        debug_assert! { argss.next().is_none() }
+        args
+      } else {
+        bail!(
+          "trying to retrieve_neg for {} in a non-strict clause (argss)"
+        )
+      }
+    } ;
+
+
+    match utils::terms_of_lhs_app(
+      true, instance, clause.vars(),
+      clause.lhs_terms(), clause.lhs_preds(),
+      None,
+      pred, args
+    ) ? {
+      ExtractRes::Failed => bail!(
+        "term extraction failed for {}", instance[pred]
+      ),
+      ExtractRes::Trivial |
+      ExtractRes::SuccessTrue |
+      ExtractRes::SuccessFalse => bail!(
+        "unexpected result for term extraction for {}",
+        instance[pred]
+      ),
+      ExtractRes::Success((qvars, rhs, tterms)) => {
+        debug_assert! { rhs.is_none() }
+        let (terms, preds) = tterms.destroy() ;
+        debug_assert! { preds.is_empty() }
+        let mut neg_terms = HConSet::<Term>::new() ;
+        for term in terms {
+          neg_terms.insert(term) ;
+        }
+        self.neg_defs.entry(pred).or_insert_with(
+          || vec![]
+        ).push( (qvars, neg_terms) )
+      },
+    }
+
+    Ok(())
+  }
+
+  /// Retrieves all the partial negative definitions for some predicate.
+  fn retrieve_neg_defs(
+    & mut self, instance: & Instance, pred: PrdIdx,
+  ) -> Res<usize> {
+    let mut count = 0 ;
+    for clause in instance.clauses_of(pred).0 {
+      let clause = & instance[* clause] ;
+      if clause.lhs_preds().len() == 1
+      && clause.rhs().is_none()
+      && clause.lhs_preds().iter().next().map(
+        |(p, argss)| {
+          debug_assert_eq! { p, & pred }
+          argss.len() == 1
+        }
+      ).unwrap_or( false ) {
+        self.retrieve_neg_def(instance, pred, clause) ? ;
+        count += 1
+      }
+    }
+    Ok(count)
+  }
+
+  /// Retrieves all partial negative definitions.
+  fn retrieve_all_neg_defs(
+    & mut self, instance: & Instance
+  ) -> Res<()> {
+    for pred in self.in_neg_clauses.clone() {
+      let count = self.retrieve_neg_defs(instance, pred) ? ;
+      if count == 0 {
+        bail!("failed to retrieve negative definition for {}", instance[pred])
+      }
+    }
+    Ok(())
+  }
+
+
+
+
+  /// Forces some terms in a clause by inserting a predicate application.
+  ///
+  /// `terms` is understood as a conjunction.
+  fn insert_terms(
+    & self, clause: & mut Clause, args: & VarTerms,
+    qvars: & Quantfed, terms: & HConSet<Term>,
+  ) -> Res<()> {
+    // Generate fresh variables for the clause if needed.
+    let qual_map = clause.fresh_vars_for(qvars) ;
+
+    for term in terms {
+      if let Some((term, _)) = term.subst_total( & (args, & qual_map) ) {
+        clause.insert_term(term) ;
+      } else {
+        bail!("error during total substitution in `insert_terms`")
+      }
+    }
+
+    Ok(())
+  }
+
+
+
+
+
+  /// Tries to generate a positive clause for a predicate.
+  fn generate_pos_clauses_for<'a>(
+    & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+
+    'all_clauses: for rhs_clause in instance.clauses_of(pred).1.clone() {
+      let mut one_pred_is_new = false ;
+
+      for (p, _) in instance[rhs_clause].lhs_preds() {
+        if ! self.in_pos_clauses.contains(p) {
+          continue 'all_clauses
+        } else if let Some((pos, _)) = self.pos_new_preds.get(& pred) {
+          if pos.contains(p) {
+            one_pred_is_new = true
+          }
+        }
+      }
+      if ! one_pred_is_new {
+        continue 'all_clauses
+      }
+
+      let mut nu_clauses = vec![] ;
+
+      scoped! {
+
+        let mut clause = instance[rhs_clause].clone() ;
+
+        let mut lhs_preds: Vec<_> = clause.drain_lhs_preds().collect() ;
+        let mut map = Vec::with_capacity( lhs_preds.len() ) ;
+
+        for (pred, argss) in & lhs_preds {
+          let mut arg_map = Vec::with_capacity( argss.len() ) ;
+
+          if let Some(defs) = self.pos_defs.get(pred) {
+            for args in argss {
+              arg_map.push( (args, 0) )
+            }
+
+            map.push( (pred, defs, arg_map) )
+          } else {
+            bail!("no definition for {}", instance[* pred])
+          }
+        }
+
+        macro_rules! map_inc {
+          () => ({
+            let mut done = true ;
+            'all_apps: for & mut (_, defs, ref mut argss) in & mut map {
+              for (_, ref mut index) in argss {
+                * index += 1 ;
+                if * index < defs.len() {
+                  done = false ;
+                  break 'all_apps
+                } else {
+                  * index = 0
+                }
+              }
+            }
+            done
+          })
+        }
+
+        let mut done = false ;
+        while ! done {
+          let mut clause = clause.clone() ;
+
+          for (_, defs, argss) in & map {
+            for (args, index) in argss {
+              self.insert_terms(
+                & mut clause, args, & defs[* index].0, & defs[* index].1
+              ) ?
+            }
+          }
+
+          if let Some(trivial) = instance.is_this_clause_trivial(
+            & mut clause
+          ) ? {
+            if ! trivial {
+              nu_clauses.push(clause)
+            }
+          } else {
+            unimplemented!("unsat in biased unrolling")
+          }
+
+          done = map_inc!()
+        }
+
+      }
+
+      for mut clause in nu_clauses {
+        clause.from_unrolling = true ;
+        if let Some(index) = instance.push_clause(clause) ? {
+          self.retrieve_pos_def(
+            instance, pred, & instance[index]
+          ) ? ;
+          info.clauses_added += 1
+        }
+      }
+    }
+
+    Ok(info)
+  }
+
+
+
+
+
+  /// Tries to generate a negative clause for a predicate.
+  fn generate_neg_clauses_for<'a>(
+    & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+
+    'all_clauses: for lhs_clause in instance.clauses_of(pred).0.clone() {
+      let mut one_pred_is_new = false ;
+
+      if let Some((p, _)) = instance[lhs_clause].rhs() {
+        if ! self.in_neg_clauses.contains(& p) {
+          continue 'all_clauses
+        } else if let Some((_, neg)) = self.neg_new_preds.get(& pred) {
+          if neg.contains(& p) {
+            one_pred_is_new = true
+          }
+        }
+      }
+
+      for (p, _) in instance[lhs_clause].lhs_preds() {
+        if * p == pred {
+          ()
+        } else if ! self.in_pos_clauses.contains(p) {
+          continue 'all_clauses
+        } else if let Some((pos, _)) = self.neg_new_preds.get(p) {
+          if pos.contains(p) {
+            one_pred_is_new = true
+          }
+        }
+      }
+
+      if ! one_pred_is_new {
+        continue 'all_clauses
+      }
+
+      let mut nu_clauses = vec![] ;
+
+      scoped! {
+
+        let mut clause = instance[lhs_clause].clone() ;
+
+        let mut this_pred = None ;
+        let mut lhs_preds: Vec<_> = clause.drain_lhs_preds().collect() ;
+        let rhs_pred = clause.unset_rhs() ;
+
+        let mut map = Vec::with_capacity(
+          lhs_preds.len()
+        ) ;
+
+        for (p, argss) in lhs_preds {
+          let mut arg_map = Vec::with_capacity( argss.len() ) ;
+
+          if let Some(defs) = self.pos_defs.get(& p) {
+            for args in argss {
+              arg_map.push( (args, 0) )
+            }
+
+            if p == pred {
+              this_pred = Some((defs, arg_map))
+            } else {
+              map.push( (p, defs, arg_map) )
+            }
+          } else if p == pred {
+            debug_assert_eq! { argss.len(), 1 }
+            let is_new = clause.insert_pred_app(
+              pred, argss.into_iter().next().unwrap()
+            ) ;
+            debug_assert! { is_new }
+          } else {
+            bail!("no definition for {}", instance[p])
+          }
+        }
+
+        if let Some((pred, args)) = rhs_pred {
+          if let Some(defs) = self.neg_defs.get(& pred) {
+            map.push( (pred, defs, vec![ (args, 0) ]) )
+          } else {
+            bail!("no definition for {}", instance[pred])
+          }
+        }
+
+        let mut active_lhs_pred_app = 0 ;
+
+        macro_rules! map_inc {
+          () => ({
+            let mut done = true ;
+            for & mut (_, defs, ref mut argss) in & mut map {
+              map_inc!(@argss done, defs, argss ; true) ;
+              if ! done {
+                break
+              }
+            }
+
+            if let Some(& mut (defs, ref mut argss)) = this_pred.as_mut() {
+              if active_lhs_pred_app < argss.len() {
+                let mut index = 0 ;
+                map_inc!(
+                  @argss done, defs, argss ; {
+                    let iff = index != active_lhs_pred_app ;
+                    index += 1 ;
+                    iff
+                  }
+                )
+              }
+            }
+            done
+          }) ;
+          (@argss $done:ident, $defs:expr, $argss:expr ; $iff:expr) => (
+            for (_, ref mut index) in $argss {
+              if $iff {
+                * index += 1 ;
+                if * index < $defs.len() {
+                  $done = false ;
+                  break
+                } else {
+                  * index = 0
+                }
+              }
+            }
+          )
+        }
+
+        let mut done = false ;
+        while ! done {
+          let mut clause = clause.clone() ;
+          if let Some((_, argss)) = this_pred.as_ref() {
+            let (ref args, _) = argss[active_lhs_pred_app] ;
+            let is_new = clause.insert_pred_app(pred, args.clone()) ;
+            debug_assert! { is_new }
+          }
+
+          for (_, defs, argss) in & map {
+            for (args, index) in argss {
+              self.insert_terms(
+                & mut clause, args, & defs[* index].0, & defs[* index].1
+              ) ?
+            }
+          }
+
+          // println!(
+          //   "negative clause: {}",
+          //   clause.to_string_info(instance.preds()).unwrap()
+          // ) ;
+
+          if let Some(trivial) = instance.is_this_clause_trivial(
+            & mut clause
+          ) ? {
+            if ! trivial {
+              nu_clauses.push(clause)
+            } else {
+              // println!("trivial...")
+            }
+          } else {
+            unimplemented!("unsat in biased unrolling")
+          }
+
+          done = map_inc!()
+        }
+
+      }
+
+      for mut clause in nu_clauses {
+        clause.from_unrolling = true ;
+        if let Some(index) = instance.push_clause(clause) ? {
+          self.retrieve_neg_def(
+            instance, pred, & instance[index]
+          ) ? ;
+          info.clauses_added += 1
+        }
+      }
+    }
+
+    Ok(info)
+  }
+
+
+
+
+
+
+  pub fn pause(& self, blah: & str) {
+    pause(blah, & self.dummy_prof) ;
+  }
+}
+
+impl RedStrat for BiasedUnroll {
+  fn name(& self) -> & 'static str { "biased unroll" }
+
+  fn new(_: & Instance) -> Self {
+    let (
+      in_pos_clauses, in_neg_clauses,
+      not_in_pos_clauses, not_in_neg_clauses,
+    ) = (
+      PrdSet::new(), PrdSet::new(),
+      PrdSet::new(), PrdSet::new(),
+    ) ;
+
+    BiasedUnroll {
+      in_pos_clauses, in_neg_clauses,
+      not_in_pos_clauses, not_in_neg_clauses,
+      pos_defs: PrdHMap::new(),
+      neg_defs: PrdHMap::new(),
+      pos_new_preds: PrdHMap::new(),
+      neg_new_preds: PrdHMap::new(),
+      dummy_prof: Profiler::new(),
+    }
+  }
+
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+
+    let nothing_to_do = self.setup(instance) ? ;
+
+    if nothing_to_do {
+      return Ok(info)
+    }
+
+    // println!("done with setup") ;
+    // self.print(instance) ;
+    // println!("") ;
+
+    let mut new_stuff = true ;
+
+    while new_stuff {
+      new_stuff = false ;
+
+      for pred in self.not_in_pos_clauses.clone() {
+        log! { @4
+          "trying to generate positive clauses for {}", instance[pred]
+        }
+
+        // self.print(instance) ;
+
+        if self.pos_new_preds.get(& pred).map(
+          |(pos, _)| ! pos.is_empty()
+        ).unwrap_or(false) {
+
+          let this_info = self.generate_pos_clauses_for(pred, instance) ? ;
+          if this_info.non_zero() {
+            new_stuff = true ;
+
+            let was_there = self.not_in_pos_clauses.remove(& pred) ;
+            debug_assert! { was_there }
+
+            let is_new = self.in_pos_clauses.insert(pred) ;
+            debug_assert! { is_new }
+
+            let prev = self.pos_new_preds.remove(& pred) ;
+            debug_assert! { prev.is_some() }
+
+            for (_, (pos, _)) in self.pos_new_preds.iter_mut().chain(
+              self.neg_new_preds.iter_mut()
+            ) {
+              let is_new = pos.insert(pred) ;
+              debug_assert! { is_new }
+            }
+            log! { @4 "-> success" }
+          } else {
+            if let Some((pos, neg)) = self.pos_new_preds.get_mut(& pred) {
+              pos.clear() ;
+              neg.clear()
+            } else {
+              bail!("inconsistent BiasedUnroll state")
+            }
+            log! { @4 "-> failure" }
+          }
+          info += this_info ;
+
+        } else {
+          log! { @4 "-> nothing new, skipping" }
+        }
+      }
+
+      for pred in self.not_in_neg_clauses.clone() {
+        log! { @4
+          "trying to generate negative clauses for {}", instance[pred]
+        }
+
+        // self.print(instance) ;
+
+        if self.neg_new_preds.get(& pred).map(
+          |(pos, neg)| ! pos.is_empty() || ! neg.is_empty()
+        ).unwrap_or(false) {
+
+          let this_info = self.generate_neg_clauses_for(pred, instance) ? ;
+          if this_info.non_zero() {
+            new_stuff = true ;
+
+            let was_there = self.not_in_neg_clauses.remove(& pred) ;
+            debug_assert! { was_there }
+
+            let is_new = self.in_neg_clauses.insert(pred) ;
+            debug_assert! { is_new }
+
+            let prev = self.neg_new_preds.remove(& pred) ;
+            debug_assert! { prev.is_some() }
+
+            for (_, (_, neg)) in self.pos_new_preds.iter_mut().chain(
+              self.neg_new_preds.iter_mut()
+            ) {
+              let is_new = neg.insert(pred) ;
+              debug_assert! { is_new }
+            }
+            log! { @4 "-> success" }
+          } else {
+            if let Some((pos, neg)) = self.neg_new_preds.get_mut(& pred) {
+              pos.clear() ;
+              neg.clear()
+            } else {
+              bail!("inconsistent BiasedUnroll state")
+            }
+            log! { @4 "-> failure" }
+          }
+          info += this_info ;
+
+        } else {
+          log! { @4 "-> nothing new, skipping" }
+        }
+      }
+    }
+
+    // self.pause("end") ;
+
+    Ok(info)
+  }
+}
 
 
 

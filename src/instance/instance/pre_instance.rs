@@ -3,7 +3,7 @@
 
 use common::{
   *,
-  smt::{ SmtConj, SmtImpl },
+  smt::{ SmtImpl, ClauseTrivialExt },
 } ;
 use instance::Clause ;
 
@@ -39,6 +39,11 @@ impl<'a> PreInstance<'a> {
         clauses_to_check, clauses_to_simplify
       }
     )
+  }
+
+  /// Accessor for the solver.
+  pub fn solver(& mut self) -> & mut Solver<()> {
+    & mut self.solver
   }
 
   /// Destroys the pre instance, kills the internal solver.
@@ -394,63 +399,35 @@ impl<'a> PreInstance<'a> {
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-    let mut lhs: Vec<Term> = Vec::with_capacity(17) ;
-    let clause = & self.instance[clause_idx] ;
 
-    for term in clause.lhs_terms() {
-      match term.bool() {
-        Some(true) => (),
-        Some(false) => return Ok(true),
-        _ => {
-          let neg = term::not( term.clone() ) ;
-          for term in & lhs {
-            if neg == * term {
-              return Ok(true)
-            }
-          }
-          lhs.push( term.clone() )
-        },
-      }
-    }
-
-    let conj = SmtConj::new( lhs.iter() ) ;
-
-    if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
-
-      // Either it is trivial, or falsifiable regardless of the predicates.
-      if conj.is_unsat(
-        & mut self.solver, clause.vars()
-      ) ? {
-        return Ok(true)
-      } else {
-        log_debug!{
-          "unsat because of {}", clause.to_string_info(
-            self.instance.preds()
-          ) ?
-        }
-        bail!( ErrorKind::UnsatFrom(clause_idx) )
-      }
-
+    if let Some(res) = self.solver.is_clause_trivial(
+      & mut self.instance[clause_idx]
+    ) ? {
+      Ok(res)
     } else {
-
-      if let Some((pred, args)) = clause.rhs() {
-        if clause.lhs_preds().get(& pred).map(
-          |set| set.contains(args)
-        ).unwrap_or(false) {
-          return Ok(true)
-        }
+      log_debug!{
+        "unsat because of {}",
+        self.instance[clause_idx].to_string_info(
+          self.instance.preds()
+        ) ?
       }
-
-      if lhs.is_empty() {
-        Ok(false)
-      } else {
-        conj.is_unsat(
-          & mut self.solver, clause.vars()
-        )
-      }
-
+      bail!( ErrorKind::UnsatFrom(clause_idx) )
     }
 
+  }
+
+  /// Checks whether a clause is trivial.
+  ///
+  /// Returns `None` if the clause is unsat.
+  ///
+  /// Returns true if
+  ///
+  /// - the terms in the lhs are equivalent to `false`, or
+  /// - the rhs is a predicate application contained in the lhs.
+  pub fn is_this_clause_trivial(
+    & mut self, clause: & mut Clause
+  ) -> Res< Option<bool> > {
+    self.solver.is_clause_trivial(clause)
   }
 
 
@@ -656,6 +633,9 @@ impl<'a> PreInstance<'a> {
 
     Ok(info)
   }
+
+
+
 
 
   /// Forces the lhs occurences of a predicate to be equal to something.
@@ -1611,6 +1591,9 @@ impl<'a> PreInstance<'a> {
 
     Ok(info)
   }
+
+
+
 
   /// Removes all clauses in which `pred` is in the rhs.
   ///

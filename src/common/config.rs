@@ -273,9 +273,6 @@ pub struct PreprocConf {
   /// (Unroll strategy)
   pub unroll: bool,
 
-  /// Allows multiplet unrollings.
-  pub mult_unroll: bool,
-
   /// Allows clause term pruning.
   ///
   /// This is part of the [`Simplify`][simpl] strategy as well as the
@@ -506,19 +503,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).hidden(
-        true
-      ).number_of_values(1).display_order( order() )
-
-    ).arg(
-
-      Arg::with_name("mult_unroll").long("--mult_unroll").help(
-        "(de)activates multiple unrollings"
-      ).validator(
-        bool_validator
-      ).value_name(
-        bool_format
-      ).default_value("off").takes_value(true).hidden(
+      ).default_value("on").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -563,14 +548,13 @@ impl PreprocConf {
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
     let unroll = bool_of_matches(matches, "unroll") ;
-    let mult_unroll = bool_of_matches(matches, "mult_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms, unroll, mult_unroll, split_strengthen, split_sort
+      arg_red, prune_terms, unroll, split_strengthen, split_sort
     }
   }
 }

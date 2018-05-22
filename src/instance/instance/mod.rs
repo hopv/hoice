@@ -1001,7 +1001,7 @@ impl Instance {
   pub fn qualifiers_of_clause(
     & self, clause: & Clause, quals: & mut NuQuals
   ) -> Res<()> {
-    // if clause.from_unrolling { return Ok(()) }
+    if clause.from_unrolling { return Ok(()) }
 
     let build_conj = self.clauses.len() < 2000 && conf.ice.mine_conjs ;
 
