@@ -265,13 +265,21 @@ pub struct PreprocConf {
   /// (ArgRed reduction strategy)
   pub arg_red: bool,
 
-  /// Allows unrolling.
+  /// Allows positive clever unrolling.
   ///
-  /// (De)activates [`Unroll`][unroll].
+  /// (De)activates [`BiasedUnroll`][unroll] (positive version).
   ///
-  /// [unroll]: ../../instance/preproc/struct.Unroll.html
-  /// (Unroll strategy)
-  pub unroll: bool,
+  /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
+  /// (BiasedUnroll strategy)
+  pub pos_unroll: bool,
+
+  /// Allows negative clever unrolling.
+  ///
+  /// (De)activates [`BiasedUnroll`][unroll] (negative version).
+  ///
+  /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
+  /// (BiasedUnroll strategy)
+  pub neg_unroll: bool,
 
   /// Allows clause term pruning.
   ///
@@ -497,8 +505,20 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("unroll").long("--unroll").help(
-        "(de)activates unrolling"
+      Arg::with_name("pos_unroll").long("--pos_unroll").help(
+        "(de)activates positive unrolling"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("neg_unroll").long("--neg_unroll").help(
+        "(de)activates negative unrolling"
       ).validator(
         bool_validator
       ).value_name(
@@ -547,14 +567,16 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
-    let unroll = bool_of_matches(matches, "unroll") ;
+    let pos_unroll = bool_of_matches(matches, "pos_unroll") ;
+    let neg_unroll = bool_of_matches(matches, "neg_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms, unroll, split_strengthen, split_sort
+      arg_red, prune_terms, pos_unroll, neg_unroll,
+      split_strengthen, split_sort
     }
   }
 }

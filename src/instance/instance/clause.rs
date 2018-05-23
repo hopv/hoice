@@ -209,7 +209,9 @@ impl Clause {
       TTerm::T(term) => if let Some(true) = term.bool() {
         false
       } else {
-        self.insert_term(term)
+        let is_new = self.insert_term(term) ;
+        self.terms_changed = self.terms_changed || is_new ;
+        is_new
       },
       TTerm::P { pred, args } => self.insert_pred_app(pred, args),
     }
@@ -222,7 +224,13 @@ impl Clause {
   pub fn drop_lhs_pred(
     & mut self, pred: PrdIdx
   ) -> Option< VarTermsSet > {
-    self.lhs_preds.remove(& pred)
+    let res = self.lhs_preds.remove(& pred) ;
+    if res.is_some()
+    && self.lhs_preds.is_empty()
+    && self.rhs.is_none() {
+      self.terms_changed = true
+    }
+    res
   }
 
   /// Inserts a predicate application in the LHS.
@@ -317,16 +325,14 @@ impl Clause {
   /// Inserts a term in the LHS.
   pub fn insert_term(& mut self, term: Term) -> bool {
     let is_new = Self::lhs_insert_term(& mut self.lhs_terms, term) ;
-    if is_new {
-      self.terms_changed = true ;
-      true
-    } else {
-      false
-    }
+    self.terms_changed = self.terms_changed || is_new ;
+    is_new
   }
   /// Removes a term from the LHS.
   pub fn rm_term(& mut self, term: & Term) -> bool {
-    self.lhs_terms.remove(term)
+    let was_there = self.lhs_terms.remove(term) ;
+    self.terms_changed = self.terms_changed || was_there ;
+    was_there
   }
 
   /// Length of a clause's LHS.
@@ -356,13 +362,8 @@ impl Clause {
   pub fn drain_lhs_preds(
     & mut self
   ) -> ::std::collections::hash_map::Drain<PrdIdx, VarTermsSet> {
+    self.terms_changed = self.terms_changed || self.rhs.is_none() ;
     self.lhs_preds.drain()
-  }
-
-  /// LHS accessor for a predicate, mutable.
-  #[inline]
-  pub fn lhs_pred_mut(& mut self, pred: PrdIdx) -> Option< & mut VarTermsSet > {
-    self.lhs_preds.get_mut(& pred)
   }
 
   /// Maps over the arguments of a predicate in the lhs.
@@ -396,15 +397,7 @@ impl Clause {
       None
     }
   }
-  /// RHS accessor, mutable.
-  #[inline]
-  pub fn rhs_mut(& mut self) -> Option<(PrdIdx, & mut VarTerms)> {
-    if let Some(& mut (pred, ref mut args)) = self.rhs.as_mut() {
-      Some((pred, args))
-    } else {
-      None
-    }
-  }
+
   /// Map over the arguments of a predicate in the rhs.
   #[inline]
   pub fn rhs_map_args<F>(& mut self, mut f: F)
@@ -437,9 +430,9 @@ impl Clause {
   pub fn unset_rhs(& mut self) -> Option<PredApp> {
     let mut old_rhs = None ;
     ::std::mem::swap( & mut self.rhs, & mut old_rhs ) ;
-    if old_rhs.is_some() {
-      self.terms_changed = true
-    }
+    self.terms_changed = self.terms_changed || (
+      old_rhs.is_some() && self.lhs_preds.is_empty()
+    ) ;
     old_rhs
   }
 
@@ -489,7 +482,7 @@ impl Clause {
     self.from
   }
 
-  /// Clones a clause without the lhs predicate applications.
+  /// Clones a clause without the lhs predicate applications of `pred`.
   pub fn clone_except_lhs_of(
     & self, pred: PrdIdx, info: & 'static str
   ) -> Self {
@@ -504,7 +497,7 @@ impl Clause {
       vars: self.vars.clone(),
       lhs_terms: self.lhs_terms.clone(), lhs_preds,
       rhs: self.rhs.clone(),
-      terms_changed: true,
+      terms_changed: self.lhs_preds.is_empty(),
       from_unrolling: self.from_unrolling,
       info,
       from: self.from.clone(),
@@ -585,6 +578,10 @@ impl Clause {
           }
         }
       }
+
+      self.terms_changed = self.terms_changed
+      || ! to_rm.is_empty() || ! to_add.is_empty() ;
+
       for to_rm in to_rm.drain() {
         let was_there = self.lhs_terms.remove(& to_rm) ;
         debug_assert! { was_there }
@@ -641,7 +638,10 @@ impl Clause {
       }
     ) ;
 
-    if changed { self.prune() }
+    if changed {
+      self.terms_changed = true ;
+      self.prune()
+    }
 
     changed
   }
@@ -683,7 +683,7 @@ impl Clause {
       }
       map
     } else {
-      return VarHMap::new()
+      VarHMap::new()
     }
   }
 

@@ -205,7 +205,10 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
-    log! { @debug "simplifying clause #{} ({})", clause, self.instance[clause].terms_changed() }
+    log! { @debug
+      "simplifying clause #{} (terms_changed: {})",
+      clause, self.instance[clause].terms_changed()
+    }
 
     if self.instance[clause].is_unsat() {
       unsat!("by preprocessing, clause simplification")

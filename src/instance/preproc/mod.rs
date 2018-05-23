@@ -280,6 +280,9 @@ impl<'a> Reductor<'a> {
       ($red:ident if $flag:ident $(and $flags:ident )*) => (
         some_new! { $red |if| conf.preproc.$flag $( && conf.preproc.$flags )* }
       ) ;
+      ($red:ident if $flag:ident $(or $flags:ident )*) => (
+        some_new! { $red |if| conf.preproc.$flag $( && conf.preproc.$flags )* }
+      ) ;
       ($red:ident |if| $cond:expr) => (
         if $cond {
           Some( $red::new(& instance) )
@@ -309,7 +312,7 @@ impl<'a> Reductor<'a> {
     let cfg_red = some_new! { CfgRed if cfg_red } ;
 
     let biased_unroll = some_new! {
-      BiasedUnroll if unroll
+      BiasedUnroll if pos_unroll or neg_unroll
     } ;
 
     Ok(
@@ -2067,13 +2070,22 @@ impl BiasedUnroll {
   fn generate_neg_clauses_for<'a>(
     & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
   ) -> Res<RedInfo> {
+    // self.print(instance) ;
+
     let mut info = RedInfo::new() ;
 
     'all_clauses: for lhs_clause in instance.clauses_of(pred).0.clone() {
       let mut one_pred_is_new = false ;
 
+      log! { @6
+        "trying to generate negative clause(s) for {} from {}",
+        instance[pred],
+        instance[lhs_clause].to_string_info( instance.preds() ) ?
+      }
+
       if let Some((p, _)) = instance[lhs_clause].rhs() {
         if ! self.in_neg_clauses.contains(& p) {
+          log! { @6 "{} not in pos clauses", instance[p] }
           continue 'all_clauses
         } else if let Some((_, neg)) = self.neg_new_preds.get(& pred) {
           if neg.contains(& p) {
@@ -2086,13 +2098,16 @@ impl BiasedUnroll {
         if * p == pred {
           ()
         } else if ! self.in_pos_clauses.contains(p) {
+          log! { @6 "{} not in pos clauses", instance[* p] }
           continue 'all_clauses
-        } else if let Some((pos, _)) = self.neg_new_preds.get(p) {
+        } else if let Some((pos, _)) = self.neg_new_preds.get(& pred) {
           if pos.contains(p) {
             one_pred_is_new = true
           }
         }
       }
+
+      log! { @6 "one pred new: {}", one_pred_is_new }
 
       if ! one_pred_is_new {
         continue 'all_clauses
@@ -2156,18 +2171,31 @@ impl BiasedUnroll {
               }
             }
 
-            if let Some(& mut (defs, ref mut argss)) = this_pred.as_mut() {
-              if active_lhs_pred_app < argss.len() {
-                let mut index = 0 ;
-                map_inc!(
-                  @argss done, defs, argss ; {
-                    let iff = index != active_lhs_pred_app ;
-                    index += 1 ;
-                    iff
-                  }
-                )
+            // println!("inc: {}", done) ;
+
+            if done {
+              if let Some(
+                & mut (defs, ref mut argss)
+              ) = this_pred.as_mut() {
+                let argss_len = argss.len() ;
+                if active_lhs_pred_app < argss_len {
+                  let mut index = 0 ;
+                  map_inc!(
+                    @argss done, defs, argss ; {
+                      let iff = index != active_lhs_pred_app ;
+                      index += 1 ;
+                      iff
+                    }
+                  )
+                }
+
+                if done {
+                  active_lhs_pred_app += 1 ;
+                  done = active_lhs_pred_app >= argss_len
+                }
               }
             }
+
             done
           }) ;
           (@argss $done:ident, $defs:expr, $argss:expr ; $iff:expr) => (
@@ -2187,11 +2215,25 @@ impl BiasedUnroll {
 
         let mut done = false ;
         while ! done {
+          // println!("running: {}", active_lhs_pred_app) ;
+
           let mut clause = clause.clone() ;
-          if let Some((_, argss)) = this_pred.as_ref() {
-            let (ref args, _) = argss[active_lhs_pred_app] ;
-            let is_new = clause.insert_pred_app(pred, args.clone()) ;
-            debug_assert! { is_new }
+          if let Some((defs, argss)) = this_pred.as_ref() {
+            let mut current = 0 ;
+
+            while current < argss.len() {
+              let (ref args, index) = argss[current] ;
+              if current == active_lhs_pred_app {
+                let is_new = clause.insert_pred_app(pred, args.clone()) ;
+                debug_assert! { is_new }
+              } else {
+                self.insert_terms(
+                  & mut clause, args, & defs[index].0, & defs[index].1
+                ) ?
+              }
+              current += 1
+            }
+
           }
 
           for (_, defs, argss) in & map {
@@ -2211,6 +2253,7 @@ impl BiasedUnroll {
             & mut clause
           ) ? {
             if ! trivial {
+              // println!("non-trivial...") ;
               nu_clauses.push(clause)
             } else {
               // println!("trivial...")
@@ -2225,6 +2268,11 @@ impl BiasedUnroll {
       }
 
       for mut clause in nu_clauses {
+        log! { @6
+          "new clause: {}",
+          clause.to_string_info( instance.preds() ) ?
+        }
+
         clause.from_unrolling = true ;
         if let Some(index) = instance.push_clause(clause) ? {
           self.retrieve_neg_def(
@@ -2249,7 +2297,7 @@ impl BiasedUnroll {
 }
 
 impl RedStrat for BiasedUnroll {
-  fn name(& self) -> & 'static str { "biased unroll" }
+  fn name(& self) -> & 'static str { "biased_unroll" }
 
   fn new(_: & Instance) -> Self {
     let (
@@ -2296,8 +2344,6 @@ impl RedStrat for BiasedUnroll {
           "trying to generate positive clauses for {}", instance[pred]
         }
 
-        // self.print(instance) ;
-
         if self.pos_new_preds.get(& pred).map(
           |(pos, _)| ! pos.is_empty()
         ).unwrap_or(false) {
@@ -2322,6 +2368,13 @@ impl RedStrat for BiasedUnroll {
               debug_assert! { is_new }
             }
             log! { @4 "-> success" }
+
+            preproc_dump!(
+              instance =>
+                format!("after_{}_pos", pred),
+                format!("After {} pos", instance[pred])
+            ) ? ;
+
           } else {
             if let Some((pos, neg)) = self.pos_new_preds.get_mut(& pred) {
               pos.clear() ;
@@ -2369,6 +2422,12 @@ impl RedStrat for BiasedUnroll {
               debug_assert! { is_new }
             }
             log! { @4 "-> success" }
+
+            preproc_dump!(
+              instance =>
+                format!("after_{}_neg", pred),
+                format!("After {} neg", instance[pred])
+            ) ? ;
           } else {
             if let Some((pos, neg)) = self.neg_new_preds.get_mut(& pred) {
               pos.clear() ;
@@ -2385,8 +2444,6 @@ impl RedStrat for BiasedUnroll {
         }
       }
     }
-
-    // self.pause("end") ;
 
     Ok(info)
   }
