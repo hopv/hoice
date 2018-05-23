@@ -269,6 +269,8 @@ pub struct Reductor<'a> {
   cfg_red: Option<CfgRed>,
   /// Optional biased unroller.
   biased_unroll: Option<BiasedUnroll>,
+  /// Optional reverse unroller.
+  runroll: Option<RUnroll>,
 }
 impl<'a> Reductor<'a> {
   /// Constructor.
@@ -314,13 +316,16 @@ impl<'a> Reductor<'a> {
     let biased_unroll = some_new! {
       BiasedUnroll if pos_unroll or neg_unroll
     } ;
+    let runroll = some_new! {
+      RUnroll if neg_unroll
+    } ;
 
     Ok(
       Reductor {
         instance, simplify, arg_red,
         s_one_rhs, s_one_lhs, one_rhs, one_lhs,
         cfg_red,
-        biased_unroll,
+        biased_unroll, runroll,
       }
     )
   }
@@ -541,6 +546,16 @@ impl<'a> Reductor<'a> {
       let biased_info = run!(biased_unroll info) ;
       if biased_info.non_zero() {
         run! { simplify } ;
+      }
+
+      let strict_neg_count = self.instance.strict_neg_clauses().fold(
+        0, |acc, _| acc + 1
+      ) ;
+      if strict_neg_count <= 1 {
+        let info = run!( runroll info ) ;
+        if info.non_zero() {
+          run! { simplify } ;
+        }
       }
     }
 
