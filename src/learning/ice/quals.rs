@@ -974,7 +974,7 @@ impl NuQuals {
     let mut quals = NuQuals {
       quals,
       instance: instance.clone(),
-      rng: ::rand::StdRng::from_seed(& [42]),
+      rng: ::rand::StdRng::from_seed( [42 ; 32] ),
     } ;
 
     if mine {
@@ -1164,7 +1164,7 @@ impl NuQuals {
     ).collect() ;
 
     quals.sort_unstable_by(
-      |_, _| if rng.next_f64() > 0.5 {
+      |_, _| if 0.5 < rng.gen() {
         ::std::cmp::Ordering::Greater
       } else {
         ::std::cmp::Ordering::Less

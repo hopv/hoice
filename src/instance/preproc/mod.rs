@@ -2339,110 +2339,119 @@ impl RedStrat for BiasedUnroll {
     while new_stuff {
       new_stuff = false ;
 
-      for pred in self.not_in_pos_clauses.clone() {
-        log! { @4
-          "trying to generate positive clauses for {}", instance[pred]
-        }
+      if conf.preproc.pos_unroll {
 
-        if self.pos_new_preds.get(& pred).map(
-          |(pos, _)| ! pos.is_empty()
-        ).unwrap_or(false) {
+        for pred in self.not_in_pos_clauses.clone() {
+          log! { @4
+            "trying to generate positive clauses for {}", instance[pred]
+          }
 
-          let this_info = self.generate_pos_clauses_for(pred, instance) ? ;
-          if this_info.non_zero() {
-            new_stuff = true ;
+          if self.pos_new_preds.get(& pred).map(
+            |(pos, _)| ! pos.is_empty()
+          ).unwrap_or(false) {
 
-            let was_there = self.not_in_pos_clauses.remove(& pred) ;
-            debug_assert! { was_there }
+            let this_info = self.generate_pos_clauses_for(pred, instance) ? ;
+            if this_info.non_zero() {
+              new_stuff = true ;
 
-            let is_new = self.in_pos_clauses.insert(pred) ;
-            debug_assert! { is_new }
+              let was_there = self.not_in_pos_clauses.remove(& pred) ;
+              debug_assert! { was_there }
 
-            let prev = self.pos_new_preds.remove(& pred) ;
-            debug_assert! { prev.is_some() }
-
-            for (_, (pos, _)) in self.pos_new_preds.iter_mut().chain(
-              self.neg_new_preds.iter_mut()
-            ) {
-              let is_new = pos.insert(pred) ;
+              let is_new = self.in_pos_clauses.insert(pred) ;
               debug_assert! { is_new }
-            }
-            log! { @4 "-> success" }
 
-            preproc_dump!(
-              instance =>
-                format!("after_{}_pos", pred),
-                format!("After {} pos", instance[pred])
-            ) ? ;
+              let prev = self.pos_new_preds.remove(& pred) ;
+              debug_assert! { prev.is_some() }
+
+              for (_, (pos, _)) in self.pos_new_preds.iter_mut().chain(
+                self.neg_new_preds.iter_mut()
+              ) {
+                let is_new = pos.insert(pred) ;
+                debug_assert! { is_new }
+              }
+              log! { @4 "-> success" }
+
+              preproc_dump!(
+                instance =>
+                  format!("after_{}_pos", pred),
+                  format!("After {} pos", instance[pred])
+              ) ? ;
+
+            } else {
+              if let Some((pos, neg)) = self.pos_new_preds.get_mut(& pred) {
+                pos.clear() ;
+                neg.clear()
+              } else {
+                bail!("inconsistent BiasedUnroll state")
+              }
+              log! { @4 "-> failure" }
+            }
+            info += this_info ;
 
           } else {
-            if let Some((pos, neg)) = self.pos_new_preds.get_mut(& pred) {
-              pos.clear() ;
-              neg.clear()
-            } else {
-              bail!("inconsistent BiasedUnroll state")
-            }
-            log! { @4 "-> failure" }
+            log! { @4 "-> nothing new, skipping" }
           }
-          info += this_info ;
-
-        } else {
-          log! { @4 "-> nothing new, skipping" }
         }
+
       }
 
-      for pred in self.not_in_neg_clauses.clone() {
-        log! { @4
-          "trying to generate negative clauses for {}", instance[pred]
-        }
+      if conf.preproc.neg_unroll {
 
-        // self.print(instance) ;
+        for pred in self.not_in_neg_clauses.clone() {
+          log! { @4
+            "trying to generate negative clauses for {}", instance[pred]
+          }
 
-        if self.neg_new_preds.get(& pred).map(
-          |(pos, neg)| ! pos.is_empty() || ! neg.is_empty()
-        ).unwrap_or(false) {
+          // self.print(instance) ;
 
-          let this_info = self.generate_neg_clauses_for(pred, instance) ? ;
-          if this_info.non_zero() {
-            new_stuff = true ;
+          if self.neg_new_preds.get(& pred).map(
+            |(pos, neg)| ! pos.is_empty() || ! neg.is_empty()
+          ).unwrap_or(false) {
 
-            let was_there = self.not_in_neg_clauses.remove(& pred) ;
-            debug_assert! { was_there }
+            let this_info = self.generate_neg_clauses_for(pred, instance) ? ;
+            if this_info.non_zero() {
+              new_stuff = true ;
 
-            let is_new = self.in_neg_clauses.insert(pred) ;
-            debug_assert! { is_new }
+              let was_there = self.not_in_neg_clauses.remove(& pred) ;
+              debug_assert! { was_there }
 
-            let prev = self.neg_new_preds.remove(& pred) ;
-            debug_assert! { prev.is_some() }
-
-            for (_, (_, neg)) in self.pos_new_preds.iter_mut().chain(
-              self.neg_new_preds.iter_mut()
-            ) {
-              let is_new = neg.insert(pred) ;
+              let is_new = self.in_neg_clauses.insert(pred) ;
               debug_assert! { is_new }
-            }
-            log! { @4 "-> success" }
 
-            preproc_dump!(
-              instance =>
-                format!("after_{}_neg", pred),
-                format!("After {} neg", instance[pred])
-            ) ? ;
-          } else {
-            if let Some((pos, neg)) = self.neg_new_preds.get_mut(& pred) {
-              pos.clear() ;
-              neg.clear()
+              let prev = self.neg_new_preds.remove(& pred) ;
+              debug_assert! { prev.is_some() }
+
+              for (_, (_, neg)) in self.pos_new_preds.iter_mut().chain(
+                self.neg_new_preds.iter_mut()
+              ) {
+                let is_new = neg.insert(pred) ;
+                debug_assert! { is_new }
+              }
+              log! { @4 "-> success" }
+
+              preproc_dump!(
+                instance =>
+                  format!("after_{}_neg", pred),
+                  format!("After {} neg", instance[pred])
+              ) ? ;
             } else {
-              bail!("inconsistent BiasedUnroll state")
+              if let Some((pos, neg)) = self.neg_new_preds.get_mut(& pred) {
+                pos.clear() ;
+                neg.clear()
+              } else {
+                bail!("inconsistent BiasedUnroll state")
+              }
+              log! { @4 "-> failure" }
             }
-            log! { @4 "-> failure" }
-          }
-          info += this_info ;
+            info += this_info ;
 
-        } else {
-          log! { @4 "-> nothing new, skipping" }
+          } else {
+            log! { @4 "-> nothing new, skipping" }
+          }
         }
+
       }
+
     }
 
     Ok(info)

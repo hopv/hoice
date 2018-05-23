@@ -148,19 +148,19 @@ impl<'core> IceLearner<'core> {
         dec_mem, candidate, predicates,
         sort_rng_1: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed(& [ 42 ])
+          ::rand::StdRng::from_seed( [ 42 ; 32 ] )
         },
         sort_rng_2: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed(& [ 79 ])
+          ::rand::StdRng::from_seed( [ 79 ; 32 ] )
         },
         simple_rng: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed(& [ 107 ])
+          ::rand::StdRng::from_seed( [ 107 ; 32 ] )
         },
         pre_skip_rng: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed(& [ 666 ])
+          ::rand::StdRng::from_seed( [ 245 ; 32 ] )
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
@@ -312,11 +312,11 @@ impl<'core> IceLearner<'core> {
     }
 
     // Decide whether to use simple gain.
-    let simple = self.simple_rng.next_f64() <= conf.ice.simple_gain_ratio ;
+    let simple = conf.ice.simple_gain_ratio >= self.simple_rng.gen() ;
     // Decide whether to sort the predicates.
-    let sorted = self.sort_rng_1.next_f64() <= conf.ice.sort_preds ;
+    let sorted = conf.ice.sort_preds >= self.sort_rng_1.gen() ;
     // Skip preliminary decision 20% of the time.
-    let skip_prelim = self.pre_skip_rng.next_f64() <= 0.20 ;
+    let skip_prelim = 0.20 >= self.pre_skip_rng.gen() ;
 
     msg! { @verb
       self =>
@@ -461,20 +461,22 @@ impl<'core> IceLearner<'core> {
 
       // Not sorting, forcing random order.
       profile!{ self tick "learning", "predicate sorting" }
-      let mut sort_rng = self.sort_rng_2 ;
-      self.predicates.sort_unstable_by(
-        |_, _| {
-          use std::cmp::Ordering::* ;
-          let rand = sort_rng.next_f64() ;
-          if rand <= 0.33 {
-            Less
-          } else if rand <= 0.66 {
-            Equal
-          } else {
-            Greater
+      scoped! {
+        let sort_rng = & mut self.sort_rng_2 ;
+        self.predicates.sort_unstable_by(
+          |_, _| {
+            use std::cmp::Ordering::* ;
+            let rand: f64 = sort_rng.gen() ;
+            if rand <= 0.33 {
+              Less
+            } else if rand <= 0.66 {
+              Equal
+            } else {
+              Greater
+            }
           }
-        }
-      ) ;
+        )
+      }
       profile!{ self mark "learning", "predicate sorting" }
 
     }
