@@ -1344,7 +1344,7 @@ impl<'a> PreInstance<'a> {
             "staging clause {}",
             nu_clause.to_string_info(& self.preds).unwrap()
           }
-          nu_clause.from_unrolling = true ;
+          // nu_clause.from_unrolling = true ;
           to_add.push( nu_clause )
         }
       }
@@ -1421,7 +1421,7 @@ impl<'a> PreInstance<'a> {
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
-          nu_clause.from_unrolling = true ;
+          // nu_clause.from_unrolling = true ;
           to_add.push( nu_clause )
         }
       }
