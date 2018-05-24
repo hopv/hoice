@@ -352,10 +352,11 @@ impl<'a> Reductor<'a> {
             // Check remaining clauses, maybe some of them are unsat.
             match self.instance.simplify_all() {
               Ok(_) => (),
-              Err(e) => if e.is_unsat() {
-                self.instance.set_unsat()
-              } else {
-                return Err(e)
+              Err(e) => {
+                if e.is_unsat() {
+                  self.instance.set_unsat()
+                }
+                bail!(e)
               },
             }
           }
@@ -375,26 +376,26 @@ impl<'a> Reductor<'a> {
         $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
       ) ;
 
-      (
-        |simplify| simplify $preproc:expr, $count:ident, $info:expr
-      ) => (
-      ) ; 
-      (
-        |$name:ident| simplify $preproc:expr, $count:ident, $info:expr
-      ) => (
-        $info += if let Some(simplify) = self.simplify.as_mut() {
-          simplify.apply(& mut self.instance) ?
-        } else {
-          bail!("simplify should always be active")
-        } ;
-        preproc_dump!(
-          self.instance =>
-          format!("preproc_{:0>4}_{}_simplify", $count, $preproc.name()),
-          format!(
-            "Instance after running `{}` and simplifying.", $preproc.name()
-          )
-        ) ? ;
-      ) ;
+      // (
+      //   |simplify| simplify $preproc:expr, $count:ident, $info:expr
+      // ) => (
+      // ) ; 
+      // (
+      //   |$name:ident| simplify $preproc:expr, $count:ident, $info:expr
+      // ) => (
+      //   $info += if let Some(simplify) = self.simplify.as_mut() {
+      //     simplify.apply(& mut self.instance) ?
+      //   } else {
+      //     bail!("simplify should always be active")
+      //   } ;
+      //   preproc_dump!(
+      //     self.instance =>
+      //     format!("preproc_{:0>4}_{}_simplify", $count, $preproc.name()),
+      //     format!(
+      //       "Instance after running `{}` and simplifying.", $preproc.name()
+      //     )
+      //   ) ? ;
+      // ) ;
 
       ($preproc:ident) => ( run!($preproc bool) ) ;
       ($preproc:ident $($tail:tt)*) => (
@@ -416,7 +417,7 @@ impl<'a> Reductor<'a> {
               format!("Instance after running `{}`.", preproc.name())
             ) ? ;
 
-            run! { |$preproc| simplify preproc, count, red_info }
+            // run! { |$preproc| simplify preproc, count, red_info }
 
             profile!{
               |_profiler| format!(
@@ -568,7 +569,7 @@ impl<'a> Reductor<'a> {
     // } ;
 
 
-    if self.instance.split().is_none() {
+    if self.instance.split().is_none() && self.instance.clauses().len() > 20 {
       let biased_info = run!(biased_unroll info) ;
       if biased_info.non_zero() {
         run! { simplify } ;
@@ -577,7 +578,7 @@ impl<'a> Reductor<'a> {
       let strict_neg_count = self.instance.strict_neg_clauses().fold(
         0, |acc, _| acc + 1
       ) ;
-      if strict_neg_count <= 1 {
+      if strict_neg_count <= 1 && conf.preproc.runroll {
         let info = run!( runroll info ) ;
         if info.non_zero() {
           run! { simplify } ;
@@ -1660,7 +1661,8 @@ pub struct BiasedUnroll {
   /// 
   pos_new_preds: PrdHMap<(PrdSet, PrdSet)>,
   neg_new_preds: PrdHMap<(PrdSet, PrdSet)>,
-  dummy_prof: Profiler,
+  /// Maximum number of new clauses we can create by predicate.
+  max_new_clauses: usize,
 }
 
 impl BiasedUnroll {
@@ -1796,6 +1798,10 @@ impl BiasedUnroll {
   fn setup<'a>(
     & mut self, instance: & PreInstance<'a>
   ) -> Res<bool> {
+    self.max_new_clauses = ::std::cmp::min(
+      10, instance.clauses().len() / 20
+    ) ;
+
     for (pred, _) in instance.preds().index_iter() {
       if instance.is_known(pred) { continue }
       let (lhs_clauses, rhs_clauses) = instance.clauses_of(pred) ;
@@ -2093,7 +2099,7 @@ impl BiasedUnroll {
 
 
 
-  /// Tries to generate a positive clause for a predicate.
+  /// Tries to generate some positive clauses for a predicate.
   fn generate_pos_clauses_for<'a>(
     & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
   ) -> Res<RedInfo> {
@@ -2108,7 +2114,7 @@ impl BiasedUnroll {
         if let Some(defs) = self.pos_defs.get(p) {
           for _ in argss {
             estimation = defs.len() * estimation ;
-            if estimation > 20 {
+            if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
           }
@@ -2235,7 +2241,7 @@ impl BiasedUnroll {
       if let Some((p, _)) = instance[lhs_clause].rhs() {
         if let Some(defs) = self.neg_defs.get(& p) {
           estimation = estimation * defs.len() ;
-          if estimation > 20 {
+          if estimation > self.max_new_clauses {
             continue 'all_clauses
           }
         } else {
@@ -2254,7 +2260,7 @@ impl BiasedUnroll {
             ()
           } else if let Some(defs) = self.pos_defs.get(p) {
             estimation = estimation * defs.len() ;
-            if estimation > 20 {
+            if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
           } else {
@@ -2263,7 +2269,7 @@ impl BiasedUnroll {
         } else if let Some(defs) = self.pos_defs.get(p) {
           for _ in argss {
             estimation = estimation * defs.len() ;
-            if estimation > 20 {
+            if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
           }
@@ -2464,14 +2470,6 @@ impl BiasedUnroll {
     Ok(info)
   }
 
-
-
-
-
-
-  pub fn pause(& self, blah: & str) {
-    pause(blah, & self.dummy_prof) ;
-  }
 }
 
 impl RedStrat for BiasedUnroll {
@@ -2493,7 +2491,7 @@ impl RedStrat for BiasedUnroll {
       neg_defs: PrdHMap::new(),
       pos_new_preds: PrdHMap::new(),
       neg_new_preds: PrdHMap::new(),
-      dummy_prof: Profiler::new(),
+      max_new_clauses: 0,
     }
   }
 
@@ -2555,12 +2553,6 @@ impl RedStrat for BiasedUnroll {
                 this_info.clauses_added, conf.emph(& instance[pred].name)
               }
 
-              preproc_dump!(
-                instance =>
-                  format!("after_{}_pos", pred),
-                  format!("After {} pos", instance[pred])
-              ) ? ;
-
             } else {
               if let Some((pos, neg)) = self.pos_new_preds.get_mut(& pred) {
                 pos.clear() ;
@@ -2617,11 +2609,6 @@ impl RedStrat for BiasedUnroll {
                 this_info.clauses_added, conf.emph(& instance[pred].name)
               }
 
-              preproc_dump!(
-                instance =>
-                  format!("after_{}_neg", pred),
-                  format!("After {} neg", instance[pred])
-              ) ? ;
             } else {
               if let Some((pos, neg)) = self.neg_new_preds.get_mut(& pred) {
                 pos.clear() ;
@@ -2641,6 +2628,8 @@ impl RedStrat for BiasedUnroll {
       }
 
     }
+
+    info += instance.simplify_all() ? ;
 
     Ok(info)
   }

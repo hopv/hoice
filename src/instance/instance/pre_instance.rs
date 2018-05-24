@@ -17,10 +17,6 @@ pub struct PreInstance<'a> {
   /// Clause simplifier.
   simplifier: ClauseSimplifier,
 
-  /// Factored vector of clauses to check for simplification.
-  ///
-  /// Be **super careful** of swap removes.
-  clauses_to_check: ClsSet,
   /// Factored vector of clauses to simplify.
   clauses_to_simplify: Vec<ClsIdx>,
 
@@ -33,13 +29,12 @@ impl<'a> PreInstance<'a> {
     let solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
 
     let simplifier = ClauseSimplifier::new() ;
-    let clauses_to_check = ClsSet::with_capacity(7) ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
 
     Ok(
       PreInstance {
         instance, solver, simplifier,
-        clauses_to_check, clauses_to_simplify,
+        clauses_to_simplify,
         vars: VarSet::new(),
       }
     )
@@ -223,34 +218,6 @@ impl<'a> PreInstance<'a> {
 
     info += self.force_trivial() ? ;
 
-    Ok(info)
-  }
-
-
-
-  /// Simplifies some clauses.
-  ///
-  /// - can change **all** clause indices because of potential swap removes
-  /// - does not run `force_trivial`
-  fn simplify_clauses(& mut self) -> Res<RedInfo> {
-    let mut info = RedInfo::new() ;
-    // We're **popping**, so sort lowest to highest to avoid problems with swap
-    // removes.
-    self.clauses_to_simplify.sort_unstable_by(
-      |c_1, c_2| c_1.cmp( c_2 )
-    ) ;
-    log! { @3 "simplify clauses ({})", self.clauses_to_simplify.len() }
-    let mut prev = None ;
-    while let Some(clause) = self.clauses_to_simplify.pop() {
-      prev = {
-        if let Some(prev) = prev {
-          if clause == prev { continue }
-        }
-        Some(clause)
-      } ;
-      info += self.simplify_clause(clause) ?
-    }
-    self.check("after `simplify_clauses`") ? ;
     Ok(info)
   }
 
@@ -525,8 +492,8 @@ impl<'a> PreInstance<'a> {
 
   /// Checks the underlying instance is correct.
   pub fn check(& self, blah: & 'static str) -> Res<()> {
-    if ! self.clauses_to_check.is_empty() {
-      bail!("clauses_to_check is not empty: {}", blah)
+    if ! self.clauses_to_simplify.is_empty() {
+      bail!("clauses_to_simplify is not empty: {}", blah)
     }
     self.instance.check(blah)
   }
@@ -666,16 +633,13 @@ impl<'a> PreInstance<'a> {
     self.instance.unlink_pred_rhs(
       pred, & mut self.clauses_to_simplify
     ) ;
-    for clause in & self.clauses_to_simplify {
-      let clause = * clause ;
+    for clause in self.clauses_to_simplify.drain(0 ..) {
       debug_assert_eq! {
         self.instance.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
       }
       self.instance.clauses[clause].unset_rhs() ;
+      debug_assert! { self.instance.clauses[clause].preds_changed() }
     }
-
-    // Simplify all clauses that have been modified.
-    info += self.simplify_clauses() ? ;
 
     self.check("after force true") ? ;
 
@@ -707,14 +671,11 @@ impl<'a> PreInstance<'a> {
     self.instance.unlink_pred_lhs(
       pred, & mut self.clauses_to_simplify
     ) ;
-    for clause in & self.clauses_to_simplify {
-      let clause = * clause ;
+    for clause in self.clauses_to_simplify.drain(0..) {
       let prev = self.instance.clauses[clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
+      debug_assert! { self.instance.clauses[clause].preds_changed() }
     }
-
-    // Simplify all clauses that have been modified.
-    info += self.simplify_clauses() ? ;
 
     self.check("after force true") ? ;
 
@@ -729,6 +690,8 @@ impl<'a> PreInstance<'a> {
   ///
   /// If `pred` appears in `pred /\ apps /\ trms => rhs`, the clause will
   /// become `apps /\ pred_apps /\ trms /\ terms => rhs`.
+  ///
+  /// Simplifies the clauses before returning.
   ///
   /// # Usage
   ///
@@ -780,8 +743,7 @@ impl<'a> PreInstance<'a> {
       "updating lhs clauses ({})", self.clauses_to_simplify.len()
     }
 
-    'clause_iter: for clause in & self.clauses_to_simplify {
-      let clause = * clause ;
+    'clause_iter: for clause in self.clauses_to_simplify.drain(0..) {
       log! { @4
         "- working on lhs of clause {}",
         self.instance[clause].to_string_info(
@@ -806,7 +768,7 @@ impl<'a> PreInstance<'a> {
 
         for term in tterm_set.terms() {
           if let Some((term, _)) = term.subst_total( & (& args, & qual_map) ) {
-            self.instance.clause_add_lhs_term(clause, term)
+            self.instance.clause_add_lhs_term(clause, term) ;
           } else {
             bail!("error during total substitution in `force_pred_left`")
           }
@@ -828,17 +790,16 @@ impl<'a> PreInstance<'a> {
         }
       }
 
-      log_debug! {
-        "    done with clause: {}",
+      log! { @5
+        "done with clause: {}",
         self.instance[clause].to_string_info(
           self.instance.preds()
         ).unwrap()
       }
 
-    }
+      debug_assert! { self.instance[clause].preds_changed() }
 
-    // Simplify the clauses we just updated.
-    info += self.simplify_clauses() ? ;
+    }
 
 
     // Forget the rhs clause.
@@ -888,7 +849,7 @@ impl<'a> PreInstance<'a> {
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
 
-    info += self.force_trivial() ? ;
+    info += self.simplify_all() ? ;
 
     self.check("after `force_pred_left`") ? ;
 
@@ -901,6 +862,8 @@ impl<'a> PreInstance<'a> {
   /// If `pred` appears in `pred /\ apps /\ trms => rhs` **where `rhs` is a
   /// predicate application, the clause will become `pred /\ apps /\ trms /\
   /// term => rhs`.
+  ///
+  /// Simplifies before returning.
   ///
   /// # Consequences
   ///
@@ -929,8 +892,6 @@ impl<'a> PreInstance<'a> {
     }
 
     // Update lhs clauses.
-    debug_assert! { self.clauses_to_simplify.is_empty() }
-
     let mut to_simplify = ClsSet::new() ;
     for pred in preds.keys() {
       to_simplify.extend(
@@ -1000,16 +961,11 @@ impl<'a> PreInstance<'a> {
         ).unwrap()
       }
 
-      self.clauses_to_simplify.push(clause) ;
-
     }
 
-    // Simplify the clauses we just updated.
-    info += self.simplify_clauses() ? ;
+    info += self.simplify_all() ? ;
 
     self.check("after `extend_pred_left`") ? ;
-
-    info += self.force_trivial() ? ;
 
     Ok(info)
   }
@@ -1024,6 +980,8 @@ impl<'a> PreInstance<'a> {
   /// - if `def` is empty, equivalent to `force_false`
   /// - simplifies all clauses impacted
   /// - does not call `force_trivial`
+  ///
+  /// Simplifies before returning.
   ///
   /// Used by `GraphRed`.
   pub fn force_dnf_left(
@@ -1057,19 +1015,16 @@ impl<'a> PreInstance<'a> {
     }
 
     // Update lhs clauses.
-    let mut clauses_to_rm = Vec::with_capacity(
-      self.instance.pred_to_clauses[pred].0.len()
-    ) ;
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_lhs(
-      pred, & mut clauses_to_rm
+      pred, & mut self.clauses_to_simplify
     ) ;
     // Rev-sorting as we're going to swap remove stuff.
-    clauses_to_rm.sort_unstable_by(
+    self.clauses_to_simplify.sort_unstable_by(
       |c_1, c_2| c_2.cmp(c_1)
     ) ;
 
-    for clause in clauses_to_rm {
+    for clause in self.clauses_to_simplify.drain(0..) {
       info.clauses_rmed += 1 ;
 
       let pred_argss: Vec< VarTerms > = if let Some(
@@ -1120,7 +1075,7 @@ impl<'a> PreInstance<'a> {
                 } else {
                   bail!(
                     "unexpected total substitution failure on arg {} \
-                    of ({} {})", arg, self[pred], args
+                    of ({} {})", arg, self.instance[pred], args
                   )
                 }
               }
@@ -1129,17 +1084,9 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        // This is a bit dangerous as we're inside a loop iterating over some
-        // clause indices `for clause in clauses_to_rm { ... }`.
-        //
-        // It's fine here since by construction, `this_clause` is at the end of
-        // the clause list, meaning simplifying it will not impact other
-        // clauses.
-        let this_clause = self.instance.clauses.next_index() ;
         let is_new = self.instance.push_clause_unchecked(clause) ;
         if is_new {
           info.clauses_added += 1 ;
-          info += self.simplify_clause(this_clause) ?
         }
 
         // Increment.
@@ -1169,6 +1116,8 @@ impl<'a> PreInstance<'a> {
       pred, TTerms::dnf(def)
     ) ? ;
 
+    info += self.simplify_all() ? ;
+
     self.check("after `force_dnf_left`") ? ;
 
     Ok(info)
@@ -1184,6 +1133,8 @@ impl<'a> PreInstance<'a> {
   /// `apps /\ pred_apps /\ trms /\ terms => pred_app`.
   ///
   /// Quantified variables are understood as universally quantified.
+  ///
+  /// Simplifies before returning.
   ///
   /// # Usage
   ///
@@ -1224,8 +1175,7 @@ impl<'a> PreInstance<'a> {
       pred, & mut self.clauses_to_simplify
     ) ;
 
-    'clause_iter: for clause in & self.clauses_to_simplify {
-      let clause = * clause ;
+    'clause_iter: for clause in self.clauses_to_simplify.drain(0..) {
       log! { @4 "working on clause #{}", clause }
       log! { @4
         "{}", self.instance[clause].to_string_info(
@@ -1291,7 +1241,7 @@ impl<'a> PreInstance<'a> {
             if let Some((term, _)) = term.subst_total(
               & (& subst, & qual_map)
             ) {
-              self.instance.clause_add_lhs_term(clause, term)
+              self.instance.clause_add_lhs_term(clause, term) ;
             }
           }
 
@@ -1306,9 +1256,6 @@ impl<'a> PreInstance<'a> {
         `pred_to_clauses` and clauses out of sync"
       )
     }
-
-    // Simplify the clause we updated.
-    info += self.simplify_clauses() ? ;
 
     // Make sure there's exactly one lhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -1351,6 +1298,8 @@ impl<'a> PreInstance<'a> {
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
 
+    info += self.simplify_all() ? ;
+
     self.check("after `force_pred_right`") ? ;
 
     Ok(info)
@@ -1358,6 +1307,8 @@ impl<'a> PreInstance<'a> {
 
 
   /// Unrolls some predicates.
+  ///
+  /// Simplifies before returning.
   ///
   /// For each clause `(pred args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
   /// for terms in `pred_terms[p]`.
@@ -1448,6 +1399,8 @@ impl<'a> PreInstance<'a> {
       }
     }
 
+    info += self.simplify_all() ? ;
+
     self.check("after unroll") ? ;
 
     Ok(info)
@@ -1455,6 +1408,8 @@ impl<'a> PreInstance<'a> {
 
 
   /// Reverse unrolls some predicates.
+  ///
+  /// Simplifies before returning.
   ///
   /// For each clause `lhs => (pred args)`, adds `(not terms) /\ lhs => false`
   /// for terms in `pred_terms[p]`.
@@ -1527,6 +1482,8 @@ impl<'a> PreInstance<'a> {
       }
     }
 
+    info += self.simplify_all() ? ;
+
     self.check("after runroll") ? ;
 
     Ok(info)
@@ -1541,8 +1498,12 @@ impl<'a> PreInstance<'a> {
   }
 
 
-  /// Removes all predicate arguments not in `to_keep`, and all corresponding
-  /// arguments in the clauses. Updates `old_preds`, `pred_terms` and.
+  /// Removes all predicate arguments not in `to_keep`.
+  ///
+  /// Simplifies before returning.
+  ///
+  /// Removes useless arguments in the clauses. Updates `old_preds`,
+  /// `pred_terms`.
   fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
     if_debug! {
       log_debug! { "  rm_args ({})", to_keep.len() }
@@ -1585,8 +1546,6 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    debug_assert! { self.clauses_to_check.is_empty() }
-
     let mut did_something = false ;
 
     // Remove args from applications in clauses.
@@ -1627,7 +1586,6 @@ impl<'a> PreInstance<'a> {
       let (ref lhs, ref rhs) = self.instance.pred_to_clauses[pred] ;
 
       for clause in lhs {
-        self.clauses_to_check.insert(* clause) ;
 
         self.instance.clauses[
           * clause
@@ -1645,7 +1603,6 @@ impl<'a> PreInstance<'a> {
       }
 
       for clause in rhs {
-        self.clauses_to_check.insert(* clause) ;
         debug_assert! { self.instance.clauses[* clause].rhs().is_some() }
         self.instance.clauses[* clause].rhs_map_args(
           |p, args| {
@@ -1667,12 +1624,8 @@ impl<'a> PreInstance<'a> {
 
     // Simplify the clauses we just updated.
     debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.clauses_to_simplify = self.clauses_to_check.drain().collect() ;
 
-    info += self.simplify_clauses() ? ;
-
-    // Force trivial predicates if any.
-    info += self.force_trivial() ? ;
+    info += self.simplify_all() ? ;
 
     self.check("after `rm_args`") ? ;
 

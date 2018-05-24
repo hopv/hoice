@@ -224,13 +224,6 @@ where F : FnMut(Term) -> Res<bool> {
     let sum = term::add(sum) ;
 
     let done = f(
-      term::eq( sum.clone(), val.clone() )
-    ) ? ;
-    if done {
-      return Ok(true)
-    }
-
-    let done = f(
       term::ge( sum.clone(), val.clone() )
     ) ? ;
     if done {
@@ -238,7 +231,14 @@ where F : FnMut(Term) -> Res<bool> {
     }
 
     let done = f(
-      term::gt(sum, val)
+      term::le( sum.clone(), val.clone() )
+    ) ? ;
+    if done {
+      return Ok(true)
+    }
+
+    let done = f(
+      term::eq(sum, val)
     ) ? ;
     if done {
       return Ok(true)

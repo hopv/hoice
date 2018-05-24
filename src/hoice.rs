@@ -184,8 +184,10 @@ pub fn read_and_work<R: ::std::io::Read>(
             }
           } else if e.is_unsat() {
             if let Some(clause) = e.unsat_cause() {
+              println!("some") ;
               unsat = Some( unsat_core::UnsatRes::Clause(clause) )
             } else {
+              println!("none") ;
               unsat = Some( unsat_core::UnsatRes::None )
             }
             ()

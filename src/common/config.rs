@@ -265,6 +265,9 @@ pub struct PreprocConf {
   /// (ArgRed reduction strategy)
   pub arg_red: bool,
 
+  /// Reverse unrolling.
+  pub runroll: bool,
+
   /// Allows positive clever unrolling.
   ///
   /// (De)activates [`BiasedUnroll`][unroll] (positive version).
@@ -505,6 +508,18 @@ impl PreprocConf {
 
     ).arg(
 
+      Arg::with_name("runroll").long("--runroll").help(
+        "(de)activates reverse unrolling"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
       Arg::with_name("pos_unroll").long("--pos_unroll").help(
         "(de)activates positive unrolling"
       ).validator(
@@ -567,6 +582,7 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
+    let runroll = bool_of_matches(matches, "runroll") ;
     let pos_unroll = bool_of_matches(matches, "pos_unroll") ;
     let neg_unroll = bool_of_matches(matches, "neg_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
@@ -575,7 +591,7 @@ impl PreprocConf {
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms, pos_unroll, neg_unroll,
+      arg_red, prune_terms, runroll, pos_unroll, neg_unroll,
       split_strengthen, split_sort
     }
   }
@@ -699,7 +715,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("99").takes_value(
+      ).default_value("5").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -724,7 +740,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("0").takes_value(
+      ).default_value("5").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -736,7 +752,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("100").takes_value(
+      ).default_value("30").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 

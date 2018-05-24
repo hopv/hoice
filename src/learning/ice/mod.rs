@@ -843,7 +843,9 @@ impl<'core> IceLearner<'core> {
     let mut best_synth_qual = None ;
     msg! { self => "synthesizing" }
     profile!{ self tick "learning", "qual", "synthesis" } ;
-    let res = self.synthesize(pred, & data, & mut best_synth_qual, simple) ;
+    let res = self.synthesize(
+      pred, & data, & mut best_synth_qual, simple
+    ) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;
     if let None = res ? {
       return Ok(None)
@@ -939,56 +941,61 @@ impl<'core> IceLearner<'core> {
         if ! is_new {
           // Term already known, skip.
           Ok(false)
-        } else if let Some(gain) = {
-          if simple {
+        } else {
+          let gain = if simple {
             data.simple_gain(& term, false) ?
           } else {
             data.gain(
               pred, self_data, & term, & self_core._profiler, false
             ) ?
-          }
-        } {
-          // println!("  - {}", gain) ;
+          } ;
+
           if conf.ice.qual_step {
             let _ = self_core.msg(
               format!(
-                "{}: {} (synthesis)", term, gain
+                "{}: {} (synthesis)", term, gain.map(
+                  |gain| format!("{}", gain)
+                ).unwrap_or_else( || "none".into() )
               )
             ) ;
             pause_msg(self_core, "to continue (--qual_step on)") ;
             ()
           }
-          if conf.ice.add_synth && gain == 1.0 {
-            msg! { self_core => "  adding synth qual {}", term }
-            quals.insert(term.clone(), pred) ? ;
-            ()
-          }
-          if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
-            if * old_gain < gain {
-              * old_gain = gain ;
-              * old_term = term
-            }
-          } else {
-            * best = Some((term, gain))
-          }
 
-          let stop = gain >= 0.9999
-          || if let Some(pivot) = gain_pivot_synth {
-            gain >= pivot
-          } else {
-            false
-          } ;
-
-          if stop {
-            msg! {
-              self_core =>
-              "  stopping on synth qual {}, gain {}",
-              best.as_ref().unwrap().0, gain
+          if let Some(gain) = gain {
+            // println!("  - {}", gain) ;
+            if conf.ice.add_synth && gain == 1.0 {
+              msg! { self_core => "  adding synth qual {}", term }
+              quals.insert(term.clone(), pred) ? ;
+              ()
             }
+            if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
+              if * old_gain < gain {
+                * old_gain = gain ;
+                * old_term = term
+              }
+            } else {
+              * best = Some((term, gain))
+            }
+
+            let stop = gain >= 0.9999
+            || if let Some(pivot) = gain_pivot_synth {
+              gain >= pivot
+            } else {
+              false
+            } ;
+
+            if stop {
+              msg! {
+                self_core =>
+                "  stopping on synth qual {}, gain {}",
+                best.as_ref().unwrap().0, gain
+              }
+            }
+            Ok(stop)
+          } else {
+            Ok(false)
           }
-          Ok(stop)
-        } else {
-          Ok(false)
         }
       } ;
 

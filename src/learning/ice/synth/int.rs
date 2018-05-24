@@ -26,7 +26,7 @@ impl TheoSynth for IntSynth {
   fn typ(& self) -> & Typ { & self.typ }
 
   fn is_done(& self) -> bool {
-    self.expressivity > 3
+    self.expressivity > 2
   }
 
   fn restart(& mut self) {
@@ -55,12 +55,12 @@ impl TheoSynth for IntSynth {
       ),
       2 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 2, f)
+          n_term_arith_synth(sample, others, & self.typ, 3, f)
         } "learning", "qual", "synthesis", "int", "level 2"
       ),
       3 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 3, f)
+          n_term_arith_synth(sample, others, & self.typ, 4, f)
         } "learning", "qual", "synthesis", "int", "level 3"
       ),
       4 => profile!(
