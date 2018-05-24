@@ -374,6 +374,28 @@ impl<'a> Reductor<'a> {
       (@ bool $info_opt:expr) => (
         $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
       ) ;
+
+      (
+        |simplify| simplify $preproc:expr, $count:ident, $info:expr
+      ) => (
+      ) ; 
+      (
+        |$name:ident| simplify $preproc:expr, $count:ident, $info:expr
+      ) => (
+        $info += if let Some(simplify) = self.simplify.as_mut() {
+          simplify.apply(& mut self.instance) ?
+        } else {
+          bail!("simplify should always be active")
+        } ;
+        preproc_dump!(
+          self.instance =>
+          format!("preproc_{:0>4}_{}_simplify", $count, $preproc.name()),
+          format!(
+            "Instance after running `{}` and simplifying.", $preproc.name()
+          )
+        ) ? ;
+      ) ;
+
       ($preproc:ident) => ( run!($preproc bool) ) ;
       ($preproc:ident $($tail:tt)*) => (
         if let Some(preproc) = self.$preproc.as_mut() {
@@ -381,10 +403,11 @@ impl<'a> Reductor<'a> {
             |_profiler| tick "preproc", preproc.name()
           }
           log_verb! { "running {}", conf.emph( preproc.name() ) }
-          let red_info = preproc.apply( & mut self.instance ) ? ;
+          let mut red_info = preproc.apply( & mut self.instance ) ? ;
           profile! {
             |_profiler| mark "preproc", preproc.name()
           }
+
           if red_info.non_zero() {
             count += 1 ;
             preproc_dump!(
@@ -392,6 +415,9 @@ impl<'a> Reductor<'a> {
               format!("preproc_{:0>4}_{}", count, preproc.name()),
               format!("Instance after running `{}`.", preproc.name())
             ) ? ;
+
+            run! { |$preproc| simplify preproc, count, red_info }
+
             profile!{
               |_profiler| format!(
                 "{:>10}   pred red", preproc.name()
@@ -701,9 +727,62 @@ impl RedStrat for Simplify {
   fn new(_: & Instance) -> Self { Simplify }
 
   fn apply<'a>(
-    & mut self, instance:& mut PreInstance<'a>
+    & mut self, instance: & mut PreInstance<'a>
   ) -> Res<RedInfo> {
-    instance.simplify_all()
+    let mut info = RedInfo::new() ;
+
+    let mut done = false ;
+    let mut force = PrdHMap::new() ;
+
+    while ! done {
+      info += instance.simplify_all() ? ;
+
+      log! { @4 "looking for nullary predicates..." }
+
+      'all_preds: for (pred, info) in instance.preds().index_iter() {
+        log! { @5 "looking at {} ({})", instance[pred], info.sig }
+        if ! info.sig.is_empty() {
+          continue
+        }
+
+        log! { @5 "{} is nullary", instance[pred] }
+
+        for clause in instance.clauses_of(pred).1 {
+          if instance[* clause].lhs_preds().is_empty()
+          && instance[pred].sig.is_empty() {
+            // We already know the clause is not trivial because we just
+            // simplified. Predicate has to be `true`.
+            let prev = force.insert(pred, true) ;
+            debug_assert! { prev.is_none() } ;
+            continue 'all_preds
+          }
+        }
+
+        for clause in instance.clauses_of(pred).0 {
+          if instance[* clause].lhs_preds().len() == 1
+          && instance[* clause].rhs().is_none() {
+            // We already know the clause is not trivial because we just
+            // simplified. Predicate has to be `false`.
+            let prev = force.insert(pred, false) ;
+            debug_assert! { prev.is_none() } ;
+            continue 'all_preds
+          }
+        }
+      }
+
+      done = force.is_empty() ;
+
+      for (pred, positive) in force.drain() {
+        log! { @4 "forcing {} to {}", instance[pred], positive }
+        if positive {
+          info += instance.force_true(pred) ?
+        } else {
+          info += instance.force_false(pred) ?
+        }
+      }
+    }
+
+    Ok(info)
   }
 }
 
@@ -1566,18 +1645,48 @@ impl RedStrat for CfgRed {
 ///   definitions ; then, only check clauses that mention new predicates (old
 ///   ones have already been tried)
 pub struct BiasedUnroll {
+  /// Predicates appearing in positive clauses.
   in_pos_clauses: PrdSet,
+  /// Predicates appearing in negative clauses.
   in_neg_clauses: PrdSet,
+  /// Predicates not appearing in positive clauses.
   not_in_pos_clauses: PrdSet,
+  /// Predicates not appearing in negative clauses.
   not_in_neg_clauses: PrdSet,
+  /// Positive definitions retrieved from positive clauses.
   pos_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  /// Negative definitions retrieved from negative clauses.
   neg_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  /// 
   pos_new_preds: PrdHMap<(PrdSet, PrdSet)>,
   neg_new_preds: PrdHMap<(PrdSet, PrdSet)>,
   dummy_prof: Profiler,
 }
 
 impl BiasedUnroll {
+
+  /// Adds a positive definition for something.
+  fn add_pos_def_for(
+    & mut self, pred: PrdIdx, def: (Quantfed, HConSet<Term>)
+  ) {
+    let defs = self.pos_defs.entry(pred).or_insert_with(|| vec![]) ;
+    if defs.iter().all( |d| d != & def ) {
+      defs.push(def)
+    }
+  }
+
+  /// Adds a negative definition for something.
+  fn add_neg_def_for(
+    & mut self, pred: PrdIdx, def: (Quantfed, HConSet<Term>)
+  ) {
+    let defs = self.neg_defs.entry(pred).or_insert_with(|| vec![]) ;
+    if defs.iter().all( |d| d != & def ) {
+      defs.push(def)
+    }
+  }
+
+
+
   /// Prints itself.
   #[allow(dead_code)]
   fn print(& self, instance: & Instance) {
@@ -1779,6 +1888,9 @@ impl BiasedUnroll {
       )
     }
 
+    // println!(
+    //   "from clause {}", clause.to_string_info(instance.preds()).unwrap()
+    // ) ;
 
     match utils::terms_of_rhs_app(
       true, instance, clause.vars(),
@@ -1791,14 +1903,13 @@ impl BiasedUnroll {
       ExtractRes::Trivial |
       ExtractRes::SuccessTrue |
       ExtractRes::SuccessFalse => bail!(
-        "unexpected result for term extraction for {}", instance[pred]
+        "unexpected result for term extraction for {} (false)",
+        instance[pred]
       ),
       ExtractRes::Success((qvars, tterms)) => {
         let (terms, preds) = tterms.destroy() ;
         debug_assert! { preds.is_empty() }
-        self.pos_defs.entry(pred).or_insert_with(
-          || vec![]
-        ).push( (qvars, terms) )
+        self.add_pos_def_for(pred, (qvars, terms))
       },
     }
 
@@ -1809,6 +1920,10 @@ impl BiasedUnroll {
   fn retrieve_pos_defs(
     & mut self, instance: & Instance, pred: PrdIdx,
   ) -> Res<usize> {
+    log! {
+      @verb "retrieving positive partial definitions for {}",
+      conf.emph(& instance[pred].name)
+    }
     let mut count = 0 ;
     for clause in instance.clauses_of(pred).1 {
       let clause = & instance[* clause] ;
@@ -1877,6 +1992,9 @@ impl BiasedUnroll {
       }
     } ;
 
+    // println!(
+    //   "from clause {}", clause.to_string_info(instance.preds()).unwrap()
+    // ) ;
 
     match utils::terms_of_lhs_app(
       true, instance, clause.vars(),
@@ -1890,7 +2008,7 @@ impl BiasedUnroll {
       ExtractRes::Trivial |
       ExtractRes::SuccessTrue |
       ExtractRes::SuccessFalse => bail!(
-        "unexpected result for term extraction for {}",
+        "unexpected result for term extraction for {} (false)",
         instance[pred]
       ),
       ExtractRes::Success((qvars, rhs, tterms)) => {
@@ -1901,9 +2019,7 @@ impl BiasedUnroll {
         for term in terms {
           neg_terms.insert(term) ;
         }
-        self.neg_defs.entry(pred).or_insert_with(
-          || vec![]
-        ).push( (qvars, neg_terms) )
+        self.add_neg_def_for(pred, (qvars, neg_terms))
       },
     }
 
@@ -1914,6 +2030,10 @@ impl BiasedUnroll {
   fn retrieve_neg_defs(
     & mut self, instance: & Instance, pred: PrdIdx,
   ) -> Res<usize> {
+    log! {
+      @verb "retrieving negative partial definitions for {}",
+      conf.emph(& instance[pred].name)
+    }
     let mut count = 0 ;
     for clause in instance.clauses_of(pred).0 {
       let clause = & instance[* clause] ;
@@ -1982,10 +2102,21 @@ impl BiasedUnroll {
     'all_clauses: for rhs_clause in instance.clauses_of(pred).1.clone() {
       let mut one_pred_is_new = false ;
 
-      for (p, _) in instance[rhs_clause].lhs_preds() {
-        if ! self.in_pos_clauses.contains(p) {
+      let mut estimation = 1 ;
+
+      for (p, argss) in instance[rhs_clause].lhs_preds() {
+        if let Some(defs) = self.pos_defs.get(p) {
+          for _ in argss {
+            estimation = defs.len() * estimation ;
+            if estimation > 20 {
+              continue 'all_clauses
+            }
+          }
+        } else {
           continue 'all_clauses
-        } else if let Some((pos, _)) = self.pos_new_preds.get(& pred) {
+        }
+
+        if let Some((pos, _)) = self.pos_new_preds.get(& pred) {
           if pos.contains(p) {
             one_pred_is_new = true
           }
@@ -1993,6 +2124,13 @@ impl BiasedUnroll {
       }
       if ! one_pred_is_new {
         continue 'all_clauses
+      }
+
+      log! { @4
+        "generating positive clause(s) for {} from {} ({})",
+        instance[pred],
+        instance[rhs_clause].to_string_info( instance.preds() ) ?,
+        estimation
       }
 
       let mut nu_clauses = vec![] ;
@@ -2014,7 +2152,7 @@ impl BiasedUnroll {
 
             map.push( (pred, defs, arg_map) )
           } else {
-            bail!("no definition for {}", instance[* pred])
+            bail!("no definition for {} (positive, lhs)", instance[* pred])
           }
         }
 
@@ -2092,40 +2230,65 @@ impl BiasedUnroll {
     'all_clauses: for lhs_clause in instance.clauses_of(pred).0.clone() {
       let mut one_pred_is_new = false ;
 
-      log! { @6
-        "trying to generate negative clause(s) for {} from {}",
-        instance[pred],
-        instance[lhs_clause].to_string_info( instance.preds() ) ?
-      }
+      let mut estimation = 1 ;
 
       if let Some((p, _)) = instance[lhs_clause].rhs() {
-        if ! self.in_neg_clauses.contains(& p) {
-          log! { @6 "{} not in pos clauses", instance[p] }
+        if let Some(defs) = self.neg_defs.get(& p) {
+          estimation = estimation * defs.len() ;
+          if estimation > 20 {
+            continue 'all_clauses
+          }
+        } else {
           continue 'all_clauses
-        } else if let Some((_, neg)) = self.neg_new_preds.get(& pred) {
+        }
+        if let Some((_, neg)) = self.neg_new_preds.get(& pred) {
           if neg.contains(& p) {
             one_pred_is_new = true
           }
         }
       }
 
-      for (p, _) in instance[lhs_clause].lhs_preds() {
+      for (p, argss) in instance[lhs_clause].lhs_preds() {
         if * p == pred {
-          ()
-        } else if ! self.in_pos_clauses.contains(p) {
-          log! { @6 "{} not in pos clauses", instance[* p] }
+          if argss.len() == 1 {
+            ()
+          } else if let Some(defs) = self.pos_defs.get(p) {
+            estimation = estimation * defs.len() ;
+            if estimation > 20 {
+              continue 'all_clauses
+            }
+          } else {
+            continue 'all_clauses
+          }
+        } else if let Some(defs) = self.pos_defs.get(p) {
+          for _ in argss {
+            estimation = estimation * defs.len() ;
+            if estimation > 20 {
+              continue 'all_clauses
+            }
+          }
+        } else {
+          // log! { @6 "{} not in pos clauses", instance[* p] }
           continue 'all_clauses
-        } else if let Some((pos, _)) = self.neg_new_preds.get(& pred) {
+        }
+
+        if let Some((pos, _)) = self.neg_new_preds.get(& pred) {
           if pos.contains(p) {
             one_pred_is_new = true
           }
         }
       }
 
-      log! { @6 "one pred new: {}", one_pred_is_new }
+      // log! { @6 "one pred new: {}", one_pred_is_new }
 
       if ! one_pred_is_new {
         continue 'all_clauses
+      }
+
+      log! { @4
+        "generating negative clause(s) for {} from {}",
+        instance[pred],
+        instance[lhs_clause].to_string_info( instance.preds() ) ?
       }
 
       let mut nu_clauses = vec![] ;
@@ -2162,7 +2325,7 @@ impl BiasedUnroll {
             ) ;
             debug_assert! { is_new }
           } else {
-            bail!("no definition for {}", instance[p])
+            bail!("no definition for {} (negative, lhs)", instance[p])
           }
         }
 
@@ -2170,7 +2333,7 @@ impl BiasedUnroll {
           if let Some(defs) = self.neg_defs.get(& pred) {
             map.push( (pred, defs, vec![ (args, 0) ]) )
           } else {
-            bail!("no definition for {}", instance[pred])
+            bail!("no definition for {} (negative, rhs)", instance[pred])
           }
         }
 
@@ -2360,6 +2523,7 @@ impl RedStrat for BiasedUnroll {
           log! { @4
             "trying to generate positive clauses for {}", instance[pred]
           }
+          // self.print(instance) ;
 
           if self.pos_new_preds.get(& pred).map(
             |(pos, _)| ! pos.is_empty()
@@ -2385,6 +2549,11 @@ impl RedStrat for BiasedUnroll {
                 debug_assert! { is_new }
               }
               log! { @4 "-> success" }
+
+              log! { @verb
+                "generated {} positive clauses for {}",
+                this_info.clauses_added, conf.emph(& instance[pred].name)
+              }
 
               preproc_dump!(
                 instance =>
@@ -2416,7 +2585,6 @@ impl RedStrat for BiasedUnroll {
           log! { @4
             "trying to generate negative clauses for {}", instance[pred]
           }
-
           // self.print(instance) ;
 
           if self.neg_new_preds.get(& pred).map(
@@ -2443,6 +2611,11 @@ impl RedStrat for BiasedUnroll {
                 debug_assert! { is_new }
               }
               log! { @4 "-> success" }
+
+              log! { @verb
+                "generated {} negative clauses for {}",
+                this_info.clauses_added, conf.emph(& instance[pred].name)
+              }
 
               preproc_dump!(
                 instance =>

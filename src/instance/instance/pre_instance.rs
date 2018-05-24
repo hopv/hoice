@@ -23,6 +23,9 @@ pub struct PreInstance<'a> {
   clauses_to_check: ClsSet,
   /// Factored vector of clauses to simplify.
   clauses_to_simplify: Vec<ClsIdx>,
+
+  /// Set of variables used by some simplification techniques.
+  vars: VarSet,
 }
 impl<'a> PreInstance<'a> {
   /// Constructor.
@@ -36,7 +39,8 @@ impl<'a> PreInstance<'a> {
     Ok(
       PreInstance {
         instance, solver, simplifier,
-        clauses_to_check, clauses_to_simplify
+        clauses_to_check, clauses_to_simplify,
+        vars: VarSet::new(),
       }
     )
   }
@@ -54,79 +58,144 @@ impl<'a> PreInstance<'a> {
     Ok(())
   }
 
+  /// Checks whether a clause alone forces the definition of a predicate.
+  /// - forces to true all predicates appearing in `terms => (p vars)` where
+  ///   `vars` are all distinct and don't appear in `terms`
+  /// - forces to false all predicates appearing in `terms /\ (p vars) =>
+  ///   false` where `vars` are all distinct and don't appear in `terms`
+  pub fn force_trivial_from_clause(
+    & mut self, clause_idx: ClsIdx
+  ) -> Option<(PrdIdx, bool)> {
+    if ! self.instance[clause_idx].preds_changed()
+    && ! self.instance[clause_idx].terms_changed() {
+      return None
+    }
+    self.instance[clause_idx].preds_checked() ;
+
+    let clause = & self.instance[clause_idx] ;
+
+    let (
+      pred, positive, args
+    ) = if let Some((pred, args)) = clause.rhs() {
+
+      // Positive clause.
+      if clause.lhs_preds().is_empty() { // No lhs predicate applications.
+        (pred, true, args)
+      } else {
+        return None
+      }
+
+    } else {
+
+      // Negative clause.
+      let mut lhs_preds = clause.lhs_preds().iter() ;
+
+      if let Some((pred, argss)) = lhs_preds.next() {
+        if lhs_preds.next().is_none() // Only one predicate?
+        && argss.len() == 1 {         // Only one application?
+          let args = argss.iter().next().unwrap() ;
+
+          (* pred, false, args)
+        } else {
+          return None
+        }
+
+      } else {
+        return None
+      }
+
+    } ;
+
+    self.vars.clear() ;
+    // Are all arguments different variables?
+    for arg in args.iter() {
+      if let Some(v) = arg.var_idx() {
+        let is_new = self.vars.insert(v) ;
+        if ! is_new {
+          return None
+        }
+      } else {
+        return None
+      }
+    }
+
+    for term in clause.lhs_terms() {
+      // `vars` don't appear in any lhs term?
+      if term.mentions_one_of(& self.vars) {
+        return None
+      }
+    }
+
+    Some((pred, positive))
+
+  }
+
   /// Performs cheap triviality checks.
   /// 
   /// - forces to false (true) all the predicates that only appear in clauses'
   ///   lhs (rhs)
-  /// - forces to true all predicates appearing in `true => (p vars)` where
-  ///   `vars` are all distinct
-  /// - forces to false all predicates appearing in `(p vars) => false` where
-  ///   `vars` are all distinct
+  /// - forces to true all predicates appearing in `terms => (p vars)` where
+  ///   `vars` are all distinct and don't appear in `terms`
+  /// - forces to false all predicates appearing in `terms /\ (p vars) =>
+  ///   false` where `vars` are all distinct and don't appear in `terms`
   pub fn force_trivial(& mut self) -> Res< RedInfo > {
     let mut info: RedInfo = (0, 0, 0).into() ;
     let mut fixed_point = false ;
+
     while ! fixed_point {
+
       fixed_point = true ;
-      for pred in PrdRange::zero_to( self.instance.preds.len() ) {
-        if ! self.instance.is_known(pred) {
-          if self.instance.pred_to_clauses[pred].1.is_empty() {
-            info.preds += 1 ;
-            fixed_point = false ;
-            info += self.force_false(pred) ?
-          } else if self.instance.pred_to_clauses[pred].0.is_empty() {
-            info.preds += 1 ;
-            fixed_point = false ;
-            info += self.force_true(pred) ?
-          }
+
+      'all_preds: for pred in PrdRange::zero_to(
+        self.instance.preds.len()
+      ) {
+        if self.instance.is_known(pred) {
+          continue 'all_preds
         }
 
-        let mut force = None ;
-
-        for neg_clause in self.instance.clauses_of(pred).0 {
-          let clause = & self.instance.clauses[* neg_clause] ;
-
-          if clause.lhs_terms().is_empty() // No lhs terms.
-          && ! clause.rhs().is_some()      // No rhs (=> false).
-          && clause.lhs_pred_apps_len() == 1 // Only one application...
-          && clause.lhs_preds().iter().all(  // ...with all arguments different
-            |(_, argss)| argss.iter().all(|args| args.are_diff_vars())
-          ) {
-            force = Some(false) ;
-            break
-          }
-        }
-
-        for pos_clause in self.instance.clauses_of(pred).1 {
-          if force.is_some() { break }
-          let clause = & self.instance.clauses[* pos_clause] ;
-
-          if clause.lhs_terms().is_empty() // No lhs terms.
-          && clause.lhs_preds().is_empty() // No lhs preds.
-          && clause.rhs().map(
-            |(_, args)| args.are_diff_vars() // All vars are different.
-          ).unwrap_or(true) {
-            force = Some(true) ;
-            break
-          }
-        }
-
-        if let Some(pos) = force {
+        if self.instance.pred_to_clauses[pred].1.is_empty() {
           info.preds += 1 ;
           fixed_point = false ;
-          if pos {
+          info += self.force_false(pred) ?
+        } else if self.instance.pred_to_clauses[pred].0.is_empty() {
+          info.preds += 1 ;
+          fixed_point = false ;
+          info += self.force_true(pred) ?
+        }
+
+      }
+
+      let mut force = vec![] ;
+
+      'all_clauses: for clause_idx in ClsRange::zero_to(
+        self.clauses.len()
+      ) {
+        if let Some(
+          (pred, positive)
+        ) = self.force_trivial_from_clause(clause_idx) {
+          force.push((pred, positive))
+        }
+      }
+
+      for (pred, positive) in force {
+        if ! self.is_known(pred) {
+          fixed_point = false ;
+          info.preds += 1 ;
+          if positive {
             info += self.force_true(pred) ?
           } else {
             info += self.force_false(pred) ?
           }
         }
       }
+
     }
     Ok(info)
   }
 
 
 
-  /// Number of strict negative clauses.
+  /// Strict negative clauses.
   pub fn strict_neg_clauses(& self) -> impl Iterator<Item = & Clause> {
     self.clauses.iter().filter(
       |clause| clause.rhs().is_none() && clause.lhs_preds().len() == 1 && (
@@ -170,7 +239,7 @@ impl<'a> PreInstance<'a> {
     self.clauses_to_simplify.sort_unstable_by(
       |c_1, c_2| c_1.cmp( c_2 )
     ) ;
-    log_debug! { "    simplify clauses ({})", self.clauses_to_simplify.len() }
+    log! { @3 "simplify clauses ({})", self.clauses_to_simplify.len() }
     let mut prev = None ;
     while let Some(clause) = self.clauses_to_simplify.pop() {
       prev = {
@@ -208,6 +277,20 @@ impl<'a> PreInstance<'a> {
     log! { @debug
       "simplifying clause #{} (terms_changed: {})",
       clause, self.instance[clause].terms_changed()
+    }
+
+    rm_return! {
+      clause if {
+        if let Some((pred, args)) = self.instance[clause].rhs() {
+          if let Some(argss) = self.instance[clause].lhs_preds().get(& pred) {
+            argss.contains(args)
+          } else {
+            false
+          }
+        } else {
+          false
+        }
+      } => "trivial implication"
     }
 
     if self.instance[clause].is_unsat() {
@@ -395,6 +478,8 @@ impl<'a> PreInstance<'a> {
     Ok(())
   }
 
+
+
   /// Checks whether a clause is trivial.
   ///
   /// Returns true if
@@ -402,7 +487,6 @@ impl<'a> PreInstance<'a> {
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-
     if let Some(res) = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
     ) ? {

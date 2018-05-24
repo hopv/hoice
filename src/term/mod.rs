@@ -568,6 +568,26 @@ impl RTerm {
     }
   }
 
+  /// Return true if the term mentions at least one variable from `vars`.
+  pub fn mentions_one_of(& self, vars: & VarSet) -> bool {
+    let mut to_do = vec![ self ] ;
+    while let Some(term) = to_do.pop() {
+      match * term {
+        RTerm::Var(_, var) => if vars.contains(& var) {
+          return true
+        },
+        RTerm::Bool(_) |
+        RTerm::Int(_) |
+        RTerm::Real(_) |
+        RTerm::CArray { .. } => (),
+        RTerm::App { ref args, .. } => for arg in args {
+          to_do.push(arg)
+        },
+      }
+    }
+    false
+  }
+
   /// If the term is a negation, returns what's below the negation.
   pub fn rm_neg(& self) -> Option<Term> {
     match * self {

@@ -553,7 +553,9 @@ impl Graph {
             }
           },
           utils::ExtractRes::SuccessTrue => {
-            bail!("unimplemented, predicate is true")
+            bail!(
+              "unimplemented, predicate is true ({} {})", instance[pred], args
+            )
           },
           utils::ExtractRes::Trivial |
           utils::ExtractRes::SuccessFalse => continue 'clause_iter,
@@ -616,10 +618,10 @@ impl Graph {
             sum_increase, upper_bound
           }
           if sum_increase >= upper_bound {
-            log_verb! { "  -> blows up" }
+            log! { @debug "-> blows up" }
             keep_and_continue! { pred }
           } else {
-            log_verb! { "  -> inlining" }
+            log! { @debug "  unfolding {}", conf.emph(& instance[pred].name) }
             increase = sum_increase ;
             let prev = res.insert( pred, def ) ;
             debug_assert! { prev.is_none() }
