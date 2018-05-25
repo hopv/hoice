@@ -1610,10 +1610,21 @@ impl RedStrat for CfgRed {
           log_debug! { ")" }
         }
 
-        info += instance.force_dnf_left(pred, def) ? ;
-      }
+        if false && instance.is_known(pred) {
+          bail!(
+            "trying to force predicate {} again",
+            conf.emph(& instance[pred].name)
+          )
+        } else {
+          info += instance.force_dnf_left(pred, def) ?
+        }
 
-      info += instance.force_trivial() ? ;
+        preproc_dump!(
+          instance =>
+            format!("after_force_dnf_left_on_{}", pred),
+            "Instance after reaching preproc fixed-point."
+        ) ? ;
+      }
 
       if conf.preproc.dump_pred_dep {
         self.graph.setup(instance) ;

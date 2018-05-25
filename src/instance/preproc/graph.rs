@@ -387,11 +387,14 @@ impl Graph {
     & mut self, instance: & Instance, keep: & mut PrdSet,
     upper_bound: usize
   ) -> Res<
-    PrdHMap< Vec<(Quantfed, TTermSet)> >
+    Vec< (PrdIdx, Vec<(Quantfed, TTermSet)>) >
   > {
-    let mut res = PrdHMap::with_capacity(
+    let mut res = Vec::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
+    macro_rules! res_contains {
+      ($pred:expr) => ( res.iter().any( |(pred, _)| pred == $pred ) ) ;
+    }
     let mut increase: usize = 0 ;
 
     let forced_inlining = keep.len() == 0 ;
@@ -406,13 +409,13 @@ impl Graph {
       'find_pred: for (prd, srcs) in self.bakward.index_iter() {
         if keep.contains(& prd)
         || instance.forced_terms_of(prd).is_some()
-        || res.contains_key(& prd) { continue 'find_pred }
+        || res_contains!(& prd) { continue 'find_pred }
         log_debug! { "looking at {}", instance[prd] }
         'check_src: for (src, cnt) in srcs.index_iter() {
           if * cnt == 0 { continue 'check_src }
           log_debug! { "depends on {}", instance[src] }
           if ! keep.contains(& src)
-          && ! res.contains_key(& src) { continue 'find_pred }
+          && ! res_contains!(& src) { continue 'find_pred }
         }
         pred = Some(prd) ;
         break 'find_pred
@@ -607,8 +610,8 @@ impl Graph {
       } ;
 
       if forced_inlining {
-        let prev = res.insert( pred, def ) ;
-        debug_assert! { prev.is_none() }
+        debug_assert! { ! res_contains!(& pred) }
+        res.push( (pred, def) )
       } else {
 
         if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
@@ -621,10 +624,10 @@ impl Graph {
             log! { @debug "-> blows up" }
             keep_and_continue! { pred }
           } else {
-            log! { @debug "  unfolding {}", conf.emph(& instance[pred].name) }
+            log! { @debug "-> unfolding {}", conf.emph(& instance[pred].name) }
             increase = sum_increase ;
-            let prev = res.insert( pred, def ) ;
-            debug_assert! { prev.is_none() }
+            debug_assert! { ! res_contains!(& pred) }
+            res.push( (pred, def) )
           }
         } else {
           keep_and_continue! { pred }

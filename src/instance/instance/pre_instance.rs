@@ -507,19 +507,11 @@ impl<'a> PreInstance<'a> {
   /// Checks that the positive and negative constraints are respected. Returns
   /// `true` if they are, *i.e.* the definitions are a legal model, and `false`
   /// otherwise.
-  pub fn force_all_preds(
-    & mut self, defs: PrdHMap< Vec<(Quantfed, TTermSet)> >
-  ) -> Res< (bool, RedInfo) > {
-    for (pred, def_opt) in self.pred_terms.index_iter() {
-      if def_opt.is_none() && defs.get(& pred).is_none() {
-        bail!(
-          format!(
-            "error in `force_all_preds`, no definition for {}", self[pred]
-          )
-        )
-      }
-    }
-    log_debug! { "forcing all {} remaining predicates", defs.len() }
+  pub fn force_all_preds<Defs>(
+    & mut self, defs: Defs,
+  ) -> Res< (bool, RedInfo) >
+  where Defs: IntoIterator<Item = (PrdIdx, Vec<(Quantfed, TTermSet)>)> {
+    log_debug! { "forcing all remaining predicates" }
 
     let mut info = RedInfo::new() ;
     info.clauses_rmed += self.instance.clauses.len() ;
@@ -558,7 +550,19 @@ impl<'a> PreInstance<'a> {
       }
     }
     log_debug! { "  checking pred defs" }
+
+    for (pred, _) in self.preds().index_iter() {
+      if ! self.is_known(pred) {
+        bail!(
+          format!(
+            "error in `force_all_preds`, no definition for {}", self[pred]
+          )
+        )
+      }
+    }
+
     let is_sat = self.check_pred_defs() ? ;
+
     self.instance.clauses.clear() ;
 
     Ok( (is_sat, info) )
@@ -574,6 +578,7 @@ impl<'a> PreInstance<'a> {
   fn force_pred(
     & mut self, pred: PrdIdx, tterms: TTerms
   ) -> Res<()> {
+    log! { @5 "forcing {}", conf.emph(& self.instance[pred].name) }
     if let Some(_) = self.instance.pred_terms[pred].as_ref() {
       let mut s: Vec<u8> = Vec::new() ;
       tterms.write_smt2(
@@ -641,6 +646,8 @@ impl<'a> PreInstance<'a> {
       debug_assert! { self.instance.clauses[clause].preds_changed() }
     }
 
+    info += self.simplify_all() ? ;
+
     self.check("after force true") ? ;
 
     Ok(info)
@@ -676,6 +683,8 @@ impl<'a> PreInstance<'a> {
       debug_assert! { prev.is_some() }
       debug_assert! { self.instance.clauses[clause].preds_changed() }
     }
+
+    info += self.simplify_all() ? ;
 
     self.check("after force true") ? ;
 
