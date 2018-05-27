@@ -555,11 +555,9 @@ impl Graph {
               }
             }
           },
-          utils::ExtractRes::SuccessTrue => {
-            bail!(
-              "unimplemented, predicate is true ({} {})", instance[pred], args
-            )
-          },
+          utils::ExtractRes::SuccessTrue => bail!(
+            "unimplemented, predicate is true ({} {})", instance[pred], args
+          ),
           utils::ExtractRes::Trivial |
           utils::ExtractRes::SuccessFalse => continue 'clause_iter,
           _ => bail!("failed to extract lhs terms"),

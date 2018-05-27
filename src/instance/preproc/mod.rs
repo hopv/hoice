@@ -411,6 +411,7 @@ impl<'a> Reductor<'a> {
           }
 
           if red_info.non_zero() {
+            red_info += self.instance.force_trivial() ? ;
             count += 1 ;
             preproc_dump!(
               self.instance =>

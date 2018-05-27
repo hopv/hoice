@@ -2,7 +2,7 @@
 
 use common::* ;
 
-use super::helpers::n_term_arith_synth ;
+// use super::helpers::n_term_arith_synth ;
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -59,6 +59,7 @@ impl TheoSynth for IntSynth {
         } "learning", "qual", "synthesis", "int", "level 2"
       ),
       _ => Ok(false),
+
       // 0 => profile!(
       //   |_profiler| wrap {
       //     n_term_arith_synth(sample, others, & self.typ, 1, f)

@@ -961,11 +961,11 @@ use common::* ;
 pub struct NuQuals {
   instance: Arc<Instance>,
   quals: PrdMap< VarHMap< HConSet<Term> > >,
-  rng: ::rand::StdRng,
+  // rng: ::rand::StdRng,
 }
 impl NuQuals {
   pub fn new(instance: Arc<Instance>, mine: bool) -> Res<Self> {
-    use rand::SeedableRng ;
+    // use rand::SeedableRng ;
 
     let mut quals = PrdMap::with_capacity( instance.preds().len() ) ;
     for _ in 0 .. instance.preds().len() {
@@ -974,7 +974,7 @@ impl NuQuals {
     let mut quals = NuQuals {
       quals,
       instance: instance.clone(),
-      rng: ::rand::StdRng::from_seed( [42 ; 32] ),
+      // rng: ::rand::StdRng::from_seed( [42 ; 32] ),
     } ;
 
     if mine {
