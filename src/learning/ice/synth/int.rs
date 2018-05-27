@@ -45,30 +45,46 @@ impl TheoSynth for IntSynth {
     match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 1, f)
+          simple_int_synth(sample, others, f)
         } "learning", "qual", "synthesis", "int", "level 0"
       ),
       1 => profile!(
         |_profiler| wrap {
-          non_lin_int_synth(sample, others, f)
+          int_synth_1(sample, others, f)
         } "learning", "qual", "synthesis", "int", "level 1"
       ),
       2 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 3, f)
+          int_synth_2(sample, others, f)
         } "learning", "qual", "synthesis", "int", "level 2"
       ),
-      3 => profile!(
-        |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 4, f)
-        } "learning", "qual", "synthesis", "int", "level 3"
-      ),
-      4 => profile!(
-        |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 4, f)
-        } "learning", "qual", "synthesis", "int", "level 4"
-      ),
       _ => Ok(false),
+      // 0 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 1, f)
+      //   } "learning", "qual", "synthesis", "int", "level 0"
+      // ),
+      // 1 => profile!(
+      //   |_profiler| wrap {
+      //     non_lin_int_synth(sample, others, f)
+      //   } "learning", "qual", "synthesis", "int", "level 1"
+      // ),
+      // 2 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 3, f)
+      //   } "learning", "qual", "synthesis", "int", "level 2"
+      // ),
+      // 3 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
+      //   } "learning", "qual", "synthesis", "int", "level 3"
+      // ),
+      // 4 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
+      //   } "learning", "qual", "synthesis", "int", "level 4"
+      // ),
+      // _ => Ok(false),
     }
   }
 
@@ -134,3 +150,129 @@ where F: FnMut(Term) -> Res<bool> {
 
   Ok(false)
 }
+
+
+/// Lowest level of int synthesis.
+///
+/// All `v*` are variables. Synthesizes qualifiers of the form
+///
+/// - `v = n`, `v <= n`, `v >= n`,
+/// - `v_1 = v_2`, `v_1 = - v_2`,
+/// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
+/// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
+pub fn simple_int_synth<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        simple_arith_synth! { previous_int, f, int | var = ( i.clone() ) }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      val::RVal::I(ref val) => {
+        simple_arith_synth! { previous_int, f, int | term = val.clone() }
+      }
+      val => bail!(
+        "int synthesis expects projected integers, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+
+/// Level 1 for int synthesis.
+pub fn int_synth_1<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        arith_synth_non_lin! {
+          previous_int, f, int | var = ( i.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::I(ref val) => {
+        arith_synth_non_lin! {
+          previous_int, f, int | term = val.clone()
+        }
+      }
+      val => bail!(
+        "int synthesis expects projected integers, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+/// Level 2 for int synthesis.
+pub fn int_synth_2<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        arith_synth_three_terms! {
+          previous_int, f, int | var = ( i.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::I(ref val) => {
+        arith_synth_three_terms! {
+          previous_int, f, int | term = val.clone()
+        }
+      }
+      val => bail!(
+        "int synthesis expects projected integers, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+

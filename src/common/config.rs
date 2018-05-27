@@ -514,7 +514,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(
+      ).default_value("off").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -526,7 +526,7 @@ impl PreprocConf {
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("on").takes_value(true).hidden(
+      ).default_value("off").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -740,7 +740,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("5").takes_value(
+      ).default_value("0").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -752,7 +752,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("30").takes_value(
+      ).default_value("100000").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 

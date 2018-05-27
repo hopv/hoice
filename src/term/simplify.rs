@@ -177,6 +177,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   let res = conj_simpl_2(lhs, rhs) ;
 
   if res.is_some() {
+
     if let Some(solver) = simpl_solver.write().unwrap().as_mut() {
       solver.push(1).unwrap() ;
       let mut vars = VarSet::new() ;
@@ -200,6 +201,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
           }
         }
       ) ;
+
       use std::cmp::Ordering::* ;
       let check = match res {
         SimplRes::Cmp(Equal) => format!(
@@ -244,40 +246,40 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   use std::cmp::Ordering::* ;
 
   if let Some(args) = lhs.disj_inspect() {
+    let mut greater_count = 0 ;
+    let mut yields = vec![] ;
     for lhs in args {
-      let mut greater_count = 0 ;
-      let mut yields = vec![] ;
       match int_conj_simpl(lhs, rhs, true) {
         SimplRes::Cmp(Equal) |
         SimplRes::Cmp(Less) => return SimplRes::Cmp(Less),
         SimplRes::Cmp(Greater) => greater_count += 1,
 
         SimplRes::Yields(term) => yields.push(term),
-        SimplRes::None => break,
-      }
-      if yields.len() == args.len() {
-        return SimplRes::Yields( term::or(yields) )
-      } else if greater_count == args.len() {
-        return SimplRes::Cmp(Greater)
+        SimplRes::None => (),
       }
     }
+    if yields.len() == args.len() {
+      return SimplRes::Yields( term::or(yields) )
+    } else if greater_count == args.len() {
+      return SimplRes::Cmp(Greater)
+    }
   } else if let Some(args) = rhs.disj_inspect() {
+    let mut less_count = 0 ;
+    let mut yields = vec![] ;
     for rhs in args {
-      let mut less_count = 0 ;
-      let mut yields = vec![] ;
       match int_conj_simpl(lhs, rhs, true) {
         SimplRes::Cmp(Equal) |
         SimplRes::Cmp(Greater) => return SimplRes::Cmp(Greater),
         SimplRes::Cmp(Less) => less_count += 1,
 
         SimplRes::Yields(term) => yields.push(term),
-        SimplRes::None => break,
+        SimplRes::None => (),
       }
-      if yields.len() == args.len() {
-        return SimplRes::Yields( term::or(yields) )
-      } else if less_count == args.len() {
-        return SimplRes::Cmp(Greater)
-      }
+    }
+    if yields.len() == args.len() {
+      return SimplRes::Yields( term::or(yields) )
+    } else if less_count == args.len() {
+      return SimplRes::Cmp(Greater)
     }
   }
 
@@ -311,7 +313,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   let (lhs, rhs) = ( lhs.deref(), rhs.deref() ) ;
 
   // A term implies itself.
-  if lhs == rhs { return SimplRes::Cmp(Equal) }
+  if lhs == rhs {
+    return SimplRes::Cmp(Equal)
+  }
 
   match ( lhs.bool(), rhs.bool() ) {
     // True can only imply true.

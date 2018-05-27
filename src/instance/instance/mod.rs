@@ -60,6 +60,12 @@ pub struct Instance {
   /// application, and it's in the clause's body. Only available after
   /// finalize.
   strict_neg_clauses: ClsSet,
+  /// Set of non-strictly negative clauses.
+  ///
+  /// A clause is strictly negative if it has strictly one predicate
+  /// application, and it's in the clause's body. Only available after
+  /// finalize.
+  non_strict_neg_clauses: ClsSet,
   /// Set of (non-strictly) negative clauses.
   ///
   /// Super set of strictly negative clauses. Only available after finalize.
@@ -101,6 +107,7 @@ impl Instance {
       is_unsat: false,
       pos_clauses: ClsSet::new(),
       strict_neg_clauses: ClsSet::new(),
+      non_strict_neg_clauses: ClsSet::new(),
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
@@ -133,6 +140,7 @@ impl Instance {
       is_unsat: false,
       pos_clauses: ClsSet::new(),
       strict_neg_clauses: ClsSet::new(),
+      non_strict_neg_clauses: ClsSet::new(),
       neg_clauses: ClsSet::new(),
       imp_clauses: ClsSet::new(),
       is_finalized: false,
@@ -159,6 +167,12 @@ impl Instance {
   /// Only available after finalize.
   pub fn neg_clauses(& self) -> & ClsSet {
     & self.neg_clauses
+  }
+  /// Set of non-strict negative clauses.
+  ///
+  /// Only available after finalize.
+  pub fn non_strict_neg_clauses(& self) -> & ClsSet {
+    & self.non_strict_neg_clauses
   }
   /// Set of implication clauses ad negative clausesh.
   ///
@@ -444,6 +458,9 @@ impl Instance {
       if clause.rhs().is_none() {
         if clause.lhs_pred_apps_len() == 1 {
           let is_new = self.strict_neg_clauses.insert(idx) ;
+          debug_assert! { is_new }
+        } else {
+          let is_new = self.non_strict_neg_clauses.insert(idx) ;
           debug_assert! { is_new }
         }
         let is_new = self.neg_clauses.insert(idx) ;
@@ -899,6 +916,11 @@ impl Instance {
   ///
   /// Returns its index, if it was added.
   pub fn push_clause(& mut self, clause: Clause) -> Res< Option<ClsIdx> > {
+    for term in clause.lhs_terms() {
+      if let Some(false) = term.bool() {
+        return Ok(None)
+      }
+    }
     let idx = self.clauses.next_index() ;
     let is_new = self.push_clause_unchecked(clause) ;
     self.check("after `push_clause`") ? ;
@@ -1001,7 +1023,7 @@ impl Instance {
   pub fn qualifiers_of_clause(
     & self, clause: & Clause, quals: & mut NuQuals
   ) -> Res<()> {
-    if clause.from_unrolling { return Ok(()) }
+    // if clause.from_unrolling { return Ok(()) }
 
     let build_conj = self.clauses.len() < 2000 && conf.ice.mine_conjs ;
 
@@ -1459,7 +1481,16 @@ impl Instance {
     ) ? ;
     self.check_preds_consistency() ? ;
     
-    for clause in & self.clauses {
+    for (idx, clause) in self.clauses.index_iter() {
+      for term in clause.lhs_terms() {
+        if let Some(false) = term.bool() {
+          bail!(
+            "({}) found a trivial clause: #{} {}", s, idx,
+            clause.to_string_info(self.preds()).unwrap()
+          )
+        }
+      }
+
       for pred in clause.lhs_preds().iter().map(
         |(pred, _)| * pred
       ).chain( clause.rhs().into_iter().map(|(pred, _)| pred) ) {

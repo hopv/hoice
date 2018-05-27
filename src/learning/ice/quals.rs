@@ -1154,24 +1154,26 @@ impl NuQuals {
     & mut self, pred: PrdIdx, mut crit: Crit
   ) -> Res< Option<(Term, f64)> >
   where Crit: FnMut( & Term ) -> Res< Option<f64> > {
-    use rand::Rng ;
+    // use rand::Rng ;
 
     let mut best = None ;
-    let rng = & mut self.rng ;
+    // let rng = & mut self.rng ;
 
-    let mut quals: Vec<_> = self.quals[pred].iter().map(
-      |(_, terms)| terms
-    ).collect() ;
+    for (_, terms) in self.quals[pred].iter() {
 
-    quals.sort_unstable_by(
-      |_, _| if 0.5 < rng.gen() {
-        ::std::cmp::Ordering::Greater
-      } else {
-        ::std::cmp::Ordering::Less
-      }
-    ) ;
+    // let mut quals: Vec<_> = self.quals[pred].iter().map(
+    //   |(_, terms)| terms
+    // ).collect() ;
 
-    for terms in quals {
+    // quals.sort_unstable_by(
+    //   |_, _| if 0.5 < rng.gen() {
+    //     ::std::cmp::Ordering::Greater
+    //   } else {
+    //     ::std::cmp::Ordering::Less
+    //   }
+    // ) ;
+
+      // for terms in terms {
       for term in terms {
         if let Some(value) = crit(term) ? {
           best = if value > 0.9999 {
@@ -1187,7 +1189,9 @@ impl NuQuals {
           }
         }
       }
+
     }
+
     Ok( best.map(|(t,v)| (t.clone(), v)) )
   }
 }

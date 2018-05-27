@@ -97,7 +97,8 @@ pub fn work_on_split(
 
   let mut split_instance = instance.clone_with_clauses(to_keep) ;
 
-  let mut to_forget: Vec<_> = instance.neg_clauses().iter().filter_map(
+  let mut to_forget: Vec<_> = instance.neg_clauses(
+  ).iter().filter_map(
     |c| if c == & to_keep /* || instance[* c].from_unrolling */ {
       None
     } else {
@@ -235,7 +236,7 @@ pub fn work_on_split(
     }
 
     if conf.preproc.active {
-      run(pre_instance, profiler, false)
+      run(pre_instance, profiler, true)
     } else {
       Ok(())
     }
@@ -730,60 +731,7 @@ impl RedStrat for Simplify {
   fn apply<'a>(
     & mut self, instance: & mut PreInstance<'a>
   ) -> Res<RedInfo> {
-    let mut info = RedInfo::new() ;
-
-    let mut done = false ;
-    let mut force = PrdHMap::new() ;
-
-    while ! done {
-      info += instance.simplify_all() ? ;
-
-      log! { @4 "looking for nullary predicates..." }
-
-      'all_preds: for (pred, info) in instance.preds().index_iter() {
-        log! { @5 "looking at {} ({})", instance[pred], info.sig }
-        if ! info.sig.is_empty() {
-          continue
-        }
-
-        log! { @5 "{} is nullary", instance[pred] }
-
-        for clause in instance.clauses_of(pred).1 {
-          if instance[* clause].lhs_preds().is_empty()
-          && instance[pred].sig.is_empty() {
-            // We already know the clause is not trivial because we just
-            // simplified. Predicate has to be `true`.
-            let prev = force.insert(pred, true) ;
-            debug_assert! { prev.is_none() } ;
-            continue 'all_preds
-          }
-        }
-
-        for clause in instance.clauses_of(pred).0 {
-          if instance[* clause].lhs_preds().len() == 1
-          && instance[* clause].rhs().is_none() {
-            // We already know the clause is not trivial because we just
-            // simplified. Predicate has to be `false`.
-            let prev = force.insert(pred, false) ;
-            debug_assert! { prev.is_none() } ;
-            continue 'all_preds
-          }
-        }
-      }
-
-      done = force.is_empty() ;
-
-      for (pred, positive) in force.drain() {
-        log! { @4 "forcing {} to {}", instance[pred], positive }
-        if positive {
-          info += instance.force_true(pred) ?
-        } else {
-          info += instance.force_false(pred) ?
-        }
-      }
-    }
-
-    Ok(info)
+    instance.simplify_all()
   }
 }
 
@@ -1551,7 +1499,12 @@ impl RedStrat for CfgRed {
       info.preds += pred_defs.len() ;
 
       self.graph.check(& instance) ? ;
-      log_verb! { "inlining {} predicates", pred_defs.len() }
+      if_log! { @verb
+        log_verb! { "inlining {} predicates", pred_defs.len() }
+        for (pred, _) in & pred_defs {
+          log_verb! { "  {}", instance[* pred] }
+        }
+      }
 
       if pred_defs.len() == instance.active_pred_count() {
         let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
@@ -1610,14 +1563,7 @@ impl RedStrat for CfgRed {
           log_debug! { ")" }
         }
 
-        if false && instance.is_known(pred) {
-          bail!(
-            "trying to force predicate {} again",
-            conf.emph(& instance[pred].name)
-          )
-        } else {
-          info += instance.force_dnf_left(pred, def) ?
-        }
+        info += instance.force_dnf_left(pred, def) ? ;
 
         preproc_dump!(
           instance =>

@@ -222,6 +222,34 @@ impl<'a> PreInstance<'a> {
   }
 
 
+  /// Simplifies some clauses.
+  ///
+  /// - can change **all** clause indices because of potential swap removes
+  /// - does not run `force_trivial`
+  fn simplify_clauses(& mut self) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+    // We're **popping**, so sort lowest to highest to avoid problems with swap
+    // removes.
+    self.clauses_to_simplify.sort_unstable_by(
+      |c_1, c_2| c_1.cmp( c_2 )
+    ) ;
+    log! { @4 "simplify clauses ({})", self.clauses_to_simplify.len() }
+    let mut prev = None ;
+    while let Some(clause) = self.clauses_to_simplify.pop() {
+      log! { @5 "{}", self[clause].to_string_info(self.preds()).unwrap() }
+      prev = {
+        if let Some(prev) = prev {
+          if clause == prev { continue }
+        }
+        Some(clause)
+      } ;
+      info += self.simplify_clause(clause) ?
+    }
+    self.check("after `simplify_clauses`") ? ;
+    Ok(info)
+  }
+
+
   /// Simplifies a clause.
   ///
   /// This function might create new clauses. Potentially voids the semantics
@@ -276,24 +304,22 @@ impl<'a> PreInstance<'a> {
         } => "propagation"
       }
 
+      // Remove redundant atoms.
+      if conf.preproc.prune_terms {
+        self.prune_atoms(clause) ?
+      }
+
       // Check for triviality.
       rm_return! {
         clause if self.is_clause_trivial(clause) ? => "clause trivial"
       }
+
+      self.instance[clause].lhs_terms_checked() ;
     }
 
     rm_return! {
       clause if self.is_redundant(clause) => "clause redundant"
     }
-
-    if self.instance[clause].terms_changed() {
-      // Remove redundant atoms.
-      if conf.preproc.prune_terms {
-        self.prune_atoms(clause) ?
-      }
-    }
-
-    self.instance[clause].lhs_terms_checked() ;
 
     // Try to split the clause.
     self.split_disj(clause)
@@ -454,6 +480,7 @@ impl<'a> PreInstance<'a> {
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
+    // println!("is trivial {}", self[clause_idx].to_string_info(self.preds()).unwrap()) ;
     if let Some(res) = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
     ) ? {
@@ -638,15 +665,15 @@ impl<'a> PreInstance<'a> {
     self.instance.unlink_pred_rhs(
       pred, & mut self.clauses_to_simplify
     ) ;
-    for clause in self.clauses_to_simplify.drain(0 ..) {
+    for clause in & self.clauses_to_simplify {
       debug_assert_eq! {
-        self.instance.clauses[clause].rhs().map(|(p, _)| p), Some(pred)
+        self.instance.clauses[* clause].rhs().map(|(p, _)| p), Some(pred)
       }
-      self.instance.clauses[clause].unset_rhs() ;
-      debug_assert! { self.instance.clauses[clause].preds_changed() }
+      self.instance.clauses[* clause].unset_rhs() ;
+      debug_assert! { self.instance.clauses[* clause].preds_changed() }
     }
 
-    info += self.simplify_all() ? ;
+    info += self.simplify_clauses() ? ;
 
     self.check("after force true") ? ;
 
@@ -678,13 +705,13 @@ impl<'a> PreInstance<'a> {
     self.instance.unlink_pred_lhs(
       pred, & mut self.clauses_to_simplify
     ) ;
-    for clause in self.clauses_to_simplify.drain(0..) {
-      let prev = self.instance.clauses[clause].drop_lhs_pred(pred) ;
+    for clause in & self.clauses_to_simplify {
+      let prev = self.instance.clauses[* clause].drop_lhs_pred(pred) ;
       debug_assert! { prev.is_some() }
-      debug_assert! { self.instance.clauses[clause].preds_changed() }
+      debug_assert! { self.instance.clauses[* clause].preds_changed() }
     }
 
-    info += self.simplify_all() ? ;
+    info += self.simplify_clauses() ? ;
 
     self.check("after force true") ? ;
 
@@ -752,7 +779,8 @@ impl<'a> PreInstance<'a> {
       "updating lhs clauses ({})", self.clauses_to_simplify.len()
     }
 
-    'clause_iter: for clause in self.clauses_to_simplify.drain(0..) {
+    'clause_iter: for clause in & self.clauses_to_simplify {
+      let clause = * clause ;
       log! { @4
         "- working on lhs of clause {}",
         self.instance[clause].to_string_info(
@@ -811,6 +839,9 @@ impl<'a> PreInstance<'a> {
     }
 
 
+    info += self.simplify_clauses() ? ;
+
+
     // Forget the rhs clause.
     log_debug! {
       "forgetting rhs clause"
@@ -857,8 +888,6 @@ impl<'a> PreInstance<'a> {
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
-
-    info += self.simplify_all() ? ;
 
     self.check("after `force_pred_left`") ? ;
 
@@ -910,8 +939,11 @@ impl<'a> PreInstance<'a> {
       ) ;
     }
 
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+
     'clause_iter: for clause in & to_simplify {
       let clause = * clause ;
+      self.clauses_to_simplify.push(clause) ;
 
       if self.clauses[clause].rhs().is_none() {
         continue 'clause_iter
@@ -972,7 +1004,7 @@ impl<'a> PreInstance<'a> {
 
     }
 
-    info += self.simplify_all() ? ;
+    info += self.simplify_clauses() ? ;
 
     self.check("after `extend_pred_left`") ? ;
 
@@ -1184,7 +1216,8 @@ impl<'a> PreInstance<'a> {
       pred, & mut self.clauses_to_simplify
     ) ;
 
-    'clause_iter: for clause in self.clauses_to_simplify.drain(0..) {
+    'clause_iter: for clause in & self.clauses_to_simplify {
+      let clause = * clause ;
       log! { @4 "working on clause #{}", clause }
       log! { @4
         "{}", self.instance[clause].to_string_info(
@@ -1266,6 +1299,8 @@ impl<'a> PreInstance<'a> {
       )
     }
 
+    info += self.simplify_clauses() ? ;
+
     // Make sure there's exactly one lhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_lhs(
@@ -1306,8 +1341,6 @@ impl<'a> PreInstance<'a> {
 
     info.clauses_rmed += 1 ;
     self.instance.forget_clause(clause_to_rm) ? ;
-
-    info += self.simplify_all() ? ;
 
     self.check("after `force_pred_right`") ? ;
 
@@ -1408,8 +1441,6 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    info += self.simplify_all() ? ;
-
     self.check("after unroll") ? ;
 
     Ok(info)
@@ -1490,8 +1521,6 @@ impl<'a> PreInstance<'a> {
         info += simplinfo
       }
     }
-
-    info += self.simplify_all() ? ;
 
     self.check("after runroll") ? ;
 

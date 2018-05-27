@@ -280,7 +280,9 @@ impl CData {
     }
 
     profile! { |_profiler| tick "learning", "qual", "gain", "unc eval" }
+    // println!("{}", qual) ;
     for unc in & self.unc {
+      // println!("  {}", unc) ;
       match qual.evaluate( unc.get() ).chain_err(
         || format!("while evaluating qualifier {} on {}", qual, unc)
       ) ? {

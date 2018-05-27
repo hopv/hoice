@@ -210,45 +210,50 @@ impl Splitter {
       ).collect() ;
 
       clauses.sort_unstable_by(
-        |& (c_1, count_1), & (c_2, count_2)|
-        if instance[c_1].is_strict_neg()
-        && ! instance[c_2].is_strict_neg() {
-          ::std::cmp::Ordering::Greater
-        } else
-        if ! instance[c_1].is_strict_neg()
-        && instance[c_2].is_strict_neg() {
-          ::std::cmp::Ordering::Less
-        } else if instance[c_1].from_unrolling
-        && ! instance[c_2].from_unrolling {
-          ::std::cmp::Ordering::Greater
-        } else if ! instance[c_1].from_unrolling
-        && instance[c_2].from_unrolling {
-          ::std::cmp::Ordering::Less
-        } else {
-          count_1.cmp(& count_2)
+        |& (c_1, count_1), & (c_2, count_2)| {
+          if   instance[c_1].is_strict_neg()
+          && ! instance[c_2].is_strict_neg() {
+            ::std::cmp::Ordering::Greater
+          } else
+          if ! instance[c_1].is_strict_neg()
+          &&   instance[c_2].is_strict_neg() {
+            ::std::cmp::Ordering::Less
+          } else
+          if   instance[c_1].from_unrolling
+          && ! instance[c_2].from_unrolling {
+            ::std::cmp::Ordering::Greater
+          } else
+          if ! instance[c_1].from_unrolling
+          &&   instance[c_2].from_unrolling {
+            ::std::cmp::Ordering::Less
+          } else {
+            count_1.cmp(& count_2)
+          }
         }
       ) ;
 
-      if_verb! {
-        if conf.preproc.split_sort {
-          log_verb! {
-            "sorted clauses:"
-          }
-          for & (clause, count) in clauses.iter() {
-            log_verb! { "#{} ({})", clause, count }
-            log_debug! {
-              "{}", instance[clause].to_string_info(instance.preds()).unwrap()
-            }
-          }
-        }
-      }
+      // if_verb! {
+      //   if conf.preproc.split_sort {
+      //     log_verb! {
+      //       "sorted clauses:"
+      //     }
+      //     for & (clause, count) in clauses.iter() {
+      //       log_verb! { "#{} ({})", clause, count }
+      //       log_debug! {
+      //         "{}", instance[clause].to_string_info(instance.preds()).unwrap()
+      //       }
+      //     }
+      //   }
+      // }
 
-      let clauses: Vec<_> = clauses.into_iter().filter_map(
-        |(c,_)| if instance[c].from_unrolling {
-          Some(c)
-        } else {
-          Some(c)
-        }
+      let clauses: Vec<_> = clauses.into_iter()
+      .map(|(c,_)| c
+      // .filter_map(
+      //   |(c,_)| if instance[c].from_unrolling {
+      //     Some(c)
+      //   } else {
+      //     Some(c)
+      //   }
       ).collect() ;
 
       let len = clauses.len() ;
