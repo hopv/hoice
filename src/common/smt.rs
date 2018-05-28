@@ -436,7 +436,7 @@ impl FullParser {
   pub fn fix_model(
     & self, mut model: Vec<(FPVar, Vec<(FPVar, Typ)>, Typ, FPVal)>
   ) -> Res< Vec<(VarIdx, Typ, Val)> > {
-    let mut fun_defs: HashMap<String, Fun> = HashMap::new() ;
+    let mut fun_defs: HashMap<String, (Sig, Term)> = HashMap::new() ;
     let mut res = Vec::with_capacity( model.len() ) ;
     let mut postponed = Vec::new() ;
 
@@ -453,8 +453,15 @@ impl FullParser {
 
           FPVar::Var(var) => match val {
             FPVal::Val(val) => res.push((var, typ, val)),
-            FPVal::FunToArray(fun) => if let Some(def) = fun_defs.get(& fun) {
-              res.push( (var, typ, val::array(def.clone())) )
+            FPVal::FunToArray(fun) => if let Some(
+              (sig, def)
+            ) = fun_defs.get(& fun) {
+              debug_assert_eq! { sig.len(), 1 }
+              let idx_type = sig.iter().next().unwrap() ;
+              let array = val::array_of_fun(idx_type.clone(), def).chain_err(
+                || "while recovering array from function definition"
+              ) ? ;
+              res.push( (var, typ, array) )
             } else {
               postponed.push(
                 (FPVar::Var(var), sig, typ, FPVal::FunToArray(fun))
@@ -523,8 +530,7 @@ impl FullParser {
                 ::instance::parse::PTTerms::tterm( TTerm::T(term.clone()) )
               ) ;
               debug_assert! { prev.is_none() }
-              let fun = fun::mk((nu_sig, term)) ;
-              let prev = fun_defs.insert(name, fun) ;
+              let prev = fun_defs.insert(name, (nu_sig, term)) ;
               debug_assert_eq! { prev, None }
             } else {
               postponed.push(

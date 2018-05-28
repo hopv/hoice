@@ -108,6 +108,18 @@ impl RTerm {
       _ => None,
     }
   }
+
+  /// Returns the kids of an ite.
+  pub fn ite_inspect(& self) -> Option<(& Term, & Term, & Term)> {
+    match * self {
+      RTerm::App { op: Op::Ite, ref args, .. } => {
+        debug_assert_eq! { args.len(), 3 }
+        Some( (& args[0], & args[1], & args[2]) )
+      },
+      _ => None,
+    }
+  }
+
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
@@ -500,7 +512,7 @@ impl RTerm {
         Bool(b) => val::bool(b),
         CArray { ref typ, ref term } => {
           let default = term.eval(model) ? ;
-          val::mono_array(typ.clone(), default)
+          val::array(typ.clone(), default)
         },
       } ;
 

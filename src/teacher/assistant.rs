@@ -374,6 +374,10 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
     let mut unknown = 0 ;
 
     for (arg, val) in self.args.iter().zip( self.vals.iter() ) {
+      if ! val.is_known() {
+        unknown += 1 ;
+        continue
+      }
       match val.get() {
         & val::RVal::B(b) => {
           write!(w, " ") ? ;
@@ -405,8 +409,14 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           rat_to_smt!(w, r) ? ;
           write!(w, ")") ?
         },
-        & val::RVal::N(_) => unknown += 1,
-        & val::RVal::Array { .. } => unimplemented!("support for arrays"),
+        & val::RVal::Array { .. } => {
+          write!(w, " (= ") ? ;
+          arg.write(
+            w, |w, v| w.write_all( v.default_str().as_bytes() )
+          ) ? ;
+          write!(w, " {})", val) ?
+        },
+        & val::RVal::N(_) => (),
       }
     }
 
