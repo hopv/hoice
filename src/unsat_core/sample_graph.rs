@@ -932,10 +932,11 @@ impl SampleGraph {
         }
 
         let model = solver.get_model() ? ;
+        let model = Parser.fix_model(model) ? ;
 
         solver.pop(1) ? ;
 
-        for (var, _, _, val) in model {
+        for (var, _, val) in model {
           let prev = map.insert(var, val) ;
           debug_assert_eq! { prev, None }
         }

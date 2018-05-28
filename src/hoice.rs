@@ -32,6 +32,7 @@ pub mod common ;
 
 pub mod val ;
 pub mod term ;
+pub mod fun ;
 pub mod var_to ;
 
 pub mod data ;

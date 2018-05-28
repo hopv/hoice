@@ -33,19 +33,23 @@ pub fn mk<V: Into<RVal>>(val: V) -> Val {
 pub fn bool(b: bool) -> Val {
   factory.mk(RVal::B(b))
 }
-/// Creates an array with a default value.
-///
-/// - `idx_typ` is the type of **the indices** of the array.
-pub fn array<Tgt: Into<Val>>(
-  idx_typ: Typ, default: Tgt
-) -> Val {
+
+/// Creates an array from a function.
+pub fn array(def: Fun) -> Val {
   factory.mk(
-    RVal::Array {
-      idx_typ,
-      default: default.into(),
-      vals: Vec::new(),
-    }
+    RVal::Array { def }
   )
+}
+/// Creates a mono-valued array.
+pub fn mono_array(idx: Typ, val: Val) -> Val {
+  if let Some(term) = val.to_term() {
+    let def = fun::mk(
+      (vec![idx].into(), term)
+    ) ;
+    array(def)
+  } else {
+    none( typ::array(idx, val.typ()) )
+  }
 }
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
@@ -84,28 +88,35 @@ pub enum RVal {
   I(Int),
   /// Real value (actually a rational).
   R(Rat),
+  // /// An array is a total function.
+  // ///
+  // /// The `vals` field encodes a sequence of if-then-else's.
+  // Array {
+  //   /// The type of **the indices** of the array.
+  //   ///
+  //   /// The actual type of the array is `array(idx_typ, default.typ())`.
+  //   ///
+  //   /// # Examples
+  //   ///
+  //   /// ```
+  //   /// use hoice::common::* ;
+  //   /// let array = val::array(
+  //   ///   typ::int(), val::real( Rat::new(9.into(), 7.into()) )
+  //   /// ) ;
+  //   /// assert_eq! { array.typ(), typ::array( typ::int(), typ::real() ) }
+  //   /// ```
+  //   idx_typ: Typ,
+  //   /// Default target value.
+  //   default: Val,
+  //   /// The values of the array.
+  //   vals: Vec<(Op, Val, Val)>
+  // },
   /// An array is a total function.
   ///
   /// The `vals` field encodes a sequence of if-then-else's.
   Array {
-    /// The type of **the indices** of the array.
-    ///
-    /// The actual type of the array is `array(idx_typ, default.typ())`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use hoice::common::* ;
-    /// let array = val::array(
-    ///   typ::int(), val::real( Rat::new(9.into(), 7.into()) )
-    /// ) ;
-    /// assert_eq! { array.typ(), typ::array( typ::int(), typ::real() ) }
-    /// ```
-    idx_typ: Typ,
-    /// Default target value.
-    default: Val,
-    /// The values of the array.
-    vals: Vec<(Op, Val, Val)>
+    /// Function conversion.
+    def: Fun,
   },
 }
 
@@ -262,9 +273,16 @@ impl RVal {
       B(_) => typ::bool(),
       I(_) => typ::int(),
       R(_) => typ::real(),
-      Array { ref idx_typ, ref default, .. } => typ::array(
-        idx_typ.clone(), default.typ()
-      ),
+      // Array { ref idx_typ, ref default, .. } => typ::array(
+      //   idx_typ.clone(), default.typ()
+      // ),
+      Array { ref def } => {
+        let (sig, out) = def.sig() ;
+        debug_assert_eq! { sig.len(), 1 }
+        typ::array(
+          sig.iter().next().unwrap().clone(), out.clone()
+        )
+      },
       N(ref typ) => typ.clone()
     }
   }
@@ -273,6 +291,10 @@ impl RVal {
   pub fn cast(& self, typ: & ::term::Typ) -> Res<Val> {
     use num::One ;
     use term::typ::RTyp ;
+    if & self.typ() == typ {
+      return Ok( mk(self.clone()) )
+    }
+
     match (self, typ.get()) {
       (& RVal::I(ref i), & RTyp::Int) => Ok( int(i.clone()) ),
       (& RVal::I(ref num), & RTyp::Real) => Ok(
@@ -416,6 +438,7 @@ impl RVal {
       RVal::R(ref r) => Some( ::term::real(r.clone()) ),
       RVal::B(b) => Some( ::term::bool(b) ),
       RVal::N(_) => None,
+      // RVal::Array { .. } => unimplemented!("support for arrays"),
       RVal::Array { .. } => unimplemented!("support for arrays"),
     }
   }
@@ -920,28 +943,27 @@ impl RVal {
 use hoice::term::typ ;
 use hoice::val::* ;
 
-let first_array = array( typ::int(), int(0) ) ;
-assert_eq! {
-  & format!("{}", first_array), "(array (v_0 Int) 0)"
-}
+let first_array = mono_array( typ::int(), int(0) ) ;
+# println!("{}", first_array) ;
+
 assert_eq! { first_array.select( int(7) ), int(0) }
 // Following works because `first_array` is constant.
 assert_eq! { first_array.select( none(typ::int()) ), int(0) }
 
 let array = first_array.store(int(7), int(0)) ;
-assert_eq! {
-  & format!("{}", array), "(array (v_0 Int) 0)"
-}
+# println!("{}", array) ;
 assert_eq! { array, first_array }
-// `array` is the same because the value stored is the default one.
 
 let array = first_array.store(int(7), int(1)) ;
-assert_eq! {
-  & format!("{}", array), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
-}
+# println!("{}", array) ;
+
+# println!("array[{}] = {}", 7, 1) ;
 assert_eq! { array.select( int(7) ), int(1) }
+# println!("array[{}] = {}", 5, 0) ;
 assert_eq! { array.select( int(5) ), int(0) }
+# println!("array[{}] = {}", 0, 0) ;
 assert_eq! { array.select( int(0) ), int(0) }
+# println!("array[_] = {}", 1) ;
 // Select on `none` does not work anymore, array is not constant.
 assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
 ```
@@ -949,51 +971,48 @@ assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
 impl RVal {
   /// Store over arrays, creates a `RVal`.
   ///
-  /// Does not actually create a `Val`.
+  /// Does not actually create a `Val`, see `store` for that.
   ///
-  /// # Examples
+  /// # TODO
   ///
-  /// ```
-  /// use hoice::term::typ ;
-  /// use hoice::val::* ;
-  ///
-  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
-  /// assert_eq! {
-  ///   & format!("{}", arr), "(array (v_0 Int) 0)"
-  /// }
-  ///
-  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(1)) ;
-  /// assert_eq! {
-  ///   & format!("{}", arr), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
-  /// }
-  /// ```
+  /// - find a way to handle unknown values better?
   pub fn raw_store<V: Into<Val>>(& self, idx: V, val: V) -> Self {
     let (idx, val) = ( idx.into(), val.into() ) ;
-    match * self {
-      RVal::Array { ref idx_typ, ref default, ref vals } => {
-        debug_assert_eq! { idx_typ, & idx.typ() }
-        debug_assert_eq! { default.typ(), val.typ() }
 
-        // If `idx` is none, just set the default to `val`.
-        if ! idx.is_known() {
-          return RVal::Array {
-            idx_typ: idx_typ.clone(), default: val, vals: vec![]
-          }
-        }
-
-        let (idx_typ, default, mut vals) = (
-          idx_typ.clone(), default.clone(), vals.clone()
-        ) ;
-        if default != val {
-          vals.push( (Op::Eql, idx, val) )
-        }
-
-        RVal::Array { idx_typ, default, vals }
-      },
-      _ => panic!(
-        "trying to store a value in a non-array value of type {}", self.typ()
-      ),
+    debug_assert! {
+      if let Some((i, v)) = self.typ().array_inspect() {
+        debug_assert_eq! { i, & idx.typ() }
+        debug_assert_eq! { v, & val.typ() }
+        true
+      } else {
+        false
+      }
     }
+
+    let (idx, val) = (
+      idx.to_term().unwrap_or( idx.typ().default_term() ),
+      val.to_term().unwrap_or( val.typ().default_term() ),
+    ) ;
+
+    let def = match self {
+      RVal::Array { def } => term::ite(
+        term::eq(
+          term::var(0, idx.typ()), idx.clone()
+        ), val, def.def().clone()
+      ),
+
+      RVal::N(_) => val,
+
+      _ => panic!(
+        "trying to store value {} in non-array value {} of type {}",
+        val, self, self.typ()
+      ),
+    } ;
+
+    let def = fun::mk((vec![ idx.typ() ].into(), def)) ;
+
+    RVal::Array { def }
+
   }
 
   /// Store over arrays.
@@ -1004,15 +1023,23 @@ impl RVal {
   /// use hoice::term::typ ;
   /// use hoice::val::* ;
   ///
-  /// let arr: RVal = array( typ::int(), int(0) ).raw_store(int(7), int(0)) ;
-  /// assert_eq! {
-  ///   & format!("{}", arr), "(array (v_0 Int) 0)"
-  /// }
+  /// let arr: RVal = mono_array(
+  ///   typ::int(), int(0)
+  /// ).raw_store(int(7), int(0)) ;
+  /// # println!("arr[{}] = {}", 7, 0) ;
+  /// assert_eq! { arr.select( int(7) ), int(0) }
+  /// # println!("arr[{}] = {}", 5, 0) ;
+  /// assert_eq! { arr.select( int(5) ), int(0) }
+  /// # println!("arr[{}] = {}", 0, 0) ;
+  /// assert_eq! { arr.select( int(0) ), int(0) }
   ///
-  /// let arr = array( typ::int(), int(0) ).store(int(7), int(1)) ;
-  /// assert_eq! {
-  ///   & format!("{}", arr), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
-  /// }
+  /// let arr = mono_array( typ::int(), int(0) ).store(int(7), int(1)) ;
+  /// # println!("arr[{}] = {}", 7, 1) ;
+  /// assert_eq! { arr.select( int(7) ), int(1) }
+  /// # println!("arr[{}] = {}", 5, 0) ;
+  /// assert_eq! { arr.select( int(5) ), int(0) }
+  /// # println!("arr[{}] = {}", 0, 0) ;
+  /// assert_eq! { arr.select( int(0) ), int(0) }
   /// ```
   pub fn store<V: Into<Val>>(& self, idx: V, val: V) -> Val {
     factory.mk( self.raw_store(idx, val) )
@@ -1026,10 +1053,7 @@ impl RVal {
   /// use hoice::term::typ ;
   /// use hoice::val::* ;
   ///
-  /// let array = array( typ::int(), int(0) ).store(int(7), int(1)) ;
-  /// assert_eq! {
-  ///   & format!("{}", array), "(array (v_0 Int) (ite (= v_0 7) 1 0))"
-  /// }
+  /// let array = mono_array( typ::int(), int(0) ).store(int(7), int(1)) ;
   /// assert_eq! { array.select( int(7) ), int(1) }
   /// assert_eq! { array.select( int(5) ), int(0) }
   /// assert_eq! { array.select( int(0) ), int(0) }
@@ -1037,45 +1061,34 @@ impl RVal {
   /// ```
   pub fn select<V: Into<Val>>(& self, idx: V) -> Val {
     let idx = idx.into() ;
+    // let idx = if idx.is_known() {
+    //   idx
+    // } else {
+    //   idx.typ().default_val()
+    // } ;
+
     match * self {
-      RVal::Array { ref idx_typ, ref default, ref vals } => {
-        debug_assert_eq! { idx_typ, & idx.typ() }
-
-        // If the index is a non-value...
-        if ! idx.is_known() {
-          // and the array is constant, return that value.
-          if vals.is_empty() {
-            return default.clone()
-          } else {
-            return none( default.typ().clone() )
-          }
-        }
-
-        for (op, key, val) in vals {
-          match op.eval(vec![idx.clone(), key.clone()]).and_then(
-            |res| res.to_bool()
-          ) {
-            Ok( Some(true) ) => return val.clone(),
-            Ok( Some(false) ) => (),
-            Ok(None) => panic!(
-              "non-value array condition ({} {} {})", op, idx, key
-            ),
-            Err(e) => {
-              print_err(e) ;
-              panic!(
-                "while evaluating array condition ({} {} {})", op, idx, key
-              )
-            }
-          }
-        }
-
-        default.clone()
+      RVal::Array { ref def } => match def.def().eval::<VarMap<_>>(
+        & vec![idx.clone()].into()
+      ) {
+        Ok(val) => return val,
+        Err(e) => panic!(
+          "{}\nwhile selecting on {}: {} at {}: {}",
+          e, self, self.typ(), idx, idx.typ()
+        ),
       },
-      _ => panic!(
-        "trying to select a value from a non-array value of type {}",
-        self.typ()
-      ),
+
+      RVal::N(ref typ) => if let Some((_, out)) = typ.array_inspect() {
+        return none( out.clone() )
+      },
+
+      _ => (),
     }
+
+    panic!(
+      "trying to select at {} in non-array value {} of type {}",
+      idx, self, self.typ()
+    )
   }
 }
 
@@ -1089,16 +1102,11 @@ impl_fmt!{
       RVal::I(ref i) => int_to_smt!(fmt, i),
       RVal::R(ref r) => rat_to_smt!(fmt, r),
       RVal::B(b) => write!(fmt, "{}", b),
-      RVal::Array { ref idx_typ, ref default, ref vals } => {
-        write!(fmt, "(array (v_0 {}) ", idx_typ) ? ;
-        for (op, key, val) in vals {
-          write!(fmt, "(ite ({} v_0 {}) {} ", op, key, val) ?
-        }
-        write!(fmt, "{}", default) ? ;
-        for _ in vals {
-          write!(fmt, ")") ?
-        }
-        write!(fmt, ")")
+      RVal::Array { ref def } => {
+        use fun::FunExt ;
+        write!(
+          fmt, "(_ as-array {})", def.name()
+        )
       },
     }
   }

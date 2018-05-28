@@ -661,7 +661,7 @@ impl Op {
         bail!("expected three arguments for `{}`, found {}", self, args.len())
       },
 
-      Select => if args.len() != 2 {
+      Select => if args.len() == 2 {
         let (idx, array) = (
           args.pop().unwrap(),
           args.pop().unwrap()

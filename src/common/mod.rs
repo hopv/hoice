@@ -29,6 +29,9 @@ pub use term::{
 pub use val ;
 pub use val::Val ;
 
+pub use fun ;
+pub use fun::Fun ;
+
 pub use var_to ;
 pub use var_to::{
   VarVals, VarTerms,

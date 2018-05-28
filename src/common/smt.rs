@@ -1,13 +1,10 @@
 //! SMT-related zero-cost wrappers.
 
-use std::{
-  str::FromStr,
-  io::BufRead,
-} ;
+use std::str::FromStr ;
 
 use rsmt2::{
   print::*,
-  parse::{ IdentParser, ValueParser, SmtParser },
+  parse::{ IdentParser, ModelParser },
 } ;
 
 use common::{
@@ -406,6 +403,26 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
 
 
 
+/// Type of values returned by the full parser.
+pub enum FPVal {
+  /// A normal value.
+  Val(Val),
+  /// A function to array conversion.
+  FunToArray(String),
+  /// A function declaration.
+  FunDef(String),
+}
+/// Type of variables returned by the full parser.
+pub enum FPVar {
+  /// A normal variable.
+  Var(VarIdx),
+  /// A symbol that's not a normal variable.
+  Sym(String),
+}
+
+
+
+
 /// Unit type parsing the output of the SMT solver.
 ///
 /// Parses variables of the form `v<int>` and constants. It is designed to
@@ -414,50 +431,227 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
 #[derive(Clone, Copy)]
 pub struct FullParser ;
 
-impl<'a> IdentParser<VarIdx, (), & 'a str> for FullParser {
-  fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
-    debug_assert_eq!( & input[0..2], "v_" ) ;
-    match usize::from_str(& input[2..]) {
-      Ok(idx) => Ok( idx.into() ),
-      Err(e) => bail!(
-        "could not retrieve var index from `{}`: {}", input, e
-      ),
+impl FullParser {
+  /// Translates a raw model to a normal model.
+  pub fn fix_model(
+    & self, mut model: Vec<(FPVar, Vec<(FPVar, Typ)>, Typ, FPVal)>
+  ) -> Res< Vec<(VarIdx, Typ, Val)> > {
+    let mut fun_defs: HashMap<String, Fun> = HashMap::new() ;
+    let mut res = Vec::with_capacity( model.len() ) ;
+    let mut postponed = Vec::new() ;
+
+    let mut instance = Instance::new() ;
+    let mut context = ::instance::parse::ParserCxt::new() ;
+
+    let mut stuck ;
+
+    while ! model.is_empty() {
+      let model_len = model.len() ;
+
+      while let Some((var, sig, typ, val)) = model.pop() {
+        match var {
+
+          FPVar::Var(var) => match val {
+            FPVal::Val(val) => res.push((var, typ, val)),
+            FPVal::FunToArray(fun) => if let Some(def) = fun_defs.get(& fun) {
+              res.push( (var, typ, val::array(def.clone())) )
+            } else {
+              postponed.push(
+                (FPVar::Var(var), sig, typ, FPVal::FunToArray(fun))
+              )
+            },
+            FPVal::FunDef(def) => bail!(
+              "inconsistent model, \
+              normal variable {} associated to function definition {}",
+              var.default_str(), def
+            ),
+          },
+
+          FPVar::Sym(name) => {
+            use ::instance::info::VarInfo ;
+
+            let (mut nu_sig, mut var_infos): (
+              VarMap<Typ>, VarMap<_>
+            ) = (
+              VarMap::with_capacity( sig.len() ),
+              VarMap::with_capacity( sig.len() ),
+            ) ;
+
+            for (var, typ) in & sig {
+              let idx = var_infos.next_index() ;
+              if let FPVar::Sym(ref var) = * var {
+                nu_sig.push( typ.clone() ) ;
+                var_infos.push(
+                  VarInfo::new(var.clone(), typ.clone(), idx)
+                ) ;
+              } else {
+                bail!("inconsistent function parameters: variable index")
+              }
+            }
+
+            if let Ok(Some(term)) = match val {
+              FPVal::FunDef(ref fun) => {
+                let mut var_hmap: HashMap<
+                  & str, VarIdx
+                > = HashMap::with_capacity( sig.len() ) ;
+
+                for (idx, info) in var_infos.index_iter() {
+                  let prev = var_hmap.insert(
+                    & info.name, idx
+                  ) ;
+                  debug_assert_eq! { prev, None }
+                }
+
+                let mut parser = context.parser(fun, 0) ;
+
+                parser.term_opt(
+                    & var_infos, & var_hmap, & instance
+                )
+              },
+
+              FPVal::Val(ref val) => Ok( val.to_term() ),
+
+              FPVal::FunToArray(fun) => bail!(
+                "inconsistent model, function name {} \
+                associated to function to array conversion {}",
+                name, fun
+              ),
+            } {
+              debug_assert_eq! { term.typ(), typ }
+              let prev = instance.add_define_fun(
+                name.clone(), var_infos,
+                ::instance::parse::PTTerms::tterm( TTerm::T(term.clone()) )
+              ) ;
+              debug_assert! { prev.is_none() }
+              let fun = fun::mk((nu_sig, term)) ;
+              let prev = fun_defs.insert(name, fun) ;
+              debug_assert_eq! { prev, None }
+            } else {
+              postponed.push(
+                (FPVar::Sym(name), sig, typ, val)
+              )
+            }
+          },
+
+        }
+
+      }
+
+      stuck = model_len == postponed.len() ;
+
+      if stuck {
+        bail!("failed to parse model from solver")
+      }
+
+      model.extend( postponed.drain(0..) )
+
     }
-  }
-  fn parse_type(self, _: & 'a str) -> SmtRes<()> {
-    Ok(())
+
+    Ok(res)
   }
 }
 
-impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for FullParser
-where Br: BufRead {
-  fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
-    if let Some(val) = input.try_int::<
-      _, _, ::num::bigint::ParseBigIntError
-    >(
-      |int, pos| {
-        let int = Int::from_str(int) ? ;
-        Ok( if ! pos { - int } else { int } )
+impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
+  fn parse_ident(self, input: & 'a str) -> SmtRes<FPVar> {
+    if & input[0..2] == "v_" {
+      match usize::from_str(& input[2..]) {
+        Ok(idx) => Ok( FPVar::Var( idx.into() ) ),
+        Err(e) => bail!(
+          "could not retrieve var index from `{}`: {}", input, e
+        ),
       }
-    ) ? {
-      Ok( val::int(val) )
-    } else if let Some(val) = input.try_bool() ? {
-      Ok( val::bool(val) )
-    } else if let Some(val) = input.try_rat::<
-      _, _, ::num::bigint::ParseBigIntError
-    >(
-      |num, den, pos| {
-        let (num, den) = (
-          Int::from_str(num) ?, Int::from_str(den) ?
-        ) ;
-        let rat = Rat::new(num, den) ;
-        Ok( if ! pos { - rat } else { rat } )
-      }
-    ) ? {
-      let mut val = val::real(val) ;
-      Ok(val)
     } else {
-      input.fail_with("unexpected value")
+      Ok( FPVar::Sym( input.into() ) )
+    }
+  }
+  fn parse_type(self, input: & 'a str) -> SmtRes<Typ> {
+    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut parser = cxt.parser(input, 0) ;
+    match parser.sort_opt() {
+      Ok( Some(s) ) => Ok(s),
+      _ => Err(
+        format!("unexpected type `{}`", input).into()
+      ),
+    }
+  }
+}
+
+impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
+  fn parse_value(
+    self, input: & 'a str,
+    _id: & FPVar, _params: & Vec<(FPVar, Typ)>, _out: & Typ
+  ) -> SmtRes<FPVal> {
+    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut parser = cxt.parser(input, 0) ;
+
+    let negated = {
+      let start = parser.pos() ;
+      if parser.tag_opt("(") && {
+        parser.ws_cmt() ; parser.tag_opt("-")
+      } {
+        parser.ws_cmt() ;
+        true
+      } else {
+        parser.backtrack_to(start) ;
+        false
+      }
+    } ;
+
+    if let Some(val) = parser.int() {
+      let val = if negated {
+        parser.ws_cmt() ;
+        if parser.tag_opt(")") {
+          - val
+        } else {
+          bail!("illegal integer value, missing closing `)`")
+        }
+      } else {
+        val
+      } ;
+
+      Ok( FPVal::Val( val::int(val) ) )
+
+    } else if let Ok(Some(val)) = parser.real() {
+      let val = if negated {
+        parser.ws_cmt() ;
+        if parser.tag_opt(")") {
+          - val
+        } else {
+          bail!("illegal real value, missing closing `)`")
+        }
+      } else {
+        val
+      } ;
+
+      Ok( FPVal::Val( val::real(val) ) )
+
+    } else if let Some(val) = parser.bool() {
+      debug_assert! { ! negated }
+
+      Ok( FPVal::Val( val::bool(val) ) )
+
+    } else { // More complex stuff.
+
+      // Try function to array conversion.
+      if parser.tag_opt("(") && {
+        parser.ws_cmt() ; parser.tag_opt("_")
+      } && {
+        parser.ws_cmt() ; parser.tag_opt("as-array")
+      } {
+        debug_assert! { ! negated }
+        parser.ws_cmt() ;
+
+        if let Ok((_, ident)) = parser.ident() {
+          Ok( FPVal::FunToArray( ident.into() ) )
+        } else {
+          bail!("expected symbol in function to array conversion `{}`", input)
+        }
+
+      } else {
+        debug_assert! { ! negated }
+        Ok( FPVal::FunDef(input.into()) )
+      }
+
     }
   }
 }

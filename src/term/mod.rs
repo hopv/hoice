@@ -500,7 +500,7 @@ impl RTerm {
         Bool(b) => val::bool(b),
         CArray { ref typ, ref term } => {
           let default = term.eval(model) ? ;
-          val::array(typ.clone(), default)
+          val::mono_array(typ.clone(), default)
         },
       } ;
 

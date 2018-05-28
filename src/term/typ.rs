@@ -124,8 +124,8 @@ impl RTyp {
       RTyp::Real => val::real( Rat::zero() ),
       RTyp::Int => val::int( Int::zero() ),
       RTyp::Bool => val::bool( true ),
-      RTyp::Array { ref tgt, .. } => val::array(
-        factory.mk( self.clone() ), tgt.default_val(),
+      RTyp::Array { ref src, ref tgt } => val::mono_array(
+        src.clone(), tgt.default_val(),
       ),
     }
   }

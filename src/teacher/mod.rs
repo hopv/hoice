@@ -789,7 +789,8 @@ impl<'a> Teacher<'a> {
         if $sat {
           log_debug! { "getting cex for clause #{}", clause_idx }
           profile!{ self tick "cexs", "model" }
-          let model = self.solver.get_model_const() ? ;
+          let model = self.solver.get_model() ? ;
+          let model = Parser.fix_model(model) ? ;
           let cex = Cex::of_model(
             clause!().vars(), model, partial
           ) ? ;

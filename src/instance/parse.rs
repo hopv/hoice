@@ -236,6 +236,12 @@ pub struct Parser<'cxt, 's> {
 
 impl<'cxt, 's> Parser<'cxt, 's> {
 
+
+  /// Returns the text that hasn't been parsed yet.
+  pub fn rest(& self) -> & str {
+    & self.string[self.cursor..]
+  }
+
   /// Generates a parse error at the current position.
   fn error_here<S: Into<String>>(& mut self, msg: S) -> ErrorKind {
     let pos = self.pos() ;
@@ -326,17 +332,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Backtracks to a precise position.
-  fn backtrack_to(& mut self, Pos(pos): Pos) {
+  pub fn backtrack_to(& mut self, Pos(pos): Pos) {
     self.cursor = pos
   }
 
   /// Returns the current position.
-  fn pos(& mut self) -> Pos {
+  pub fn pos(& mut self) -> Pos {
     Pos( self.cursor )
   }
 
   /// Consumes whitespaces and comments.
-  fn ws_cmt(& mut self) {
+  pub fn ws_cmt(& mut self) {
     let mut done = false ;
     while ! done {
       // Eat spaces.
@@ -363,7 +369,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses a string or fails.
-  fn tag(& mut self, tag: & str) -> Res<()> {
+  pub fn tag(& mut self, tag: & str) -> Res<()> {
     if self.tag_opt(tag) {
       Ok(())
     } else {
@@ -388,7 +394,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
   /// Tries parsing a string.
-  fn tag_opt(& mut self, tag: & str) -> bool {
+  pub fn tag_opt(& mut self, tag: & str) -> bool {
     self.tag_opt_pos(tag).is_some()
   }
   /// Tries parsing a string. Returns the position of the start of the tag.
@@ -407,7 +413,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses an ident of fails.
-  fn ident(& mut self) -> Res< (Pos, & 's str) > {
+  pub fn ident(& mut self) -> Res< (Pos, & 's str) > {
     if let Some(id) = self.ident_opt() ? {
       Ok(id)
     } else {
@@ -417,7 +423,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
   /// Tries to parse an ident.
-  fn ident_opt(& mut self) -> Res< Option< (Pos, & 's str) > > {
+  pub fn ident_opt(& mut self) -> Res< Option< (Pos, & 's str) > > {
     let ident_start_pos = self.pos() ;
     if let Some(id) = self.unsafe_ident_opt() ? {
       if keywords::is_keyword(id) {
@@ -627,7 +633,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Tries to parse a sort.
-  fn sort_opt(& mut self) -> Res<Option<Typ>> {
+  pub fn sort_opt(& mut self) -> Res<Option<Typ>> {
     // Compound type under construction.
     //
     // The position is always that of the opening paren of the type.
@@ -926,7 +932,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Bool parser.
-  fn bool(& mut self) -> Option<bool> {
+  pub fn bool(& mut self) -> Option<bool> {
     let start_pos = self.pos() ;
     if self.tag_opt("true") {
       if ! self.legal_id_char() {
@@ -1022,7 +1028,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Integer parser (numeral not followed by a `.`).
-  fn int(& mut self) -> Option<Int> {
+  pub fn int(& mut self) -> Option<Int> {
     let start_pos = self.pos() ;
     let num = self.numeral() ;
     if num.is_some() {
@@ -1069,7 +1075,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Real parser.
   ///
   /// Decimal or fraction.
-  fn real(& mut self) -> Res< Option<Rat> > {
+  pub fn real(& mut self) -> Res< Option<Rat> > {
     let start_pos = self.pos() ;
 
     if let Some(res) = self.decimal() {
