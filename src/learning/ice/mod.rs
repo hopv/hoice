@@ -904,7 +904,7 @@ impl<'core> IceLearner<'core> {
         // }
         // msg.push_str("\n)") ;
         // bail!(msg)
-        unsat!("by lack of (synth) qualifier")
+        unknown!("by lack of (synth) qualifier")
       },
     } ;
     profile!{ self tick "learning", "qual", "data split" }

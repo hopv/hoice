@@ -178,17 +178,16 @@ pub fn read_and_work<R: ::std::io::Read>(
         } {
           Ok(()) => (),
           Err(e) => if e.is_timeout() {
-            if e.is_timeout() {
-              println!("unknown") ;
-              print_stats("top", profiler) ;
-              ::std::process::exit(0)
-            }
+            println!("unknown") ;
+            print_stats("top", profiler) ;
+            ::std::process::exit(0)
+          } else if e.is_unknown() {
+            println!("unknown") ;
+            continue
           } else if e.is_unsat() {
             if let Some(clause) = e.unsat_cause() {
-              println!("some") ;
               unsat = Some( unsat_core::UnsatRes::Clause(clause) )
             } else {
-              println!("none") ;
               unsat = Some( unsat_core::UnsatRes::None )
             }
             ()
@@ -255,6 +254,11 @@ pub fn read_and_work<R: ::std::io::Read>(
               None
             },
             Err(ref e) if e.is_timeout() => {
+              println!("unknown") ;
+              print_stats("top", profiler) ;
+              ::std::process::exit(0)
+            },
+            Err(ref e) if e.is_unknown() => {
               println!("unknown") ;
               print_stats("top", profiler) ;
               ::std::process::exit(0)

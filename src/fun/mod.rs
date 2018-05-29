@@ -27,6 +27,17 @@ lazy_static! {
 pub type Fun = HConsed<RFun> ;
 
 
+/// Defines all functions.
+pub fn define_all<P>(solver: & mut Solver<P>) -> Res<()> {
+  if let Ok(f) = factory.read() {
+    f.fold_res(
+      (), |_, fun| fun.define(solver).map(|_| ())
+    )
+  } else {
+    bail!("failed to lock factory")
+  }
+}
+
 
 /// Extends [`Fun`][fun] with function declaration.
 ///

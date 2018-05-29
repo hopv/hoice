@@ -1313,18 +1313,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
             let term_pos = self.pos() ;
 
+            let stack = Vec::with_capacity(
+              self.cxt.term_stack.capacity()
+            ) ;
+            let old_stack = ::std::mem::replace(
+              & mut self.cxt.term_stack, stack
+            ) ;
+
             // !!!! RECURSIVE CALL !!!!
             if let Some(term) = self.term_opt(var_map, map, instance) ? {
               if term.typ() != * tgt {
                 bail!(
                   self.error(
                     term_pos, format!(
-                      "expected term of type {}, got one of type {}",
+                      "expected expression of sort {}, got one of sort {}",
                       tgt, term.typ()
                     )
                   )
                 )
               }
+
+              let empty_stack = ::std::mem::replace(
+                & mut self.cxt.term_stack,
+                old_stack
+              ) ;
+              debug_assert! { empty_stack.is_empty() }
+
               self.ws_cmt() ;
               self.tag(")") ? ;
               term::cst_array(src.clone(), term)

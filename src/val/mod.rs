@@ -1081,8 +1081,10 @@ impl RVal {  /// Store over arrays, creates a `RVal`.
 
       _ => (),
     }
+
     panic!(
-      "trying to store a value in a non-array value of type {}", self.typ()
+      "trying to store value {}: {} at {}: {} in non-array value {}: {}",
+      idx, idx.typ(), val, val.typ(), self, self.typ()
     )
   }
 
@@ -1159,13 +1161,22 @@ impl RVal {  /// Store over arrays, creates a `RVal`.
           }
         }
 
-        default.clone()
+        return default.clone()
       },
-      _ => panic!(
-        "trying to select a value from a non-array value of type {}",
-        self.typ()
-      ),
+
+      RVal::N(ref typ) => if let Some((i, v)) = typ.array_inspect() {
+        debug_assert_eq! { i, & idx.typ() }
+        return none( v.clone() )
+      } else {
+        ()
+      },
+
+      _ => (),
     }
+    panic!(
+      "trying to select at {}: {} in non-array value {}: {}",
+      idx, idx.typ(), self, self.typ()
+    )
   }
 }
 

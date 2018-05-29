@@ -115,7 +115,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
       }
       let one_alive = teacher.broadcast() ;
       if ! one_alive {
-        bail!("all learners are dead")
+        unknown!("all learners are dead")
       }
     }
 
@@ -447,7 +447,7 @@ impl<'a> Teacher<'a> {
     & mut self, drain: bool
   ) -> Res< Either<(LrnIdx, Candidates), UnsatRes> > {
     macro_rules! all_dead {
-      () => ( bail!("all learners are dead") ) ;
+      () => ( unknown!("all learners are dead") ) ;
     }
 
     'recv: loop {
@@ -539,6 +539,14 @@ impl<'a> Teacher<'a> {
           for _line in _s.lines() {
             println!("; {} | {}", id, _line)
           }
+        },
+
+        MsgKind::Err(ref e) if e.is_unknown() => {
+          let id = match id {
+            Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
+            Id::Assistant => conf.emph( "assistant" ),
+          } ;
+          log! { @verb "received `{}` from {}", conf.bad("unknown"), id }
         },
 
         MsgKind::Err(e) => {
@@ -831,6 +839,10 @@ impl<'a> Teacher<'a> {
     if let Some(unbiased_cex) = cexs.pop() {
 
       if bias {
+        fun::define_all(& mut self.solver).chain_err(
+          || "while declaring all functions"
+        ) ? ;
+
         let (
           bias_lhs_actlit, bias_rhs_actlit
         ) = self.bias_applications(clause_idx) ? ;

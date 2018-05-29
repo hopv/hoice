@@ -88,6 +88,11 @@ error_chain!{
       description("could not spawn z3")
       display("could not spawn z3")
     }
+    #[doc = "Not really an error, unknown early return."]
+    Unknown {
+      description("unknown")
+      display("unknown")
+    }
     #[doc = "Not really an error, unsat early return."]
     Unsat {
       description("unsat")
@@ -120,6 +125,17 @@ impl Error {
     match * self.kind() {
       ErrorKind::Unsat => true,
       ErrorKind::UnsatFrom(_) => true,
+      _ => false,
+    }
+  }
+
+  /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
+  ///
+  /// [unknown]: enum.ErrorKind.html#variant.Unknown
+  /// (ErrorKind's Unknown variant)
+  pub fn is_unknown(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Unknown => true,
       _ => false,
     }
   }

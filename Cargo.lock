@@ -132,7 +132,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "hashconsing"
 version = "0.9.0"
-source = "git+https://github.com/AdrienChampion/hashconsing#999aa2b07684da19f1b9656fbba4f70028011f0f"
+source = "git+https://github.com/AdrienChampion/hashconsing#1b57890dacd8078757f51825a495c88dcb70a439"
 
 [[package]]
 name = "hashconsing"

@@ -53,6 +53,17 @@ macro_rules! unsat {
 }
 
 
+/// Bails with unknown.
+#[macro_export]
+macro_rules! unknown {
+  ($($stuff:tt)*) => ({
+    log! { @info "unknown" } ;
+    log! { @debug $($stuff)* } ;
+    bail!($crate::errors::ErrorKind::Unknown)
+  }) ;
+}
+
+
 
 /// Wraps stuff in a block, usually to please borrow-checking.
 #[macro_export]
