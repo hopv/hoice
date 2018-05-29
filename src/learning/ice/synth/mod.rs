@@ -69,7 +69,7 @@ impl SynthSys {
 
     SynthSys {
       int: if int { Some( IntSynth::new() ) } else { None },
-      real: if real { Some(RealSynth::new() ) } else { None },
+      real: if real { Some( RealSynth::new() ) } else { None },
       cross_synth: HConMap::new(),
     }
   }

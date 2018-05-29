@@ -1058,14 +1058,24 @@ impl RVal {  /// Store over arrays, creates a `RVal`.
           }
         }
 
-        let (idx_typ, default, mut vals) = (
-          idx_typ.clone(), default.clone(), vals.clone()
+        let mut nu_vals: Vec<_> = vals.iter().filter_map(
+          |(i, v)| if i != & idx {
+            Some( (i.clone(), v.clone()) )
+          } else {
+            None
+          }
+        ).collect() ;
+
+        let (idx_typ, default) = (
+          idx_typ.clone(), default.clone()
         ) ;
         if default != val {
-          vals.push( (idx, val) )
+          nu_vals.push( (idx, val) )
         }
 
-        return RVal::Array { idx_typ, default, vals }
+        nu_vals.sort_unstable() ;
+
+        return RVal::Array { idx_typ, default, vals: nu_vals }
       },
 
       RVal::N(ref typ) => if let Some((i, v)) = typ.array_inspect() {
@@ -1073,7 +1083,7 @@ impl RVal {  /// Store over arrays, creates a `RVal`.
         debug_assert_eq! { & val.typ(), v }
         let vals = vec![ (idx, val) ] ;
         return RVal::Array {
-          idx_typ: i.clone(), default: none(v.clone()), vals
+          idx_typ: i.clone(), default: v.default_val(), vals
         }
       } else {
         ()

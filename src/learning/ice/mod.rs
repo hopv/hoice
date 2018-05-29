@@ -1001,21 +1001,18 @@ impl<'core> IceLearner<'core> {
 
       self.synth_sys[pred].restart() ;
 
-      use self::synth::SynthSys ;
-      let mut synth_sys = SynthSys::new( & self.instance[pred].sig ) ;
-
       'synth: loop {
 
         for sample in data.iter(! simple) {
           self_core.check_exit() ? ;
-          let done = synth_sys.sample_synth(
+          let done = self.synth_sys[pred].sample_synth(
             sample, & mut treatment, & self_core._profiler
           ) ? ;
           if done { break }
         }
 
-        synth_sys.increment() ;
-        if synth_sys.is_done() {
+        self.synth_sys[pred].increment() ;
+        if self.synth_sys[pred].is_done() {
           break 'synth
         }
 
