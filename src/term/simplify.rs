@@ -68,6 +68,10 @@ pub fn conj_term_insert(
   let mut add_term ;
 
   macro_rules! helper {
+    (add term) => (
+      next_term.is_none() && add_term
+    ) ;
+
     (is false) => (fls) ;
     (term dropped) => (next_term.is_none() && ! add_term) ;
     (is true) => (! fls && helper!(term dropped)) ;
@@ -98,6 +102,7 @@ pub fn conj_term_insert(
   ) {
     add_term = true ;
 
+
     set.retain(
       |set_term| {
         if helper!(is false) {
@@ -117,7 +122,9 @@ pub fn conj_term_insert(
             true
           },
 
-          SimplRes::Cmp(Greater) => false,
+          SimplRes::Cmp(Greater) => {
+            false
+          },
 
           SimplRes::Yields(nu_term) => match nu_term.bool() {
             Some(true) => {
@@ -135,7 +142,12 @@ pub fn conj_term_insert(
           },
         }
       }
-    )
+    ) ;
+
+    if helper!(add term) {
+      let is_new = set.insert(term) ;
+      debug_assert! { is_new }
+    }
   }
 
   if fls {

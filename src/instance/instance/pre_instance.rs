@@ -1070,6 +1070,8 @@ impl<'a> PreInstance<'a> {
       |c_1, c_2| c_2.cmp(c_1)
     ) ;
 
+    let mut nu_clauses = vec![] ;
+
     for clause in self.clauses_to_simplify.drain(0..) {
       info.clauses_rmed += 1 ;
 
@@ -1088,24 +1090,31 @@ impl<'a> PreInstance<'a> {
       // This is why we rev-sorted:
       let clause = self.instance.forget_clause(clause) ? ;
 
-      // This vector maps indices from `pred_argss` to the disjuncts of `def`.
-      let mut def_indices = vec![ 0 ; pred_argss.len() ] ;
+      // Iterator over all combinations of elements from `def` with len
+      // `pred_argss`.
+      let mut all_combinations = CombinationIter::new(
+        def.iter(), pred_argss.len()
+      ) ? ;
 
-      let mut is_done = false ;
+      // Go over all the combinations.
+      'all_combinations: while let Some(
+        combination
+      ) = all_combinations.next() {
 
-      while ! is_done {
+        debug_assert_eq! { combination.len(), pred_argss.len() }
+
         let mut clause = clause.clone() ;
 
-        for arg_idx in 0..def_indices.len() {
-          let def_idx = def_indices[arg_idx] ;
-          let params = & pred_argss[arg_idx] ;
-          let (ref quant, ref conj) = def[def_idx] ;
+        // Apply substitution and insert into the new clause.
+        for ((quant, def), pred_args) in combination.iter().zip(
+          pred_argss.iter()
+        ) {
 
-          let quant_map = clause.nu_fresh_vars_for(& quant) ;
+          let quant_map = clause.nu_fresh_vars_for(quant) ;
 
-          for term in conj.terms() {
+          for term in def.terms() {
             if let Some((term, _)) = term.subst_total(
-              & (params, & quant_map)
+              & (pred_args, & quant_map)
             ) {
               clause.insert_term(term) ;
             } else {
@@ -1113,13 +1122,13 @@ impl<'a> PreInstance<'a> {
             }
           }
 
-          for (pred, argss) in conj.preds() {
+          for (pred, argss) in def.preds() {
             let pred = * pred ;
             for args in argss {
               let mut nu_args = VarMap::with_capacity( args.len() ) ;
               for arg in args.iter() {
                 if let Some((arg, _)) = arg.subst_total(
-                  & (params, & quant_map)
+                  & (pred_args, & quant_map)
                 ) {
                   nu_args.push(arg)
                 } else {
@@ -1132,30 +1141,10 @@ impl<'a> PreInstance<'a> {
               clause.insert_pred_app( pred, nu_args.into() ) ;
             }
           }
+
         }
 
-        let is_new = self.instance.push_clause_unchecked(clause) ;
-        if is_new {
-          info.clauses_added += 1 ;
-        }
-
-        // Increment.
-        let mut n = def_indices.len() ;
-        let mut increase = false ;
-        while n > 0 {
-          n -= 1 ;
-          if def_indices[n] + 1 < def.len() {
-            def_indices[n] += 1 ;
-            increase = false ;
-            break
-          } else {
-            def_indices[n] = 0 ;
-            increase = true
-          }
-        }
-        // If we still need to increase at this point, we went over the max
-        // index of the first application, meaning we went over everything.
-        is_done = increase
+        nu_clauses.push( clause )
 
       }
 
@@ -1165,6 +1154,13 @@ impl<'a> PreInstance<'a> {
     self.force_pred(
       pred, TTerms::dnf(def)
     ) ? ;
+
+    for clause in nu_clauses {
+      let is_new = self.instance.push_clause_unchecked(clause) ;
+      if is_new {
+        info.clauses_added += 1 ;
+      }
+    }
 
     info += self.simplify_all() ? ;
 

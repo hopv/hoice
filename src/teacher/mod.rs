@@ -122,7 +122,9 @@ pub fn teach(teacher: & mut Teacher) -> Res<
     match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
-      Either::Right(unsat) => return Ok(Either::Right(unsat)),
+      Either::Right(unsat) => {
+        return Ok(Either::Right(unsat))
+      },
 
       // Got a candidate.
       Either::Left( ( idx, candidates) ) => {
@@ -166,6 +168,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
         ) ;
         profile!{ teacher mark "data", "registration" }
         profile!{ teacher mark "data" }
+
         teacher.run_assistant() ? ;
         match res {
           Ok(true) => {
@@ -581,7 +584,9 @@ impl<'a> Teacher<'a> {
           }
         },
 
-        MsgKind::Unsat => return Ok(Either::Right(self.unsat_core())),
+        MsgKind::Unsat => if self.data.is_unsat().is_some() {
+          return Ok(Either::Right(self.unsat_core()))
+        },
 
       }
 

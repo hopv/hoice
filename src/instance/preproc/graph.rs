@@ -7,112 +7,6 @@ use instance::preproc::utils ;
 
 
 
-/// Iterator over all the combinations of some length of a collection of
-/// something.
-///
-/// In the following, `len` is the length of the combinations we generate.
-///
-/// # Fields
-///
-/// `current` is `None` if there are no more combinations. Otherwise it stores
-/// a list of pairs of length `len`, where `current[i]` stores
-///
-/// - the `i`th element `e` of the **next** combination ;
-/// - the elements that follow `e` in the original collection, as an iterator.
-///
-/// `next` will be used to pass the next combination, if any, when the `next`
-/// function is called.
-///
-/// `head` is the first element of the collection.
-///
-/// `tail` is the rest of the collection.
-///
-/// # Invariants
-///
-/// - `self.current.as_ref().map(|v| v.len()).unwrap_or(self.len())`
-///   is equal to `self.len`
-/// - `self.next.capacity() == self.len()`
-/// - There's `self.len - 1` elements in `self.tail`
-struct CombinationIter<Iter: Iterator + Clone> {
-  current: Option< Vec< (Iter::Item, Iter) > >,
-  len: usize,
-  next: Vec<Iter::Item>,
-  head: Iter::Item,
-  tail: Iter,
-}
-
-impl<Iter> CombinationIter<Iter>
-where Iter: Iterator + ExactSizeIterator + Clone, Iter::Item: Clone {
-
-  /// Constructor.
-  ///
-  /// Fails if `coll.next().is_none()`, or if `len == 0`.
-  fn new(mut coll: Iter, len: usize) -> Res<Self> {
-    if len == 0 {
-      bail!("trying to create all combinations of length 0, illegal")
-    }
-    let (head, tail) = if let Some(first) = coll.next() {
-      (first, coll)
-    } else {
-      bail!("trying to create all combinations of an empty collection")
-    } ;
-
-    Ok(
-      CombinationIter {
-        current: Some(
-          vec![ (head.clone(), tail.clone()) ; len ]
-        ),
-        len,
-        next: Vec::with_capacity(len),
-        head, tail
-      }
-    )
-  }
-
-  /// Returns the next combination if any.
-  fn next(& mut self) -> Option< & Vec<Iter::Item> > {
-    let mut res = None ;
-
-    if let Some(mut current) = ::std::mem::replace(
-      & mut self.current, None
-    ) {
-      self.next.clear() ;
-
-      // Construct result, easy part.
-      for (item, _) in & current {
-        self.next.push( item.clone() )
-      }
-      // Remember we have a next.
-      res = Some(& self.next) ;
-
-      // Tricky part.
-      //
-      // Remove from `current` the pairs that don't have a next element, until
-      // we find one that does (starting from the end).
-      'find_next: while let Some((_, mut curr)) = current.pop() {
-        if let Some(next) = curr.next() {
-          // Found an element with a next.
-          current.push( (next, curr) ) ;
-          // Now we restart all elements after this one (the elements we
-          // removed).
-          while current.len() < self.len {
-            current.push(
-              // Starting again from the beginning for this element.
-              ( self.head.clone(), self.tail.clone() )
-            )
-          }
-          // Done, update current and break out.
-          self.current = Some(current) ;
-          break 'find_next
-        }
-      }
-    }
-    res
-  }
-
-}
-
-
 
 
 /// Maps predicates to the predicates they depend on.
@@ -473,6 +367,7 @@ impl Graph {
           substs.iter()
         ) {
           conf.check_timeout() ? ;
+          log! { @7 "working on substitution..." }
 
           // Fresh map for this substitution.
           qvar_map.clear() ;
@@ -499,7 +394,9 @@ impl Graph {
           ) ;
           // Working on terms.
           for term in l_conj.terms() {
+            log! { @8 "subst on {}", term }
             let (term, _) = term.subst( & (& qvar_map, subst) ) ;
+            log! { @8 "-> {}", term }
 
             let is_false = term::simplify::conj_term_insert(
               term, r_conj.terms_mut()
@@ -566,6 +463,16 @@ impl Graph {
 
     let mut estimation = 0 ;
 
+    macro_rules! curr_max {
+      () => (
+        max.map(
+          |max: usize| if estimation > max { 0 } else {
+            max - estimation
+          }
+        )
+      ) ;
+    }
+
     let clauses = instance.rhs_clauses_of(pred) ;
     let mut def = Vec::with_capacity( clauses.len() ) ;
 
@@ -605,7 +512,7 @@ impl Graph {
           if to_merge.is_empty() {
             def.push( (qvars, tterms) ) ;
 
-            if let Some(max) = max {
+            if let Some(max) = curr_max!() {
               if let Some(e) = Self::estimate(
                 instance, pred, def.len(), max
               ) {
@@ -685,10 +592,10 @@ impl Graph {
               }
 
               if let Some((def, e)) = Self::merge(
-                instance, pred, & argss, p_def, & curr, max
+                instance, pred, & argss, p_def, & curr, curr_max!()
               ) ? {
                 curr = def ;
-                estimation = e
+                estimation += e
               } else {
                 return Ok(None)
               }
