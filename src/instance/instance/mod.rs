@@ -935,7 +935,7 @@ impl Instance {
     }
     let idx = self.clauses.next_index() ;
     let is_new = self.push_clause_unchecked(clause) ;
-    self.check("after `push_clause`") ? ;
+    // self.check("after `push_clause`") ? ;
     Ok( if is_new { Some(idx) } else { None } )
   }
 

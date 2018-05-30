@@ -56,6 +56,96 @@ impl SimplRes {
 }
 
 
+/// Adds a term to a set understood as a conjunction.
+///
+/// Returns `true` if the resulting set is false.
+pub fn conj_term_insert(
+  term: Term, set: & mut TermSet
+) -> bool {
+
+  let mut next_term = Some(term) ;
+  let mut fls = false ;
+  let mut add_term ;
+
+  macro_rules! helper {
+    (is false) => (fls) ;
+    (term dropped) => (next_term.is_none() && ! add_term) ;
+    (is true) => (! fls && helper!(term dropped)) ;
+
+    (drop term) => ({
+      next_term = None ;
+      add_term = false
+    }) ;
+
+    (set false) => ({
+      fls = true ;
+      helper!(drop term)
+    }) ;
+
+    (set true) => ({
+      debug_assert! { ! fls }
+      helper!(drop term)
+    }) ;
+
+    (update $old_term:expr, to $term:expr) => ({
+      $old_term = $term.clone() ;
+      next_term = Some($term) ;
+    }) ;
+  }
+
+  while let Some(mut term) = ::std::mem::replace(
+    & mut next_term, None
+  ) {
+    add_term = true ;
+
+    set.retain(
+      |set_term| {
+        if helper!(is false) {
+          return false
+        }
+        if helper!(is true) {
+          return true
+        }
+
+        use std::cmp::Ordering::* ;
+        match conj_simpl(& term, set_term) {
+          SimplRes::None => true,
+
+          SimplRes::Cmp(Less) |
+          SimplRes::Cmp(Equal) => {
+            helper!(drop term) ;
+            true
+          },
+
+          SimplRes::Cmp(Greater) => false,
+
+          SimplRes::Yields(nu_term) => match nu_term.bool() {
+            Some(true) => {
+              helper!(set true) ;
+              false
+            },
+            Some(false) => {
+              helper!(set false) ;
+              false
+            },
+            None => {
+              helper!(update term, to nu_term) ;
+              false
+            },
+          },
+        }
+      }
+    )
+  }
+
+  if fls {
+    set.clear() ;
+    set.insert( term::fls() ) ;
+  }
+  fls
+}
+
+
 
 /// Simplifies a conjunction.
 pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {

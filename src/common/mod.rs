@@ -143,6 +143,9 @@ pub type Int = ::num::BigInt ;
 /// Rationals.
 pub type Rat = ::num::BigRational ;
 
+/// A set of terms.
+pub type TermSet = HConSet<Term> ;
+
 /// A signature.
 pub type Sig = VarMap<Typ> ;
 

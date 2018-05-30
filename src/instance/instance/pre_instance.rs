@@ -620,7 +620,7 @@ impl<'a> PreInstance<'a> {
         || "while dumping top terms during error on `force_pred`"
       ) ? ;
       bail!(
-        "[bug] trying to force predicate {} twice\n{}",
+        "trying to force predicate {} twice\n{}",
         conf.sad(& self.instance[pred].name),
         String::from_utf8_lossy(& s)
       )
@@ -1042,7 +1042,10 @@ impl<'a> PreInstance<'a> {
 
     self.check("before `force_dnf_left`") ? ;
 
-    log_debug! { "  force_dnf_left {}", self[pred] }
+    log! { @6
+      "force_dnf_left {} ({} defs)", self[pred], def.len() ;
+      "unlinking rhs"
+    }
 
     // Make sure there's no rhs clause for `pred`.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -1054,6 +1057,8 @@ impl<'a> PreInstance<'a> {
         "can't force dnf {}, it appears in some rhs", self.instance[pred]
       )
     }
+
+    log! { @6 "unlinking lhs" }
 
     // Update lhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -1068,6 +1073,8 @@ impl<'a> PreInstance<'a> {
     for clause in self.clauses_to_simplify.drain(0..) {
       info.clauses_rmed += 1 ;
 
+      log! { @7 "working on #{}", clause }
+
       let pred_argss: Vec< VarTerms > = if let Some(
         argss
       ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
@@ -1075,6 +1082,8 @@ impl<'a> PreInstance<'a> {
       } else {
         bail!("inconsistent instance state")
       } ;
+
+      log! { @7 "  {} applications", pred_argss.len() }
 
       // This is why we rev-sorted:
       let clause = self.instance.forget_clause(clause) ? ;

@@ -456,7 +456,9 @@ impl Graph {
 
       // For each combination of elements of `lft` of len `substs`, add a new
       // definition to `r_conj`.
-      while let Some(combination) = all_lft_combinations.next() {
+      'all_combinations: while let Some(
+        combination
+      ) = all_lft_combinations.next() {
         debug_assert_eq! { combination.len(), substs.len() }
 
         // Cloning `rgt`'s definition to add stuff from `lft` for this
@@ -465,15 +467,15 @@ impl Graph {
         // Cloning `rgt`'s qvars to add the renamed qvars from `lft`.
         let mut r_qvars = r_qvars.clone() ;
 
-        // Fresh map for this combination.
-        qvar_map.clear() ;
-
         // Work on the current combination: apply a substitution to a member of
         // `lft`.
         for ( (l_qvars, l_conj), subst ) in combination.iter().zip(
           substs.iter()
         ) {
           conf.check_timeout() ? ;
+
+          // Fresh map for this substitution.
+          qvar_map.clear() ;
 
           // Generate fresh indices for `l_qvars` to avoid index clashes.
           qvar_map.reserve( l_qvars.len() ) ;
@@ -498,8 +500,16 @@ impl Graph {
           // Working on terms.
           for term in l_conj.terms() {
             let (term, _) = term.subst( & (& qvar_map, subst) ) ;
-            r_conj.insert_term( term ) ;
+
+            let is_false = term::simplify::conj_term_insert(
+              term, r_conj.terms_mut()
+            ) ;
+
+            if is_false {
+              continue 'all_combinations
+            }
           }
+
           // Working on pred applications.
           for (pred, argss) in l_conj.preds() {
             let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
@@ -550,6 +560,8 @@ impl Graph {
     & mut self, instance: & Instance, pred: PrdIdx, max: Option<usize>,
     previous: & Vec< (PrdIdx, Vec<(Quantfed, TTermSet)>) >
   ) -> Res< Option< (Vec<(Quantfed, TTermSet)>, usize) > > {
+    log! { @4 "dnf_of({}, {:?})", instance[pred], max }
+
     let forced_inlining = max.is_none() ;
 
     let mut estimation = 0 ;
@@ -591,7 +603,17 @@ impl Graph {
           }
 
           if to_merge.is_empty() {
-            def.push( (qvars, tterms) )
+            def.push( (qvars, tterms) ) ;
+
+            if let Some(max) = max {
+              if let Some(e) = Self::estimate(
+                instance, pred, def.len(), max
+              ) {
+                estimation += e
+              } else {
+                return Ok(None)
+              }
+            }
           } else {
 
             if_log! { @5
@@ -776,10 +798,13 @@ impl Graph {
 
       let def = if let Some((def, estimation)) = self.dnf_of(
         instance, pred,
-        if forced_inlining { Some(upper_bound) } else { None },
+        if ! forced_inlining { Some(upper_bound) } else { None },
         & res
       ) ? {
         upper_bound += estimation ;
+        log! { @4
+          "inlining {} (blow-up estimation: {})", instance[pred], estimation
+        }
         def
       } else {
         keep_and_continue!()
@@ -830,17 +855,38 @@ impl Graph {
     let max = max + instance.clauses_of(pred).1.len() ;
     let mut estimation: usize = 0 ;
 
+    // println!("{}: {} / {}", instance[pred], len, max) ;
+
     for clause in instance.clauses_of(pred).0 {
       let argss_len = instance[* clause].lhs_preds().get(& pred).map(
         |argss| argss.len()
       ).expect("inconsistent instance state") ;
-      if let Some(inc) = argss_len.checked_mul(len) {
-        if let Some(e) = estimation.checked_add(inc) {
-          estimation = e ;
-          if estimation <= max {
-            continue
-          }
+      // println!("  #{}: {}", clause, argss_len) ;
+
+      let mut inc = len ;
+      for _ in 1 .. argss_len {
+        if inc > max {
+          return None
+        } else if let Some(nu_inc) = inc.checked_mul(len) {
+          inc = nu_inc
+        } else {
+          return None
         }
+      }
+
+      // println!("  inc: {}", inc) ;
+
+      if let Some(e) = estimation.checked_add(inc) {
+        estimation = e ;
+        if estimation <= max {
+          // println!("  est: {}", estimation) ;
+          continue
+        }
+      }
+      // println!("blows up") ;
+      log! { @6
+        "inlining for {} blows up: {} > {} (len: {})",
+        instance[pred], estimation, max, len
       }
       return None
     }

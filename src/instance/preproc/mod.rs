@@ -1501,7 +1501,7 @@ impl RedStrat for CfgRed {
 
       self.graph.check(& instance) ? ;
       if_log! { @verb
-        log_verb! { "inlining {} predicates", pred_defs.len() }
+        log_debug! { "inlining {} predicates", pred_defs.len() }
         for (pred, _) in & pred_defs {
           log_verb! { "  {}", instance[* pred] }
         }
@@ -1520,10 +1520,14 @@ impl RedStrat for CfgRed {
 
       // Remove all clauses leading to the predicates we just inlined.
       for (pred, def) in pred_defs {
+        if instance.is_known(pred) {
+          continue
+        }
+
         conf.check_timeout() ? ;
         info += instance.rm_rhs_clauses_of(pred) ? ;
 
-        if_debug! {
+        if_log! { @4
           let mut s = format!("{}(", instance[pred]) ;
           let mut is_first = true ;
           for (var, typ) in instance[pred].sig.index_iter() {
@@ -1535,7 +1539,7 @@ impl RedStrat for CfgRed {
             s.push_str( & var.default_str() ) ;
             s.push_str(& format!(": {}", typ)) ;
           }
-          log_debug! { "{}) = (or", s }
+          log! { @4 "{}) = (or", s }
           for & (ref qvars, ref conj) in & def {
             let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
               let mut s = format!("  (exists") ;
@@ -1544,25 +1548,27 @@ impl RedStrat for CfgRed {
                 s.push_str( & var.default_str() ) ;
                 s.push_str( & format!(" {})", typ) )
               }
-              log_debug! { "{}", s }
+              log! { @4 "{}", s }
               (Some("  )"), "    ")
             } ;
-            log_debug! { "{}(and", pref }
+            log! { @4 "{}(and", pref }
             for term in conj.terms() {
-              log_debug! { "{}  {}", pref, term }
+              log! { @4 "{}  {}", pref, term }
             }
             for (pred, argss) in conj.preds() {
               for args in argss {
-                log_debug! { "{}  ({} {})", pref, instance[* pred], args }
+                log! { @4 "{}  ({} {})", pref, instance[* pred], args }
               }
             }
-            log_debug! { "{})", pref }
+            log! { @4 "{})", pref }
             if let Some(suff) = suff {
-              log_debug! { "{}", suff }
+              log! { @4 "{}", suff }
             }
           }
-          log_debug! { ")" }
+          log! { @4 ")" }
         }
+
+        log! { @4 "  unfolding {}", instance[pred] }
 
         info += instance.force_dnf_left(pred, def) ? ;
 
