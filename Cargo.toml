@@ -34,7 +34,7 @@ bench = [ ]
 human-panic = "*"
 lazy_static = "*"
 clap = "*"
-hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
+hashconsing = "0.9.9"
 error-chain = "*"
 ansi_term = "*"
 rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }

@@ -547,6 +547,11 @@ impl<'a> Teacher<'a> {
             Id::Assistant => conf.emph( "assistant" ),
           } ;
           log! { @verb "received `{}` from {}", conf.bad("unknown"), id }
+
+          // Are we unsat?
+          if self.data.is_unsat().is_some() {
+            return Ok(Either::Right(self.unsat_core()))
+          }
         },
 
         MsgKind::Err(e) => {

@@ -131,12 +131,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "hashconsing"
-version = "0.9.0"
-source = "git+https://github.com/AdrienChampion/hashconsing#1b57890dacd8078757f51825a495c88dcb70a439"
-
-[[package]]
-name = "hashconsing"
-version = "0.9.0"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -147,7 +142,7 @@ dependencies = [
  "clap 2.31.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "either 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "hashconsing 0.9.0 (git+https://github.com/AdrienChampion/hashconsing)",
+ "hashconsing 0.9.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "human-panic 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "isatty 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -383,7 +378,7 @@ version = "0.9.10"
 source = "git+https://github.com/kino-mc/rsmt2#2b5a9501223f315986af1dcb46bb9bb6f8f49848"
 dependencies = [
  "error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "hashconsing 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hashconsing 0.9.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -601,8 +596,7 @@ dependencies = [
 "checksum failure_derive 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "c7cdda555bb90c9bb67a3b670a0f42de8e73f5981524123ad8578aafec8ddb8b"
 "checksum fuchsia-zircon 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2e9763c69ebaae630ba35f74888db465e49e259ba1bc0eda7d06f4a067615d82"
 "checksum fuchsia-zircon-sys 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
-"checksum hashconsing 0.9.0 (git+https://github.com/AdrienChampion/hashconsing)" = "<none>"
-"checksum hashconsing 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)" = "15e86ffd504bc2764c0cbcec8a5e6b4f1cc1a9eb6d5ce576ca5e036d40a6ce41"
+"checksum hashconsing 0.9.9 (registry+https://github.com/rust-lang/crates.io-index)" = "ef549cc1be545db5f8852e0d8e655e3f55b61c9f19a9f9439da894493bea11e3"
 "checksum human-panic 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e88948dc7cd763e7d4e2ea66ab6a0ac08a8b0bdb1c8aa2bb44c04cb91c23e07f"
 "checksum isatty 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "6c324313540cd4d7ba008d43dc6606a32a5579f13cc17b2804c13096f0a5c522"
 "checksum lazy_static 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c8f31047daa365f19be14b47c29df4f7c3b581832407daabe6ae77397619237d"

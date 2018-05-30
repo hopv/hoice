@@ -550,14 +550,26 @@ impl Instance {
   }
 
   /// Forced predicates in topological order.
+  #[inline]
   pub fn sorted_forced_terms(& self) -> & Vec<PrdIdx> {
     & self.sorted_pred_terms
   }
 
   /// Returns the clauses in which the predicate appears in the lhs and rhs
   /// respectively.
+  #[inline]
   pub fn clauses_of(& self, pred: PrdIdx) -> (& ClsSet, & ClsSet) {
     (& self.pred_to_clauses[pred].0, & self.pred_to_clauses[pred].1)
+  }
+  /// Returns the clauses in which `pred` appears in the lhs.
+  #[inline]
+  pub fn lhs_clauses_of(& self, pred: PrdIdx) -> & ClsSet {
+    & self.pred_to_clauses[pred].0
+  }
+  /// Returns the clauses in which `pred` appears in the rhs.
+  #[inline]
+  pub fn rhs_clauses_of(& self, pred: PrdIdx) -> & ClsSet {
+    & self.pred_to_clauses[pred].1
   }
 
   /// Adds a predicate application to a clause's lhs.
