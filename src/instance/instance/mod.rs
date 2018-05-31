@@ -3,6 +3,7 @@
 use common::* ;
 use instance::info::* ;
 use learning::ice::quals::NuQuals ;
+use data::Data ;
 
 mod clause ;
 mod pre_instance ;
@@ -1353,115 +1354,185 @@ impl Instance {
 
   }
 
-  /// Turns some teacher counterexamples into learning data.
-  pub fn cexs_to_data(
-    & self, data: & mut ::data::Data, cexs: Cexs
-  ) -> Res<bool> {
+
+
+  /// Transforms a cex for a clause into some learning data.
+  ///
+  /// Returns `true` if some new data was generated.
+  pub fn clause_cex_to_data(
+    & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
+  ) -> Res< Option<bool> > {
+    let (mut cex, bias) = cex ;
+    let clause = & self[clause_idx] ;
+
+    if_log! { @6
+      let mut s = String::new() ;
+      for (var, val) in cex.index_iter() {
+        s.push_str(& format!("{}: {}, ", var.default_str(), val))
+      }
+      log! { @6
+        "lhs preds: {}", clause.lhs_pred_apps_len() ;
+        "      rhs: {}", if clause.rhs().is_some() { "some" } else { "none" } ;
+        "     bias: {}", bias ;
+        "      cex: {}", s
+      }
+    }
+
+    // Factored set of variables when fixing cex for arguments.
+    let mut known_vars = VarSet::new() ;
+
     macro_rules! fix_cex {
-      ($clause:expr, $cex:expr, $args:expr) => ({
-        let mut modded_cex = $cex.clone() ;
-        let mut all_vars = VarSet::new() ;
+      ($args:expr) => ({
+        log! { @6 "fixing {}", $args }
         for arg in $args.iter() {
           for var in term::vars(arg) {
-            let is_new = all_vars.insert(var) ;
-            // Variable appears in more than one arg, force its value.
-            if ! is_new && ! modded_cex[var].is_known() {
-              modded_cex[var] = $clause[var].typ.default_val()
+            if ! cex[var].is_known() {
+              // Value for `var` is a non-value.
+              let is_new = known_vars.insert(var) ;
+              // Variable appears in more than one arg, force its value.
+              if ! is_new {
+                cex[var] = cex[var].typ().default_val()
+              }
             }
           }
         }
-        modded_cex
       })
     }
 
+    let (lhs, rhs) = match bias {
+
+      // Consider the whole lhs of the clause positive.
+      Bias::Lft => (vec![], clause.rhs()),
+
+      // Consider the rhs of the clause negative.
+      Bias::Rgt => (
+        clause.lhs_preds().iter().map(
+          |(pred, argss)| (* pred, argss.clone())
+        ).collect(),
+        None
+      ),
+
+      // Consider the rhs of the clause negative, and all lhs applications
+      // positive except this one.
+      Bias::NuRgt(pred, args) => {
+        use var_to::terms::VarTermsSet ;
+        debug_assert! { clause.lhs_preds().get(& pred).is_some() }
+        debug_assert! {
+          clause.lhs_preds().get(& pred).unwrap().contains(& args)
+        }
+        let mut argss = VarTermsSet::with_capacity(1) ;
+        argss.insert(args) ;
+        ( vec![(pred, argss)], None )
+      },
+
+      // No bias.
+      Bias::Non => (
+        clause.lhs_preds().iter().map(
+          |(pred, argss)| (* pred, argss.clone())
+        ).collect(),
+        clause.rhs()
+      ),
+
+    } ;
+
+    // Force non-values in the cex if we're dealing with a constraint, not a
+    // sample.
+    if (
+      // Positive sample?
+      lhs.is_empty() && rhs.is_some()
+    ) || (
+      // Negative sample?
+      lhs.iter().next().map(
+        |(_, argss)| argss.len() == 1
+      ).unwrap_or(false) && rhs.is_none()
+    ) {
+      // We're generating a sample. Still need to force variables that appear
+      // more than once in arguments.
+      for (_, argss) in & lhs {
+        debug_assert_eq! { argss.len(), 1 }
+        for args in argss {
+          fix_cex!(args)
+        }
+      }
+      if let Some((_, args)) = rhs.as_ref() {
+        fix_cex!(args)
+      }
+    } else {
+      // We're dealing with a constraint, not a sample. Force non-values.
+      for val in cex.iter_mut() {
+        if ! val.is_known() {
+          * val = val.typ().default_val()
+        }
+      }
+    }
+
+    // Evaluates some arguments for a predicate.
+    macro_rules! eval {
+      ($args:expr) => ({
+        use var_to::vals::RVarVals ;
+        let mut sample = RVarVals::with_capacity( $args.len() ) ;
+        for arg in $args.get() {
+          let val = arg.eval(& cex) ? ;
+          sample.push(val)
+        }
+        sample
+      }) ;
+    }
+
+    // Evaluate antecedents.
+    let mut antecedents = vec![] ;
+    for (pred, argss) in lhs {
+      for args in argss {
+        let sample = eval!(args) ;
+        antecedents.push((pred, sample))
+      }
+    }
+
+    let consequent = if let Some((pred, args)) = rhs {
+      let sample = eval!(args) ;
+      Some( (pred, sample) )
+    } else {
+      None
+    } ;
+
+    if_log! { @6
+      let mut s = String::new() ;
+      if ! antecedents.is_empty() {
+        for (pred, sample) in & antecedents {
+          s.push_str( & format!("({} {}) ", self[* pred], sample) )
+        }
+      } else {
+        s.push_str("true ")
+      }
+      s.push_str("=> ") ;
+      if let Some((pred, sample)) = consequent.as_ref() {
+        s.push_str( & format!("({} {})", self[* pred], sample) )
+      } else {
+        s.push_str("false")
+      }
+      log! { @6 "{}", s }
+    }
+
+    data.add_data(clause_idx, antecedents, consequent)
+  }
+
+
+
+
+  /// Turns some teacher counterexamples into learning data.
+  pub fn cexs_to_data(
+    & self, data: & mut Data, cexs: Cexs
+  ) -> Res<bool> {
     let mut nu_stuff = false ;
 
     for (clause_idx, cexs) in cexs.into_iter() {
+      log! { @5 "adding cexs for #{}", clause_idx }
 
       for cex in cexs {
-
-        // if_debug! {
-        //   debug! { "    working on clause {}...", clause }
-        //   debug! { "    cex:" }
-        //   for (index, val) in cex.index_iter() {
-        //     debug! { "    - v_{}: {}", index, val }
-        //   }
-        // }
-
-        let clause = & self[clause_idx] ;
-        let mut antecedents = Vec::with_capacity( clause.lhs_len() ) ;
-
-        // debug! { "    working on lhs..." }
-        for (pred, argss) in clause.lhs_preds() {
-          let pred = * pred ;
-          // debug! { "        {}", self[pred] }
-          if self.pred_terms[pred].is_none() {
-            // debug! { "        -> is none, {} args", argss.len() }
-
-            for args in argss {
-              // debug! { "        {}", args }
-
-              let modded_cex = fix_cex!(clause, cex, args) ;
-
-              let mut values = Cex::with_capacity( args.len() ) ;
-              for arg in args.iter() {
-                values.push(
-                  arg.eval(& modded_cex).chain_err(
-                    || "during argument evaluation to generate learning data"
-                  ) ?
-                )
-              }
-              // debug! { "          {}", values }
-              antecedents.push(
-                (pred, values)
-              )
-            }
-          } else {
-            // debug! { "      -> is some" }
-          }
-        }
-        antecedents.shrink_to_fit() ;
-
-        // debug! { "    working on rhs..." }
-        let consequent = if let Some((pred, args)) = clause.rhs() {
-          // debug! { "        ({} {})", self[pred], args }
-          let mut values = Cex::with_capacity( args.len() ) ;
-          let modded_cex = fix_cex!(clause, cex, args) ;
-          'pred_args: for arg in args.iter() {
-            values.push(
-              arg.eval(& modded_cex).chain_err(
-                || "during argument evaluation to generate learning data"
-              ) ?
-            )
-          }
-          // debug! { "          {}", values }
-          Some( (pred, values) )
-        } else {
-          None
-        } ;
-
-        match ( antecedents.len(), consequent ) {
-          (0, None) => unsat!(
-            "by `true => false` during model to cex translation"
-          ),
-          (1, None) => {
-            let (pred, args) = antecedents.pop().unwrap() ;
-            debug_assert! { antecedents.is_empty() }
-            data.add_raw_neg(clause_idx, pred, args)
-          },
-          (0, Some( (pred, args) )) => data.add_raw_pos(
-            clause_idx, pred, args
-          ),
-          (_, consequent) => {
-            let (new_pos, new_neg) = data.propagate() ? ;
-            nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
-            let new_stuff = data.add_cstr(
-              clause_idx, antecedents, consequent
-            ) ? ;
-            if new_stuff {
-              nu_stuff = true
-            }
-          },
+        if let Some(true) = self.clause_cex_to_data(
+          data, clause_idx, cex
+        ) ? {
+          nu_stuff = true
         }
       }
     }

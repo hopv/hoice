@@ -608,7 +608,17 @@ impl Clause {
     && self.rhs.is_none()
   }
 
+  /// True if the clause is positive (lhs is empty).
+  pub fn is_positive(& self) -> bool {
+    self.lhs_preds.is_empty() && self.rhs.is_some()
+  }
+
   /// True if the clause is a strictly negative clause.
+  ///
+  /// True if
+  ///
+  /// - no rhs
+  /// - only one predicate application
   pub fn is_strict_neg(& self) -> bool {
     self.rhs.is_none()
     && self.lhs_preds.len() == 1

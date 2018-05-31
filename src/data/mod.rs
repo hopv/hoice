@@ -119,6 +119,19 @@ impl Data {
 
   /// Destroys the data and returns profiling info.
   pub fn destroy(self) -> Profiler {
+    profile! {
+      self "> constraints" => add self.constraints.len()
+    }
+    profile! {
+      self "> pos samples" => add self.pos.iter().fold(
+        0, |acc, samples| acc + samples.len()
+      )
+    }
+    profile! {
+      self "> neg samples" => add self.neg.iter().fold(
+        0, |acc, samples| acc + samples.len()
+      )
+    }
     self._profiler
   }
 
@@ -669,6 +682,51 @@ impl Data {
     } else {
       Ok(true)
     }
+  }
+
+  /// Adds a sample or a constraint.
+  pub fn add_data(
+    & mut self, clause: ClsIdx,
+    mut lhs: Vec< (PrdIdx, RVarVals) >, rhs: Option<(PrdIdx, RVarVals)>,
+  ) -> Res< Option<bool> > {
+
+    let rhs = match rhs {
+
+      Some((pred, sample)) => if lhs.is_empty() {
+        // Positive sample.
+        self.add_raw_pos(clause, pred, sample) ;
+        return Ok(None)
+      } else {
+        // Constraint.
+        Some((pred, sample))
+      },
+
+      None => if lhs.len() == 1 {
+        // Negative sample.
+        let (pred, sample) = lhs.pop().expect(
+          "failed pop on vector of length 1"
+        ) ;
+        debug_assert_eq! { lhs.len(), 0 }
+        self.add_raw_neg(clause, pred, sample) ;
+        return Ok(None)
+      } else {
+        // Constraint.
+        None
+      }
+
+    } ;
+
+    // Only reachable if we're not adding a pos/neg sample, or the input isn't
+    // legal.
+    debug_assert! {
+      lhs.len() > 1 || (
+        lhs.len() == 1 && rhs.is_some()
+      )
+    }
+
+    let new_stuff = self.add_cstr(clause, lhs, rhs) ? ;
+
+    Ok( Some(new_stuff) )
   }
 
 

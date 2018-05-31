@@ -72,7 +72,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
   log_debug!{ "performing initial check..." }
   let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
-    log_debug!{ "solved by initial cex..." }
+    log_debug!{ "solved by initial candidate..." }
     return Ok( Either::Left(cands) )
   }
   log_debug!{ "generating data from initial cex..." }
@@ -545,11 +545,13 @@ impl<'a> Teacher<'a> {
         },
 
         MsgKind::Err(ref e) if e.is_unknown() => {
-          let id = match id {
-            Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
-            Id::Assistant => conf.emph( "assistant" ),
-          } ;
-          log! { @verb "received `{}` from {}", conf.bad("unknown"), id }
+          if_not_bench! {
+            let id = match id {
+              Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
+              Id::Assistant => conf.emph( "assistant" ),
+            } ;
+            log! { @verb "received `{}` from {}", conf.bad("unknown"), id }
+          }
 
           // Are we unsat?
           if self.data.is_unsat().is_some() {
@@ -707,14 +709,23 @@ impl<'a> Teacher<'a> {
 
     let instance = self.instance.clone() ;
 
+    // True if we got some positive or negative samples.
+    let mut got_pos_neg_samples = false ;
+
     macro_rules! run {
       ($clause:expr, $bias:expr) => (
         if ! clauses_to_ignore.contains($clause) {
           let cexs = self.get_cex(
-            * $clause, & true_preds, & false_preds, $bias
+            * $clause, & true_preds, & false_preds, $bias, got_pos_neg_samples
           ).chain_err(
             || format!("while getting counterexample for clause {}", $clause)
           ) ? ;
+
+          got_pos_neg_samples = got_pos_neg_samples || (
+            cexs.iter().any(
+              |(_, bias)| ! bias.is_none()
+            )
+          ) ;
 
           if ! cexs.is_empty() {
             let prev = map.insert(* $clause, cexs) ;
@@ -740,27 +751,42 @@ impl<'a> Teacher<'a> {
       run!(clause, false)
     }
 
-    if map.is_empty() {
-      log! { @verb
-        "looking for counterexamples in negative clauses ({})...",
-        instance.neg_clauses().len()
-      }
-      for clause in instance.neg_clauses() {
-        if ! instance.strict_neg_clauses().contains(clause) {
-          run!(clause, true)
-        }
-      }
-    }
+    got_pos_neg_samples = ! map.is_empty() ;
 
-    if map.is_empty() {
+    // if map.is_empty() {
+      log! { @verb
+        "looking for counterexamples in non-strict negative clauses ({})...",
+        instance.non_strict_neg_clauses().len()
+      }
+      for clause in instance.non_strict_neg_clauses() {
+        run!(clause, true)
+      }
+    // }
+
+    // if map.is_empty() {
       log_verb! { "looking for counterexamples in implication clauses..." }
 
       for clause in instance.imp_clauses() {
         run!(clause, true)
       }
-    }
+    // }
 
     self.solver.pop(1) ? ;
+
+    log! { @debug
+      "extracted {} cexs", map.iter().fold(
+        0, |acc, (_, cexs)| acc + cexs.len()
+      )
+    }
+
+    if got_pos_neg_samples {
+      map.retain(
+        |_, cexs| {
+          cexs.retain( |(_, bias)| ! bias.is_none() ) ;
+          ! cexs.is_empty()
+        }
+      )
+    }
 
     Ok(map)
   }
@@ -769,12 +795,14 @@ impl<'a> Teacher<'a> {
   pub fn get_cex(
     & mut self,
     clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
-    bias: bool,
-  ) -> Res< Vec<Cex> > {
+    bias: bool, bias_only: bool
+  ) -> Res< Vec<BCex> > {
     let partial = conf.teacher.partial && (
       self.instance.pos_clauses().contains(& clause_idx) ||
       self.instance.strict_neg_clauses().contains(& clause_idx)
     ) ;
+
+    log! { @debug "working on clause #{}", clause_idx }
 
     self.solver.push(1) ? ;
     // Macro to avoid borrowing `self.instance`.
@@ -803,9 +831,9 @@ impl<'a> Teacher<'a> {
 
     macro_rules! get_cex {
 
-      (@$sat:ident $($stuff:tt)*) => ({ // Works on the check-sat result.
+      (@$sat:ident $bias:expr) => ({ // Works on the check-sat result.
         if $sat {
-          log_debug! { "getting cex for clause #{}", clause_idx }
+          log! { @3 "sat, getting cex" }
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model() ? ;
           let model = Parser.fix_model(model) ? ;
@@ -813,65 +841,298 @@ impl<'a> Teacher<'a> {
             clause!().vars(), model, partial
           ) ? ;
           profile!{ self mark "cexs", "model" }
-          cexs.push(cex) ;
-          $($stuff)*
+
+          if ! $bias.is_none() {
+            profile! { self "biased checksat" => add 1 }
+          }
+
+          cexs.push((cex, $bias))
         }
       }) ;
 
       () => ({ // Normal check, no actlit.
+        log! { @debug "  checksat" }
         profile!{ self tick "cexs", "check-sat" }
         let sat = self.solver.check_sat() ? ;
         profile!{ self mark "cexs", "check-sat" }
-
-        get_cex!(@sat) ;
+        get_cex!(
+          @sat if clause!().is_positive() {
+            Bias::Lft
+          } else if clause!().is_strict_neg() {
+            let (pred, args) = clause!().lhs_preds().iter().next().map(
+              |(pred, argss)| (
+                * pred, argss.iter().next().unwrap().clone()
+              )
+            ).unwrap() ;
+            Bias::NuRgt(pred, args)
+          } else {
+            Bias::Non
+          }
+        ) ;
       }) ;
 
-      ($actlit:expr ; $blah:expr) => ( // Check modulo actlit, if any.
-        if let Some(actlit) = $actlit {
-          log_debug! { "checksat for {}", $blah }
-          profile!{ self tick "cexs", "biased check-sat" }
-          let sat = self.solver.check_sat_act(
-            Some(& actlit)
-          ) ? ;
-          profile!{ self mark "cexs", "biased check-sat" }
-          get_cex!(
-            @sat
-            profile!{ self $blah => add 1 }
-          ) ;
-          self.solver.de_actlit(actlit) ?
+      ($actlit:expr ; $bias:expr) => ({
+        log! { @debug
+          "  checksat with bias {}", $bias.to_string(& self.instance)
         }
-      )
+        self.solver.comment(
+          & format!("checksat with bias {}", $bias.to_string(& self.instance))
+        ) ? ;
+        profile!{ self tick "cexs", "biased check-sat" }
+        let sat = self.solver.check_sat_act(
+          Some(& $actlit)
+        ) ? ;
+        profile!{ self mark "cexs", "biased check-sat" }
+        get_cex!(@sat $bias) ;
+        self.solver.de_actlit($actlit) ?
+      }) ;
     }
 
-    get_cex!() ;
+    if ! bias || ! bias_only {
+      get_cex!()
+    }
 
-    // Only try biased cexs if current instance is sat.
-    if let Some(unbiased_cex) = cexs.pop() {
 
-      if bias {
-        fun::define_all(& mut self.solver).chain_err(
-          || "while declaring all functions"
-        ) ? ;
+    if bias {
+      let unbiased_cex = cexs.pop() ;
 
-        let (
-          bias_lhs_actlit, bias_rhs_actlit
-        ) = self.bias_applications(clause_idx) ? ;
+      // Don't try bias examples if instance is unsat.
+      if unbiased_cex.is_some() || bias_only {
 
-        get_cex! { bias_lhs_actlit ; "biased examples (pos)" }
-        get_cex! { bias_rhs_actlit ; "biased examples (neg)" }
+
+        log! { @3 "generating bias actlits" }
+        for (actlit, bias) in self.nu_bias_applications(clause_idx) ? {
+          get_cex! { actlit ; bias }
+        }
       }
 
       // Add the unbiased cex back if bias checks yielded nothing.
       if cexs.is_empty() {
-        cexs.push(unbiased_cex)
+        if let Some(unbiased_cex) = unbiased_cex {
+          cexs.push(unbiased_cex)
+        }
       }
-
     }
 
     self.solver.pop(1) ? ;
 
     Ok(cexs)
   }
+
+
+
+  pub fn nu_bias_applications(
+    & mut self, clause_idx: ClsIdx
+  ) -> Res<Vec<(Actlit, Bias)>> {
+    use common::smt::DisjArgs ;
+    use var_to::terms::VarTermsMap ;
+
+    let clause = & self.instance[clause_idx] ;
+
+    // Maps lhs applications to activation literals for positive samples.
+    let mut lhs_actlits_of = PrdHMap::with_capacity(
+      clause.lhs_preds().len()
+    ) ;
+    // Predicates in lhs applications that don't have positive samples.
+    let mut lhs_preds_with_no_pos = PrdHMap::new() ;
+
+    log! { @4
+      "creating lhs actlits"
+    }
+
+    // Create actlits for lhs applications when possible.
+    for (pred, argss) in clause.lhs_preds() {
+      let pred = * pred ;
+      log! { @5 "for {} ({})", self.instance[pred], argss.len() }
+
+      if self.data.pos[pred].is_empty() {
+        log! { @5 "  no positive data" }
+        lhs_preds_with_no_pos.insert(pred, argss) ;
+        continue
+      }
+
+      self.solver.comment(
+        & format!(
+          "activating positive samples for {} ({} applications)",
+          self.instance[pred], argss.len()
+        )
+      ) ? ;
+
+      let mut argss_map = VarTermsMap::with_capacity( argss.len() ) ;
+
+      for args in argss {
+        let actlit = self.solver.get_actlit() ? ;
+        let disjunction = DisjArgs::new(
+          args, & self.data.pos[pred]
+        ) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ? ;
+        let prev = argss_map.insert(args.clone(), actlit) ;
+        debug_assert! { prev.is_none() }
+      }
+
+      let prev = lhs_actlits_of.insert(pred, argss_map) ;
+      debug_assert! { prev.is_none() }
+    }
+
+    log! { @4 "working on rhs" }
+
+    // Create actlit for rhs application if any.
+    //
+    // - `Some(None)` if there's not rhs
+    // - `None` if there's one but it has no negative data
+    // - `Some(actlit)` otherwise.
+    //
+    // So `rhs_actlit.is_none()` => we can't force the rhs to be false.
+    let rhs_actlit = if let Some((pred, args)) = clause.rhs() {
+      log! { @5 "-> {}", self.instance[pred] }
+      if self.data.neg[pred].is_empty() {
+        // No negative data...
+        log! { @5 "   no negative data" }
+        None
+      } else {
+        log! { @5 "   has negative data" }
+        // Negative data, generate an actlit for that.
+        self.solver.comment(
+          & format!(
+            "activating negative samples for {}", self.instance[pred]
+          )
+        ) ? ;
+        let actlit = self.solver.get_actlit() ? ;
+        let disjunction = DisjArgs::new(
+          args, & self.data.neg[pred]
+        ) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ? ;
+        Some( Some(actlit) )
+      }
+    } else {
+      log! { @5 "-> None" }
+      Some(None)
+    } ;
+
+
+    // Let's do this.
+    let mut actlits = vec![] ;
+
+
+    // If there's any positive samples at all, we can do something for the rhs
+    // (if any).
+    if ! lhs_actlits_of.is_empty() && clause.rhs().is_some() {
+      self.solver.comment("activating all lhs positive samples") ? ;
+      let actlit = self.solver.get_actlit() ? ;
+      for (_, map) in & lhs_actlits_of {
+        for (_, pos_actlit) in map {
+          self.solver.assert_act(& actlit, pos_actlit) ?
+        }
+      }
+
+      let bias = if lhs_preds_with_no_pos.is_empty() {
+        log! { @4 "total bias left" }
+        // If all lhs predicates have positive sample then this actlit yields a
+        // positive example for the rhs.
+        Bias::Lft
+      } else {
+        log! { @4 "partial bias left" }
+        // Otherwise this will generate a constraint.
+        Bias::Non
+      } ;
+
+      actlits.push( (actlit, bias) )
+    }
+
+    // If there's no rhs or it has negative samples we can do something for the
+    // lhs.
+    if let Some(maybe_actlit) = rhs_actlit {
+
+      if lhs_preds_with_no_pos.is_empty() {
+        log! { @4 "exhaustive bias right" }
+        // We can force all positive examples for all lhs applications but one
+        // in turn to try to generate negative examples.
+        for (this_pred, map) in & lhs_actlits_of {
+          for (this_args, _) in map {
+
+            self.solver.comment(
+              & format!(
+                "actlit forcing application ({} {}) to be false",
+                self.instance[* this_pred], this_args
+              )
+            ) ? ;
+            let this_actlit = self.solver.get_actlit() ? ;
+
+            // Force rhs false if any.
+            if let Some(rhs_actlit) = maybe_actlit.as_ref() {
+              self.solver.assert_act(& this_actlit, rhs_actlit) ?
+            }
+
+            // Activate everything else than this particular application
+            for (pred, map) in & lhs_actlits_of {
+              for (args, actlit) in map {
+                if pred == this_pred && args == this_args {
+                  continue
+                }
+                self.solver.assert_act(& this_actlit, actlit) ?
+              }
+            }
+
+            actlits.push(
+              (this_actlit, Bias::NuRgt(* this_pred, this_args.clone()))
+            )
+          }
+        }
+
+      } else {
+
+        // There's some lhs applications with no negative data. Activate
+        // everything we can.
+
+        let this_actlit = self.solver.get_actlit() ? ;
+
+        // Force rhs false if any.
+        if let Some(rhs_actlit) = maybe_actlit.as_ref() {
+          self.solver.assert_act(& this_actlit, rhs_actlit) ?
+        }
+
+        // Activate everything we can.
+        for (_, map) in & lhs_actlits_of {
+          for (_, actlit) in map {
+            self.solver.assert_act(& this_actlit, actlit) ?
+          }
+        }
+
+        // Now the question is what kind of bias this corresponds to.
+
+        let mut iter = lhs_preds_with_no_pos.into_iter() ;
+        let (this_pred, argss) = iter.next().expect(
+          "next on non-empty iterator cannot yield none"
+        ) ;
+
+        let mut argss_iter = argss.into_iter() ;
+        let this_args = argss_iter.next().expect(
+          "empty arguments for predicate are illegal in clauses"
+        ) ;
+
+        // If we have a single predicate application with no negative samples
+        // we can generate an actlit for this one.
+        let bias = if iter.next().is_none() && argss_iter.next().is_none() {
+          log! { @4 "singular bias right" }
+          Bias::NuRgt(this_pred, this_args.clone())
+        } else {
+          // Otherwise we can just generate a negative constraint that's more
+          // constrained.
+          log! { @4 "partial bias left" }
+          Bias::Non
+        } ;
+
+        actlits.push( (this_actlit, bias) )
+
+      }
+
+    }
+
+
+    Ok(actlits)
+  }
+
+
 
   /// Biases the arguments of the predicates of a clause.
   ///

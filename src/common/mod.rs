@@ -187,10 +187,55 @@ pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 ///
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 
+/// Indicates a bias in a counterexample for some clause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bias {
+  /// Left bias: the whole LHS of the clause should be considered positive.
+  Lft,
+  /// Right bias: the RHS should be considered negative.
+  Rgt,
+  /// Right bias: the RHS should be considered negative, and the whole LHS
+  /// should be considered positive **except** for the predicate application
+  /// mentioned.
+  NuRgt(PrdIdx, VarTerms),
+  /// No bias.
+  Non,
+}
+impl Bias {
+  /// True if `Non`.
+  pub fn is_none(& self) -> bool {
+    * self == Bias::Non
+  }
+
+  /// Pretty string representation.
+  pub fn to_string(& self, instance: & Instance) -> String {
+    match * self {
+      Bias::NuRgt(pred, ref args) => format!(
+        "right({} {})", instance[pred], args
+      ),
+      Bias::Lft => "left".into(),
+      Bias::Rgt => "right".into(),
+      Bias::Non => "none".into(),
+    }
+  }
+}
+impl_fmt! {
+  Bias(self, fmt) {
+    match * self {
+      Bias::Lft => write!(fmt, "left"),
+      Bias::Rgt => write!(fmt, "right"),
+      Bias::NuRgt(pred, ref args) => write!(fmt, "right({} {})", pred, args),
+      Bias::Non => write!(fmt, "none"),
+    }
+  }
+}
+
 /// Alias type for a counterexample for a clause.
 pub type Cex = var_to::vals::RVarVals ;
+/// Alias type for a counterexample for a clause.
+pub type BCex = ( Cex, Bias ) ;
 /// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap< Vec<Cex> > ;
+pub type Cexs = ClsHMap< Vec<BCex> > ;
 
 /// Signature trait, for polymorphic term insertion.
 pub trait Signature {
@@ -249,6 +294,13 @@ where E: Evaluator {
   #[inline]
   fn len(& self) -> usize { self.0.len() }
 }
+
+
+
+
+
+
+
 
 
 /// Something that can be evaluated to a boolean.
