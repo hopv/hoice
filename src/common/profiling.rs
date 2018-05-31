@@ -28,20 +28,20 @@ pub struct ProfileTree {
   /// Duration stored at this level.
   duration: Option<Duration>,
   /// Sub-branches.
-  branches: HashMap<& 'static str, ProfileTree>,
+  branches: BTreeMap<& 'static str, ProfileTree>,
 }
 impl ProfileTree {
   /// Tree with nothing but the top level.
   pub fn top(top: Duration) -> Self {
     ProfileTree {
       duration: Some(top),
-      branches: HashMap::new(),
+      branches: BTreeMap::new(),
     }
   }
 
   /// Empty tree, not visible outside.
   fn empty() -> Self {
-    ProfileTree { duration: None, branches: HashMap::new() }
+    ProfileTree { duration: None, branches: BTreeMap::new() }
   }
 
   /// Debug printing (multi-line).
@@ -178,7 +178,7 @@ impl ProfileTree {
 
 
 /// Maps strings to counters.
-pub type Stats = HashMap<String, usize> ;
+pub type Stats = BTreeMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// True if at least one value is not `0`.
@@ -212,7 +212,7 @@ impl CanPrint for Stats {
 ///
 /// - a (start) instant option: `Some` if the scope is currently active, and
 /// - a duration representing the total runtime of this scope.
-pub type InstantMap = HashMap<
+pub type InstantMap = BTreeMap<
   Vec<& 'static str>, (Option<Instant>, Duration)
 > ;
 

@@ -25,7 +25,11 @@ pub fn work(
   instance: & mut Instance, profiler: & Profiler,
 ) -> Res<()> {
   let res = {
-    let instance = PreInstance::new(instance) ? ;
+    let instance = profile! {
+      |profiler| wrap {
+        PreInstance::new(instance) ?
+      } "preproc", "pre-instance creation"
+    } ;
     run(instance, profiler, true)
   } ;
   finalize(res, instance, profiler)
@@ -37,9 +41,17 @@ fn run(
 ) -> Res<()> {
   profile! { |profiler| tick "preproc" }
 
-  let mut reductor = Reductor::new(instance) ? ;
+  let mut reductor = profile! {
+    |profiler| wrap {
+      Reductor::new(instance) ?
+    } "preproc", "creation"
+  } ;
   let res = reductor.run(profiler, simplify_first).and_then(
-    |_| reductor.destroy()
+    |_| profile! {
+      |profiler| wrap {
+        reductor.destroy()
+      } "preproc", "reductor destruction"
+    }
   ) ;
 
   profile! { |profiler| mark "preproc" }
@@ -133,7 +145,7 @@ pub fn work_on_split(
 
       profile! { |profiler| tick "strengthening" }
 
-      log_debug! {
+      log! { @debug
         "strengthening using {} clauses", strict_neg_clauses.len()
       }
 
@@ -169,7 +181,7 @@ pub fn work_on_split(
           }
         } ;
 
-        log_debug! {
+        log! { @debug
           "Strengthening using {}",
           clause.to_string_info( instance.preds() ) ?
         }
@@ -350,6 +362,9 @@ impl<'a> Reductor<'a> {
       () => (
         if self.instance.is_solved() {
           if ! self.instance.is_unsat() {
+            profile! {
+              |_profiler| tick "preproc", "final simplify"
+            }
             // Check remaining clauses, maybe some of them are unsat.
             match self.instance.simplify_all() {
               Ok(_) => (),
@@ -359,6 +374,9 @@ impl<'a> Reductor<'a> {
                 }
                 bail!(e)
               },
+            }
+            profile! {
+              |_profiler| mark "preproc", "final simplify"
             }
           }
           return Ok(())
@@ -404,14 +422,16 @@ impl<'a> Reductor<'a> {
           profile! {
             |_profiler| tick "preproc", preproc.name()
           }
-          log_verb! { "running {}", conf.emph( preproc.name() ) }
+          log! { @verb
+            "running {}", conf.emph( preproc.name() )
+          }
           let mut red_info = preproc.apply( & mut self.instance ) ? ;
           profile! {
             |_profiler| mark "preproc", preproc.name()
           }
 
           if red_info.non_zero() {
-            red_info += self.instance.force_trivial() ? ;
+            // red_info += self.instance.force_trivial() ? ;
             count += 1 ;
             preproc_dump!(
               self.instance =>
@@ -441,12 +461,16 @@ impl<'a> Reductor<'a> {
                 "{:>10}    arg red", preproc.name()
               ) => add red_info.args_rmed
             }
-            log_verb! { "{}: {}", conf.emph( preproc.name() ), red_info }
+            log! { @verb
+              "{}: {}", conf.emph( preproc.name() ), red_info
+            }
             conf.check_timeout() ? ;
             check_solved!() ;
             run! { @ $($tail)* Some(red_info) }
           } else {
-            log_verb! { "{}: did nothing", conf.emph( preproc.name() ) }
+            log! { @verb
+              "{}: did nothing", conf.emph( preproc.name() )
+            }
             run! { @ $($tail)* Some(red_info) }
           }
         } else {
@@ -850,12 +874,12 @@ impl RedStrat for SimpleOneRhs {
 
         if res.is_failed() { continue }
 
-        log_debug! {
+        log! { @debug
           "from {}",
           instance.clauses()[clause].to_string_info( instance.preds() ) ?
         }
 
-        log_verb! {
+        log! { @verb
           "unfolding {}", conf.emph(& instance[pred].name)
         }
 
@@ -976,7 +1000,7 @@ impl RedStrat for SimpleOneLhs {
         }
       } ;
 
-      log_debug! {
+      log! { @debug
         "looking at {} ({}, {})",
         instance[pred],
         instance.clauses_of(pred).0.len(),
@@ -988,7 +1012,7 @@ impl RedStrat for SimpleOneLhs {
         if argss.len() > 1 { continue }
       }
 
-      log_debug! {
+      log! { @debug
         "trying to unfold {}", instance[pred]
       }
 
@@ -1022,7 +1046,7 @@ impl RedStrat for SimpleOneLhs {
 
       if res.is_failed() { continue }
 
-      log_debug! {
+      log! { @debug
         "from {}",
         instance.clauses()[clause_idx].to_string_info( instance.preds() ) ?
       }
@@ -1032,7 +1056,9 @@ impl RedStrat for SimpleOneLhs {
 
       // log_verb!{ "  instance:\n{}", instance.to_string_info( () ) ? }
 
-      log_verb! { "unfolding {}", conf.emph(& instance[pred].name) }
+      log! { @verb
+        "unfolding {}", conf.emph(& instance[pred].name)
+      }
       use self::ExtractRes::* ;
       match res {
         SuccessTrue => {
@@ -1181,11 +1207,11 @@ impl RedStrat for OneRhs {
         } ;
 
         if res.is_failed() {
-          log_debug!{ "  skipping" }
+          log! { @debug "  skipping" }
           continue
         }
 
-        log_debug!{
+        log! { @debug
           "from {}",
           instance.clauses()[clause].to_string_info( instance.preds() ) ?
         }
@@ -1207,17 +1233,19 @@ impl RedStrat for OneRhs {
           },
           Success( (qvars, tterms) ) => {
             if_debug! {
-              log_debug!("  {} quantified variables", qvars.len()) ;
+              log! { @debug
+                "  {} quantified variables", qvars.len()
+              }
               for (var, typ) in & qvars {
-                log_debug!("  - v_{}: {}", var, typ)
+                log! {  @debug "  - v_{}: {}", var, typ }
               }
               for (pred, argss) in tterms.preds() {
                 for args in argss {
-                  log_debug! { "  => ({} {})", instance[* pred], args }
+                  log! { @debug "  => ({} {})", instance[* pred], args }
                 }
               }
               for term in tterms.terms() {
-                log_debug!("  => {}", term ) ;
+                log! { @debug "  => {}", term }
               }
             }
             red_info += instance.force_pred_left(
@@ -1372,45 +1400,45 @@ impl RedStrat for OneLhs {
       use self::ExtractRes::* ;
       match res {
         SuccessTrue => {
-          log_verb!("  => true") ;
+          log! { @verb "  => true" }
           red_info += instance.force_true(pred) ?
         },
         SuccessFalse => {
-          log_verb!("  => false") ;
+          log! { @verb "  => false" }
           red_info += instance.force_false(pred) ?
         },
         Trivial => {
-          log_verb!("  => trivial") ;
+          log! { @verb "  => trivial" }
           red_info += instance.force_true(pred) ?
         },
         Success((qvars, pred_app, tterms)) => {
-          if_debug! {
-            log_debug!("{} quantified variables", qvars.len()) ;
+          if_log! { @debug
+            log! { @ debug "{} quantified variables", qvars.len() }
             for (var, typ) in & qvars {
-              log_debug!("- v_{}: {}", var, typ)
+              log! { @ debug "- v_{}: {}", var, typ }
             }
-            log_debug!{ "=> (or" }
+            log! { @ debug  "=> (or" }
             if let Some((pred, ref args)) = pred_app {
               let mut s = format!("({}", instance[pred]) ;
               for arg in args.iter() {
                 s = format!("{} {}", s, arg)
               }
-              log_debug!{ "  {})", s }
+              log! { @ debug  "  {})", s }
             }
-            log_debug!{ "  (not" }
-            log_debug!{ "    (and" }
+            log! { @ debug  "  (not" }
+            log! { @ debug  "    (and" }
             for (pred, args) in tterms.preds() {
               let mut s = format!("({}", instance[* pred]) ;
               for arg in args {
                 s = format!("{} {}", s, arg)
               }
-              log_debug!{ "      {})", s }
+              log! { @debug "      {})", s }
             }
             for term in tterms.terms() {
-              log_debug!{ "      {}", term }
+              log! { @debug "      {}", term }
             }
-            log_debug!{ "    )" }
-            log_debug!{ "  )" }
+            log! { @debug "    )" }
+            log! { @debug "  )" }
           }
           red_info += instance.force_pred_right(
             pred, qvars, pred_app, tterms
@@ -1501,9 +1529,9 @@ impl RedStrat for CfgRed {
 
       self.graph.check(& instance) ? ;
       if_log! { @verb
-        log_debug! { "inlining {} predicates", pred_defs.len() }
+        log! { @verb "inlining {} predicates", pred_defs.len() }
         for (pred, _) in & pred_defs {
-          log_verb! { "  {}", instance[* pred] }
+          log! { @verb "  {}", instance[* pred] }
         }
       }
 
@@ -2681,14 +2709,14 @@ impl RedStrat for Unroll {
       if terms.len() * appearances >= self.max_new_clauses {
         let is_new = self.ignore.insert(pred) ;
         debug_assert! { is_new }
-        log_verb! {
+        log! { @verb
           "not unrolling {}, {} variant(s), estimation: {} new clauses",
           conf.emph(& instance[pred].name),
           terms.len(),
           terms.len() * appearances
         }
       } else {
-        log_verb! {
+        log! { @verb
           "unrolling {}, {} variant(s)",
           conf.emph(& instance[pred].name),
           terms.len()
@@ -2772,28 +2800,28 @@ impl RedStrat for RUnroll {
               debug_assert! { apps.is_none() }
               let (terms, pred_apps) = ts.destroy() ;
               if_debug! {
-                log_debug!{
+                log!{ @debug
                   "from {}",
                   clause.to_string_info(
                     instance.preds()
                   ) ?
                 }
-                log_debug! { "terms {{" }
+                log! { @debug "terms {{" }
                 for term in & terms {
-                  log_debug! { "  {}", term }
+                  log! { @debug "  {}", term }
                 }
-                log_debug! { "}}" }
-                log_debug! { "pred apps {{" }
+                log! { @debug "}}" }
+                log! { @debug "pred apps {{" }
                 for (pred, argss) in & pred_apps {
                   for args in argss {
                     let mut s = format!("({}", instance[* pred]) ;
                     for arg in args.iter() {
                       s = format!("{} {}", s, arg)
                     }
-                    log_debug! { "  {})", s }
+                    log! { @debug "  {})", s }
                   }
                 }
-                log_debug! { "}}" }
+                log! { @debug "}}" }
               }
               debug_assert! { pred_apps.is_empty() }
               insert( pred, Quant::exists(q), terms )
@@ -2803,7 +2831,7 @@ impl RedStrat for RUnroll {
               insert( pred, None, set )
             },
             ExtractRes::Failed => {
-              log_debug! { "extraction failed, skipping" }
+              log! { @debug "extraction failed, skipping" }
               continue 'neg_clauses
             },
             ExtractRes::Trivial => bail!(
@@ -2827,7 +2855,7 @@ impl RedStrat for RUnroll {
       if appearances >= self.max_new_clauses {
         let is_new = self.ignore.insert(pred) ;
         debug_assert! { is_new }
-        log_verb! {
+        log! { @verb
           "not r_unrolling {}, {} occurence(s), \
           estimation: {} new clauses (>= {})",
           conf.emph(& instance[pred].name),
@@ -2836,7 +2864,7 @@ impl RedStrat for RUnroll {
           self.max_new_clauses,
         }
       } else {
-        log_verb! {
+        log! { @verb
           "r_unrolling {}, {} variant(s)",
           conf.emph(& instance[pred].name),
           terms.len()

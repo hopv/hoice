@@ -235,6 +235,9 @@ impl<'a> PreInstance<'a> {
     ) ;
     log! { @4 "simplify clauses ({})", self.clauses_to_simplify.len() }
     let mut prev = None ;
+
+    let mut force = PrdHMap::new() ;
+
     while let Some(clause) = self.clauses_to_simplify.pop() {
       log! { @5 "{}", self[clause].to_string_info(self.preds()).unwrap() }
       prev = {
@@ -243,8 +246,29 @@ impl<'a> PreInstance<'a> {
         }
         Some(clause)
       } ;
-      info += self.simplify_clause(clause) ?
+      info += self.simplify_clause(clause) ? ;
+      if ! info.non_zero() {
+        if let Some((pred, pos)) = self.force_trivial_from_clause(clause) {
+          let prev = force.insert(pred, pos) ;
+          debug_assert! {
+            if let Some(prev) = prev {
+              prev == pos
+            } else {
+              true
+            }
+          }
+        }
+      }
     }
+
+    for (pred, pos) in force {
+      if pos {
+        info += self.force_true(pred) ?
+      } else {
+        info += self.force_false(pred) ?
+      }
+    }
+
     self.check("after `simplify_clauses`") ? ;
     Ok(info)
   }
@@ -1820,48 +1844,48 @@ impl ClauseSimplifier {
   #[cfg( not(feature = "bench") )]
   #[allow(dead_code)]
   fn print_state(& self, pref: & str) {
-    if_debug! {
+    if_log! { @debug
       if ! self.var_to_rep.is_empty() {
-        log_debug!{ "{}var_to_rep {{", pref }
+        log! { @debug "{}var_to_rep {{", pref }
         for (var, rep) in & self.var_to_rep {
-          log_debug!{ "{}  {} -> {}", pref, var, rep }
+          log! { @debug "{}  {} -> {}", pref, var, rep }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
       if ! self.var_to_rep_term.is_empty() {
-        log_debug!{ "{}var_to_rep_term {{", pref }
+        log! { @debug "{}var_to_rep_term {{", pref }
         for (var, rep) in & self.var_to_rep_term {
-          log_debug!{ "{}  {} -> {}", pref, var, rep }
+          log! { @debug "{}  {} -> {}", pref, var, rep }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
       if ! self.rep_to_vars.is_empty() {
-        log_debug!{ "{}rep_to_vars {{", pref }
+        log! { @debug "{}rep_to_vars {{", pref }
         for (rep, set) in & self.rep_to_vars {
-          log_debug!{ "{}  {} -> {}", pref, rep, Self::pretty_varset(set) }
+          log! { @debug "{}  {} -> {}", pref, rep, Self::pretty_varset(set) }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
       if ! self.rep_to_term.is_empty() {
-        log_debug!{ "{}rep_to_term {{", pref }
+        log! { @debug "{}rep_to_term {{", pref }
         for (rep, term) in & self.rep_to_term {
-          log_debug!{ "{}  {} -> {}", pref, rep, term }
+          log! { @debug "{}  {} -> {}", pref, rep, term }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
       if ! self.rep_to_stable_term.is_empty() {
-        log_debug!{ "{}rep_to_stable_term {{", pref }
+        log! { @debug "{}rep_to_stable_term {{", pref }
         for (rep, term) in & self.rep_to_stable_term {
-          log_debug!{ "{}  {} -> {}", pref, rep, term }
+          log! { @debug "{}  {} -> {}", pref, rep, term }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
       if ! self.terms_to_add.is_empty() {
-        log_debug!{ "{}terms_to_add {{", pref }
+        log! { @debug "{}terms_to_add {{", pref }
         for term in & self.terms_to_add {
-          log_debug!{ "{}  {}", pref, term }
+          log! { @debug "{}  {}", pref, term }
         }
-        log_debug!{ "{}}}", pref }
+        log! { @debug "{}}}", pref }
       }
     }
   }

@@ -148,6 +148,7 @@ pub fn read_and_work<R: ::std::io::Read>(
         if stop_on_err { return Err(e) }
         // error = true ;
         print_err(e) ;
+        profile!{ |profiler| mark "parsing" }
         continue 'parse_work
       },
     } ;
