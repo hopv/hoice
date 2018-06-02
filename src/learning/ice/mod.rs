@@ -91,13 +91,13 @@ pub struct IceLearner<'core> {
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
-  sort_rng_1: ::rand::StdRng,
+  sort_rng_1: ::rand::rngs::SmallRng,
   /// Rng actually doing the predicate sorting.
-  sort_rng_2: ::rand::StdRng,
+  sort_rng_2: ::rand::rngs::SmallRng,
   /// Rng to decide when to use simple gain.
-  simple_rng: ::rand::StdRng,
+  simple_rng: ::rand::rngs::SmallRng,
   /// Rng to decide when skip preliminary.
-  pre_skip_rng: ::rand::StdRng,
+  pre_skip_rng: ::rand::rngs::SmallRng,
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
@@ -148,19 +148,19 @@ impl<'core> IceLearner<'core> {
         dec_mem, candidate, predicates,
         sort_rng_1: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed( [ 42 ; 32 ] )
+          ::rand::rngs::SmallRng::from_seed( [ 42 ; 16 ] )
         },
         sort_rng_2: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed( [ 79 ; 32 ] )
+          ::rand::rngs::SmallRng::from_seed( [ 79 ; 16 ] )
         },
         simple_rng: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed( [ 107 ; 32 ] )
+          ::rand::rngs::SmallRng::from_seed( [ 107 ; 16 ] )
         },
         pre_skip_rng: {
           use rand::SeedableRng ;
-          ::rand::StdRng::from_seed( [ 245 ; 32 ] )
+          ::rand::rngs::SmallRng::from_seed( [ 245 ; 16 ] )
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
@@ -300,7 +300,6 @@ impl<'core> IceLearner<'core> {
 
     self.check_exit() ? ;
 
-    let prd_count = self.instance.preds().len() ;
     debug_assert!{
       scoped! {
         let mut okay = true ;
@@ -330,99 +329,82 @@ impl<'core> IceLearner<'core> {
     // Stores `(<unclassified_count>, <classified_count>, <prd_index>)`
     debug_assert! { self.predicates.is_empty() }
 
-    let mut all_preds: Vec<_> = PrdRange::zero_to(prd_count).filter_map(
-      |pred| if self.instance.is_known(pred) {
-        None
-      } else {
-        Some(pred)
-      }
-    ).collect() ;
+    let mut stuff_changed = true ;
 
-    if sorted {
-      all_preds.sort_unstable_by(
-        |p_1, p_2| {
-          let sum_1 = self.data.pos[* p_1].len() + self.data.neg[* p_1].len() ;
-          let unc_1 = self.data.map()[* p_1].len() ;
-          let sum_1 = sum_1 - ::std::cmp::min(
-            sum_1, unc_1
-          ) ;
+    while stuff_changed {
+      stuff_changed = false ;
+      self.predicates.clear() ;
 
-          let sum_2 = self.data.pos[* p_2].len() + self.data.neg[* p_2].len() ;
-          let unc_2 = self.data.map()[* p_2].len() ;
-          let sum_2 = sum_2 - ::std::cmp::min(
-            sum_2, unc_2
-          ) ;
+      for pred in self.instance.pred_indices() {
 
-          sum_1.cmp(& sum_2).reverse()
+        if self.instance.is_known(pred)
+        || self.candidate[pred].is_some() {
+          continue
         }
-      )
-    }
 
-    for pred in all_preds {
+        let pos_len = self.data.pos[pred].len() ;
+        let neg_len = self.data.neg[pred].len() ;
+        let unc_len = self.data.map()[pred].len() ;
 
-      if self.instance.is_known(pred) {
-        continue
-      }
+        if ! skip_prelim {
 
-      let pos_len = self.data.pos[pred].len() ;
-      let neg_len = self.data.neg[pred].len() ;
-      let unc_len = self.data.map()[pred].len() ;
-
-      if ! skip_prelim {
-
-        if pos_len == 0 && neg_len > 0 {
-          msg! { debug self => "legal_pred (1)" }
-          // Maybe we can assert everything as negative right away?
-          if self.is_legal_pred(pred, false) ? {
-            msg! { @verb
-              self =>
-              "{} only has negative ({}) and unclassified ({}) data\n\
-              legal check ok, assuming everything negative",
-              self.instance[pred], neg_len, unc_len
-            }
-            self.candidate[pred] = Some( term::fls() ) ;
-            profile!(
-              |self.core._profiler| wrap {
-                self.data.force_pred(pred, false).chain_err(
-                  || format!(
-                    "while setting all false for {}", self.instance[pred]
+          if pos_len == 0 && neg_len > 0 {
+            msg! { debug self => "legal_pred (1)" }
+            // Maybe we can assert everything as negative right away?
+            if self.is_legal_pred(pred, false) ? {
+              msg! { @verb
+                self =>
+                "{} only has negative ({}) and unclassified ({}) data\n\
+                legal check ok, assuming everything negative",
+                self.instance[pred], neg_len, unc_len
+              }
+              self.candidate[pred] = Some( term::fls() ) ;
+              profile!(
+                |self.core._profiler| wrap {
+                  self.data.force_pred(pred, false).chain_err(
+                    || format!(
+                      "while setting all false for {}", self.instance[pred]
+                    )
                   )
-                )
-              } "learning", "data"
-            ) ? ;
-            continue
-          }
-        }
-
-        if neg_len == 0 && pos_len > 0 {
-          msg! { debug self => "legal_pred (2)" }
-          // Maybe we can assert everything as positive right away?
-          if self.is_legal_pred(pred, true) ? {
-            msg! { @verb
-              self =>
-              "{} only has positive ({}) and unclassified ({}) data\n\
-              legal check ok, assuming everything positive",
-              self.instance[pred], pos_len, unc_len
+                } "learning", "data"
+              ) ? ;
+              stuff_changed = true ;
+              continue
             }
-            self.candidate[pred] = Some( term::tru() ) ;
-            profile!(
-              |self.core._profiler| wrap {
-                self.data.force_pred(pred, true).chain_err(
-                  || format!(
-                    "while setting all true for {}", self.instance[pred]
-                  )
-                )
-              } "learning", "data"
-            ) ? ;
-            continue
           }
+
+          if neg_len == 0 && pos_len > 0 {
+            msg! { debug self => "legal_pred (2)" }
+            // Maybe we can assert everything as positive right away?
+            if self.is_legal_pred(pred, true) ? {
+              msg! { @verb
+                self =>
+                "{} only has positive ({}) and unclassified ({}) data\n\
+                legal check ok, assuming everything positive",
+                self.instance[pred], pos_len, unc_len
+              }
+              self.candidate[pred] = Some( term::tru() ) ;
+              profile!(
+                |self.core._profiler| wrap {
+                  self.data.force_pred(pred, true).chain_err(
+                    || format!(
+                      "while setting all true for {}", self.instance[pred]
+                    )
+                  )
+                } "learning", "data"
+              ) ? ;
+              stuff_changed = true ;
+              continue
+            }
+          }
+
         }
 
+        self.predicates.push((
+          unc_len, pos_len + neg_len, pred
+        ))
       }
 
-      self.predicates.push((
-        unc_len, pos_len + neg_len, pred
-      ))
     }
 
     self.check_exit() ? ;
@@ -440,18 +422,46 @@ impl<'core> IceLearner<'core> {
       self.predicates.sort_unstable_by(
         |
           & (
-            unc_1, cla_1, _p_1
+            unc_1, sum_1, _p_1
           ), & (
-            unc_2, cla_2, _p_2
+            unc_2, sum_2, _p_2
           )
         | {
           use std::cmp::Ordering::* ;
-          match cla_1.cmp(& cla_2) {
-            // Same amount of classified data, we want the one with fewer
-            // unclassifieds last.
-            Equal => unc_1.cmp(& unc_2).reverse(),
-            // Otherwise we want the one with the most classified data last.
-            cmp => cmp,
+          match (unc_1 == 0, unc_2 == 0) {
+            (true, false) => Greater,
+            (false, true) => Less,
+
+            (true, true) => sum_2.cmp(& sum_1),
+
+            (false, false) => match (sum_1 == 0, sum_2 == 0) {
+
+              (true, false) => Less,
+              (false, true) => Greater,
+
+              (true, true) => unc_1.cmp(& unc_2),
+
+              (false, false) => match (
+                sum_1.cmp(& sum_2), unc_1.cmp(& unc_2)
+              ) {
+
+                (Greater, Greater) => (unc_1 - unc_2).cmp(
+                  & (sum_1 - sum_2)
+                ).reverse(),
+                (Greater, _) |
+                (Equal, Less) => Greater,
+
+                (Less, Less) => (unc_2 - unc_1).cmp(
+                  & (sum_2 - sum_1)
+                ).reverse(),
+                (Less, _) |
+                (Equal, Greater) => Less,
+
+                (Equal, Equal) => Equal,
+
+              },
+
+            },
           }
         }
       ) ;
@@ -508,6 +518,7 @@ impl<'core> IceLearner<'core> {
       }
       self.check_exit() ? ;
     }
+
     let mut candidates: PrdMap<_> = vec![
       None ; self.instance.preds().len()
     ].into() ;
@@ -712,7 +723,9 @@ impl<'core> IceLearner<'core> {
     & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
     let simple = data.unc().is_empty() || (
-      simple && ! data.pos().is_empty() && ! data.neg().is_empty()
+      ! data.pos().is_empty() && ! data.neg().is_empty() && (
+        simple || data.unc().len() > 3 * (data.pos().len() + data.neg().len())
+      )
     )  ;
 
     if_debug! {

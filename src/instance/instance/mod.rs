@@ -1361,7 +1361,7 @@ impl Instance {
   /// Returns `true` if some new data was generated.
   pub fn clause_cex_to_data(
     & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
-  ) -> Res< Option<bool> > {
+  ) -> Res<()> {
     let (mut cex, bias) = cex ;
     let clause = & self[clause_idx] ;
 
@@ -1523,24 +1523,19 @@ impl Instance {
   pub fn cexs_to_data(
     & self, data: & mut Data, cexs: Cexs
   ) -> Res<bool> {
-    let mut nu_stuff = false ;
+    let metrics = data.metrics() ;
 
     for (clause_idx, cexs) in cexs.into_iter() {
       log! { @5 "adding cexs for #{}", clause_idx }
 
       for cex in cexs {
-        if let Some(true) = self.clause_cex_to_data(
-          data, clause_idx, cex
-        ) ? {
-          nu_stuff = true
-        }
+        self.clause_cex_to_data(data, clause_idx, cex) ?
       }
     }
 
-    let (new_pos, new_neg) = data.propagate() ? ;
-    nu_stuff = nu_stuff || new_pos > 0 || new_neg > 0 ;
+    data.propagate() ? ;
 
-    Ok(nu_stuff)
+    Ok( metrics != data.metrics() )
   }
 
 

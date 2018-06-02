@@ -640,6 +640,17 @@ impl Data {
 
 
 
+  /// Length of positive/negative samples and constraints.
+  pub fn metrics(& self) -> (usize, usize, usize) {
+    (
+      self.pos.iter().fold(0, |acc, samples| acc + samples.len()),
+      self.neg.iter().fold(0, |acc, samples| acc + samples.len()),
+      self.constraints.len()
+    )
+  }
+
+
+
   /// Adds a constraint, creates links, no trivial/tautology checks.
   ///
   /// - should only be called by `add_cstr`
@@ -688,14 +699,14 @@ impl Data {
   pub fn add_data(
     & mut self, clause: ClsIdx,
     mut lhs: Vec< (PrdIdx, RVarVals) >, rhs: Option<(PrdIdx, RVarVals)>,
-  ) -> Res< Option<bool> > {
+  ) -> Res<()> {
 
     let rhs = match rhs {
 
       Some((pred, sample)) => if lhs.is_empty() {
         // Positive sample.
         self.add_raw_pos(clause, pred, sample) ;
-        return Ok(None)
+        return Ok(())
       } else {
         // Constraint.
         Some((pred, sample))
@@ -708,7 +719,7 @@ impl Data {
         ) ;
         debug_assert_eq! { lhs.len(), 0 }
         self.add_raw_neg(clause, pred, sample) ;
-        return Ok(None)
+        return Ok(())
       } else {
         // Constraint.
         None
@@ -724,9 +735,9 @@ impl Data {
       )
     }
 
-    let new_stuff = self.add_cstr(clause, lhs, rhs) ? ;
+    self.add_cstr(clause, lhs, rhs) ? ;
 
-    Ok( Some(new_stuff) )
+    Ok(())
   }
 
 

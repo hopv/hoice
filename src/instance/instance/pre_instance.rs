@@ -148,14 +148,36 @@ impl<'a> PreInstance<'a> {
           continue 'all_preds
         }
 
-        if self.instance.pred_to_clauses[pred].1.is_empty() {
-          info.preds += 1 ;
-          fixed_point = false ;
-          info += self.force_false(pred) ?
+        let force = if self.instance.pred_to_clauses[pred].1.is_empty() {
+          // Only appears as an antecedent.
+          Some(false)
         } else if self.instance.pred_to_clauses[pred].0.is_empty() {
+          // Only appears as a consequent.
+          Some(true)
+        } else if self.instance.pred_to_clauses[pred].1.is_superset(
+          & self.instance.pred_to_clauses[pred].0
+        ) {
+          // Only appears as a antecedent in clauses where it's also an
+          // consequent.
+          Some(true)
+        } else if self.instance.pred_to_clauses[pred].0.is_superset(
+          & self.instance.pred_to_clauses[pred].1
+        ) {
+          // Only appears as a consequent in clauses where it's also an
+          // antecedent.
+          Some(false)
+        } else {
+          None
+        } ;
+
+        if let Some(pos) = force {
           info.preds += 1 ;
           fixed_point = false ;
-          info += self.force_true(pred) ?
+          info += if pos {
+            self.force_true(pred) ?
+          } else {
+            self.force_false(pred) ?
+          }
         }
 
       }
@@ -382,9 +404,16 @@ impl<'a> PreInstance<'a> {
 
     // Skip if clause contains more than 2 disjunctions.
     let mut disj = None ;
-    let mut equalities = HConSet::<Term>::new() ;
     for term in clause!(clause_idx).lhs_terms() {
       if let Some(args) = term.disj_inspect() {
+        if disj.is_some() || args.iter().any(
+          |arg| arg.disj_inspect().is_some()
+        ) {
+          disj = None ;
+          break
+        }
+
+        let mut equalities = HConSet::<Term>::new() ;
         for maybe_eq in args {
           if let Some(_) = maybe_eq.eq_inspect() {
             equalities.insert(maybe_eq.clone()) ;
@@ -392,14 +421,12 @@ impl<'a> PreInstance<'a> {
           }
         }
         if ! equalities.is_empty() {
-          disj = Some( (term.clone(), equalities) ) ;
-          break
+          disj = Some( (term.clone(), equalities) )
         }
       }
     }
 
-    if let Some((disj, equalities)) = disj {
-
+    if let Some( (disj, equalities) ) = disj {
       let was_there = clause!(clause_idx).rm_term(& disj) ;
       debug_assert!(was_there) ;
       debug_assert!(! equalities.is_empty()) ;
@@ -504,7 +531,6 @@ impl<'a> PreInstance<'a> {
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-    // println!("is trivial {}", self[clause_idx].to_string_info(self.preds()).unwrap()) ;
     if let Some(res) = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
     ) ? {
@@ -1438,11 +1464,8 @@ impl<'a> PreInstance<'a> {
           nu_clause.to_string_info(& self.preds).unwrap()
         }
 
-        // println!("clause before:") ;
-        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
-        // println!("clause after:") ;
-        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
+
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
@@ -1521,11 +1544,7 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        // println!("clause before:") ;
-        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
-        // println!("clause after:") ;
-        // println!("{}", nu_clause.to_string_info(self.preds()).unwrap()) ;
         skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
 
         if ! skip {
@@ -1993,14 +2012,7 @@ impl ClauseSimplifier {
           )
         }
 
-        // println!("as_subst {}", eq) ;
         let res = eq.as_subst() ;
-
-        // if let Some(& (ref v, ref t)) = res.as_ref() {
-        //   println!("  v_{} = {}", v, t)
-        // } else {
-        //   println!("  none")
-        // }
 
         match res {
 
@@ -2084,10 +2096,8 @@ impl ClauseSimplifier {
             let rep = if let Some(rep) = self.var_to_rep.get(& var).map(
               |rep| * rep
             ) {
-              // println!("  has a rep ({})", rep.default_str()) ;
               rep
             } else {
-              // println!("  has no rep") ;
               let _prev = self.var_to_rep.insert(var, var) ;
               debug_assert!( _prev.is_none() ) ;
               let _prev = self.rep_to_vars.insert(
@@ -2108,8 +2118,6 @@ impl ClauseSimplifier {
                 }
               }
             }
-
-            // println!("  cycle: {}", skip) ;
 
             if skip {
               remove = false
@@ -2182,7 +2190,6 @@ impl ClauseSimplifier {
 
     self.check( clause.vars() ) ? ;
 
-    // println!{ "  generating `var_to_rep_term`" }
     self.var_to_rep_term = VarHMap::with_capacity( self.var_to_rep.len() ) ;
     for (rep, set) in & self.rep_to_vars {
       for var in set {
@@ -2194,20 +2201,14 @@ impl ClauseSimplifier {
         }
       }
     }
-    // for (var, rep) in & self.var_to_rep {
-    //   println! { "    {} -> {}", var.default_str(), rep.default_str() }
-    // }
 
-    // println!{ "  stabilizing `rep_to_term` (first step)" }
     for (_, term) in & mut self.rep_to_term {
       let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
       if changed { * term = nu_term }
     }
     let mut to_rm = vec![] ;
     for (rep, term) in & self.rep_to_term {
-      // println!{ "    {} -> {}", rep.default_str(), term }
       if term::vars(term).contains(rep) {
-        // println!{ "      -> recursive, putting equality back." }
         to_rm.push(* rep)
       }
     }
@@ -2220,15 +2221,9 @@ impl ClauseSimplifier {
       )
     }
 
-    // println!{
-    //   "  stabilizing `rep_to_term` (second step, {})",
-    //   self.rep_to_term.len()
-    // }
     self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
     for (rep, term) in & self.rep_to_term {
-      // println! { "    pre subst: {}", term }
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
-      // println! { "    post subst" }
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
       debug_assert!( _prev.is_none() )
     }

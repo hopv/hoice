@@ -137,7 +137,7 @@ pub fn read_and_work<R: ::std::io::Read>(
       break 'parse_work
     }
     let parse_res = parser_cxt.parser(
-      & buf, line_off
+      & buf, line_off, & profiler
     ).parse(& mut instance) ;
 
     line_off += lines_parsed ;

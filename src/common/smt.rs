@@ -442,6 +442,7 @@ impl FullParser {
 
     let mut instance = Instance::new() ;
     let mut context = ::instance::parse::ParserCxt::new() ;
+    let dummy_profiler = Profiler::new() ;
 
     let mut stuck ;
 
@@ -452,7 +453,9 @@ impl FullParser {
         match var {
 
           FPVar::Var(var) => match val {
-            FPVal::Val(val) => res.push((var, typ, val)),
+            FPVal::Val(val) => {
+              res.push((var, typ, val))
+            },
             FPVal::FunToArray(fun) => if let Some(
               (sig, def)
             ) = fun_defs.get(& fun) {
@@ -509,7 +512,7 @@ impl FullParser {
                   debug_assert_eq! { prev, None }
                 }
 
-                let mut parser = context.parser(fun, 0) ;
+                let mut parser = context.parser(fun, 0, & dummy_profiler) ;
 
                 parser.term_opt(
                     & var_infos, & var_hmap, & instance
@@ -559,7 +562,7 @@ impl FullParser {
 
 impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
   fn parse_ident(self, input: & 'a str) -> SmtRes<FPVar> {
-    if & input[0..2] == "v_" {
+    if input.len() >= 2 && & input[0..2] == "v_" {
       match usize::from_str(& input[2..]) {
         Ok(idx) => Ok( FPVar::Var( idx.into() ) ),
         Err(e) => bail!(
@@ -572,7 +575,8 @@ impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
   }
   fn parse_type(self, input: & 'a str) -> SmtRes<Typ> {
     let mut cxt = ::instance::parse::ParserCxt::new() ;
-    let mut parser = cxt.parser(input, 0) ;
+    let dummy_profiler = Profiler::new() ;
+    let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
     match parser.sort_opt() {
       Ok( Some(s) ) => Ok(s),
       _ => Err(
@@ -588,7 +592,8 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
     _id: & FPVar, _params: & Vec<(FPVar, Typ)>, _out: & Typ
   ) -> SmtRes<FPVal> {
     let mut cxt = ::instance::parse::ParserCxt::new() ;
-    let mut parser = cxt.parser(input, 0) ;
+    let dummy_profiler = Profiler::new() ;
+    let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
 
     let negated = {
       let start = parser.pos() ;

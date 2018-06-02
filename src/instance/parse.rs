@@ -189,7 +189,8 @@ impl ParserCxt {
   }
   /// Generates a parser from itself.
   pub fn parser<'cxt, 's>(
-    & 'cxt mut self, string: & 's str, line_off: usize
+    & 'cxt mut self, string: & 's str, line_off: usize,
+    _profiler: & 'cxt Profiler
   ) -> Parser<'cxt, 's> {
     debug_assert!( self.mem.is_empty() ) ;
     Parser {
@@ -198,6 +199,7 @@ impl ParserCxt {
       cursor: 0,
       line_off,
       bindings: Vec::with_capacity(7),
+      _profiler,
     }
   }
 
@@ -231,6 +233,8 @@ pub struct Parser<'cxt, 's> {
   line_off: usize,
   /// Stack of bindings.
   bindings: Vec< HashMap<& 's str, PTTerms> >,
+  /// Profiler.
+  _profiler: & 'cxt Profiler,
 }
 
 
@@ -888,8 +892,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     instance: & Instance
   ) -> Res<LetCount> {
     let mut n = 0 ;
+
+    profile! { self tick "parsing", "let bindings" }
     
     'parse_lets: loop {
+      conf.check_timeout() ? ;
+
       if let Some(pos) = self.tag_opt_pos("(") {
 
         self.ws_cmt() ;
@@ -927,6 +935,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       }
       self.ws_cmt()
     }
+
+    profile! { self mark "parsing", "let bindings" }
+    profile! { self "let bindings" => add n }
 
     Ok( LetCount { n } )
   }
@@ -1235,6 +1246,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     instance: & Instance
   ) -> Res< Option<Term> > {
     debug_assert! { self.cxt.term_stack.is_empty() }
+    conf.check_timeout() ? ;
     let start_pos = self.pos() ;
 
     // The correct (non-error) way to exit this loop is
@@ -1415,6 +1427,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt(::consts::keywords::cmd::def_fun) {
       return Ok(false)
     }
+    conf.check_timeout() ? ;
     self.ws_cmt() ;
 
     let (name_pos, name) = self.ident() ? ;
@@ -1476,6 +1489,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     let mut term_pos = self.pos() ;
 
     while ! self.tag_opt(")") {
+      conf.check_timeout() ? ;
       let ptterms = self.parse_ptterms(
         var_map, map, instance
       ) ? ;
@@ -1584,6 +1598,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: & HashMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res< Option< PTTerms > > {
+    conf.check_timeout() ? ;
     let bind_count = self.let_bindings(var_map, map, instance) ? ;
 
     self.ws_cmt() ;
@@ -2066,6 +2081,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     instance: & mut Instance,
     negated: bool,
   ) -> Res< Option<ClsIdx> > {
+    profile! { self tick "parsing", "clause" }
     self.ws_cmt() ;
 
     let start_pos = self.pos() ;
@@ -2103,6 +2119,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         at_least_one = true
       }
     }
+
+    profile! { self mark "parsing", "clause" }
+
     if at_least_one {
       Ok(Some(idx))
     } else {
@@ -2139,9 +2158,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     } ;
 
     if ! lhs_is_false {
+      profile! { self tick "parsing", "add clause" }
       let maybe_index = instance.push_new_clause(
         var_map.clone(), nu_lhs, rhs, "parsing"
       ) ? ;
+      profile! { self mark "parsing", "add clause" }
       Ok(maybe_index.is_some())
     } else {
       Ok(false)
@@ -2154,6 +2175,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if ! self.tag_opt(keywords::cmd::assert) {
       return Ok(false)
     }
+
+    profile! { self tick "parsing", "assert" }
 
     self.ws_cmt() ;
 
@@ -2220,6 +2243,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.ws_cmt() ;
       self.tag(")") ? ;
     }
+
+    profile! { self mark "parsing", "assert" }
 
     Ok(true)
   }

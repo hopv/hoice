@@ -4,7 +4,7 @@ pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
 pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
-pub use std::collections::BTreeMap ;
+pub use std::collections::{ BTreeMap, BTreeSet } ;
 
 pub use mylib::common::hash::* ;
 
