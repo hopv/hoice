@@ -15,7 +15,7 @@ static err_files_dir: & str = "rsc/error" ;
 
 macro_rules! run {
   ($f:expr) => (
-    if let Err(e) = $f() {
+    if let Err(e) = $f {
       println!("Error:") ;
       for e in e.iter() {
         let mut pref = "> " ;
@@ -30,13 +30,24 @@ macro_rules! run {
 }
 
 #[test]
-fn sat() { run!(run_sat) }
+fn sat() { run!( run_sat() ) }
 
 #[test]
-fn unsat() { run!(run_unsat) }
+fn sat_ackermann() { run!( run_sat_on("rsc/sat/long/Ackermann00.smt2") ) }
 
 #[test]
-fn err() { run!(run_err) }
+fn sat_file() { run!( run_sat_on("rsc/sat/long/file.smt2") ) }
+
+#[test]
+fn sat_rec_simpl() {
+  run!( run_sat_on("rsc/sat/long/recursive_simplifications.smt2") )
+}
+
+#[test]
+fn unsat() { run!( run_unsat() ) }
+
+#[test]
+fn err() { run!( run_err() ) }
 
 macro_rules! map_err {
   ($e:expr, $msg:expr) => (
@@ -93,35 +104,40 @@ fn run_sat() -> Res<()> {
     if map_err!(
       entry.file_type(), "while reading entry (file type of `{}`)", file_name
     ).is_file() {
-      println!("looking at `{}`", file_name) ;
-      let file = OpenOptions::new().read(true).open(entry.path()).chain_err(
-        || format!( "while opening file {}", file_name )
-      ) ? ;
-      let (model, instance) = read_and_work(file, true, true, true).chain_err(
-        || "while reading file and getting model"
-      ) ? ;
-      if let Some(model) = model {
-        let mut buff: Vec<u8> = vec![] ;
-        instance.write_model(& model, & mut buff).chain_err(
-          || "while writing model"
-        ) ? ;
-        let buff = map_err!(
-          String::from_utf8(buff), "converting model from bytes to utf8"
-        ) ;
-        ::hoice::check::do_it_from_str(entry.path(), & buff).chain_err(
-          || "while checking model"
-        ) ? ;
-        println!("- is okay")
-      } else {
-        return Err(
-          format!( "got unsat on `{}`, expected sat", file_name ).into()
-        )
-      }
+      run_sat_on(& entry.path()) ?
     }
   }
 
   Ok(())
+}
 
+fn run_sat_on<P: AsRef<::std::path::Path> + ?Sized>(path: & P) -> Res<()> {
+  let file_name = path.as_ref() ;
+  println!("looking at `{}`", file_name.display()) ;
+  let file = OpenOptions::new().read(true).open(file_name).chain_err(
+    || format!( "while opening file {}", file_name.display() )
+  ) ? ;
+  let (model, instance) = read_and_work(file, true, true, true).chain_err(
+    || "while reading file and getting model"
+  ) ? ;
+  if let Some(model) = model {
+    let mut buff: Vec<u8> = vec![] ;
+    instance.write_model(& model, & mut buff).chain_err(
+      || "while writing model"
+    ) ? ;
+    let buff = map_err!(
+      String::from_utf8(buff), "converting model from bytes to utf8"
+    ) ;
+    ::hoice::check::do_it_from_str(file_name, & buff).chain_err(
+      || "while checking model"
+    ) ? ;
+    println!("- is okay") ;
+    Ok(())
+  } else {
+    Err(
+      format!( "got unsat on `{}`, expected sat", file_name.display() ).into()
+    )
+  }
 }
 
 fn run_unsat() -> Res<()> {
