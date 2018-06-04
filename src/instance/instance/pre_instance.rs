@@ -334,27 +334,31 @@ impl<'a> PreInstance<'a> {
       } => "trivial implication"
     }
 
+    log! { @3 "is unsat?" }
+
     if self.instance[clause].is_unsat() {
       unsat!("by preprocessing, clause simplification")
     }
 
-
     if self.instance[clause].terms_changed() {
+      log! { @3 "propagation..." }
       // Propagate.
       rm_return! {
         clause if {
-          let res = self.simplifier.clause_propagate(
-            & mut self.instance[clause]
+          self.simplifier.clause_propagate(
+            & mut self.instance.clauses[clause], & self.instance.preds
           ) ? ;
-          res
+          false
         } => "propagation"
       }
 
+      log! { @3 "pruning..." }
       // Remove redundant atoms.
       if conf.preproc.prune_terms {
         self.prune_atoms(clause) ?
       }
 
+      log! { @3 "trivial?" }
       // Check for triviality.
       rm_return! {
         clause if self.is_clause_trivial(clause) ? => "clause trivial"
@@ -363,12 +367,20 @@ impl<'a> PreInstance<'a> {
       self.instance[clause].lhs_terms_checked() ;
     }
 
+    log! { @3 "redundancy check..." }
+
     rm_return! {
       clause if self.is_redundant(clause) => "clause redundant"
     }
 
+    log! { @3 "split disj..." }
+
     // Try to split the clause.
-    self.split_disj(clause)
+    let res = self.split_disj(clause) ;
+
+    log! { @3 "done" }
+
+    res
   }
 
   /// Splits disjunctions.
@@ -1464,11 +1476,11 @@ impl<'a> PreInstance<'a> {
           nu_clause.to_string_info(& self.preds).unwrap()
         }
 
-        let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
+        self.simplifier.clause_propagate(
+          & mut nu_clause, self.instance.preds()
+        ) ? ;
 
-        skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
-
-        if ! skip {
+        if ! nu_clause.lhs_terms().contains( & fls ) {
           log! { @4
             "staging clause {}",
             nu_clause.to_string_info(& self.preds).unwrap()
@@ -1544,10 +1556,11 @@ impl<'a> PreInstance<'a> {
           }
         }
 
-        let mut skip = self.simplifier.clause_propagate(& mut nu_clause) ? ;
-        skip = skip || nu_clause.lhs_terms().contains( & fls ) ;
+        self.simplifier.clause_propagate(
+          & mut nu_clause, self.instance.preds()
+        ) ? ;
 
-        if ! skip {
+        if ! nu_clause.lhs_terms().contains( & fls ) {
           // nu_clause.from_unrolling = true ;
           to_add.push( nu_clause )
         }
@@ -1826,448 +1839,155 @@ impl<'a> ::std::ops::DerefMut for PreInstance<'a> {
 /// The goal of this type is to avoid reallocation and compartment the clause
 /// simplification process.
 pub struct ClauseSimplifier {
-  /// Maps variables to their representative.
-  var_to_rep: VarHMap<VarIdx>,
-  /// Maps variables to their representative as a term.
-  var_to_rep_term: VarHMap<Term>,
-  /// Maps representatives to their equivalence set.
-  rep_to_vars: VarHMap<VarSet>,
-  /// Maps representatives to a term they're equal to according to an equality
-  /// in the clause's lhs.
-  rep_to_term: VarHMap<Term>,
-  /// Mpas representatives to the final term they're equal to.
-  rep_to_stable_term: VarHMap<Term>,
+  /// Factored variable substitution.
+  subst: VarHMap<Term>,
   /// Terms to add to the clause.
   terms_to_add: Vec<Term>,
-  /// Stores equalities found in clauses.
-  eqs: Vec<Term>,
-  /// Stores equalities found in clauses that have been dismissed.
-  other_eqs: Vec<Term>
+  /// Variables that can't be inserted during the substitution.
+  var_set: VarSet,
 }
 impl ClauseSimplifier {
   /// Constructor.
   pub fn new() -> Self {
     ClauseSimplifier {
-      var_to_rep: VarHMap::with_capacity(29),
-      var_to_rep_term: VarHMap::with_capacity(29),
-      rep_to_vars: VarHMap::with_capacity(29),
-      rep_to_term: VarHMap::with_capacity(29),
-      rep_to_stable_term: VarHMap::with_capacity(29),
+      subst: VarHMap::with_capacity(20),
       terms_to_add: Vec::with_capacity(29),
-      eqs: Vec::with_capacity(11),
-      other_eqs: Vec::with_capacity(11),
+      var_set: VarSet::with_capacity(27),
     }
-  }
-
-  /// Prints its state.
-  #[cfg( not(feature = "bench") )]
-  #[allow(dead_code)]
-  fn print_state(& self, pref: & str) {
-    if_log! { @debug
-      if ! self.var_to_rep.is_empty() {
-        log! { @debug "{}var_to_rep {{", pref }
-        for (var, rep) in & self.var_to_rep {
-          log! { @debug "{}  {} -> {}", pref, var, rep }
-        }
-        log! { @debug "{}}}", pref }
-      }
-      if ! self.var_to_rep_term.is_empty() {
-        log! { @debug "{}var_to_rep_term {{", pref }
-        for (var, rep) in & self.var_to_rep_term {
-          log! { @debug "{}  {} -> {}", pref, var, rep }
-        }
-        log! { @debug "{}}}", pref }
-      }
-      if ! self.rep_to_vars.is_empty() {
-        log! { @debug "{}rep_to_vars {{", pref }
-        for (rep, set) in & self.rep_to_vars {
-          log! { @debug "{}  {} -> {}", pref, rep, Self::pretty_varset(set) }
-        }
-        log! { @debug "{}}}", pref }
-      }
-      if ! self.rep_to_term.is_empty() {
-        log! { @debug "{}rep_to_term {{", pref }
-        for (rep, term) in & self.rep_to_term {
-          log! { @debug "{}  {} -> {}", pref, rep, term }
-        }
-        log! { @debug "{}}}", pref }
-      }
-      if ! self.rep_to_stable_term.is_empty() {
-        log! { @debug "{}rep_to_stable_term {{", pref }
-        for (rep, term) in & self.rep_to_stable_term {
-          log! { @debug "{}  {} -> {}", pref, rep, term }
-        }
-        log! { @debug "{}}}", pref }
-      }
-      if ! self.terms_to_add.is_empty() {
-        log! { @debug "{}terms_to_add {{", pref }
-        for term in & self.terms_to_add {
-          log! { @debug "{}  {}", pref, term }
-        }
-        log! { @debug "{}}}", pref }
-      }
-    }
-  }
-
-  /// Pretty printer set of variables.
-  #[cfg( not(feature = "bench") )]
-  #[allow(dead_code)]
-  fn pretty_varset(set: & VarSet) -> String {
-    let mut s = String::new() ;
-    s.push('{') ;
-    for var in set {
-      s.push_str( & format!(" {}", var) )
-    }
-    s.push(' ') ;
-    s.push('}') ;
-    s
-  }
-
-  /// Checks internal consistency.
-  #[cfg(debug_assertions)]
-  fn check(& self, vars: & VarInfos) -> Res<()> {
-    // Representatives can only be mapped to themselves.
-    for (var, rep) in & self.var_to_rep {
-      if var != rep {
-        for (_, rep) in & self.var_to_rep {
-          if var == rep {
-            bail!(
-              "representative {} is mapped to representative {}",
-              vars[* var], vars[* rep]
-            )
-          }
-        }
-      }
-    }
-    // Make sure `var_to_rep` and `rep_to_vars` are consistent.
-    for (var, rep) in & self.var_to_rep {
-      if var != rep {
-        if ! self.rep_to_vars.get(rep).map(
-          |set| set.contains(var)
-        ).unwrap_or(false) {
-          bail!{
-            "{} is mapped to representative {}, \
-            but does not appear in its equivalence class",
-            vars[* var], vars[* rep]
-          }
-        }
-      }
-    }
-    for (rep, set) in & self.rep_to_vars {
-      for var in set {
-        if self.var_to_rep.get(var) != Some(rep) {
-          bail!{
-            "{} is in the equivalence class of {} but is not mapped to it",
-            vars[* var], vars[* rep]
-          }
-        }
-      }
-    }
-    Ok(())
-  }
-  #[cfg( not(debug_assertions) )]
-  #[inline(always)]
-  fn check(& self, _: & VarInfos) -> Res<()> {
-    Ok(())
   }
 
   /// Propagates equalities in a clause.
-  ///
-  /// Returns `true` if the clause should be removed.
-  ///
-  /// Assumes equalities have arity `2`.
-  pub fn clause_propagate(& mut self, clause: & mut Clause) -> Res<bool> {
-    self.var_to_rep.clear() ;
-    self.var_to_rep_term.clear() ;
-    self.rep_to_vars.clear() ;
-    self.rep_to_term.clear() ;
-    self.rep_to_stable_term.clear() ;
-    self.terms_to_add.clear() ;
-    self.eqs.clear() ;
-    self.other_eqs.clear() ;
-    let mut remove ;
+  pub fn clause_propagate(
+    & mut self, clause: & mut Clause, preds: & PrdInfos
+  ) -> Res<()> {
+    debug_assert! { self.terms_to_add.is_empty() }
+    debug_assert! { self.subst.is_empty() }
+    debug_assert! { self.var_set.is_empty() }
 
-    // Find equalities in `lhs`.
-    for term in clause.lhs_terms() {
-      if let Some((Op::Eql, _)) = term.app_inspect() {
-        self.eqs.push( term.clone() )
+    let mut eq = None ;
+
+    log! { @4 "working on {}", clause.to_string_info( preds ).unwrap() }
+
+    let mut changed = false ;
+
+    'outter: loop {
+
+      debug_assert_eq! { eq, None }
+      for term in clause.lhs_terms() {
+        if let Some((Op::Eql, _)) = term.app_inspect() {
+          eq = Some( term.clone() )
+        }
       }
-    }
 
-    loop {
-      let mut inlined = false ;
+      if let Some(eq) = ::std::mem::replace(& mut eq, None) {
+        log! { @4 "{}", eq }
 
-      while let Some(eq) = self.eqs.pop() {
-        remove = true ;
+        let was_there = clause.rm_term(& eq) ;
+        debug_assert! { was_there }
 
-        let args = if let Some(args) = eq.kids() { args } else {
-          unreachable!(
-            "clause_propagate: not equality after checking that it is"
-          )
-        } ;
-        if args.len() != 2 {
-          bail!(
-            "simplification for equality over more \
-            than 2 terms is unimplemented"
-          )
+        macro_rules! skip {
+          () => ({
+            log! { @5 "skipping" }
+            self.terms_to_add.push( eq.clone() ) ;
+            continue 'outter
+          }) ;
         }
 
-        let res = eq.as_subst() ;
+        let args = eq.kids().expect(
+          "not an equality after checking that it is one"
+        ) ;
+        if args.len() != 2 {
+          skip!()
+        }
 
-        match res {
 
-          Some((var, term)) => if let Some(v_2) = term.var_idx() {
-            let v_1 = var ;
+        match eq.as_subst() {
 
-            match (
-              self.var_to_rep.get(& v_1).map(|rep| * rep),
-              self.var_to_rep.get(& v_2).map(|rep| * rep)
+          Some((var, term)) => {
+            if self.subst.get(& var).is_some() {
+              skip!()
+            }
+
+            let vars = term::vars(& term) ;
+            if vars.contains(& var)
+            || self.var_set.contains(& var)
+            || term::vars(& term).into_iter().any(
+              |v| v == var || self.subst.get(& v).is_some()
             ) {
-
-              // Both already have same rep.
-              (Some(rep_1), Some(rep_2)) if rep_1 == rep_2 => (),
-              // Different rep.
-              (Some(rep_1), Some(rep_2)) => {
-                // We keep `rep_1`.
-                let set_2 = if let Some(set) = self.rep_to_vars.remove(
-                  & rep_2
-                ) {
-                  set
-                } else { bail!("simplification error (1)") } ;
-                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(
-                  & rep_1
-                ) {
-                  set
-                } else { bail!("simplification error (2)") } ;
-                // Drain `set_2`: update `var_to_rep` and `set_1`.
-                use mylib::coll::* ;
-                for var in set_2.into_iter().chain_one(rep_2) {
-                  let _prev = self.var_to_rep.insert(var, rep_1) ;
-                  debug_assert_eq!( _prev, Some(rep_2) ) ;
-                  let _is_new = set_1.insert(var) ;
-                  debug_assert!( _is_new )
-                }
-                // Re-route `rep_to_term`.
-                if let Some(term) = self.rep_to_term.remove(& rep_2) {
-                  let prev = self.rep_to_term.insert(rep_1, term.clone()) ;
-                  if let Some(other_term) = prev {
-                    self.terms_to_add.push( term::eq(term, other_term) )
-                  }
-                }
-              },
-              // Only `v_1` has a rep.
-              (Some(rep_1), None) => {
-                let set_1 = if let Some(set) = self.rep_to_vars.get_mut(
-                  & rep_1
-                ) {
-                  set
-                } else { panic!("simplification error (3)") } ;
-                let _is_new = set_1.insert(v_2) ;
-                debug_assert!( _is_new ) ;
-                let _prev = self.var_to_rep.insert(v_2, rep_1) ;
-                debug_assert!( _prev.is_none() )
-              },
-              // Only `v_2` has a rep.
-              (None, Some(rep_2)) => {
-                let set_2 = if let Some(set) = self.rep_to_vars.get_mut(& rep_2) {
-                  set
-                } else { bail!("simplification error (4)") } ;
-                let _is_new = set_2.insert(v_1) ;
-                debug_assert!( _is_new ) ;
-                let _prev = self.var_to_rep.insert(v_1, rep_2) ;
-                debug_assert!( _prev.is_none() )
-              },
-              // No rep, we use `v_1` as the rep.
-              (None, None) => {
-                let mut set = VarSet::with_capacity(4) ;
-                set.insert(v_2) ;
-                let _prev = self.rep_to_vars.insert(v_1, set) ;
-                debug_assert!( _prev.is_none() ) ;
-                let _prev = self.var_to_rep.insert(v_1, v_1) ;
-                debug_assert!( _prev.is_none() ) ;
-                let _prev = self.var_to_rep.insert(v_2, v_1) ;
-                debug_assert!( _prev.is_none() ) ;
-              },
-
+              skip!()
             }
 
-          } else {
+            log! { @4 "{} -> {}", var.default_str(), term }
 
-            let rep = if let Some(rep) = self.var_to_rep.get(& var).map(
-              |rep| * rep
-            ) {
-              rep
-            } else {
-              let _prev = self.var_to_rep.insert(var, var) ;
-              debug_assert!( _prev.is_none() ) ;
-              let _prev = self.rep_to_vars.insert(
-                var, VarSet::with_capacity(4)
-              ) ;
-              debug_assert!( _prev.is_none() ) ;
-              var
-            } ;
+            let prev = self.subst.insert(var, term) ;
+            debug_assert_eq! { prev, None }
 
-            // Check for cycles.
-            let mut skip = false ;
-            for is_rep in term::vars(& term) {
-              if let Some(rep_term) = self.rep_to_term.get(& is_rep) {
-                if term::vars(& rep_term).contains(& rep) {
-                  // Cycle, skip this equality.
-                  skip = true ;
-                  break
-                }
-              }
-            }
-
-            if skip {
-              remove = false
-            } else {
-              let prev = self.rep_to_term.insert(rep, term.clone()) ;
-              if let Some(prev) = prev {
-                let eq = term::eq(prev, term) ;
-                match eq.bool() {
-                  Some(true) => (),
-                  Some(false) => return Ok(true),
-                  None => self.terms_to_add.push(eq),
-                }
-              }
-            }
+            self.var_set.extend( vars )
           },
 
           // Two terms.
           None => {
             debug_assert_eq! { args[1].typ(), args[0].typ() }
-            let inline = if args[0].typ().is_bool() {
-              if clause.lhs_terms().contains(& args[0]) {
-                Some( args[1].clone() )
-              } else if clause.lhs_terms().contains(& args[1]) {
-                Some( args[0].clone() )
+            let nu_term = if args[0].typ().is_bool() {
+              let not_lhs = term::not( args[0].clone() ) ;
+              let not_rhs = term::not( args[1].clone() ) ;
+              if clause.lhs_terms().contains(& args[0])
+              || self.terms_to_add.iter().any(
+                |t| t == & args[0]
+              ) {
+                args[1].clone()
+              } else if clause.lhs_terms().contains(& args[1])
+              || self.terms_to_add.iter().any(
+                |t| t == & args[1]
+              ) {
+                args[0].clone()
+              } else if clause.lhs_terms().contains(& not_lhs)
+              || self.terms_to_add.iter().any(
+                |t| t == & not_lhs
+              ) {
+                not_rhs
+              } else if clause.lhs_terms().contains(& not_rhs)
+              || self.terms_to_add.iter().any(
+                |t| t == & not_rhs
+              ) {
+                not_lhs
               } else {
-                let not_lhs = term::not( args[0].clone() ) ;
-                let not_rhs = term::not( args[1].clone() ) ;
-                if clause.lhs_terms().contains(& not_lhs) {
-                  Some(not_rhs)
-                } else if clause.lhs_terms().contains(& not_rhs) {
-                  Some(not_lhs)
-                } else {
-                  self.other_eqs.push( eq.clone() ) ;
-                  None
-                }
+                skip!()
               }
             } else {
-              None
+              skip!()
             } ;
-            if let Some(term) = inline {
-              inlined = true ;
-              let is_new = clause.insert_term( term.clone() ) ;
-              remove = is_new ;
-              if term.is_eq() && is_new {
-                self.eqs.push(term)
-              } else {
-                // self.terms_to_add.push(term)
-              }
-            } else {
-              remove = false
-            }
+
+            log! { @5 "{} -> {}", eq, nu_term }
+
+            clause.insert_term( nu_term ) ;
           },
 
         }
 
-        if remove {
-          log!{ @4 "removing {}", eq }
-          let was_there = clause.rm_term(& eq) ;
-          debug_assert!(was_there)
-        }
-      }
-
-      if ! inlined || self.other_eqs.is_empty() {
-        break
       } else {
-        ::std::mem::swap(& mut self.eqs, & mut self.other_eqs)
-      }
+        if ! self.subst.is_empty()
+        || ! self.terms_to_add.is_empty() {
+          for term in self.terms_to_add.drain(0..) {
+            clause.insert_term(term) ;
+          }
+          changed = clause.subst(& self.subst) ;
+          log! { @5 "yielding {}", clause.to_string_info( preds ).unwrap() }
+          for (var, _) in self.subst.drain() {
+            clause.deactivate(var) ?
+          }
+          self.var_set.clear()
+        }
 
-    }
-
-    self.check( clause.vars() ) ? ;
-
-    self.var_to_rep_term = VarHMap::with_capacity( self.var_to_rep.len() ) ;
-    for (rep, set) in & self.rep_to_vars {
-      for var in set {
-        if var != rep {
-          let _prev = self.var_to_rep_term.insert(
-            * var, term::var(* rep, clause[* var].typ.clone())
-          ) ;
-          debug_assert!( _prev.is_none() )
+        if ! changed {
+          break
+        } else {
+          changed = false ;
         }
       }
     }
 
-    for (_, term) in & mut self.rep_to_term {
-      let (nu_term, changed) = term.subst(& self.var_to_rep_term) ;
-      if changed { * term = nu_term }
-    }
-    let mut to_rm = vec![] ;
-    for (rep, term) in & self.rep_to_term {
-      if term::vars(term).contains(rep) {
-        to_rm.push(* rep)
-      }
-    }
-    for to_rm in to_rm {
-      let term = self.rep_to_term.remove(& to_rm).ok_or::<Error>(
-        "unreachable".into()
-      ) ? ;
-      self.terms_to_add.push(
-        term::eq( term::var(to_rm, clause[to_rm].typ.clone()), term )
-      )
-    }
-
-    self.rep_to_stable_term = VarHMap::with_capacity(self.rep_to_term.len()) ;
-    for (rep, term) in & self.rep_to_term {
-      let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
-      let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
-      debug_assert!( _prev.is_none() ) ;
-      clause.vars[* rep].active = false ;
-    }
-
-    if_log!{ @4
-      for (rep, term) in & self.rep_to_stable_term {
-        log!{ @4 "{} -> {}", rep, term }
-      }
-    }
-
-    // Note that clause variable de-activation is done in this loop.
-    // log_debug!{ "  completing substitution" }
-    for (rep, vars) in self.rep_to_vars.drain() {
-      // log_debug!{"  - rep {}", rep}
-      let term = if let Some(term) = self.rep_to_stable_term.get(& rep) {
-        clause.vars[rep].active = false ;
-        term.clone()
-      } else {
-        debug_assert!( clause.vars[rep].active ) ;
-        term::var(rep, clause[rep].typ.clone())
-      } ;
-      for var in vars {
-        if var != rep {
-          // log_debug!{"    var: {}", var}
-          clause.vars[var].active = false ;
-          let _prev = self.rep_to_stable_term.insert(var, term.clone()) ;
-          debug_assert_eq!( _prev, None )
-        }
-      }
-    }
-    if_log!{ @4
-      for (rep, term) in & self.rep_to_stable_term {
-        log!{ @4 "{} -> {}", rep, term }
-      }
-    }
-
-    for term in self.terms_to_add.drain(0..) {
-      clause.insert_term(term) ;
-    }
-
-    clause.subst(& self.rep_to_stable_term) ;
-
-    Ok(false)
+    Ok(())
   }
 
 }
