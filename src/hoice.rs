@@ -256,8 +256,9 @@ pub fn read_and_work<R: ::std::io::Read>(
             },
             Err(ref e) if e.is_unknown() => {
               println!("unknown") ;
-              print_stats("top", profiler) ;
-              ::std::process::exit(0)
+              None
+              // print_stats("top", profiler) ;
+              // ::std::process::exit(0)
             },
             Err(e) => bail!(e),
           }

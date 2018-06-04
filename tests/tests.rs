@@ -24,13 +24,6 @@ macro_rules! run {
           pref = "  "
         }
       }
-      let mut file = ::std::fs::OpenOptions::new().write(true).create(true).truncate(true).open("blah").unwrap() ;
-      writeln!(file, "ERROR") ;
-      for e in e.iter() {
-        for line in format!("{}", e).lines() {
-          writeln!(file, "{}", line).unwrap()
-        }
-      }
       panic!("failure")
     }
   ) ;
