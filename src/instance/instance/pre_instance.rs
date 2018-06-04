@@ -1858,7 +1858,7 @@ impl ClauseSimplifier {
 
   /// Propagates equalities in a clause.
   pub fn clause_propagate(
-    & mut self, clause: & mut Clause, preds: & PrdInfos
+    & mut self, clause: & mut Clause, _preds: & PrdInfos
   ) -> Res<()> {
     debug_assert! { self.terms_to_add.is_empty() }
     debug_assert! { self.subst.is_empty() }
@@ -1866,7 +1866,7 @@ impl ClauseSimplifier {
 
     let mut eq = None ;
 
-    log! { @4 "working on {}", clause.to_string_info( preds ).unwrap() }
+    log! { @4 "working on {}", clause.to_string_info( _preds ).unwrap() }
 
     let mut changed = false ;
 
@@ -1972,7 +1972,7 @@ impl ClauseSimplifier {
             clause.insert_term(term) ;
           }
           changed = clause.subst(& self.subst) ;
-          log! { @5 "yielding {}", clause.to_string_info( preds ).unwrap() }
+          log! { @5 "yielding {}", clause.to_string_info( _preds ).unwrap() }
           for (var, _) in self.subst.drain() {
             clause.deactivate(var) ?
           }
