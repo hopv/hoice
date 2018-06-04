@@ -597,7 +597,8 @@ impl<'a> Teacher<'a> {
 
   /// Retrieves the unsat core, if any.
   pub fn unsat_core(& mut self) -> UnsatRes {
-    UnsatRes::new( self.data.sample_graph() )
+    // UnsatRes::new( self.data.sample_graph() )
+    UnsatRes::new( None )
   }
 
   /// Initial check, where all candidates are `true`.

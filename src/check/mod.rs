@@ -334,7 +334,6 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
 /// Checks a `hoice` run, script from a file, model from a string.
 ///
 /// This is currently only used for testing purposes.
-#[cfg(test)]
 pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
   input_file: P, model: & str
 ) -> Res<()> {

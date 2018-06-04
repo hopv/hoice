@@ -43,9 +43,6 @@ pub mod check ;
 pub mod split ;
 pub mod unsat_core ;
 
-#[cfg( all(test, not(windows)) )]
-mod tests ;
-
 use common::* ;
 use instance::Instance ;
 

@@ -891,10 +891,7 @@ impl Instance {
       )
     }
     if let Some((pred, _)) = self.clauses[clause].rhs() {
-      let was_there = self.pred_to_clauses[pred].1.remove(& clause) ;
-      debug_assert!(
-        was_there || self.is_known(pred)
-      )
+      self.pred_to_clauses[pred].1.remove(& clause) ;
     }
     // Relink the last clause as its index is going to be `clause`. Except if
     // `clause` is already the last one.

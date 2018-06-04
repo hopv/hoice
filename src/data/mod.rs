@@ -7,7 +7,7 @@ use common::{
   },
 } ;
 use learning::ice::data::CData ;
-use unsat_core::sample_graph::SampleGraph ;
+// use unsat_core::sample_graph::SampleGraph ;
 
 pub mod sample ;
 pub mod constraint ;
@@ -39,10 +39,10 @@ pub struct Data {
   staged: Staged,
   /// Constraint info.
   cstr_info: CstrInfo,
-  /// Sample dependency graph for unsat cores extraction.
-  ///
-  /// Different from `None` iff `conf.unsat_cores()`
-  graph: Option<SampleGraph>,
+  // /// Sample dependency graph for unsat cores extraction.
+  // ///
+  // /// Different from `None` iff `conf.unsat_cores()`
+  // graph: Option<SampleGraph>,
 
   /// Profiler.
   _profiler: Profiler,
@@ -59,7 +59,7 @@ impl Clone for Data {
 
       staged: self.staged.clone(), // Empty anyway.
       cstr_info: self.cstr_info.clone(),
-      graph: None,
+      // graph: None,
       _profiler: Profiler::new(),
     }
   }
@@ -97,18 +97,18 @@ impl Data {
       pos.push( VarValsSet::with_capacity(103) ) ;
       neg.push( VarValsSet::with_capacity(103) ) ;
     }
-    let track_samples = instance.track_samples() ;
+    // let track_samples = instance.track_samples() ;
 
     let constraints = CstrMap::with_capacity(103) ;
     Data {
       instance, pos, neg, constraints, map,
       staged: Staged::with_capacity(pred_count),
       cstr_info: CstrInfo::new(),
-      graph: if track_samples {
-        Some( SampleGraph::new() )
-      } else {
-        None
-      },
+      // graph: if track_samples {
+      //   Some( SampleGraph::new() )
+      // } else {
+      //   None
+      // },
       _profiler: Profiler::new(),
     }
   }
@@ -120,26 +120,26 @@ impl Data {
 
   /// Destroys the data and returns profiling info.
   pub fn destroy(self) -> Profiler {
-    let pos_len = self.pos.iter().fold(
+    let _pos_len = self.pos.iter().fold(
       0, |acc, samples| acc + samples.len()
     ) ;
-    let neg_len = self.neg.iter().fold(
+    let _neg_len = self.neg.iter().fold(
       0, |acc, samples| acc + samples.len()
     ) ;
-    let all = pos_len + neg_len + self.map.iter().fold(
+    let _all = _pos_len + _neg_len + self.map.iter().fold(
       0, |acc, map| acc + map.len()
     ) ;
     profile! {
       self "> constraints" => add self.constraints.len()
     }
     profile! {
-      self "> pos samples" => add pos_len
+      self "> pos samples" => add _pos_len
     }
     profile! {
-      self "> neg samples" => add neg_len
+      self "> neg samples" => add _neg_len
     }
     profile! {
-      self "> all samples" => add all
+      self "> all samples" => add _all
     }
     self._profiler
   }
@@ -160,16 +160,16 @@ impl Data {
     )
   }
 
-  /// The sample graph, used for unsat cores.
-  pub fn sample_graph(& mut self) -> Option<SampleGraph> {
-    if let Some(ref mut graph) = self.graph {
-      let mut old_graph = SampleGraph::new() ;
-      ::std::mem::swap(graph, & mut old_graph) ;
-      Some(old_graph)
-    } else {
-      None
-    }
-  }
+  // /// The sample graph, used for unsat cores.
+  // pub fn sample_graph(& mut self) -> Option<SampleGraph> {
+  //   if let Some(ref mut graph) = self.graph {
+  //     let mut old_graph = SampleGraph::new() ;
+  //     ::std::mem::swap(graph, & mut old_graph) ;
+  //     Some(old_graph)
+  //   } else {
+  //     None
+  //   }
+  // }
 
   /// Clones the new/modded constraints to create a new `Data`.
   ///
@@ -206,13 +206,13 @@ impl Data {
         self.staged.add_neg(pred, sample) ;
       }
     }
-    if let Some(graph) = self.graph.as_mut() {
-      if let Some(other) = other.graph {
-        graph.merge(other)
-      } else {
-        bail!("inconsistent sample dependency tracking")
-      }
-    }
+    // if let Some(graph) = self.graph.as_mut() {
+    //   if let Some(other) = other.graph {
+    //     graph.merge(other)
+    //   } else {
+    //     bail!("inconsistent sample dependency tracking")
+    //   }
+    // }
     self.propagate()
   }
 
@@ -308,15 +308,15 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_pos(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals
+    & mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
     if self.add_pos_untracked(pred, args.clone()) {
-      if let Some(graph) = self.graph.as_mut() {
-        graph.add(
-          pred, self.instance[clause].rhs().unwrap().1.clone(),
-          args.clone(), clause, PrdHMap::new()
-        )
-      }
+      // if let Some(graph) = self.graph.as_mut() {
+      //   graph.add(
+      //     pred, self.instance[clause].rhs().unwrap().1.clone(),
+      //     args.clone(), clause, PrdHMap::new()
+      //   )
+      // }
       true
     } else {
       false
@@ -339,28 +339,28 @@ impl Data {
   ///
   /// Does not propagate.
   pub fn add_neg(
-    & mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals
+    & mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
     if self.add_neg_untracked(pred, args.clone()) {
-      if let Some(graph) = self.graph.as_mut() {
-        let mut lhs = PrdHMap::with_capacity(1) ;
-        let mut farg_map = HConMap::new() ;
-        debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
+      // if let Some(graph) = self.graph.as_mut() {
+      //   let mut lhs = PrdHMap::with_capacity(1) ;
+      //   let mut farg_map = HConMap::new() ;
+      //   // debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
 
-        let (
-          p, argss
-        ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
-        debug_assert_eq! { pred, * p }
-        debug_assert_eq! { 1, argss.len() }
-        let prev = farg_map.insert(
-          argss.iter().next().unwrap().clone(), args
-        ) ;
-        debug_assert! { prev.is_none() }
+      //   let (
+      //     p, argss
+      //   ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
+      //   debug_assert_eq! { pred, * p }
+      //   debug_assert_eq! { 1, argss.len() }
+      //   let prev = farg_map.insert(
+      //     argss.iter().next().unwrap().clone(), args
+      //   ) ;
+      //   debug_assert! { prev.is_none() }
 
-        let prev = lhs.insert(pred, farg_map) ;
-        debug_assert! { prev.is_none() }
-        graph.add_neg(clause, lhs)
-      }
+      //   let prev = lhs.insert(pred, farg_map) ;
+      //   debug_assert! { prev.is_none() }
+      //   graph.add_neg(clause, lhs)
+      // }
       true
     } else {
       false
@@ -760,7 +760,7 @@ impl Data {
   ///
   /// - propagates staged samples beforehand
   pub fn add_cstr(
-    & mut self, clause: ClsIdx,
+    & mut self, _clause: ClsIdx,
     lhs: Vec<(PrdIdx, RVarVals)>, rhs: Option<(PrdIdx, RVarVals)>
   ) -> Res< bool > {
     profile!(
@@ -787,22 +787,22 @@ impl Data {
     let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
     // This stores the information for the unsat core, if needed. That is, if
     // `self.graph` is some.
-    let mut final_lhs = self.graph.as_ref().map(
-      |_| PrdHMap::with_capacity( lhs.len() )
-    ) ;
-    let mut final_rhs = self.graph.as_ref().map(
-      |_| None
-    ) ;
+    // let mut final_lhs = self.graph.as_ref().map(
+    //   |_| PrdHMap::with_capacity( lhs.len() )
+    // ) ;
+    // let mut final_rhs = self.graph.as_ref().map(
+    //   |_| None
+    // ) ;
 
     // Look at the lhs and remove stuff we know is true.
     'lhs_iter: for & (pred, ref args) in & lhs {
       let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
       // Remember stuff for the unsat core.
-      final_lhs.as_mut().map(
-        |lhs| lhs.entry(pred).or_insert_with(
-          || vec![]
-        ).push( args.clone() )
-      ) ;
+      // final_lhs.as_mut().map(
+      //   |lhs| lhs.entry(pred).or_insert_with(
+      //     || vec![]
+      //   ).push( args.clone() )
+      // ) ;
 
       // If no partial examples and sample is new, no need to check anything.
       if conf.teacher.partial || ! is_new {
@@ -832,12 +832,12 @@ impl Data {
       'get_rhs: loop {
         let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
         // Remember stuff for the unsat core.
-        final_rhs.as_mut().map(
-          |opt| {
-            debug_assert! { opt.is_none() }
-            * opt = Some((pred, args.clone()))
-          }
-        ) ;
+        // final_rhs.as_mut().map(
+        //   |opt| {
+        //     debug_assert! { opt.is_none() }
+        //     * opt = Some((pred, args.clone()))
+        //   }
+        // ) ;
 
         // If no partial examples and sample is new, no need to check anything.
         if conf.teacher.partial || ! is_new {
@@ -872,48 +872,48 @@ impl Data {
 
     nu_lhs.shrink_to_fit() ;
 
-    // Do we need to remember stuff for the unsat core?
-    if let Some(lhs) = final_lhs {
-      let rhs = if let Some(rhs) = final_rhs {
-        rhs
-      } else {
-        bail!("constructing unsat core, but rhs is inexistant")
-      } ;
-      let graph = if let Some(graph) = self.graph.as_mut() {
-        graph
-      } else {
-        bail!("constructing unsat core, but sample dependency graph is `None`")
-      } ;
+    // // Do we need to remember stuff for the unsat core?
+    // if let Some(lhs) = final_lhs {
+    //   let rhs = if let Some(rhs) = final_rhs {
+    //     rhs
+    //   } else {
+    //     bail!("constructing unsat core, but rhs is inexistant")
+    //   } ;
+    //   let graph = if let Some(graph) = self.graph.as_mut() {
+    //     graph
+    //   } else {
+    //     bail!("constructing unsat core, but sample dependency graph is `None`")
+    //   } ;
 
-      let mut full_lhs = PrdHMap::with_capacity(lhs.len()) ;
+    //   let mut full_lhs = PrdHMap::with_capacity(lhs.len()) ;
 
-      let clause_preds = self.instance[clause].lhs_preds() ;
+    //   let clause_preds = self.instance[clause].lhs_preds() ;
 
-      debug_assert_eq! { lhs.len(), clause_preds.len() }
+    //   debug_assert_eq! { lhs.len(), clause_preds.len() }
 
-      for (
-        (c_pred, c_argss), (pred, argss)
-      ) in clause_preds.iter().zip( lhs.into_iter() ) {
-        let mut this_pred = HConMap::new() ;
-        debug_assert_eq! { * c_pred, pred }
-        debug_assert_eq! { c_argss.len(), argss.len() }
-        for (f_args, c_args) in c_argss.iter().zip( argss.into_iter() ) {
-          let prev = this_pred.insert(f_args.clone(), c_args) ;
-          debug_assert! { prev.is_none() }
-        }
-        let prev = full_lhs.insert(pred, this_pred) ;
-        debug_assert! { prev.is_none() }
-      }
+    //   for (
+    //     (c_pred, c_argss), (pred, argss)
+    //   ) in clause_preds.iter().zip( lhs.into_iter() ) {
+    //     let mut this_pred = HConMap::new() ;
+    //     debug_assert_eq! { * c_pred, pred }
+    //     debug_assert_eq! { c_argss.len(), argss.len() }
+    //     for (f_args, c_args) in c_argss.iter().zip( argss.into_iter() ) {
+    //       let prev = this_pred.insert(f_args.clone(), c_args) ;
+    //       debug_assert! { prev.is_none() }
+    //     }
+    //     let prev = full_lhs.insert(pred, this_pred) ;
+    //     debug_assert! { prev.is_none() }
+    //   }
 
-      if let Some((pred, args)) = rhs {
-        graph.add(
-          pred, self.instance[clause].rhs().unwrap().1.clone(),
-          args, clause, full_lhs
-        )
-      } else {
-        graph.add_neg(clause, full_lhs)
-      }
-    }
+    //   if let Some((pred, args)) = rhs {
+    //     graph.add(
+    //       pred, self.instance[clause].rhs().unwrap().1.clone(),
+    //       args, clause, full_lhs
+    //     )
+    //   } else {
+    //     graph.add_neg(clause, full_lhs)
+    //   }
+    // }
 
     let mut constraint = Constraint::new(nu_lhs, nu_rhs) ;
     constraint.check().chain_err(
@@ -1397,9 +1397,9 @@ impl<'a> PebcakFmt<'a> for Data {
       write!(w, "  #{}\n", cstr) ?
     }
     write!(w, ")\n") ? ;
-    if let Some(graph) = self.graph.as_ref() {
-      graph.write(w, "", & self.instance) ? ;
-    }
+    // if let Some(graph) = self.graph.as_ref() {
+    //   graph.write(w, "", & self.instance) ? ;
+    // }
     Ok(())
   }
 }
