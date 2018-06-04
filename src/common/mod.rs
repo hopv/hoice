@@ -77,12 +77,6 @@ lazy_static!{
 /// Stdout.
 pub use ::std::io::stdout ;
 
-/// Resets whatever flags, set-option and such need resetting.
-pub fn reset() {
-  conf.init() ;
-  ()
-}
-
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg(feature = "bench")]
 pub fn print_stats(_: & 'static str, _: Profiler) {}

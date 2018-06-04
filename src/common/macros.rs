@@ -280,6 +280,11 @@ macro_rules! profile {
       $stuff$(.$prof)*.stat_do( $stat, |val| val + $e )
     }
   ) ;
+  ( | $stuff:ident $(. $prof:ident)* | $stat:expr => set $e:expr ) => (
+    if conf.stats {
+      $stuff$(.$prof)*.stat_do( $stat, |val| val + $e )
+    }
+  ) ;
   ( | $stuff:ident $(. $prof:ident)* |
     $meth:ident $( $scope:expr ),+ $(,)*
   ) => (

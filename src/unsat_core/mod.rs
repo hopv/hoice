@@ -64,7 +64,7 @@ impl UnsatRes {
     & mut self, w: & mut W, instance: & Instance
   ) -> Res<()> {
     let core = self.get_core(& instance) ? ;
-    if ! conf.unsat_cores() {
+    if ! instance.unsat_cores() {
       bail!(
         "cannot produce unsat cores without `{}`",
         conf.emph("(set-option :produce-unsat-cores true)")
@@ -91,7 +91,7 @@ impl UnsatRes {
       )
     ) ;
     let nu_self = match self {
-      _ if ! conf.proofs() => bail!( err() ),
+      _ if ! instance.proofs() => bail!( err() ),
       UnsatRes::None => bail!( err() ),
       UnsatRes::Graph(graph) => {
         let proof = graph.get_proof(instance) ? ;

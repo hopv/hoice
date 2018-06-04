@@ -89,6 +89,19 @@ pub struct Instance {
 
   /// Maps **original** clause indexes to their optional name.
   old_names: ClsHMap<String>,
+
+  /// Print success.
+  ///
+  /// Can only be set by `(set-option :print-success true)`.
+  print_success: bool,
+  /// Unsat core production.
+  ///
+  /// Can only be set by `(set-option :produce-unsat-cores true)`.
+  unsat_cores: bool,
+  /// Unsat core production.
+  ///
+  /// Can only be set by `(set-option :produce-proofs true)`.
+  proofs: bool,
 }
 impl Instance {
   /// Instance constructor.
@@ -115,6 +128,9 @@ impl Instance {
       split: None,
       define_funs: HashMap::new(),
       old_names: ClsHMap::with_capacity(clause_capa),
+      print_success: false,
+      unsat_cores: false,
+      proofs: false,
     }
   }
 
@@ -148,6 +164,9 @@ impl Instance {
       split: Some(clause),
       define_funs: self.define_funs.clone(),
       old_names: self.old_names.clone(),
+      print_success: false,
+      unsat_cores: false,
+      proofs: false,
     }
   }
 
@@ -455,7 +474,7 @@ impl Instance {
       self.preds.len()
     ) ;
 
-    for (idx, clause) in self.clauses.index_iter() {
+    for (idx, clause) in self.clauses.index_iter_mut() {
       if clause.rhs().is_none() {
         if clause.lhs_pred_apps_len() == 1 {
           let is_new = self.strict_neg_clauses.insert(idx) ;
@@ -472,7 +491,7 @@ impl Instance {
         ) {
           bail!(
             "{}\nfound a clause with no predicate during finalization",
-            clause.to_string_info(& self.preds()).unwrap()
+            clause.to_string_info(& self.preds).unwrap()
           )
         }
         let is_new = self.pos_clauses.insert(idx) ;
@@ -1929,6 +1948,76 @@ impl Instance {
     writeln!(w, ")") ? ;
     Ok(())
   }
+
+
+
+
+  /// Sets print-success flag.
+  pub fn set_print_success(& mut self, b: bool) {
+    self.print_success = b
+  }
+  /// Print-success flag accessor.
+  pub fn print_success(& self) -> bool {
+    self.print_success
+  }
+  /// Sets unsat-cores flag.
+  pub fn set_unsat_cores(& mut self, b: bool) {
+    self.unsat_cores = b
+  }
+  /// Unsat-cores flag.
+  pub fn unsat_cores(& self) -> bool {
+    self.unsat_cores
+  }
+  /// Sets proofs flag.
+  pub fn set_proofs(& mut self, b: bool) {
+    self.proofs = b
+  }
+  /// Unsat-cores flag.
+  pub fn proofs(& self) -> bool {
+    self.proofs
+  }
+
+  /// True if the teacher needs to maintain a sample graph (unsat
+  /// cores/proofs).
+  pub fn track_samples(& self) -> bool {
+    self.unsat_cores() || self.proofs()
+  }
+
+
+  /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
+  /// an error.
+  fn bool_of_str(s: & str) -> Res<bool> {
+    match s {
+      "true" => Ok(true),
+      "false" => Ok(false),
+      _ => bail!("expected boolean `true/false`, got `{}`", s),
+    }
+  }
+  
+
+
+  /// Sets an option.
+  pub fn set_option(& mut self, flag: & str, val: & str) -> Res<()> {
+    let flag_err = || format!("while handling set-option for {}", flag) ;
+    match flag {
+      "print-success" => self.set_print_success(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      "produce-unsat-cores" => self.set_unsat_cores(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      "produce-proofs" => self.set_proofs(
+        Self::bool_of_str(& val).chain_err(flag_err) ?
+      ),
+      _ => warn!(
+        "ignoring (set-option :{} {}): unknown flag {}", flag, val, flag
+      ),
+    }
+    Ok(())
+  }
+
+
+
 }
 impl ::std::ops::Index<PrdIdx> for Instance {
   type Output = PrdInfo ;

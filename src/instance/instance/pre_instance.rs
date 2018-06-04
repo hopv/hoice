@@ -820,6 +820,46 @@ impl<'a> PreInstance<'a> {
       "force pred left on {}...", conf.emph(& self.instance[pred].name)
     }
 
+
+    // Forget the rhs clause.
+    log_debug! {
+      "forgetting rhs clause"
+    }
+    debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.instance.unlink_pred_rhs(
+      pred, & mut self.clauses_to_simplify
+    ) ;
+    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
+
+      // Fail if illegal.
+      if self.clauses_to_simplify.pop().is_some() {
+        bail!(
+          "illegal context for `force_pred_left`, \
+          {} appears in more than one rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      if self.instance.preds_of_clause(clause).0.get(& pred).is_some() {
+        bail!(
+          "illegal context for `force_pred_left`, \
+          {} appears as both lhs and rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+
+      clause
+    } else {
+      bail!(
+        "illegal context for `force_pred_left`, \
+        {} appears in no rhs", conf.emph(
+          & self.instance[pred].name
+        )
+      )
+    } ;
+
+    info.clauses_rmed += 1 ;
+    self.instance.forget_clause(clause_to_rm) ? ;
+
     // Update lhs clauses.
     debug_assert! { self.clauses_to_simplify.is_empty() }
     self.instance.unlink_pred_lhs(
@@ -888,46 +928,6 @@ impl<'a> PreInstance<'a> {
 
     }
 
-
-    info += self.simplify_clauses() ? ;
-
-
-    // Forget the rhs clause.
-    log_debug! {
-      "forgetting rhs clause"
-    }
-    debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.instance.unlink_pred_rhs(
-      pred, & mut self.clauses_to_simplify
-    ) ;
-    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
-
-      // Fail if illegal.
-      if self.clauses_to_simplify.pop().is_some() {
-        bail!(
-          "illegal context for `force_pred_left`, \
-          {} appears in more than one rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      if self.instance.preds_of_clause(clause).0.get(& pred).is_some() {
-        bail!(
-          "illegal context for `force_pred_left`, \
-          {} appears as both lhs and rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-
-      clause
-    } else {
-      bail!(
-        "illegal context for `force_pred_left`, \
-        {} appears in no rhs", conf.emph(
-          & self.instance[pred].name
-        )
-      )
-    } ;
-
     // Actually force the predicate.
     self.force_pred(
       pred,
@@ -936,8 +936,8 @@ impl<'a> PreInstance<'a> {
       )
     ) ? ;
 
-    info.clauses_rmed += 1 ;
-    self.instance.forget_clause(clause_to_rm) ? ;
+
+    info += self.simplify_clauses() ? ;
 
     self.check("after `force_pred_left`") ? ;
 
@@ -2225,7 +2225,8 @@ impl ClauseSimplifier {
     for (rep, term) in & self.rep_to_term {
       let (nu_term, _) = term.subst_fp(& self.rep_to_term) ;
       let _prev = self.rep_to_stable_term.insert(* rep, nu_term) ;
-      debug_assert!( _prev.is_none() )
+      debug_assert!( _prev.is_none() ) ;
+      clause.vars[* rep].active = false ;
     }
 
     if_log!{ @4

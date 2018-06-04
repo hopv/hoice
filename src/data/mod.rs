@@ -97,13 +97,14 @@ impl Data {
       pos.push( VarValsSet::with_capacity(103) ) ;
       neg.push( VarValsSet::with_capacity(103) ) ;
     }
+    let track_samples = instance.track_samples() ;
 
     let constraints = CstrMap::with_capacity(103) ;
     Data {
       instance, pos, neg, constraints, map,
       staged: Staged::with_capacity(pred_count),
       cstr_info: CstrInfo::new(),
-      graph: if conf.track_samples() {
+      graph: if track_samples {
         Some( SampleGraph::new() )
       } else {
         None
@@ -119,18 +120,26 @@ impl Data {
 
   /// Destroys the data and returns profiling info.
   pub fn destroy(self) -> Profiler {
+    let pos_len = self.pos.iter().fold(
+      0, |acc, samples| acc + samples.len()
+    ) ;
+    let neg_len = self.neg.iter().fold(
+      0, |acc, samples| acc + samples.len()
+    ) ;
+    let all = pos_len + neg_len + self.map.iter().fold(
+      0, |acc, map| acc + map.len()
+    ) ;
     profile! {
       self "> constraints" => add self.constraints.len()
     }
     profile! {
-      self "> pos samples" => add self.pos.iter().fold(
-        0, |acc, samples| acc + samples.len()
-      )
+      self "> pos samples" => add pos_len
     }
     profile! {
-      self "> neg samples" => add self.neg.iter().fold(
-        0, |acc, samples| acc + samples.len()
-      )
+      self "> neg samples" => add neg_len
+    }
+    profile! {
+      self "> all samples" => add all
     }
     self._profiler
   }

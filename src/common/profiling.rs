@@ -285,6 +285,30 @@ impl Profiler {
     }
   }
 
+  /// Merges the durations of two profilers.
+  #[cfg(feature = "bench")]
+  pub fn merge_set(& mut self, _: Self) {}
+  /// Merges the durations of two profilers and sets the stats.
+  #[cfg(not(feature = "bench"))]
+  pub fn merge_set(& mut self, other: Self) {
+    let map = other.map.into_inner() ;
+    let stats = other.stats.into_inner() ;
+    let subs = other.subs.into_inner() ;
+    for sub in subs {
+      self.subs.get_mut().push(sub)
+    }
+    for (scope, (_, duration)) in map {
+      self.map.get_mut().entry(scope).or_insert_with(
+        || (None, Duration::new(0, 0))
+      ).1 += duration
+    }
+    for (scope, val) in stats {
+      * self.stats.get_mut().entry(scope).or_insert_with(
+        || 0
+      ) = val
+    }
+  }
+
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]
   pub fn stat_do<F, S>(& self, stat: S, f: F)

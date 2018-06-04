@@ -267,7 +267,7 @@ impl<'core> IceLearner<'core> {
     use rand::Rng ;
 
     ::std::mem::swap(& mut data, & mut self.data) ;
-    self.core.merge_prof( "data", data.destroy() ) ;
+    self.core.merge_set_prof( "data", data.destroy() ) ;
 
     if self.count % conf.ice.gain_pivot_mod == 0 {
       self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
@@ -938,6 +938,7 @@ impl<'core> IceLearner<'core> {
 
       let self_core = & self.core ;
       let known_quals = & mut self.known_quals ;
+      // let gain_pivot = self.gain_pivot ;
       let gain_pivot_synth = self.gain_pivot_synth ;
       known_quals.clear() ;
 
@@ -963,7 +964,7 @@ impl<'core> IceLearner<'core> {
             ) ?
           } ;
 
-          if conf.ice.qual_step {
+          if conf.ice.qual_step || conf.ice.qual_synth_step {
             let _ = self_core.msg(
               format!(
                 "{}: {} (synthesis)", term, gain.map(
@@ -977,7 +978,7 @@ impl<'core> IceLearner<'core> {
 
           if let Some(gain) = gain {
             // println!("  - {}", gain) ;
-            if conf.ice.add_synth && gain == 1.0 {
+            if conf.ice.add_synth && gain >= 1.0 {
               msg! { self_core => "  adding synth qual {}", term }
               quals.insert(term.clone(), pred) ? ;
               ()

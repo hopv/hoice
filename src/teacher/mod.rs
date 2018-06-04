@@ -712,7 +712,7 @@ impl<'a> Teacher<'a> {
     let instance = self.instance.clone() ;
 
     // True if we got some positive or negative samples.
-    let mut got_pos_neg_samples = false ;
+    // let mut got_pos_neg_samples = false ;
 
     macro_rules! run {
       ($clause:expr, $bias:expr) => (
@@ -720,20 +720,21 @@ impl<'a> Teacher<'a> {
           self.solver.push(1) ? ;
 
           let cexs = self.get_cex(
-            * $clause, & true_preds, & false_preds, $bias, got_pos_neg_samples
+            * $clause, & true_preds, & false_preds, $bias,
+            // got_pos_neg_samples &&
+            conf.teacher.max_bias
           ).chain_err(
             || format!("while getting counterexample for clause {}", $clause)
           ) ? ;
 
           self.solver.pop(1) ? ;
 
-          got_pos_neg_samples = got_pos_neg_samples || (
-            cexs.iter().any(
-              |(_, bias)| ! bias.is_none()
-            )
-          ) ;
-
           if ! cexs.is_empty() {
+            // got_pos_neg_samples = got_pos_neg_samples || (
+            //   cexs.iter().any(
+            //     |(_, bias)| ! bias.is_none()
+            //   )
+            // ) ;
             let prev = map.insert(* $clause, cexs) ;
             debug_assert_eq!(prev, None)
           }
@@ -757,7 +758,7 @@ impl<'a> Teacher<'a> {
       run!(clause, false)
     }
 
-    got_pos_neg_samples = ! map.is_empty() ;
+    // got_pos_neg_samples = ! map.is_empty() ;
 
     if map.is_empty() {
       log! { @verb
@@ -783,24 +784,16 @@ impl<'a> Teacher<'a> {
       )
     }
 
-    if got_pos_neg_samples {
-      println!("got pos/neg samples") ;
-      let sum_b4 = map.iter().fold(
-        0, |acc, (_, cexs)| acc + cexs.len()
-      ) ;
-      map.retain(
-        |_, cexs| {
-          cexs.retain( |(_, bias)| ! bias.is_none() ) ;
-          ! cexs.is_empty()
-        }
-      ) ;
-      let sum = map.iter().fold(
-        0, |acc, (_, cexs)| acc + cexs.len()
-      ) ;
-      println!("  {} -> {}", sum_b4, sum)
-    }
+    // if got_pos_neg_samples && conf.teacher.max_bias {
+    //   map.retain(
+    //     |_, cexs| {
+    //       cexs.retain( |(_, bias)| ! bias.is_none() ) ;
+    //       ! cexs.is_empty()
+    //     }
+    //   )
+    // }
 
-    if self.count % 50 == 0 {
+    if self.count % 100 == 0 {
       self.solver.reset() ?
     } else {
       self.solver.pop(1) ?
@@ -815,11 +808,6 @@ impl<'a> Teacher<'a> {
     clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
     bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
-    let partial = conf.teacher.partial && (
-      self.instance.pos_clauses().contains(& clause_idx) ||
-      self.instance.strict_neg_clauses().contains(& clause_idx)
-    ) ;
-
     log! { @debug "working on clause #{}", clause_idx }
 
     // Macro to avoid borrowing `self.instance`.
@@ -855,8 +843,11 @@ impl<'a> Teacher<'a> {
           profile!{ self tick "cexs", "model" }
           let model = self.solver.get_model() ? ;
           let model = Parser.fix_model(model) ? ;
+          // for (var, _, val) in & model {
+          //   println!("v_{} -> {}", var,)
+          // }
           let cex = Cex::of_model(
-            clause!().vars(), model, partial
+            clause!().vars(), model, $bias.is_none() || conf.teacher.partial
           ) ? ;
           profile!{ self mark "cexs", "model" }
 
@@ -919,6 +910,7 @@ impl<'a> Teacher<'a> {
         let biased = profile! { 
           self wrap {
             self.nu_bias_applications(clause_idx, bias_only)
+            // self.bias_applications(clause_idx)
           } "cexs", "bias generation"
         } ? ;
         log! { @3 "working on {} biased checks", biased.len() }
@@ -928,7 +920,7 @@ impl<'a> Teacher<'a> {
       }
 
       // Add the unbiased cex back if bias checks yielded nothing.
-      if cexs.is_empty() {
+      if ! conf.teacher.max_bias || cexs.is_empty() {
         if let Some(unbiased_cex) = unbiased_cex {
           cexs.push(unbiased_cex)
         }
@@ -1091,7 +1083,9 @@ impl<'a> Teacher<'a> {
         Bias::Non
       } ;
 
-      actlits.push( (actlit, bias) )
+      if ! bias.is_none() || ! bias_only {
+        actlits.push( (actlit, bias) )
+      }
     }
 
 
@@ -1137,7 +1131,7 @@ impl<'a> Teacher<'a> {
           }
         }
 
-      } else if lhs_preds_with_no_pos.iter().fold(
+      } else if ! bias_only || lhs_preds_with_no_pos.iter().fold(
         // Skip if only generating biased checksat and there's more than one
         // application without positive data.
         0, |acc, (_, argss)| acc + argss.len()
@@ -1227,7 +1221,7 @@ impl<'a> Teacher<'a> {
   /// (bias_cexs configuration)
   pub fn bias_applications(
     & mut self, clause_idx: ClsIdx
-  ) -> Res<(Option<Actlit>, Option<Actlit>)> {
+  ) -> Res<Vec<(Actlit, Bias)>> {
     use common::smt::DisjArgs ;
 
     let clause = & self.instance[clause_idx] ;
@@ -1235,7 +1229,7 @@ impl<'a> Teacher<'a> {
     // Active and not a positive constraint?
     if ! conf.teacher.bias_cexs
     || clause.lhs_preds().is_empty() {
-      return Ok( (None, None) )
+      return Ok( vec![] )
     }
 
     let rhs_actlit = if let Some((rhs_pred, rhs_args)) = clause.rhs() {
@@ -1256,7 +1250,7 @@ impl<'a> Teacher<'a> {
       }
     } else if clause.lhs_pred_apps_len() == 1 {
       // Negative constraint, skipping.
-      return Ok( (None, None) )
+      return Ok( vec![] )
     } else {
       None
     } ;
@@ -1287,6 +1281,16 @@ impl<'a> Teacher<'a> {
       lhs_actlit = Some(actlit)
     }
 
-    Ok( (lhs_actlit, rhs_actlit) )
+    let mut res = vec![] ;
+
+    if let Some(actlit) = rhs_actlit {
+      res.push((actlit, Bias::Non))
+    }
+
+    if let Some(actlit) = lhs_actlit {
+      res.push((actlit, Bias::Non))
+    }
+
+    Ok(res)
   }
 }

@@ -1,9 +1,6 @@
 //! Hoice's global configuration.
 
-use std::{
-  path::PathBuf,
-  sync::{ Arc, RwLock },
-} ;
+use std::path::PathBuf ;
 
 use rsmt2::SmtConf as SolverConf ;
 
@@ -632,6 +629,8 @@ pub struct IceConf {
   pub add_synth: bool,
   /// Lockstep for qualifiers.
   pub qual_step: bool,
+  /// Lockstep for synthesized qualifiers only.
+  pub qual_synth_step: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -804,6 +803,18 @@ impl IceConf {
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("qual_synth_step").long("--qual_synth_step").help(
+        "lockstep qualifier selection (synthesis only)"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
     )
   }
 
@@ -877,12 +888,13 @@ impl IceConf {
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
     let qual_step = bool_of_matches(matches, "qual_step") ;
+    let qual_synth_step = bool_of_matches(matches, "qual_synth_step") ;
 
     IceConf {
       simple_gain_ratio, sort_preds, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
-      pure_synth, mine_conjs, add_synth, qual_step
+      pure_synth, mine_conjs, add_synth, qual_step, qual_synth_step
     }
   }
 }
@@ -900,6 +912,8 @@ pub struct TeacherConf {
   pub assistant: bool,
   /// Try to find implication constraints related to existing samples first.
   pub bias_cexs: bool,
+  /// Maximize bias: remove all constraints when there are pos/neg cexs.
+  pub max_bias: bool,
   /// Allow partial samples.
   pub partial: bool,
 }
@@ -952,6 +966,21 @@ impl TeacherConf {
 
     ).arg(
 
+      Arg::with_name("max_bias").long("--max_bias").help(
+        "(de)activate constraint pruning when there's at least one \
+        pos/neg sample"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
+    ).arg(
+
       Arg::with_name("partial").long("--partial").help(
         "(de)activate partial samples"
       ).validator(
@@ -970,10 +999,11 @@ impl TeacherConf {
     let step = bool_of_matches(matches, "teach_step") ;
     let assistant = bool_of_matches(matches, "assistant") ;
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
+    let max_bias = bool_of_matches(matches, "max_bias") ;
     let partial = bool_of_matches(matches, "partial") ;
 
     TeacherConf {
-      step, assistant, bias_cexs, partial
+      step, assistant, bias_cexs, max_bias, partial
     }
   }
 }
@@ -1012,19 +1042,6 @@ pub struct Config {
   /// Level of term simplification.
   pub term_simpl: usize,
 
-  /// Print success.
-  ///
-  /// Can only be set by `(set-option :print-success true)`.
-  print_success: Arc<RwLock<bool>>,
-  /// Unsat core production.
-  ///
-  /// Can only be set by `(set-option :produce-unsat-cores true)`.
-  unsat_cores: Arc<RwLock<bool>>,
-  /// Unsat core production.
-  ///
-  /// Can only be set by `(set-option :produce-proofs true)`.
-  proofs: Arc<RwLock<bool>>,
-
   /// Instance and factory configuration.
   pub instance: InstanceConf,
   /// Pre-processing configuration.
@@ -1048,103 +1065,6 @@ impl Config {
       path.push( format!("split_on_clause_{}", clause) )
     }
     path
-  }
-
-  /// Reverts `set-option`-related flags to default.
-  pub fn init(& self) {
-    self.set_print_success(::common::consts::values::default::print_success) ;
-    self.set_unsat_cores(::common::consts::values::default::unsat_cores) ;
-    self.set_proofs(::common::consts::values::default::proofs) ;
-    ()
-  }
-
-
-  /// Sets print-success flag.
-  pub fn set_print_success(& self, b: bool) {
-    if let Ok(mut flag) = self.print_success.write() {
-      * flag = b
-    } else {
-      panic!("failed to set print-success conf flag")
-    }
-  }
-  /// Print-success flag accessor.
-  pub fn print_success(& self) -> bool {
-    if let Ok(flag) = self.print_success.read() {
-      * flag
-    } else {
-      panic!("failed to retrieve print-success conf flag")
-    }
-  }
-  /// Sets unsat-cores flag.
-  pub fn set_unsat_cores(& self, b: bool) {
-    if let Ok(mut flag) = self.unsat_cores.write() {
-      * flag = b
-    } else {
-      panic!("failed to set unsat-cores conf flag")
-    }
-  }
-  /// Unsat-cores flag.
-  pub fn unsat_cores(& self) -> bool {
-    if let Ok(flag) = self.unsat_cores.read() {
-      * flag
-    } else {
-      panic!("failed to retrieve unsat-cores conf flag")
-    }
-  }
-  /// Sets proofs flag.
-  pub fn set_proofs(& self, b: bool) {
-    if let Ok(mut flag) = self.proofs.write() {
-      * flag = b
-    } else {
-      panic!("failed to set proofs conf flag")
-    }
-  }
-  /// Unsat-cores flag.
-  pub fn proofs(& self) -> bool {
-    if let Ok(flag) = self.proofs.read() {
-      * flag
-    } else {
-      panic!("failed to retrieve proofs conf flag")
-    }
-  }
-
-  /// True if the teacher needs to maintain a sample graph (unsat
-  /// cores/proofs).
-  pub fn track_samples(& self) -> bool {
-    self.unsat_cores() || self.proofs()
-  }
-
-
-  /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
-  /// an error.
-  fn bool_of_str(s: & str) -> Res<bool> {
-    match s {
-      "true" => Ok(true),
-      "false" => Ok(false),
-      _ => bail!("expected boolean `true/false`, got `{}`", s),
-    }
-  }
-  
-
-
-  /// Sets an option.
-  pub fn set_option(& self, flag: & str, val: & str) -> Res<()> {
-    let flag_err = || format!("while handling set-option for {}", flag) ;
-    match flag {
-      "print-success" => self.set_print_success(
-        Self::bool_of_str(& val).chain_err(flag_err) ?
-      ),
-      "produce-unsat-cores" => self.set_unsat_cores(
-        Self::bool_of_str(& val).chain_err(flag_err) ?
-      ),
-      "produce-proofs" => self.set_proofs(
-        Self::bool_of_str(& val).chain_err(flag_err) ?
-      ),
-      _ => warn!(
-        "ignoring (set-option :{} {}): unknown flag {}", flag, val, flag
-      ),
-    }
-    Ok(())
   }
 
   /// Input file.
@@ -1260,21 +1180,6 @@ impl Config {
       file, verb, stats, infer, split, split_step,
       timeout, out_dir, styles,
       check, check_eld, check_simpl, term_simpl,
-      print_success: Arc::new(
-        RwLock::new(
-          ::common::consts::values::default::print_success
-        )
-      ),
-      unsat_cores: Arc::new(
-        RwLock::new(
-          ::common::consts::values::default::unsat_cores
-        )
-      ),
-      proofs: Arc::new(
-        RwLock::new(
-          ::common::consts::values::default::proofs
-        )
-      ),
       instance, preproc, solver, ice, teacher,
     }
   }

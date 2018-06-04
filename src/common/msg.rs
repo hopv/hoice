@@ -211,6 +211,13 @@ impl MsgCore {
     ).merge(prof)
   }
 
+  /// Merges a profiler with the subprofiler `name`.
+  pub fn merge_set_prof(& self, name: & 'static str, prof: Profiler) {
+    self._subs.borrow_mut().entry(name).or_insert_with(
+      || Profiler::new()
+    ).merge_set(prof)
+  }
+
   /// Sends some candidates.
   pub fn send_candidates(
     & self, candidates: Candidates

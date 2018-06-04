@@ -2326,7 +2326,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       res = if self.set_info() ? {
         Parsed::Items
       } else if let Some((key, val)) = self.set_option() ? {
-        ::common::conf.set_option(key, val).chain_err(
+        instance.set_option(key, val).chain_err(
           || {
             self.backtrack_to(start_pos) ;
             self.error_here("in this set-option")

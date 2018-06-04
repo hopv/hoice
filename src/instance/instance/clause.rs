@@ -73,7 +73,8 @@ impl Clause {
 
   /// Sets the internal flag `preds_changed` to false.
   pub fn preds_checked(& mut self) {
-    self.preds_changed = false
+    self.preds_changed = false ;
+    self.shrink_vars()
   }
 
   /// Inserts a top term in the lhs.

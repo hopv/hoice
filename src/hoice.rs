@@ -99,8 +99,6 @@ pub fn read_and_work<R: ::std::io::Read>(
 ) -> Res< (Option<ConjModel>, Instance) > {
   use instance::parse::ItemRead ;
 
-  reset() ;
-
   let profiler = Profiler::new() ;
 
   let mut reader = ::std::io::BufReader::new(reader) ;
@@ -208,7 +206,7 @@ pub fn read_and_work<R: ::std::io::Read>(
             if unsat.as_ref().map(
               |unsat| unsat.is_none()
             ).unwrap_or(true) && (
-              conf.unsat_cores() || conf.proofs()
+              instance.unsat_cores() || instance.proofs()
             ) {
               bail!("unsat cores/proofs from preprocessing")
             }
@@ -310,12 +308,11 @@ pub fn read_and_work<R: ::std::io::Read>(
         bail!("no model available")
       },
 
-      Parsed::Items => if conf.print_success() {
+      Parsed::Items => if instance.print_success() {
         println!("success")
       },
 
       Parsed::Reset => {
-        reset() ;
         parser_cxt.reset() ;
         instance = Instance::new() ;
         model = None

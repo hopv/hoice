@@ -532,7 +532,7 @@ impl<'a> Reductor<'a> {
       run! { simplify } ;
     }
 
-    if ! conf.preproc.active || conf.track_samples() {
+    if ! conf.preproc.active || self.instance.track_samples() {
       return Ok(())
     }
 
