@@ -848,7 +848,7 @@ impl<'a> Teacher<'a> {
           //   println!("v_{} -> {}", var,)
           // }
           let cex = Cex::of_model(
-            clause!().vars(), model, $bias.is_none() || conf.teacher.partial
+            clause!().vars(), model, ! $bias.is_none() && conf.teacher.partial
           ) ? ;
           profile!{ self mark "cexs", "model" }
 

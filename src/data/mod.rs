@@ -496,7 +496,7 @@ impl Data {
     for (pred, samples) in self.pos.index_iter() {
       for sample in samples {
         for neg in & self.neg[pred] {
-          if sample.compare(neg).is_some() {
+          if sample.is_complementary(neg) {
             return Some(
               vec![(pred, sample.clone()), (pred, neg.clone())]
             )
