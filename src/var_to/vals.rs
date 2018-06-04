@@ -164,6 +164,15 @@ pub trait SubsumeExt {
   /// Returns an error if `self` and `other` do not have the same length.
   fn compare(& self, other: & Self) -> Option<Ordering> ;
 
+  /// True if two samples are complementary.
+  ///
+  /// Two samples are complementary iff for all `i`
+  ///
+  /// - `v_i` is a non-value, or
+  /// - `v'_i` is a non-value, or
+  /// - `v_1 == v'_i`.
+  fn is_complementary(& self, other: & Self) -> bool ;
+
   /// Returns true if the two samples are related.
   ///
   /// Two samples are related if they're equal or one subsumes the other.
@@ -202,6 +211,16 @@ pub trait SubsumeExt {
 }
 impl SubsumeExt for VarVals {
   type Set = VarValsSet ;
+
+  fn is_complementary(& self, other: & Self) -> bool {
+    for (val, other_val) in self.iter().zip( other.iter() ) {
+      if val.is_known() && other_val.is_known() && val != other_val {
+        return false
+      }
+    }
+    true
+  }
+
   fn compare(& self, other: & Self) -> Option<Ordering> {
     debug_assert_eq! { self.len(), other.len() }
 
