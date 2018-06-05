@@ -113,14 +113,16 @@ script:
 addons:
   apt:
     packages:
-    - binutils-dev 
+    - pip
+    - binutils-dev
     - libcurl4-openssl-dev
     - libelf-dev
     - libdw-dev
     - libiberty-dev
     - cmake
     - gcc
-    - zlib1g-dev 
+    - zlib1g-dev
+
 after_success:
   - |
     wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
