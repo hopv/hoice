@@ -50,11 +50,11 @@ before_script:
   fi
 
 script:
-  - cargo build --verbose
-  - cargo build --verbose --release
-  - cargo build --verbose --release --features bench
-  - cargo test --verbose --lib
-  - cargo test --verbose --doc
+  - cargo build
+  - cargo build --release
+  # - cargo build --release --features bench
+  - cargo test --lib
+  - cargo test --doc
 
 after_success:
 - |
