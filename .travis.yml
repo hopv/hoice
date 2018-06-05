@@ -1,142 +1,37 @@
+sudo: false
 language: rust
-
-branches:
-  only:
-    - master
 
 os:
   - linux
-  - osx
-
-rust:
-  - stable
-  # - beta
-
-sudo: false
-
-env:
-  global:
-  - RUSTFLAGS="-C link-dead-code"
-
-cache: cargo
 
 addons:
   apt:
     packages:
-      - libgmp3-dev
       - libcurl4-openssl-dev
       - libelf-dev
       - libdw-dev
-      - cmake
-      - gcc
       - binutils-dev
-      - libiberty-dev
 
-before_script:
-- |
-  mkdir -p $HOME/.local/bin &&
-  export PATH=$HOME/.local/bin:$PATH
-- |
-  if [ "$TRAVIS_OS_NAME" == "linux" ] ; then
-    wget https://github.com/Z3Prover/z3/releases/download/z3-4.7.1/z3-4.7.1-x64-ubuntu-14.04.zip &&
-    unzip z3-4.7.1-x64-ubuntu-14.04.zip &&
-    mv z3-4.7.1-x64-ubuntu-14.04/bin/z3 $HOME/.local/bin/. &&
-    z3 -h
-  elif [ "$TRAVIS_OS_NAME" == "osx" ] ; then
-    wget https://github.com/Z3Prover/z3/releases/download/z3-4.7.1/z3-4.7.1-x64-osx-10.11.6.zip &&
-    unzip z3-4.7.1-x64-osx-10.11.6.zip &&
-    mv z3-4.7.1-x64-osx-10.11.6/bin/z3 $HOME/.local/bin/. &&
-    z3 -h
-  fi
-
-script:
-  - cargo build
-  - cargo build --release
-  # - cargo build --release --features bench
-  - cargo test --lib
-  - cargo test --doc
-
-after_success:
-- |
-  wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
-  tar xzf master.tar.gz &&
-  cd kcov-master &&
-  mkdir build &&
-  cd build &&
-  cmake .. &&
-  make &&
-  make install DESTDIR=../../kcov-build &&
-  cd ../.. &&
-  rm -rf kcov-master &&
-  cargo clean &&
-  RUSTFLAGS="-C link-dead-code" cargo test --no-run &&
-  for file in target/debug/hoice-*[^\(\.d\)]; do mkdir -p "target/cov/$(basename $file)"; ./kcov-build/usr/local/bin/kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
-  bash <(curl -s https://codecov.io/bash) &&
-  echo "Uploaded code coverage"
-
-
-
-
-sudo: true
-
-language: rust
-
-cache: cargo
-
+# run builds for all the trains (and more)
 rust:
+  - nightly
   - beta
+  # check it compiles on the latest stable compiler
   - stable
+  # and the first stable one (this should be bumped as the minimum
+  # Rust version required changes)
+  - 1.26.0
 
+# load travis-cargo
 before_script:
   - |
-    mkdir -p $HOME/.local/bin &&
-    export PATH=$HOME/.local/bin:$PATH
-  - |
-    if [ "$TRAVIS_OS_NAME" == "linux" ] ; then
-      wget https://github.com/Z3Prover/z3/releases/download/z3-4.7.1/z3-4.7.1-x64-ubuntu-14.04.zip &&
-      unzip z3-4.7.1-x64-ubuntu-14.04.zip &&
-      mv z3-4.7.1-x64-ubuntu-14.04/bin/z3 $HOME/.local/bin/. &&
-      z3 -h
-    elif [ "$TRAVIS_OS_NAME" == "osx" ] ; then
-      wget https://github.com/Z3Prover/z3/releases/download/z3-4.7.1/z3-4.7.1-x64-osx-10.11.6.zip &&
-      unzip z3-4.7.1-x64-osx-10.11.6.zip &&
-      mv z3-4.7.1-x64-osx-10.11.6/bin/z3 $HOME/.local/bin/. &&
-      z3 -h
-    fi
-  - |
-    pip install git+git://github.com/kbknapp/travis-cargo.git --user &&
-    export PATH=$HOME/.local/bin:$PATH
+      pip install 'travis-cargo<0.2' --user &&
+      export PATH=$HOME/.local/bin:$PATH
 
+# the main build
 script:
-  - travis-cargo --only stable test -- --verbose
-
-addons:
-  apt:
-    packages:
-    - pip
-    - binutils-dev
-    - libcurl4-openssl-dev
-    - libelf-dev
-    - libdw-dev
-    - libiberty-dev
-    - cmake
-    - gcc
-    - zlib1g-dev
-
-after_success:
   - |
-    wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
-    tar xzf master.tar.gz &&
-    cd kcov-master &&
-    mkdir build &&
-    cd build &&
-    cmake .. &&
-    make &&
-    sudo make install &&
-    cd ../.. &&
-    rm -rf kcov-master &&
-    cargo clean &&
-    cargo test --no-run --features "yaml unstable" &&
-    for file in target/debug/*-*; do mkdir -p "target/cov/$(basename $file)"; kcov --exclude-pattern=/.cargo --verify "target/cov/$(basename $file)" "$file"; done &&
-    kcov --coveralls-id=$TRAVIS_JOB_ID --merge target/cov target/cov/* &&
-    echo "Uploaded code coverage"
+      travis-cargo build &&
+      travis-cargo test &&
+after_success:
+  - travis-cargo coveralls --no-sudo --verify
