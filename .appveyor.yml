@@ -24,4 +24,5 @@ test_script:
   - cargo build --verbose
   - cargo build --verbose --release
   - cargo build --verbose --release --features bench
-  - cargo test --verbose
+  - cargo test --verbose --lib
+  - cargo test --verbose --doc

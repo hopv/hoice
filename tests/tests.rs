@@ -32,15 +32,12 @@ macro_rules! run {
 #[test]
 fn sat() { run!( run_sat() ) }
 
-#[cfg( not(windows) )]
 #[test]
 fn sat_ackermann() { run!( run_sat_on("rsc/sat/long/Ackermann00.smt2") ) }
 
-#[cfg( not(windows) )]
 #[test]
 fn sat_file() { run!( run_sat_on("rsc/sat/long/file.smt2") ) }
 
-#[cfg( not(windows) )]
 #[test]
 fn sat_rec_simpl() {
   run!( run_sat_on("rsc/sat/long/recursive_simplifications.smt2") )
