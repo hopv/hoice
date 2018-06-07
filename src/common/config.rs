@@ -606,6 +606,8 @@ pub struct IceConf {
   pub simple_gain_ratio: f64,
   /// Sort predicates.
   pub sort_preds: f64,
+  /// Randomize qualifiers.
+  pub rand_quals: bool,
   /// Generate complete transformations for qualifiers.
   pub complete: bool,
   /// Biases qualifier selection based on the predicates the qualifier was
@@ -665,6 +667,20 @@ impl IceConf {
         "int"
       ).default_value(
         "40"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
+    ).arg(
+
+      Arg::with_name("rand_quals").long("--rand_quals").help(
+        "randomize the qualifiers before gain computation"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
       ).takes_value(true).number_of_values(1).display_order(
         order()
       ).hidden(true)
@@ -844,6 +860,9 @@ impl IceConf {
         value
       }
     } ;
+
+    let rand_quals = bool_of_matches(matches, "rand_quals") ;
+
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
     let qual_print = bool_of_matches(matches, "qual_print") ;
@@ -891,7 +910,7 @@ impl IceConf {
     let qual_synth_step = bool_of_matches(matches, "qual_synth_step") ;
 
     IceConf {
-      simple_gain_ratio, sort_preds, complete,
+      simple_gain_ratio, sort_preds, rand_quals, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
       pure_synth, mine_conjs, add_synth, qual_step, qual_synth_step

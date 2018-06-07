@@ -1163,13 +1163,15 @@ impl NuQuals {
       |(_, terms)| terms
     ).collect() ;
 
-    quals.sort_unstable_by(
-      |_, _| if 0.5 < rng.gen() {
-        ::std::cmp::Ordering::Greater
-      } else {
-        ::std::cmp::Ordering::Less
-      }
-    ) ;
+    if conf.ice.rand_quals {
+      quals.sort_unstable_by(
+        |_, _| if 0.5 < rng.gen() {
+          ::std::cmp::Ordering::Greater
+        } else {
+          ::std::cmp::Ordering::Less
+        }
+      )
+    }
 
     for terms in quals {
 
