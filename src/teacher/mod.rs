@@ -761,7 +761,7 @@ impl<'a> Teacher<'a> {
 
     // got_pos_neg_samples = ! map.is_empty() ;
 
-    if map.is_empty() {
+    if map.is_empty() || ! conf.teacher.max_bias {
       log! { @verb
         "looking for counterexamples in non-strict negative clauses ({})...",
         instance.non_strict_neg_clauses().len()
@@ -771,7 +771,7 @@ impl<'a> Teacher<'a> {
       }
     }
 
-    if map.is_empty() {
+    if map.is_empty() || ! conf.teacher.max_bias {
       log_verb! { "looking for counterexamples in implication clauses..." }
 
       for clause in instance.imp_clauses() {
