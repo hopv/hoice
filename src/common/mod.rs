@@ -131,6 +131,92 @@ pub fn mk_dir<P: AsRef<::std::path::Path>>(path: P) -> Res<()> {
 }
 
 
+/// Compares two data metrics.
+///
+/// Takes the amount of classified and unknown data from two data collections
+/// and returns `Greater` if the first collection is considered better.
+/// Typically because it has more classified data, or no unknown data.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::cmp::Ordering::* ;
+/// use hoice::common::cmp_data_metrics as cmp ;
+///
+/// # println! ( "10, 0, 5, 0" ) ;
+/// assert_eq! { cmp(10,  0,  5,  0), Greater }
+/// # println! ( "5, 0, 10, 0" ) ;
+/// assert_eq! { cmp( 5,  0, 10,  0), Less }
+///
+/// # println! ( "\n10, 0, 15, 10" ) ;
+/// assert_eq! { cmp(10,  0, 15, 10), Greater }
+/// # println! ( "15, 10, 10, 0" ) ;
+/// assert_eq! { cmp(15, 10, 10,  0), Less }
+///
+/// # println! ( "\n15, 10, 15, 70" ) ;
+/// assert_eq! { cmp(15, 10, 15, 70), Greater }
+/// # println! ( "15, 70, 15, 10" ) ;
+/// assert_eq! { cmp(15, 70, 15, 10), Less }
+///
+/// # println! ( "\n15, 70, 20, 90" ) ;
+/// assert_eq! { cmp(15, 70, 20, 90), Greater }
+/// # println! ( "20, 90, 15, 70" ) ;
+/// assert_eq! { cmp(20, 90, 15, 70), Less }
+///
+/// # println! ( "\n20, 70, 15, 70" ) ;
+/// assert_eq! { cmp(20, 70, 15, 70), Greater }
+/// # println! ( "15, 70, 20, 70" ) ;
+/// assert_eq! { cmp(15, 70, 20, 70), Less }
+/// ```
+pub fn cmp_data_metrics(
+  classified_1: usize,
+  unknown_1: usize,
+  classified_2: usize,
+  unknown_2: usize,
+) -> ::std::cmp::Ordering {
+  use std::cmp::Ordering::* ;
+
+  match (unknown_1 == 0, unknown_2 == 0) {
+    (true, false) => Greater,
+    (false, true) => Less,
+
+    (true, true) => classified_1.cmp(& classified_2),
+
+    (false, false) => match (classified_1 == 0, classified_2 == 0) {
+
+      (true, false) => Less,
+      (false, true) => Greater,
+
+      (true, true) => unknown_1.cmp(& unknown_2),
+
+      (false, false) => match (
+        classified_1.cmp(& classified_2), unknown_1.cmp(& unknown_2)
+      ) {
+
+        (Greater, Greater) => (classified_1 - classified_2).cmp(
+          & (unknown_1 - unknown_2)
+        ),
+        (Greater, _) |
+        (Equal, Less) => Greater,
+
+        (Less, Less) => (classified_2 - classified_1).cmp(
+          & (unknown_2 - unknown_1)
+        ).reverse(),
+        (Less, _) |
+        (Equal, Greater) => Less,
+
+        (Equal, Equal) => Equal,
+
+      },
+
+    },
+  }
+}
+
+
+
+
+
 // |===| Type and traits aliases.
 
 /// Integers.

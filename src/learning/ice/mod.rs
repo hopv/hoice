@@ -421,49 +421,11 @@ impl<'core> IceLearner<'core> {
       // predicates we want to synthesize should be last.
       self.predicates.sort_unstable_by(
         |
-          & (
-            unc_1, sum_1, _p_1
-          ), & (
-            unc_2, sum_2, _p_2
-          )
-        | {
-          use std::cmp::Ordering::* ;
-          match (unc_1 == 0, unc_2 == 0) {
-            (true, false) => Greater,
-            (false, true) => Less,
-
-            (true, true) => sum_2.cmp(& sum_1),
-
-            (false, false) => match (sum_1 == 0, sum_2 == 0) {
-
-              (true, false) => Less,
-              (false, true) => Greater,
-
-              (true, true) => unc_1.cmp(& unc_2),
-
-              (false, false) => match (
-                sum_1.cmp(& sum_2), unc_1.cmp(& unc_2)
-              ) {
-
-                (Greater, Greater) => (unc_1 - unc_2).cmp(
-                  & (sum_1 - sum_2)
-                ).reverse(),
-                (Greater, _) |
-                (Equal, Less) => Greater,
-
-                (Less, Less) => (unc_2 - unc_1).cmp(
-                  & (sum_2 - sum_1)
-                ).reverse(),
-                (Less, _) |
-                (Equal, Greater) => Less,
-
-                (Equal, Equal) => Equal,
-
-              },
-
-            },
-          }
-        }
+          & (unc_1, sum_1, _p_1),
+          & (unc_2, sum_2, _p_2),
+        | cmp_data_metrics(
+          sum_1, unc_1, sum_2, unc_2
+        )
       ) ;
       profile!{ self mark "learning", "predicate sorting" }
 
@@ -530,9 +492,42 @@ impl<'core> IceLearner<'core> {
     Ok( Some(candidates) )
   }
 
+  /// Chooses a branch to go into next.
+  ///
+  /// Updates the data in the branches.
+  pub fn choose_branch(& mut self, pred: PrdIdx) -> Option<(Branch, CData)> {
+    profile! { self tick "learning", "choose branch" }
+
+    let mut best = None ;
+
+    for n in 0 .. self.unfinished.len() {
+      let data = & mut self.unfinished[n].1 ;
+      self.data.classify(pred, data) ;
+      let (classified, unknown) = (
+        data.pos().len() + data.neg().len(),
+        data.unc().len()
+      ) ;
+      best = if let Some((idx, cla, unk)) = best {
+        use std::cmp::Ordering::* ;
+        match cmp_data_metrics(classified, unknown, cla, unk) {
+          Greater => Some((n, classified, unknown)),
+          _ => Some((idx, cla, unk)),
+        }
+      } else {
+        Some((n, classified, unknown))
+      }
+    }
+
+    profile! { self mark "learning", "choose branch" }
+    if let Some((index, _, _)) = best {
+      Some( self.unfinished.swap_remove(index) )
+    } else {
+      None
+    }
+  }
+
   /// Backtracks to the last element of `unfinished`.
   ///
-  /// - updates blacklisted qualifiers
   /// - applies the current classification to the data we're backtracking to
   ///
   /// Returns `None` iff `unfinished` was empty meaning the learning process
@@ -554,7 +549,7 @@ impl<'core> IceLearner<'core> {
 
   /// Looks for a classifier for a given predicate.
   pub fn pred_learn(
-    & mut self, pred: PrdIdx, mut data: CData, simple: bool
+    & mut self, pred: PrdIdx, data: CData, simple: bool
   ) -> Res< Option<Term> > {
     debug_assert!( self.finished.is_empty() ) ;
     debug_assert!( self.unfinished.is_empty() ) ;
@@ -566,9 +561,13 @@ impl<'core> IceLearner<'core> {
       self.instance[pred], data.pos().len(), data.neg().len(), data.unc().len()
     }
 
-    let mut branch = Vec::with_capacity(17) ;
+    self.unfinished.push( (vec![], data) ) ;
 
-    'learning: loop {
+    // let mut branch = Vec::with_capacity(17) ;
+
+    'learning: while let Some(
+      (mut branch, data)
+    ) = self.choose_branch(pred) {
       self.check_exit() ? ;
 
       // Checking whether we can close this branch.
@@ -610,13 +609,8 @@ impl<'core> IceLearner<'core> {
         } else {
           self.finished.push(branch) ;
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
-          branch = nu_branch ;
-          data = nu_data ;
-          continue 'learning
-        } else {
-          break 'learning
-        }
+
+        continue 'learning
       }
 
       if data.pos().is_empty() && self.is_legal(
@@ -653,13 +647,8 @@ impl<'core> IceLearner<'core> {
             Some( term::fls() )
           )
         }
-        if let Some((nu_branch, nu_data)) = self.backtrack(pred) {
-          branch = nu_branch ;
-          data = nu_data ;
-          continue 'learning
-        } else {
-          break 'learning
-        }
+
+        continue 'learning
       }
 
       self.check_exit() ? ;
@@ -681,11 +670,9 @@ impl<'core> IceLearner<'core> {
       nq_branch.push( (qual.clone(), false) ) ;
       self.unfinished.push( (nq_branch, nq_data) ) ;
 
-      // Update current branch and data.
+      // Remember the branch where qualifier is true.
       branch.push( (qual, true) ) ;
-      data = q_data ;
-
-      // Keep going.
+      self.unfinished.push( (branch, q_data) )
     }
 
     profile!{ self tick "learning", "pred finalize" }

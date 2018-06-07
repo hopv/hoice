@@ -2,7 +2,7 @@
 
 use common::* ;
 
-use super::helpers::n_term_arith_synth ;
+// use super::helpers::n_term_arith_synth ;
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -45,25 +45,42 @@ impl TheoSynth for RealSynth {
     match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 1, f)
+          simple_real_synth(sample, others, f)
         } "learning", "qual", "synthesis", "real", "level 0"
       ),
       1 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 1, f)
+          real_synth_1(sample, others, f)
         } "learning", "qual", "synthesis", "real", "level 1"
       ),
       2 => profile!(
         |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 2, f)
+          real_synth_2(sample, others, f)
         } "learning", "qual", "synthesis", "real", "level 2"
       ),
-      3 => profile!(
-        |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, 3, f)
-        } "learning", "qual", "synthesis", "real", "level 3"
-      ),
       _ => Ok(false),
+
+      // 0 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 1, f)
+      //   } "learning", "qual", "synthesis", "real", "level 0"
+      // ),
+      // 1 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 1, f)
+      //   } "learning", "qual", "synthesis", "real", "level 1"
+      // ),
+      // 2 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 2, f)
+      //   } "learning", "qual", "synthesis", "real", "level 2"
+      // ),
+      // 3 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 3, f)
+      //   } "learning", "qual", "synthesis", "real", "level 3"
+      // ),
+      // _ => Ok(false),
     }
   }
 
@@ -88,4 +105,129 @@ impl TheoSynth for RealSynth {
     }
     Ok(())
   }
+}
+
+
+
+/// Lowest level of int synthesis.
+///
+/// All `v_*` are variables. Synthesizes qualifiers of the form
+///
+/// - `v = n`, `v <= n`, `v >= n`,
+/// - `v_1 = v_2`, `v_1 = - v_2`,
+/// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
+/// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
+pub fn simple_real_synth<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        simple_arith_synth! { previous_real, f, real | var = ( i.clone() ) }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      val::RVal::I(ref val) => {
+        simple_arith_synth! { previous_real, f, real | term = val.clone() }
+      }
+      val => bail!(
+        "real synthesis expects projected reals, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+
+/// Level 1 for real synthesis.
+pub fn real_synth_1<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        arith_synth_non_lin! {
+          previous_real, f, real | var = ( i.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::I(ref val) => {
+        arith_synth_non_lin! {
+          previous_real, f, real | term = val.clone()
+        }
+      }
+      val => bail!(
+        "real synthesis expects projected reals, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
+}
+
+
+/// Level 2 for real synthesis.
+pub fn real_synth_2<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::I(ref i) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        arith_synth_three_terms! {
+          previous_real, f, real | var = ( i.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::I(ref val) => {
+        arith_synth_three_terms! {
+          previous_real, f, real | term = val.clone()
+        }
+      }
+      val => bail!(
+        "real synthesis expects projected reals, got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
 }
