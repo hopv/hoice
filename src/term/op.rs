@@ -228,10 +228,16 @@ impl Op {
       ),
       And | Or | Impl => all_same!(bool),
       ToInt => arity_check!(
-        [ 1, 1 ] => all_same!(typ::real())
+        [ 1, 1 ] => {
+          all_same!(typ::real()) ;
+          typ::int()
+        }
       ),
       ToReal => arity_check!(
-        [ 1, 1 ] => all_same!(typ::int())
+        [ 1, 1 ] => {
+          all_same!(typ::int()) ;
+          typ::real()
+        }
       ),
       Ite => arity_check!(
         [ 3, 3 ] => if let Some((index, cond)) = args_iter.next() {
