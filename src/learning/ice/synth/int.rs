@@ -99,7 +99,7 @@ impl TheoSynth for IntSynth {
           & val::RVal::I(_) => {
             let val = Op::ToReal.eval( vec![ val.clone() ] ) ? ;
             let prev = map.insert(
-              term::to_real( term::var(var, typ::real()) ), val
+              term::to_real( term::var(var, typ::int()) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -144,7 +144,8 @@ where F: FnMut(Term) -> Res<bool> {
         }
       }
       val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+        "int synthesis expects projected integers (1), \
+        got {} for {}", val, term
       )
     }
   }
@@ -187,7 +188,8 @@ where F: FnMut(Term) -> Res<bool> {
         simple_arith_synth! { previous_int, f, int | term = val.clone() }
       }
       val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+        "int synthesis expects projected integers (2), \
+        got {} for {}", val, term
       )
     }
   }
@@ -228,7 +230,8 @@ where F: FnMut(Term) -> Res<bool> {
         }
       }
       val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+        "int synthesis expects projected integers (3), \
+        got {} for {}", val, term
       )
     }
   }
@@ -268,7 +271,8 @@ where F: FnMut(Term) -> Res<bool> {
         }
       }
       val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+        "int synthesis expects projected integers (4), \
+        got {} for {}", val, term
       )
     }
   }

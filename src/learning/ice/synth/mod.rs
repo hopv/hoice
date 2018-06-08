@@ -104,7 +104,7 @@ impl SynthSys {
 
     if let Some(int_synth) = self.int.as_mut() {
       if ! int_synth.is_done() {
-        debug_assert! { self.cross_synth.is_empty() }
+        self.cross_synth.clear() ;
         if let Some(real_synth) = self.real.as_mut() {
           profile!{
             |_profiler| tick "learning", "qual", "synthesis", "int project"
@@ -128,7 +128,7 @@ impl SynthSys {
 
     if let Some(real_synth) = self.real.as_mut() {
       if ! real_synth.is_done() {
-        debug_assert! { self.cross_synth.is_empty() }
+        self.cross_synth.clear() ;
         if let Some(int_synth) = self.int.as_mut() {
           profile! (
             |_profiler| wrap {

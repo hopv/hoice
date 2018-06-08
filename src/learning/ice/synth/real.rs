@@ -94,7 +94,7 @@ impl TheoSynth for RealSynth {
           & val::RVal::R(ref r) => {
             let val = Op::ToInt.eval( vec![ val::real( r.clone() ) ] ) ? ;
             let prev = map.insert(
-              term::to_int( term::var(var, typ::int()) ), val
+              term::to_int( term::var(var, typ::real()) ), val
             ) ;
             debug_assert_eq!( prev, None )
           },
@@ -109,7 +109,7 @@ impl TheoSynth for RealSynth {
 
 
 
-/// Lowest level of int synthesis.
+/// Lowest level of real synthesis.
 ///
 /// All `v_*` are variables. Synthesizes qualifiers of the form
 ///
@@ -198,17 +198,17 @@ pub fn real_synth_2<F>(
   sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_real: Vec<(Term, Int)> = Vec::with_capacity(
+  let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
     sample.len()
   ) ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
     match * val.get() {
-      val::RVal::I(ref i) => {
+      val::RVal::R(ref r) => {
         let var = term::var(var_idx, val.typ().clone()) ;
         arith_synth_three_terms! {
-          previous_real, f, real | var = ( i.clone() )
+          previous_real, f, real | var = ( r.clone() )
         }
       },
       _ => (),
@@ -218,9 +218,9 @@ where F: FnMut(Term) -> Res<bool> {
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
     match val.get() {
-      & val::RVal::I(ref val) => {
+      & val::RVal::R(ref r) => {
         arith_synth_three_terms! {
-          previous_real, f, real | term = val.clone()
+          previous_real, f, real | term = r.clone()
         }
       }
       val => bail!(
