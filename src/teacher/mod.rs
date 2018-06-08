@@ -119,6 +119,10 @@ pub fn teach(teacher: & mut Teacher) -> Res<
       }
     }
 
+    // if teacher.data.is_unsat().is_some() {
+    //   return Ok(Either::Right(teacher.unsat_core()))
+    // }
+
     match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
@@ -436,6 +440,7 @@ impl<'a> Teacher<'a> {
       warn!( "learner `{}` is dead...", name ) ;
     }
     profile! { self mark "sending" }
+
     Ok(alive)
   }
 

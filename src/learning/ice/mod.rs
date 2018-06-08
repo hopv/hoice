@@ -969,7 +969,8 @@ impl<'core> IceLearner<'core> {
               ()
             }
             if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
-              if * old_gain < gain {
+              let diff = gain - * old_gain ;
+              if diff > 0.000000000001 {
                 * old_gain = gain ;
                 * old_term = term
               } else if * old_gain == gain
