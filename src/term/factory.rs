@@ -691,8 +691,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         RTerm::App { op: Op::Le, ref args, .. } => return NormRes::App(
           typ::bool(), Op::Gt, args.iter().map(
             |arg| NormRes::Term( arg.clone() )
-          ).rev().collect()
-          //^^^~~~~ IMPORTANT.
+          ).collect()
         ),
         _ => (),
       }
@@ -1272,7 +1271,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             }
           }
 
-          // No correction, let's dodis.
+          // No correction, let's doodis.
           args.push(lhs) ;
           args.push(rhs)
         }

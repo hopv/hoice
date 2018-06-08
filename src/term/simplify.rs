@@ -215,7 +215,7 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// use std::cmp::Ordering::* ;
 /// use hoice::term::simplify::SimplRes::* ;
 /// use hoice::term::simplify::conj_simpl ;
@@ -268,6 +268,30 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 /// # println!("   {}", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
 /// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
+///
+/// let lhs = term::gt( term::real_var(1), term::real_zero() ) ;
+/// let rhs = term::ge(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
+///
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
+///
+/// let lhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let rhs = term::ge(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
 /// ```
 pub fn conj_simpl<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
@@ -469,13 +493,13 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       (Op::Gt, Op::Ge) |
       (Op::Ge, Op::Gt) => if lhs_cst == rhs_cst {
         if lhs_op == Op::Gt {
-          return SimplRes::Cmp(Less)
-        } else {
           return SimplRes::Cmp(Greater)
+        } else {
+          return SimplRes::Cmp(Less)
         }
       } else {
         return SimplRes::Cmp(
-          lhs_cst.get().cmp(& rhs_cst).unwrap().reverse()
+          lhs_cst.get().cmp(& rhs_cst).unwrap()
         )
       },
 
