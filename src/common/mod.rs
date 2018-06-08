@@ -6,6 +6,8 @@ pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
 pub use std::collections::{ BTreeMap, BTreeSet } ;
 
+pub use rand::prng::XorShiftRng as Rng ;
+
 pub use mylib::common::hash::* ;
 
 pub use hashconsing::{ HashConsign, HashConsed } ;

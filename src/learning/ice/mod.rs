@@ -91,13 +91,13 @@ pub struct IceLearner<'core> {
   /// Vector used during learning, avoids re-allocation.
   predicates: Vec<(usize, usize, PrdIdx)>,
   /// Rng to decide when to sort predicates.
-  sort_rng_1: ::rand::rngs::SmallRng,
+  sort_rng_1: Rng,
   /// Rng actually doing the predicate sorting.
-  sort_rng_2: ::rand::rngs::SmallRng,
+  sort_rng_2: Rng,
   /// Rng to decide when to use simple gain.
-  simple_rng: ::rand::rngs::SmallRng,
+  simple_rng: Rng,
   /// Rng to decide when skip preliminary.
-  pre_skip_rng: ::rand::rngs::SmallRng,
+  pre_skip_rng: Rng,
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
@@ -137,6 +137,8 @@ impl<'core> IceLearner<'core> {
       synth_sys.push( SynthSys::new( & instance[pred].sig ) )
     }
 
+    use rand::SeedableRng ;
+
     Ok(
       IceLearner {
         instance, qualifiers, data, solver, // synth_solver,
@@ -147,20 +149,16 @@ impl<'core> IceLearner<'core> {
         classifier: HConMap::with_capacity(1003),
         dec_mem, candidate, predicates,
         sort_rng_1: {
-          use rand::SeedableRng ;
-          ::rand::rngs::SmallRng::from_seed( [ 42 ; 16 ] )
+          Rng::from_seed( [ 42 ; 16 ] )
         },
         sort_rng_2: {
-          use rand::SeedableRng ;
-          ::rand::rngs::SmallRng::from_seed( [ 79 ; 16 ] )
+          Rng::from_seed( [ 79 ; 16 ] )
         },
         simple_rng: {
-          use rand::SeedableRng ;
-          ::rand::rngs::SmallRng::from_seed( [ 107 ; 16 ] )
+          Rng::from_seed( [ 107 ; 16 ] )
         },
         pre_skip_rng: {
-          use rand::SeedableRng ;
-          ::rand::rngs::SmallRng::from_seed( [ 245 ; 16 ] )
+          Rng::from_seed( [ 245 ; 16 ] )
         },
         luby: if mine { None } else {
           Some( LubyCount::new() )
@@ -971,7 +969,7 @@ impl<'core> IceLearner<'core> {
               ()
             }
             if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
-              if * old_gain > gain {
+              if * old_gain < gain {
                 * old_gain = gain ;
                 * old_term = term
               } else if * old_gain == gain
