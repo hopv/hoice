@@ -1002,7 +1002,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Decimal parser.
-  #[allow(dead_code)]
   fn decimal(& mut self) -> Option<Rat> {
     let start_pos = self.pos() ;
     macro_rules! if_not_give_up {

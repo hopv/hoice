@@ -455,6 +455,8 @@ impl Data {
       let map = & mut self.map ;
       self.constraints[constraint].tautologize(
         |pred, args| Self::tauto_fun(map, constraint, pred, args)
+      ).chain_err(
+        || "in tautologize"
       ) ? ;
     }
     self.cstr_info.forget(constraint) ;
@@ -588,6 +590,8 @@ impl Data {
               pred, & args, pos, |pred, args| Self::tauto_fun(
                 map, constraint_idx, pred, args
               )
+            ).chain_err(
+              || "in propagate"
             ) ? ;
 
             if tautology {

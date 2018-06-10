@@ -137,8 +137,7 @@ impl Constraint {
   /// Applies `f` to all samples.
   pub fn tautologize<F>(& mut self, mut f: F) -> Res<()>
   where F: FnMut(PrdIdx, VarVals) -> Res<()> {
-    let mut rhs = None ;
-    ::std::mem::swap(& mut rhs, & mut self.rhs) ;
+    let rhs = ::std::mem::replace(& mut self.rhs, None) ;
     if let Some(Sample { pred, args }) = rhs {
       f(pred, args) ?
     }
@@ -243,14 +242,10 @@ impl Constraint {
   ) -> Res<bool>
   where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let rmed = self.lhs_rm(pred, args) ;
-    if rmed > 0 && ! pos {
-      self.tautologize(if_tautology) ? ;
-      return Ok(true)
-    }
     let was_in_lhs = rmed > 0 ;
 
     let is_in_rhs = if let Some(
-      Sample { pred: rhs_pred, args: ref rhs_args }
+      Sample { pred: rhs_pred, args: ref mut rhs_args }
     ) = self.rhs {
       rhs_pred == pred && args.subsumes(rhs_args)
     } else {
@@ -259,14 +254,16 @@ impl Constraint {
 
     let was_in_rhs = if is_in_rhs {
       self.rhs = None ;
-      if pos {
-        self.tautologize(if_tautology) ? ;
-        return Ok(true)
-      }
       true
     } else {
       false
     } ;
+
+    if (was_in_lhs && ! pos)
+    || (was_in_rhs &&   pos) {
+      self.tautologize(if_tautology) ? ;
+      return Ok(true)
+    }
 
     if ! was_in_rhs && ! was_in_lhs {
       bail!("asked to remove sample from a clause where it wasn't")

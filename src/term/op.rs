@@ -98,9 +98,6 @@ impl Op {
 
   /// Type checking.
   ///
-  /// Checks that a potentially incomplete list of types makes sense for an
-  /// operator.
-  ///
   /// If there is an error, returns the type the spurious argument should have
   /// (if it is known) and the one found.
   pub fn type_check(

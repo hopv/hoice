@@ -1,24 +1,11 @@
 //! Entry point for the binary.
 
 #[allow(unused_imports)]
-#[macro_use]
-extern crate human_panic ;
 extern crate hoice ;
 
 use hoice::common::* ;
 
-#[cfg(not(debug_assertions))]
-macro_rules! setup {
-  () => (setup_panic!()) ;
-}
-#[cfg(debug_assertions)]
-macro_rules! setup {
-  () => () ;
-}
-
 fn main() {
-  setup!() ;
-
   // Work and report error if any.
   if let Err(errs) = ::hoice::work() {
     let errs = match * errs.kind() {

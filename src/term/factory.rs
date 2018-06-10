@@ -118,9 +118,8 @@ pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
 /// Creates an integer constant.
 #[inline(always)]
 pub fn int<I: Into<Int>>(i: I) -> Term {
-  factory.mk(
-    RTerm::Int( i.into() )
-  )
+  let i = i.into() ;
+  factory.mk( RTerm::Int(i) )
 }
 /// Creates a real constant.
 #[inline(always)]
@@ -246,8 +245,7 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
         Either::Right(blah) => res.chain_err(|| blah)
       }.unwrap_err()
   ) ;
-  let term = normalize(op, args, typ) ;
-  // println!("{}: {}", term, typ) ;
+  let term = normalize(op, args, typ.clone()) ;
   term
 }
 
@@ -521,12 +519,6 @@ enum NormRes {
 
 /// Normalizes an operation application.
 fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
-  use num::Zero ;
-
-  // println!("{} ({})", op, typ) ;
-  // for arg in & args {
-  //   println!("  {}", arg)
-  // }
 
   let (op, args) = match op {
 
@@ -850,10 +842,13 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       panic!("trying to construct an empty sum")
     } else {
 
-      let mut sum: Val = if args[0].typ() == typ::int() {
-        val::int(0)
+      let (mut sum, one): (Val, Val) = if args[0].typ() == typ::int() {
+        ( val::int(0), val::int(1) )
       } else {
-        val::real( Rat::new(0.into(), 1.into()))
+        (
+          val::real( Rat::new(0.into(), 1.into())),
+          val::real( Rat::new(1.into(), 1.into()))
+        )
       } ;
 
       let mut c_args = HConMap::<Term, Val>::new() ;
@@ -870,7 +865,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           let (val, term) = if let Some((val, term)) = arg.cmul_inspect() {
             (val, term)
           } else {
-            (val::int(1), & arg)
+            (one.clone(), & arg)
           } ;
 
           if let Some(value) = c_args.get_mut(term) {
@@ -1167,51 +1162,22 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       )
     },
 
-    Op::Div => if args.len() != 2 {
-      panic!(
-        "illegal application of `{}` to {} (!= 2) arguments",
-        op, args.len()
-      )
-    } else if let Some(den) = args[1].int() {
-      if den.is_zero() {
-        panic!("illegal division by zero")
+    Op::Div => {
+      if args.len() != 2 {
+        panic!(
+          "illegal application of `{}` to {} (!= 2) arguments",
+          op, args.len()
+        )
       }
 
-      let one = Int::one() ;
-
-      if & den == & one {
-        if let ( _, Some(num) ) = ( args.pop(), args.pop() ) {
-          debug_assert! { args.pop().is_none() }
-          return NormRes::Term(num)
-        } else {
-          panic!("logic error, pop failed after length check")
-        }
-      }
-
-      if den == - & one {
-        if let ( _, Some(num) ) = ( args.pop(), args.pop() ) {
-          debug_assert! { args.pop().is_none() }
-          return NormRes::App(
-            typ::bool(), Op::Mul, vec![
-              NormRes::Term( term::int(-1) ),
-              NormRes::Term(num),
-            ]
-          )
-        } else {
-          panic!("logic error, pop failed after length check")
-        }
-      }
-
-      if let Some(num) = args[0].int() {
-        if ( & num % & den ).is_zero() {
+      if let Some(den) = args[1].int() {
+        if let Some(num) = args[0].int() {
           return NormRes::Term(
-            term::int( num / den )
+            term::real( Rat::new(num, den) )
           )
         }
       }
 
-      (op, args)
-    } else {
       (op, args)
     },
 

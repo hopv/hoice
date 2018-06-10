@@ -31,7 +31,6 @@ panic = 'unwind'
 bench = [ ]
 
 [dependencies]
-human-panic = "*"
 lazy_static = "*"
 clap = "*"
 hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
