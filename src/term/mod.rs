@@ -493,7 +493,6 @@ impl RTerm {
     let mut stack = vec![] ;
 
     'eval: loop {
-
       // Go down applications.
       let mut evaled = match * current {
         App { op, ref args, .. } => {

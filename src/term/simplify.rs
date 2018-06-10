@@ -292,6 +292,30 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
 /// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+///
+/// let lhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let rhs = term::eq(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+///
+/// let rhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let lhs = term::eq(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
 /// ```
 pub fn conj_simpl<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
@@ -367,6 +391,8 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     res => res,
   }
 }
+
+
 pub fn conj_simpl_2<T1, T2>(lhs: & T1, rhs: & T2) -> SimplRes
 where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
   use std::cmp::Ordering::* ;
@@ -508,7 +534,6 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         Some(Less) => return SimplRes::Yields( term::fls() ),
         Some(Equal) if rhs_op == Op::Gt => if conj {
           return SimplRes::Yields( term::fls() )
-        } else {
         },
         Some(Equal) |
         Some(Greater) => return SimplRes::Cmp(Greater),
@@ -518,7 +543,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       (Op::Ge, Op::Eql) |
       (Op::Gt, Op::Eql) => match rhs_cst.get().cmp(& lhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
-        Some(Equal) if rhs_op == Op::Gt => return SimplRes::Yields(
+        Some(Equal) if lhs_op == Op::Gt => return SimplRes::Yields(
           term::fls()
         ),
         Some(Equal) |

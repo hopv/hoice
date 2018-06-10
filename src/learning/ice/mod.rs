@@ -578,10 +578,34 @@ impl<'core> IceLearner<'core> {
             "  no more negative data, is_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc().len()
           ) ;
+
+          // let mut and_args = vec![] ;
+          // for (term, pos) in & branch {
+          //   let term = term.clone() ;
+          //   let term = if * pos {
+          //     term
+          //   } else {
+          //     term::not(term)
+          //   } ;
+          //   and_args.push(term)
+          // }
+          // s.push_str(& format!("\n  {}", term::and(and_args))) ;
+
           if_debug! {
-            for unc in data.unc() {
-              s = format!("{}\n  {}", s, unc)
+            s = format!("{}\n  data:", s) ;
+            s = format!("{}\n    pos {{", s) ;
+            for sample in data.pos() {
+              s = format!("{}\n      {}", s, sample)
             }
+            s = format!("{}\n    }} neg {{", s) ;
+            for sample in data.neg() {
+              s = format!("{}\n      {}", s, sample)
+            }
+            s = format!("{}\n    }} unc {{", s) ;
+            for sample in data.unc() {
+              s = format!("{}\n      {}", s, sample)
+            }
+            s = format!("{}\n    }}", s) ;
           }
           msg! { self => s }
         }
@@ -619,11 +643,37 @@ impl<'core> IceLearner<'core> {
             "  no more positive data, is_legal check ok\n  \
             forcing {} unclassifieds negative...", data.unc().len()
           ) ;
-          if_debug! {
-            for unc in data.unc() {
-              s = format!("{}\n  {}", s, unc)
-            }
+
+          // let mut and_args = vec![] ;
+          for (term, pos) in & branch {
+            let term = term.clone() ;
+            let term = if * pos {
+              term
+            } else {
+              term::not(term)
+            } ;
+            // and_args.push(term)
+            s.push_str(& format!("\n   {}", term))
           }
+          // s.push_str(& format!("\n  {}", term::and(and_args))) ;
+
+          if_debug! {
+            s = format!("{}\n  data:", s) ;
+            s = format!("{}\n    pos {{", s) ;
+            for sample in data.pos() {
+              s = format!("{}\n      {}", s, sample)
+            }
+            s = format!("{}\n    }} neg {{", s) ;
+            for sample in data.neg() {
+              s = format!("{}\n      {}", s, sample)
+            }
+            s = format!("{}\n    }} unc {{", s) ;
+            for sample in data.unc() {
+              s = format!("{}\n      {}", s, sample)
+            }
+            s = format!("{}\n    }}", s) ;
+          }
+
           msg! { self => s }
         }
 
