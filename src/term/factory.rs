@@ -310,6 +310,17 @@ pub fn u_minus(kid: Term) -> Term {
 pub fn mul(kids: Vec<Term>) -> Term {
   app(Op::Mul, kids)
 }
+/// Creates a multiplication by a constant.
+#[inline(always)]
+pub fn cmul(cst: Val, term: Term) -> Term {
+  app(
+    Op::CMul, vec![
+      cst.to_term().expect("illegal constant passed to CMul constructor"),
+      term
+    ]
+  )
+}
+
 /// Creates an integer division.
 #[inline(always)]
 pub fn idiv(kids: Vec<Term>) -> Term {

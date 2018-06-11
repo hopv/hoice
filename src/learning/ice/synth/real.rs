@@ -48,12 +48,12 @@ impl TheoSynth for RealSynth {
           simple_real_synth(sample, others, f)
         } "learning", "qual", "synthesis", "real", "level 0"
       ),
-      // 1 => profile!(
-      //   |_profiler| wrap {
-      //     real_synth_1(sample, others, f)
-      //   } "learning", "qual", "synthesis", "real", "level 1"
-      // ),
       1 => profile!(
+        |_profiler| wrap {
+          real_synth_1(sample, others, f)
+        } "learning", "qual", "synthesis", "real", "level 1"
+      ),
+      2 => profile!(
         |_profiler| wrap {
           real_synth_2(sample, others, f)
         } "learning", "qual", "synthesis", "real", "level 2"
@@ -153,44 +153,44 @@ where F: FnMut(Term) -> Res<bool> {
 
 
 
-// /// Level 1 for real synthesis.
-// pub fn real_synth_1<F>(
-//   sample: & VarVals, others: & mut TermVals, mut f: F
-// ) -> Res<bool>
-// where F: FnMut(Term) -> Res<bool> {
-//   let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
-//     sample.len()
-//   ) ;
+/// Level 1 for real synthesis.
+pub fn real_synth_1<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_real: Vec<(Term, Rat)> = Vec::with_capacity(
+    sample.len()
+  ) ;
 
-//   // Iterate over the sample.
-//   for (var_idx, val) in sample.index_iter() {
-//     match * val.get() {
-//       val::RVal::R(ref r) => {
-//         let var = term::var(var_idx, val.typ().clone()) ;
-//         arith_synth_non_lin! {
-//           previous_real, f, real | var = ( r.clone() )
-//         }
-//       },
-//       _ => (),
-//     }
-//   }
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    match * val.get() {
+      val::RVal::R(ref r) => {
+        let var = term::var(var_idx, val.typ().clone()) ;
+        arith_synth_non_lin! {
+          previous_real, f, real | var = ( r.clone() )
+        }
+      },
+      _ => (),
+    }
+  }
 
-//   // Iterate over the cross-theory terms.
-//   for (term, val) in others.drain() {
-//     match val.get() {
-//       & val::RVal::R(ref r) => {
-//         arith_synth_non_lin! {
-//           previous_real, f, real | term = r.clone()
-//         }
-//       }
-//       val => bail!(
-//         "real synthesis expects projected reals, got {} for {}", val, term
-//       )
-//     }
-//   }
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::R(ref r) => {
+        arith_synth_non_lin! {
+          previous_real, f, real | term = r.clone()
+        }
+      }
+      val => bail!(
+        "real synthesis expects projected reals, got {} for {}", val, term
+      )
+    }
+  }
 
-//   Ok(false)
-// }
+  Ok(false)
+}
 
 
 /// Level 2 for real synthesis.

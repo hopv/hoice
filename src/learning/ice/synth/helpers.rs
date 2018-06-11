@@ -90,42 +90,55 @@ macro_rules! simple_arith_synth {
 #[macro_export]
 macro_rules! arith_synth_non_lin {
   ($previous:tt, $f:tt, $constructor:tt | $term:tt = $val:expr) => ({
-    let zero: Int = 0.into() ;
-    for & (ref other_term, ref other_val) in & $previous {
-      let (lft, rgt, div, rem) = {
-        if ! other_val.is_zero() && & $val / other_val != zero {
-          (
-            $term.clone(), other_term.clone(),
-            & $val / other_val, & $val % other_val
-          )
-        } else if ! $val.is_zero() {
-          (
-            other_term.clone(), $term.clone(),
-            other_val / & $val, other_val % & $val
-          )
-        } else {
+    use num::Zero ;
+    if ! $val.is_zero() {
+      for & (ref other_term, ref other_val) in & $previous {
+        if other_val.is_zero() {
           continue
         }
-      } ;
-      let lhs = term::sub(
-        vec![
-          lft,
-          term::mul( vec![ term::int(div), rgt ] ),
-          term::int(rem)
-        ]
-      ) ;
+        let (lhs, rhs) = arith_synth_non_lin!(
+          @lhs $constructor $term, $val, other_term, other_val
+        ) ;
 
-      let term = term::ge( lhs.clone(), term::int(0) ) ;
-      apply! { $f to term }
+        let term = term::ge( lhs.clone(), rhs.clone() ) ;
+        apply! { $f to term }
 
-      let term = term::le( lhs.clone(), term::int(0) ) ;
-      apply! { $f to term }
+        let term = term::le( lhs.clone(), rhs.clone() ) ;
+        apply! { $f to term }
 
-      let term = term::eq( lhs, term::int(0) ) ;
-      apply! { $f to term }
+        let term = term::eq( lhs, rhs ) ;
+        apply! { $f to term }
+      }
+      $previous.push(($term, $val))
     }
-    $previous.push(($term, $val))
   }) ;
+
+  // Assumes $other_val is not 0.
+  (@lhs int $term:expr, $val:expr, $other_term:expr, $other_val:expr) => ({
+    let (lft, rgt, div, rem) = (
+      $term.clone(), $other_term.clone(),
+      & $val / $other_val, & $val % $other_val
+    ) ;
+
+    (
+      term::sub(
+        vec![ lft, term::cmul(val::int(div), rgt), term::int(rem) ]
+      ),
+      term::int(0)
+    )
+  }) ;
+
+  // Assumes $other_val is not 0.
+  (@lhs real $term:expr, $val:expr, $other_term:expr, $other_val:expr) => ((
+    term::sub(
+      vec![
+        $term.clone(), term::cmul(
+          val::real($val / $other_val), $other_term.clone()
+        )
+      ]
+    ),
+    term::real( Rat::new(0.into(), 0.into()) )
+  )) ;
 }
 
 /// Arithmetic synthesis over three terms.
