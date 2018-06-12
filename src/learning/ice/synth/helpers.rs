@@ -137,7 +137,7 @@ macro_rules! arith_synth_non_lin {
         )
       ]
     ),
-    term::real( Rat::new(0.into(), 0.into()) )
+    term::real( Rat::new(0.into(), 1.into()) )
   )) ;
 }
 

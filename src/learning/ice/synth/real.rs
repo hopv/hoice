@@ -42,7 +42,8 @@ impl TheoSynth for RealSynth {
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
-    match self.expressivity {
+    println!("synth ({})", self.expressivity) ;
+    let res = match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
           simple_real_synth(sample, others, f)
@@ -81,7 +82,9 @@ impl TheoSynth for RealSynth {
       //   } "learning", "qual", "synthesis", "real", "level 3"
       // ),
       // _ => Ok(false),
-    }
+    } ;
+    println!("okay") ;
+    res
   }
 
   /// Only generates ints for now (using `to_int`).
