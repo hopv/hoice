@@ -208,6 +208,17 @@ pub fn cst_array(typ: Typ, default: Term) -> Term {
   factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
 }
 
+/// Store operation in an array.
+#[inline]
+pub fn store(array: Term, idx: Term, val: Term) -> Term {
+  app( Op::Store, vec![ array, idx, val ] )
+}
+/// Select operation for an array.
+#[inline]
+pub fn select(array: Term, idx: Term) -> Term {
+  app( Op::Select, vec![ array, idx ] )
+}
+
 /// Creates an operator application.
 ///
 /// Assumes the application is well-typed, modulo int to real casting.

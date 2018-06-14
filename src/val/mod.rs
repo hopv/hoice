@@ -40,10 +40,16 @@ pub fn bool(b: bool) -> Val {
 pub fn array<Tgt: Into<Val>>(
   idx_typ: Typ, default: Tgt
 ) -> Val {
+  let default = default.into() ;
+  let default = if ! default.is_known() {
+    default.typ().default_val()
+  } else {
+    default
+  } ;
   factory.mk(
     RVal::Array {
       idx_typ,
-      default: default.into(),
+      default: default,
       vals: Vec::new(),
     }
   )
@@ -493,8 +499,19 @@ impl RVal {
       RVal::R(ref r) => Some( ::term::real(r.clone()) ),
       RVal::B(b) => Some( ::term::bool(b) ),
       RVal::N(_) => None,
-      RVal::Array { .. } => {
-        unimplemented!("support for arrays")
+      RVal::Array { ref idx_typ, ref default, ref vals } => {
+        let default = default.to_term().expect(
+          "default of array cannot be non-value"
+        ) ;
+        let mut res = term::cst_array(idx_typ.clone(), default) ;
+        for (idx, val) in vals {
+          let (idx, val) = (
+            idx.to_term().expect("index of arrays cannot be non-value"),
+            val.to_term().expect("value of arrays cannot be non-value"),
+          ) ;
+          res = term::store(res, idx, val) ;
+        }
+        Some(res)
       },
     }
   }
@@ -1024,7 +1041,8 @@ assert_eq! { array.select( int(0) ), int(0) }
 assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
 ```
 */
-impl RVal {  /// Store over arrays, creates a `RVal`.
+impl RVal { 
+  /// Store over arrays, creates a `RVal`.
   ///
   /// Does not actually create a `Val`.
   ///
@@ -1046,17 +1064,22 @@ impl RVal {  /// Store over arrays, creates a `RVal`.
   /// ```
   pub fn raw_store<V: Into<Val>>(& self, idx: V, val: V) -> Self {
     let (idx, val) = ( idx.into(), val.into() ) ;
+    let idx = if ! idx.is_known() {
+      idx.typ().default_val()
+    } else {
+      idx
+    } ;
+    let val = if ! val.is_known() {
+      val.typ().default_val()
+    } else {
+      val
+    } ;
     match * self {
       RVal::Array { ref idx_typ, ref default, ref vals } => {
         debug_assert_eq! { idx_typ, & idx.typ() }
         debug_assert_eq! { default.typ(), val.typ() }
-
-        // If `idx` is none, just set the default to `val`.
-        if ! idx.is_known() {
-          return RVal::Array {
-            idx_typ: idx_typ.clone(), default: val, vals: vec![]
-          }
-        }
+        debug_assert! { idx.is_known() }
+        debug_assert! { val.is_known() }
 
         let mut nu_vals: Vec<_> = vals.iter().filter_map(
           |(i, v)| if i != & idx {
