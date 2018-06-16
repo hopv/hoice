@@ -42,7 +42,6 @@ impl TheoSynth for RealSynth {
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
-    println!("synth ({})", self.expressivity) ;
     let res = match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
@@ -83,7 +82,6 @@ impl TheoSynth for RealSynth {
       // ),
       // _ => Ok(false),
     } ;
-    println!("okay") ;
     res
   }
 
