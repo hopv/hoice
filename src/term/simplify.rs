@@ -557,7 +557,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         return SimplRes::Yields( term::fls() )
       },
 
-      _ => unreachable!(),
+      _ => (),
     }
 
   } else
