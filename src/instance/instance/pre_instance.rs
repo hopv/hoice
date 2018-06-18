@@ -1589,21 +1589,13 @@ impl<'a> PreInstance<'a> {
   }
 
 
-  /// Removes irrelevant predicate arguments.
-  pub fn arg_reduce(& mut self) -> Res<RedInfo> {
-    use instance::preproc::arg_red ;
-    let to_keep = arg_red::to_keep(self) ? ;
-    self.rm_args(to_keep)
-  }
-
-
   /// Removes all predicate arguments not in `to_keep`.
   ///
   /// Simplifies before returning.
   ///
   /// Removes useless arguments in the clauses. Updates `old_preds`,
   /// `pred_terms`.
-  fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
+  pub fn rm_args(& mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
     if_debug! {
       log_debug! { "  rm_args ({})", to_keep.len() }
       log_debug! { "  to keep {{" }

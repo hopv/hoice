@@ -11,7 +11,10 @@ use self::utils::{ ExtractRes } ;
 pub mod graph ;
 pub mod arg_red ;
 
-use self::graph::Graph ;
+use self::{
+  arg_red::ArgRed as ArgRedInner,
+  graph::Graph,
+} ;
 
 
 /// Runs pre-processing.
@@ -765,17 +768,24 @@ impl RedStrat for Simplify {
 ///
 /// [arg_reduce]: ../instance/struct.Instance.html#method.arg_reduce
 /// (Instance's arg_reduce method)
-pub struct ArgRed ;
+pub struct ArgRed {
+  inner: ArgRedInner,
+}
 
 impl RedStrat for ArgRed {
   fn name(& self) -> & 'static str { "arg_reduce" }
 
-  fn new(_: & Instance) -> Self { ArgRed }
+  fn new(_: & Instance) -> Self {
+    ArgRed {
+      inner: ArgRedInner::new(),
+    }
+  }
 
   fn apply<'a>(
     & mut self, instance:& mut PreInstance<'a>
   ) -> Res<RedInfo> {
-    instance.arg_reduce()
+    let keep = self.inner.run(instance) ;
+    instance.rm_args(keep)
   }
 }
 
