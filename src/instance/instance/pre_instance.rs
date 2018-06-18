@@ -1856,6 +1856,72 @@ impl ClauseSimplifier {
     }
   }
 
+  /// Propagates booleans at top level.
+  ///
+  /// Returns `None` iff the clause is trivial, otherwise returns `true` is
+  /// something changed.
+  pub fn clause_propagate_bool(
+    & mut self, clause: & mut Clause, _preds: & PrdInfos
+  ) -> Res<Option<bool>> {
+    debug_assert! { self.terms_to_add.is_empty() }
+    debug_assert! { self.subst.is_empty() }
+    debug_assert! { self.var_set.is_empty() }
+
+    let mut trivial = false ;
+    let mut changed = false ;
+
+    // println!("") ;
+    // println!("{}", clause.to_string_info(_preds).unwrap()) ;
+
+    // Propagate all top-level (negated) boolean variables.
+    for term in clause.lhs_terms() {
+      let plain_term = term.rm_neg() ;
+      let plain_term = if let Some(plain) = plain_term.as_ref() {
+        plain
+      } else {
+        term
+      } ;
+      if let Some(idx) = plain_term.var_idx() {
+        let (value, b_value) = if plain_term == term {
+          (term::tru(), true)
+        } else {
+          (term::fls(), false)
+        } ;
+        // println!("term: {}", term) ;
+        // println!("      {}", clause[idx].name) ;
+        // println!("      {}", value) ;
+        let prev = self.subst.insert(idx, value) ;
+        if let Some(prev) = prev {
+          match prev.bool() {
+            Some(prev) if b_value != prev => {
+              trivial = true ;
+              break
+            },
+            _ => unreachable!(
+              "problem in bool var propagation: value is {}, prev is {}",
+              b_value, prev
+            ),
+          }
+        }
+      }
+    }
+
+    if trivial {
+      // println!("trivializing clause") ;
+      clause.insert_term( term::fls() ) ;
+      self.subst.clear() ;
+      return Ok(None)
+    } else if ! self.subst.is_empty() {
+      changed = clause.subst(& self.subst) || changed ;
+      for (var, _) in self.subst.drain() {
+        clause.deactivate(var) ?
+      }
+    }
+    // println!("{}", clause.to_string_info(_preds).unwrap()) ;
+    Ok( Some(changed) )
+  }
+
+
   /// Propagates equalities in a clause.
   pub fn clause_propagate(
     & mut self, clause: & mut Clause, _preds: & PrdInfos
@@ -1864,11 +1930,26 @@ impl ClauseSimplifier {
     debug_assert! { self.subst.is_empty() }
     debug_assert! { self.var_set.is_empty() }
 
+
+
     let mut eq = None ;
 
-    log! { @4 "working on {}", clause.to_string_info( _preds ).unwrap() }
+    log! { @6 "working on {}", clause.to_string_info( _preds ).unwrap() }
 
     let mut changed = false ;
+
+    macro_rules! bool_prop {
+      () => (
+        match self.clause_propagate_bool(clause, _preds) ? {
+          // Clause is trivial.
+          None => return Ok(()),
+          Some(true) => changed = true,
+          Some(false) => (),
+        }
+      )
+    }
+
+    bool_prop!() ;
 
     'outter: loop {
 
@@ -1971,13 +2052,15 @@ impl ClauseSimplifier {
           for term in self.terms_to_add.drain(0..) {
             clause.insert_term(term) ;
           }
-          changed = clause.subst(& self.subst) ;
+          changed = clause.subst(& self.subst) || changed ;
           log! { @5 "yielding {}", clause.to_string_info( _preds ).unwrap() }
           for (var, _) in self.subst.drain() {
             clause.deactivate(var) ?
           }
           self.var_set.clear()
         }
+
+        bool_prop!() ;
 
         if ! changed {
           break
