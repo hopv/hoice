@@ -174,7 +174,7 @@ impl Error {
 
 
 /// Prints an error.
-pub fn print_err(errs: Error) {
+pub fn print_err(errs: & Error) {
   println!(
     "({} \"", conf.bad("error")
   ) ;

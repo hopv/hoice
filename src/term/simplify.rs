@@ -435,16 +435,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     }
   }
 
-  let res = int_conj_simpl(lhs, rhs, true) ;
-  // if res.is_some() {
-  //   log! { @0
-  //     "\n\n{}", lhs.deref() ;
-  //     "{}", rhs.deref() ;
-  //     "{:?}", res
-  //   }
-  // }
-
-  res
+  int_conj_simpl(lhs, rhs, true)
 }
 
 
@@ -560,9 +551,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       _ => (),
     }
 
-  } else
-
-  if lhs_op == Op::Ge && rhs_op == Op::Ge
+  } else if lhs_op == Op::Ge && rhs_op == Op::Ge
   && lhs_cst == rhs_cst.minus().unwrap()
   && rhs_vars == & term::u_minus( lhs_vars.clone() ) {
 

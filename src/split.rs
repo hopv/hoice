@@ -214,17 +214,14 @@ impl Splitter {
           if   instance[c_1].is_strict_neg()
           && ! instance[c_2].is_strict_neg() {
             ::std::cmp::Ordering::Greater
-          } else
-          if ! instance[c_1].is_strict_neg()
-          &&   instance[c_2].is_strict_neg() {
+          } else if ! instance[c_1].is_strict_neg()
+          && instance[c_2].is_strict_neg() {
             ::std::cmp::Ordering::Less
-          } else
-          if   instance[c_1].from_unrolling
+          } else if instance[c_1].from_unrolling
           && ! instance[c_2].from_unrolling {
             ::std::cmp::Ordering::Greater
-          } else
-          if ! instance[c_1].from_unrolling
-          &&   instance[c_2].from_unrolling {
+          } else if ! instance[c_1].from_unrolling
+          && instance[c_2].from_unrolling {
             ::std::cmp::Ordering::Less
           } else {
             count_1.cmp(& count_2)

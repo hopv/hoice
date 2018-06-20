@@ -584,12 +584,10 @@ impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if self.len() < * var {
       None
+    } else if let Ok(res) = self[var].to_term() {
+      res
     } else {
-      if let Ok(res) = self[var].to_term() {
-        res
-      } else {
-        None
-      }
+      None
     }
   }
 }

@@ -1815,12 +1815,11 @@ impl TTerms {
         TTerms::conj(conj.0, conj.1).simplify()
       ),
       TTerms::Conj { quant, tterms } => {
-        // conj => self?
         if tterms.is_subset_of(& conj.1) {
+          // conj => self?
           Ok( TTerms::Conj { quant, tterms } )
-        } else
-        // self => conj?
-        if conj.1.is_subset_of(& tterms) {
+        } else if conj.1.is_subset_of(& tterms) {
+          // self => conj?
           Ok(
             TTerms::Conj{ quant: conj.0, tterms: conj.1 }.simplify()
           )
@@ -1886,7 +1885,7 @@ impl TTerms {
 
     match self {
 
-      TTerms::True | TTerms::False => return self,
+      TTerms::True | TTerms::False => self,
 
       TTerms::Conj { quant, mut tterms } => {
         tterms.preds.retain(

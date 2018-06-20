@@ -74,28 +74,31 @@ pub fn array_of_fun(idx_typ: Typ, term: & Term) -> Res<Val> {
         mk( RVal::Array { idx_typ, default: val, vals } )
       )
     } else if let Some((c, t, e)) = current.ite_inspect() {
+
       if let Some(args) = c.eq_inspect() {
         debug_assert_eq! { args.len(), 2 }
+
         let cond = if let Some(var) = args[0].var_idx() {
           debug_assert_eq! { * var, 0 }
           args[1].clone()
         } else if let Some(var) = args[1].var_idx() {
           debug_assert_eq! { * var, 0 }
           args[0].clone()
-        } else {
-          if let Some((var, term)) = if term::vars(& args[1]).is_empty() {
+        } else if let Some(
+          (var, term)
+        ) = if term::vars(& args[1]).is_empty() {
             args[0].invert( args[1].clone() )
-          } else if term::vars(& args[0]).is_empty() {
-            args[1].invert( args[0].clone() )
-          } else {
-            break
-          } {
-            debug_assert_eq! { * var, 0 }
-            term
-          } else {
-            break
-          }
+        } else if term::vars(& args[0]).is_empty() {
+          args[1].invert( args[0].clone() )
+        } else {
+          break
+        } {
+          debug_assert_eq! { * var, 0 }
+          term
+        } else {
+          break
         } ;
+
         let cond = if let Some(val) = cond.val() {
           val
         } else {
@@ -1186,7 +1189,7 @@ impl RVal {
               "non-value array condition (= {} {})", idx, cond
             ),
             Err(e) => {
-              print_err(e) ;
+              print_err(& e) ;
               panic!(
                 "while evaluating array condition (= {} {})", idx, cond
               )

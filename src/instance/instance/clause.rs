@@ -531,7 +531,7 @@ impl Clause {
       }
     }
 
-    return new_stuff
+    new_stuff
   }
 
   /// Checks if `term` is implied by a term in `set`.

@@ -1186,7 +1186,7 @@ impl NuQuals {
             return Ok( Some((term.clone(), value)) )
           } else if let Some((best, best_value)) = best {
             let diff = value - best_value ;
-            if diff > 0.000000000001 {
+            if diff > 0.000_000_000_001 {
               Some((term, value))
             } else {
               Some((best, best_value))

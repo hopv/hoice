@@ -256,8 +256,8 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
         Either::Right(blah) => res.chain_err(|| blah)
       }.unwrap_err()
   ) ;
-  let term = normalize(op, args, typ.clone()) ;
-  term
+
+  normalize(op, args, typ.clone())
 }
 
 /// Creates an operator application.
@@ -716,11 +716,12 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     Op::Eql => {
       // println!("(= {} {})", args[0], args[1]) ;
       if args.len() == 2 {
+
         if args[0] == args[1] {
           return NormRes::Term( tru() )
-        } else
 
-        if let Some(b) = args[0].bool() {
+        } else if let Some(b) = args[0].bool() {
+
           return NormRes::Term(
             if b {
               args[1].clone()
@@ -728,9 +729,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
               not( args[1].clone() )
             }
           )
-        } else
 
-        if let Some(b) = args[1].bool() {
+        } else if let Some(b) = args[1].bool() {
+
           return NormRes::Term(
             if b {
               args[0].clone()
@@ -738,29 +739,21 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
               not( args[0].clone() )
             }
           )
-        } else
 
-        if let (Some(r_1), Some(r_2)) = (
+        } else if let (Some(r_1), Some(r_2)) = (
           args[0].real(), args[1].real()
         ) {
-          return NormRes::Term( term::bool( r_1 == r_2 ) )
-        } else
 
-        if let (Some(i_1), Some(i_2)) = (
+          return NormRes::Term( term::bool( r_1 == r_2 ) )
+
+        } else if let (Some(i_1), Some(i_2)) = (
           args[0].int(), args[1].int()
         ) {
+
           return NormRes::Term( term::bool( i_1 == i_2 ) )
-        } else
 
-        // if let Some((var, term)) = args[0].invert( args[1].clone() ) {
-        //   args = vec![ term::var(var, term.typ()), term ]
-        // } else
+        } else if args[0].typ().is_arith() {
 
-        // if let Some((var, term)) = args[1].invert( args[0].clone() ) {
-        //   args = vec![ term::var(var, term.typ()), term ]
-        // } else
-
-        if args[0].typ().is_arith() {
           // println!("  (= {} {})", args[0], args[1]) ;
           if ! args[1].is_zero() {
             let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
@@ -785,11 +778,14 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             }
             (op, args)
           }
+
         } else {
           args.sort_unstable() ;
           (op, args)
         }
+
       } else {
+
         args.sort_unstable() ;
         let len = args.len() ;
         let mut args = args.into_iter() ;
@@ -812,6 +808,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         panic!(
           "illegal application of {} to {} (< 2) argument", op, len
         )
+
       }
     },
 
@@ -1207,10 +1204,10 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
 
       if args[0] == args[1] {
         return NormRes::Term( bool( op == Op::Ge ) )
-      } else
 
-      // We want the rhs to be a constant.
-      if let Some(rhs_val) = args[1].val() {
+      } else if let Some(rhs_val) = args[1].val() {
+        // RHS is a constant.
+
         // If lhs is also a constant, we done.
         if let Some(lhs_val) = args[0].val() {
           let res = if op == Op::Ge {
@@ -1265,6 +1262,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         }
 
       } else {
+
         // Rhs is not a constant.
         let (rhs, lhs) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
         let typ = rhs.typ() ;

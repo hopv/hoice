@@ -311,14 +311,12 @@ pub fn terms_of_app(
       debug_assert_eq!( _prev, None ) ;
       let is_new = app_vars.insert(v) ;
       debug_assert!( is_new )
-    } else {
-      if let TExtractRes::Failed = terms_of_terms(
-        quantifiers, var_info, Some(arg), & mut terms,
-        & mut app_vars, & mut map, qvars, fresh,
-        true, |term| term::eq( term::var(var, term.typ()), term )
-      ) ? {
-        return Ok(None)
-      }
+    } else if let TExtractRes::Failed = terms_of_terms(
+      quantifiers, var_info, Some(arg), & mut terms,
+      & mut app_vars, & mut map, qvars, fresh,
+      true, |term| term::eq( term::var(var, term.typ()), term )
+    ) ? {
+      return Ok(None)
     }
   }
 

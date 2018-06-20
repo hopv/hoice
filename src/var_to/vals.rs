@@ -110,8 +110,7 @@ impl RVarVals {
         |info| if partial {
           val::none(info.typ.clone())
         } else {
-          let default = info.typ.default_val() ;
-          default
+          info.typ.default_val()
         }
       ).collect()
     } ;

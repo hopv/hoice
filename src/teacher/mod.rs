@@ -460,14 +460,12 @@ impl<'a> Teacher<'a> {
 
     'recv: loop {
 
-      if ! drain {
-        if self.learners.iter().all(
-          |& (ref channel, _, _)| {
-            channel.is_none()
-          }
-        ) {
-          all_dead!()
+      if ! drain && self.learners.iter().all(
+        |& (ref channel, _, _)| {
+          channel.is_none()
         }
+      ) {
+        all_dead!()
       }
 
       profile!{ self tick "waiting" }
@@ -575,7 +573,7 @@ impl<'a> Teacher<'a> {
               "from {} learner", id
             )
           ) ;
-          print_err( err.unwrap_err() )
+          print_err( & err.unwrap_err() )
         },
 
         MsgKind::Stats(profiler) => {

@@ -583,15 +583,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.error_here("could not find closing `\"` opened")
         )
       }
+    } else if let Some(res) = self.get_until(')', false) {
+      res.trim()
     } else {
-      if let Some(res) = self.get_until(')', false) {
-        res.trim()
-      } else {
-        self.backtrack_to(start_pos) ;
-        bail!(
-          self.error_here("could not find closing `)` for this set-option")
-        )
-      }
+      self.backtrack_to(start_pos) ;
+      bail!(
+        self.error_here("could not find closing `)` for this set-option")
+      )
     } ;
     Ok(Some((key, val)))
   }
@@ -1041,11 +1039,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   pub fn int(& mut self) -> Option<Int> {
     let start_pos = self.pos() ;
     let num = self.numeral() ;
-    if num.is_some() {
-      if self.peek() == Some(".") {
-        self.backtrack_to(start_pos) ;
-        return None
-      }
+    if num.is_some() && self.peek() == Some(".") {
+      self.backtrack_to(start_pos) ;
+      return None
     }
     num
   }
@@ -1808,11 +1804,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           ) ? {
             if top.typ().is_bool() {
               PTTerms::TTerm( TTerm::T(top) )
-            } else
-            // If we get here, it means what we're parsing does not have type
-            // bool. Which means we're not inside a top-term (we're most likely
-            // parsing a let-binding).
-            if stack.is_empty() {
+            } else if stack.is_empty() {
+              // If we get here, it means what we're parsing does not have type
+              // bool. Which means we're not inside a top-term (we're most
+              // likely parsing a let-binding).
               return Ok(
                 PTTerms::TTerm( TTerm::T(top) )
               )
@@ -1840,11 +1835,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         ) ? {
           if top.typ().is_bool() {
             top
-          } else
-          // If we get here, it means what we're parsing does not have type
-          // bool. Which means we're not inside a top-term (we're most likely
-          // parsing a let-binding).
-          if stack.is_empty() {
+          } else if stack.is_empty() {
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
             return Ok(top)
           } else {
             err_chain! {
@@ -1861,11 +1855,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         ) ? {
           if top.typ().is_bool() {
             PTTerms::TTerm( TTerm::T(top) )
-          } else
-          // If we get here, it means what we're parsing does not have type
-          // bool. Which means we're not inside a top-term (we're most likely
-          // parsing a let-binding).
-          if stack.is_empty() {
+          } else if stack.is_empty() {
+            // If we get here, it means what we're parsing does not have type
+            // bool. Which means we're not inside a top-term (we're most likely
+            // parsing a let-binding).
             return Ok(
               PTTerms::TTerm( TTerm::T(top) )
             )

@@ -370,7 +370,8 @@ impl Op {
           bail!("unexpected division over {} numbers", args.len() + 3)
         }
 
-        let res = match (num.get(), den.get()) {
+        match (num.get(), den.get()) {
+
           (num_val, & val::RVal::N(ref typ))
           if typ.is_arith() => if num_val.is_zero() {
             Ok(num.clone())
@@ -436,11 +437,7 @@ impl Op {
             "illegal division application to {} ({}) {} ({})",
             num, num.typ(), den, den.typ()
           ),
-        } ;
-
-        // println!("(/ {} {}) = {}", num, den, res.as_ref().unwrap()) ;
-
-        res
+        }
 
       },
 
@@ -454,10 +451,9 @@ impl Op {
         }
         let mut res = & num / & den ;
         use num::Signed ;
-        if num.is_negative() ^ den.is_negative() {
-          if den.clone() * & res != num {
-            res = res - 1
-          }
+        if num.is_negative() ^ den.is_negative()
+        && den.clone() * & res != num {
+          res = res - 1
         }
         // println!("(div {} {}) = {}", num, den, res) ;
         Ok( val::int(res) )
@@ -548,12 +544,10 @@ impl Op {
         bail!(
           format!("evaluating `Not` with {} (!= 1) arguments", args.len())
         )
+      } else if let Some(b) = args.pop().unwrap().to_bool() ? {
+        Ok( val::bool(! b) )
       } else {
-        if let Some(b) = args.pop().unwrap().to_bool() ? {
-          Ok( val::bool(! b) )
-        } else {
-          Ok(val::none(typ::bool()))
-        }
+        Ok(val::none(typ::bool()))
       },
 
       And => {

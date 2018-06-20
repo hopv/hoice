@@ -9,7 +9,7 @@ macro_rules! expect {
       Ok(res) => res,
       Err($err) => {
         $crate::errors::print_err(
-          { $($action)* }.into()
+          & { $($action)* }.into()
         ) ;
         panic!("Fatal internal error, please contact the developper")
       }
@@ -154,7 +154,7 @@ macro_rules! log {
         if line != "" {
           println!("{}{}", $pref, line)
         } else {
-          println!("")
+          println!()
         }
       }
     )*
@@ -166,7 +166,7 @@ macro_rules! log {
         if line != "" {
           println!("; {}", line)
         } else {
-          println!("")
+          println!()
         }
       }
     )*

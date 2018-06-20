@@ -627,12 +627,11 @@ impl Data {
           profile! { self mark "propagate", "cstr update" }
 
           for constraint in modded_constraints.drain() {
-            if ! self.constraints[constraint].is_tautology() {
-              if ! self.cstr_useful(constraint).chain_err(
-                || "in propagate"
-              ) ? {
-                self.tautologize(constraint) ?
-              }
+            if ! self.constraints[constraint].is_tautology()
+            && ! self.cstr_useful(constraint).chain_err(
+              || "in propagate"
+            ) ? {
+              self.tautologize(constraint) ?
             }
           }
 

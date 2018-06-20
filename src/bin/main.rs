@@ -18,7 +18,7 @@ fn main() {
       ).into(),
       _ => errs
     } ;
-    print_err(errs) ;
+    print_err(& errs) ;
     ::std::process::exit(2)
   } else {
     ::std::process::exit(0)

@@ -641,28 +641,25 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
 
       Ok( FPVal::Val( val::bool(val) ) )
 
-    } else { // More complex stuff.
-
+    } else if parser.tag_opt("(") && {
+      parser.ws_cmt() ; parser.tag_opt("_")
+    } && {
+      parser.ws_cmt() ; parser.tag_opt("as-array")
+    } {
       // Try function to array conversion.
-      if parser.tag_opt("(") && {
-        parser.ws_cmt() ; parser.tag_opt("_")
-      } && {
-        parser.ws_cmt() ; parser.tag_opt("as-array")
-      } {
-        debug_assert! { ! negated }
-        parser.ws_cmt() ;
 
-        if let Ok((_, ident)) = parser.ident() {
-          Ok( FPVal::FunToArray( ident.into() ) )
-        } else {
-          bail!("expected symbol in function to array conversion `{}`", input)
-        }
+      debug_assert! { ! negated }
+      parser.ws_cmt() ;
 
+      if let Ok((_, ident)) = parser.ident() {
+        Ok( FPVal::FunToArray( ident.into() ) )
       } else {
-        debug_assert! { ! negated }
-        Ok( FPVal::FunDef(input.into()) )
+        bail!("expected symbol in function to array conversion `{}`", input)
       }
 
+    } else {
+      debug_assert! { ! negated }
+      Ok( FPVal::FunDef(input.into()) )
     }
   }
 }
@@ -709,9 +706,9 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
       if conj.is_unsat(
         self, clause.vars()
       ) ? {
-        return Ok( Some(true) )
+        Ok( Some(true) )
       } else {
-        return Ok(None)
+        Ok(None)
       }
 
     } else {

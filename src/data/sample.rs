@@ -23,7 +23,7 @@ impl Sample {
     & self, pred: PrdIdx, samples: & VarValsSet
   ) -> bool {
     if self.pred != pred {
-      return false
+      false
     } else {
       self.args.set_subsumed(samples)
     }

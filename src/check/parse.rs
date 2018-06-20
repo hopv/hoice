@@ -93,7 +93,7 @@ impl<'a> InParser<'a> {
         return false
       }
     }
-    return true
+    true
   }
 
   /// Parses a character or fails.

@@ -291,10 +291,8 @@ impl Constraint {
       }
     }
     if let Some(ref mut lhs) = self.lhs {
-      if lhs.remove(& pred).is_some() {
-        if ! pos {
-          tautology = true
-        }
+      if lhs.remove(& pred).is_some() && ! pos {
+        tautology = true
       }
     }
     if tautology {
