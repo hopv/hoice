@@ -1064,7 +1064,11 @@ impl NuQuals {
               //   pred_info.idx
               // ) ? ;
             },
-            typ::RTyp::Bool => (),
+            typ::RTyp::Bool => {
+              let var = term::bool_var(var) ;
+              quals.insert( var.clone(), pred_info.idx ) ? ;
+              quals.insert(var, pred_info.idx) ? ;
+            },
 
             typ::RTyp::Array { .. } => {
               quals.insert(

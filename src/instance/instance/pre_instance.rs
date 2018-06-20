@@ -376,7 +376,7 @@ impl<'a> PreInstance<'a> {
     log! { @3 "split disj..." }
 
     // Try to split the clause.
-    let res = self.split_disj(clause) ;
+    let res = self.split(clause) ;
 
     log! { @3 "done" }
 
@@ -385,112 +385,114 @@ impl<'a> PreInstance<'a> {
 
   /// Splits disjunctions.
   ///
-  /// If the clause contains a single disjunction, generates a clause for each
-  /// arithmetic equality in the disjunction.
+  /// Splits a clause if
   ///
-  /// Returns the number of clauses created.
-  fn split_disj(& mut self, clause_idx: ClsIdx) -> Res< RedInfo > {
-    let mut info: RedInfo = (0, 0, 0).into() ;
-
+  /// - it contains a disjunction with kids `subs`
+  /// - `f_subs` is not empty, where `f_subs` are the kids on which `f` is true
+  ///
+  /// Generates one clause `C` per element `f_sub` of `f_subs` where `C` is
+  /// `idx` augmented with the term `sub`. If `f_subs == subs`, drops clause
+  /// `idx`. Otherwise, removes the disjunction from `idx` and adds the
+  /// disjunction of `subs` minus `f_subs`.
+  fn split_on<F>(& mut self, idx: ClsIdx, f: F) -> Res< RedInfo >
+  where F: Fn(& Term) -> bool {
+    let mut info = RedInfo::new() ;
     macro_rules! clause {
-      ($idx:expr) => ( self.instance.clauses[clause_idx] ) ;
+      () => ( self.instance[idx] )
     }
 
-    // Skip those for which the predicate in the rhs only appears in this
-    // rhs.
-    if let Some((pred, _)) = clause!(clause_idx).rhs() {
-      if self.instance.pred_to_clauses[pred].1.len() == 1 {
-        return Ok(info)
-      }
-    }
-
-    // Skip if one of the predicates in the lhs only appears (once) in this
-    // lhs.
-    for (pred, argss) in self[clause_idx].lhs_preds() {
-      if argss.len() == 1 {
-        if self.clauses_of(* pred).0.len() == 1 {
-          return Ok(info)
-        }
-      }
-    }
-
-    // Skip if clause contains more than 2 disjunctions.
-    let mut disj = None ;
-    for term in clause!(clause_idx).lhs_terms() {
-      if let Some(args) = term.disj_inspect() {
-        if disj.is_some() || args.iter().any(
-          |arg| arg.disj_inspect().is_some()
-        ) {
-          disj = None ;
-          break
-        }
-
-        let mut equalities = HConSet::<Term>::new() ;
-        for maybe_eq in args {
-          if let Some(_) = maybe_eq.eq_inspect() {
-            equalities.insert(maybe_eq.clone()) ;
-            ()
+    let mut split = None ;
+    let (mut f_subs, mut others) = (vec![], vec![]) ;
+    for maybe_disj in clause!().lhs_terms() {
+      if let Some(subs) = maybe_disj.disj_inspect() {
+        for sub in subs {
+          if f(sub) {
+            f_subs.push( sub.clone() )
+          } else {
+            others.push( sub.clone() )
           }
         }
-        if ! equalities.is_empty() {
-          disj = Some( (term.clone(), equalities) )
+        if ! f_subs.is_empty() {
+          split = Some(
+            ( maybe_disj.clone(), f_subs, others )
+          ) ;
+          break
+        } else {
+          others.clear()
         }
       }
     }
 
-    if let Some( (disj, equalities) ) = disj {
-      let was_there = clause!(clause_idx).rm_term(& disj) ;
-      debug_assert!(was_there) ;
-      debug_assert!(! equalities.is_empty()) ;
+    if let Some((disj, f_subs, others)) = split {
+      debug_assert! { ! f_subs.is_empty() }
 
-      let mut nu_disj = vec![] ;
-      for arg in disj.disj_inspect().unwrap() {
-        if ! equalities.contains(arg) {
-          nu_disj.push( arg.clone() )
-        }
-      }
+      let was_there = clause!().rm_term(& disj) ;
+      debug_assert! { was_there }
 
-      let template_clause = clause!(clause_idx).clone() ;
-
-      let mut target_clause = if nu_disj.is_empty() {
-        Some(clause_idx)
+      let clause = if others.is_empty() {
+        info.clauses_rmed += 1 ;
+        self.instance.forget_clause(idx) ?
       } else {
-        let nu_disj = term::or(nu_disj) ;
-        match nu_disj.bool() {
-          Some(true) => bail!(
-            "formed true disjunction while splitting disjunctions"
-          ),
-          Some(false) => Some(clause_idx),
-          None => {
-            clause!(clause_idx).insert_term(nu_disj) ;
-            info += self.simplify_clause(clause_idx) ? ;
-            None
-          },
-        }
+        let clause = clause!().clone() ;
+        clause!().insert_term(
+          term::or(others)
+        ) ;
+        info += self.simplify_clause(idx) ? ;
+        clause
       } ;
 
-      for eq in equalities {
-        if let Some(clause_idx) = target_clause {
-          target_clause = None ;
-          self.instance.clause_add_lhs_term(clause_idx, eq) ;
-          info += self.simplify_clause(clause_idx) ?
-        } else {
-          let mut clause = template_clause.clone() ;
-          clause.info = "split_disj" ;
-          clause.insert_term(eq) ;
-          if let Some(this_clause_idx) = self.instance.push_clause(clause) ? {
-            info.clauses_added += 1 ;
-            let this_info = self.simplify_clause( this_clause_idx ) ? ;
-            info += this_info
-          }
+      for f_sub in f_subs {
+        let mut clause = clause.clone() ;
+        clause.insert_term(f_sub) ;
+        info.clauses_added += 1 ;
+        if let Some(idx) = self.instance.push_clause(clause) ? {
+          info += self.simplify_clause(idx) ?
         }
+        ()
       }
-
-      Ok(info)
-    } else {
-      Ok(info)
     }
+
+    Ok(info)
   }
+
+
+  /// Splits on the first disjunction that contains boolean flags.
+  fn split_flags(& mut self, idx: ClsIdx) -> Res<RedInfo> {
+    self.split_on(
+      idx, |sub| sub.var_idx().is_some() || sub.neg_inspect().map(
+        |sub| sub.var_idx().is_some()
+      ).unwrap_or(false)
+    )
+  }
+
+
+  /// Splits on the first disjunction that contains equalities.
+  fn split_eqs(& mut self, idx: ClsIdx) -> Res<RedInfo> {
+    self.split_on(
+      idx, |sub| sub.eq_inspect().is_some()
+    )
+  }
+
+  /// Clever disjunction splitting.
+  ///
+  /// Stops on the first call that does something in the following:
+  ///
+  /// - `self.split_flags(idx)`
+  /// - `self.split_eqs(idx)`
+  fn split(& mut self, idx: ClsIdx) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+    info += self.split_flags(idx) ? ;
+    if info.non_zero() {
+      return Ok(info)
+    }
+    info += self.split_eqs(idx) ? ;
+    if info.non_zero() {
+      return Ok(info)
+    }
+
+    Ok(info)
+  }
+
 
   /// Removes redundant atoms.
   fn prune_atoms(& mut self, clause: ClsIdx) -> Res<()> {

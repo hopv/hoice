@@ -120,6 +120,17 @@ impl RTerm {
     }
   }
 
+  /// Returns the kid of a negation.
+  pub fn neg_inspect(& self) -> Option<& Term> {
+    match * self {
+      RTerm::App { op: Op::Not, ref args, .. } => {
+        debug_assert_eq! { args.len(), 1 }
+        Some(& args[0])
+      },
+      _ => None,
+    }
+  }
+
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
