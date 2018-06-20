@@ -401,8 +401,9 @@ impl<'a> PreInstance<'a> {
       () => ( self.instance[idx] )
     }
 
-    let mut split = None ;
+    let mut split: Option<(Term, Vec<_>, Vec<_>)> = None ;
     let (mut f_subs, mut others) = (vec![], vec![]) ;
+
     for maybe_disj in clause!().lhs_terms() {
       if let Some(subs) = maybe_disj.disj_inspect() {
         for sub in subs {
@@ -412,11 +413,22 @@ impl<'a> PreInstance<'a> {
             others.push( sub.clone() )
           }
         }
+
         if ! f_subs.is_empty() {
+          if let Some((_, prev, _)) = split.as_ref() {
+            if prev.len() > 1 && f_subs.len() > 1 {
+              // Skip if we already have 
+              return Ok(info)
+            }
+          }
+
           split = Some(
-            ( maybe_disj.clone(), f_subs, others )
-          ) ;
-          break
+            (
+              maybe_disj.clone(),
+              ::std::mem::replace(& mut f_subs, vec![]),
+              ::std::mem::replace(& mut others, vec![]),
+            )
+          )
         } else {
           others.clear()
         }
@@ -456,41 +468,13 @@ impl<'a> PreInstance<'a> {
   }
 
 
-  /// Splits on the first disjunction that contains boolean flags.
-  fn split_flags(& mut self, idx: ClsIdx) -> Res<RedInfo> {
+  /// Clever disjunction splitting.
+  fn split(& mut self, idx: ClsIdx) -> Res<RedInfo> {
     self.split_on(
       idx, |sub| sub.var_idx().is_some() || sub.neg_inspect().map(
         |sub| sub.var_idx().is_some()
-      ).unwrap_or(false)
+      ).unwrap_or(false) || sub.eq_inspect().is_some()
     )
-  }
-
-
-  /// Splits on the first disjunction that contains equalities.
-  fn split_eqs(& mut self, idx: ClsIdx) -> Res<RedInfo> {
-    self.split_on(
-      idx, |sub| sub.eq_inspect().is_some()
-    )
-  }
-
-  /// Clever disjunction splitting.
-  ///
-  /// Stops on the first call that does something in the following:
-  ///
-  /// - `self.split_flags(idx)`
-  /// - `self.split_eqs(idx)`
-  fn split(& mut self, idx: ClsIdx) -> Res<RedInfo> {
-    let mut info = RedInfo::new() ;
-    info += self.split_flags(idx) ? ;
-    if info.non_zero() {
-      return Ok(info)
-    }
-    info += self.split_eqs(idx) ? ;
-    if info.non_zero() {
-      return Ok(info)
-    }
-
-    Ok(info)
   }
 
 
