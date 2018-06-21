@@ -3,6 +3,7 @@
 use common::* ;
 
 
+
 /// Operators.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Op {
@@ -65,10 +66,10 @@ pub enum Op {
 
 impl Op {
   /// String representation.
-  pub fn as_str(& self) -> & str {
+  pub fn as_str(self) -> & 'static str {
     use self::Op::* ;
     use keywords::op::* ;
-    match * self {
+    match self {
       Add => add_,
       Sub => sub_,
       Mul => mul_,
@@ -101,19 +102,17 @@ impl Op {
   /// If there is an error, returns the type the spurious argument should have
   /// (if it is known) and the one found.
   pub fn type_check(
-    & self, args: & Vec<Term>
-  ) -> Result<
-    Typ, Either< (Option<Typ>, (Typ, usize)), String >
-  > {
+    self, args: & [ Term ]
+  ) -> Result<Typ, term::TypError> {
     use Op::* ;
     let mut args_iter = args.iter().enumerate() ;
     macro_rules! err {
       (lft $($lft:tt)*) => (
-        return Err( Either::Left($($lft)*) )
+        return Err( term::TypError::typ($($lft)*) )
       ) ;
 
       (rgt $($lft:tt)*) => (
-        return Err( Either::Right( format!($($lft)*)) )
+        return Err( term::TypError::msg( format!($($lft)*)) )
       ) ;
 
       (nullary) => (
@@ -152,11 +151,11 @@ impl Op {
         if let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
           if ! typ.is_arith() {
-            err!(lft (None, (typ, index)))
+            err!(lft None, typ, index)
           }
           while let Some((index, next)) = args_iter.next() {
             if typ != next.typ() {
-              err!(lft (Some(typ), (next.typ(), index)) )
+              err!(lft Some(typ), next.typ(), index)
             }
           }
           typ
@@ -169,7 +168,7 @@ impl Op {
         while let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
           if typ != typ::bool() {
-            err!(lft (Some(typ::bool()), (typ, index)) )
+            err!(lft Some(typ::bool()), typ, index)
           }
         }
         typ::bool()
@@ -180,7 +179,7 @@ impl Op {
           let typ = fst.typ() ;
           while let Some((index, next)) = args_iter.next() {
             if typ != next.typ() {
-              err!(lft (Some(typ), (next.typ(), index)) )
+              err!(lft Some(typ), next.typ(), index)
             }
           }
           typ
@@ -192,14 +191,14 @@ impl Op {
       ($typ:expr) => ({
         while let Some((index, fst)) = args_iter.next() {
           if fst.typ() != $typ {
-            err!(lft (Some($typ), (fst.typ(), index)))
+            err!(lft Some($typ), fst.typ(), index)
           }
         }
         $typ
       }) ;
     }
 
-    let res = match * self {
+    let res = match self {
       Add | Sub | Mul | Div | CMul => {
         all_same!(arith)
       },
@@ -239,7 +238,7 @@ impl Op {
       Ite => arity_check!(
         [ 3, 3 ] => if let Some((index, cond)) = args_iter.next() {
           if ! cond.typ().is_bool() {
-            err!(lft (Some(typ::bool()), (cond.typ(), index)))
+            err!(lft Some(typ::bool()), cond.typ(), index)
           }
           all_same!()
         } else {
@@ -251,17 +250,17 @@ impl Op {
         [ 3, 3 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
           if args[1].typ() != * src {
             err!(
-              lft ( Some(src.clone()), (args[1].typ(), 1) )
+              lft Some(src.clone()), args[1].typ(), 1
             )
           } else if args[2].typ() != * tgt {
             err!(
-              lft ( Some(tgt.clone()), (args[2].typ(), 2) )
+              lft Some(tgt.clone()), args[2].typ(), 2
             )
           } else {
             args[0].typ()
           }
         } else {
-          err!(lft (None, (args[0].typ(), 0)))
+          err!(lft None, args[0].typ(), 0)
         }
       ),
 
@@ -269,13 +268,13 @@ impl Op {
         [ 2, 2 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
           if args[1].typ() != * src {
             err!(
-              lft ( Some(src.clone()), (args[1].typ(), 1) )
+              lft Some(src.clone()), args[1].typ(), 1
             )
           } else {
             tgt.clone()
           }
         } else {
-          err!(lft (None, (args[0].typ(), 0)))
+          err!(lft None, args[0].typ(), 0)
         }
       ),
     } ;
@@ -284,7 +283,7 @@ impl Op {
 
 
   /// Evaluation.
-  pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
+  pub fn eval(self, mut args: Vec<Val>) -> Res<Val> {
     use term::Op::* ;
     if args.is_empty() {
       bail!("evaluating operator on 0 elements")
@@ -327,7 +326,7 @@ impl Op {
       }) ;
     }
 
-    match * self {
+    match self {
       Add => arith_app!(add "+" => args),
 
       Sub => if args.len() == 1 {
@@ -338,7 +337,7 @@ impl Op {
 
       Mul => {
         let mut res: Val = val::int(1) ;
-        for arg in args.into_iter() {
+        for arg in args {
           res = res.mul(& arg) ?
         }
         Ok(res)
@@ -346,7 +345,7 @@ impl Op {
 
       CMul => {
         let mut res: Val = val::int(1) ;
-        for arg in args.into_iter() {
+        for arg in args {
           res = res.mul(& arg) ?
         }
         Ok(res)
@@ -372,7 +371,7 @@ impl Op {
 
         match (num.get(), den.get()) {
 
-          (num_val, & val::RVal::N(ref typ))
+          (num_val, val::RVal::N(ref typ))
           if typ.is_arith() => if num_val.is_zero() {
             Ok(num.clone())
           } else {
@@ -380,7 +379,7 @@ impl Op {
           },
 
           (
-            & val::RVal::I(ref num), & val::RVal::I(ref den)
+            val::RVal::I(ref num), val::RVal::I(ref den)
           ) => if num.is_zero() {
             Ok( val::int(num.clone()) )
           } else if num % den == Int::zero() {
@@ -390,7 +389,7 @@ impl Op {
           },
 
           (
-            & val::RVal::I(ref num_val), & val::RVal::R(ref den_val)
+            val::RVal::I(ref num_val), val::RVal::R(ref den_val)
           ) => if num_val.is_zero() {
             Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
@@ -400,7 +399,7 @@ impl Op {
           },
 
           (
-            & val::RVal::R(ref num_val), & val::RVal::I(ref den_val)
+            val::RVal::R(ref num_val), val::RVal::I(ref den_val)
           ) => if num.is_zero() {
             Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
@@ -412,21 +411,21 @@ impl Op {
           },
 
           (
-            & val::RVal::R(ref num_val), & val::RVal::R(ref den_val)
+            val::RVal::R(ref num_val), val::RVal::R(ref den_val)
           ) => if num.is_zero() {
             Ok( val::real(Rat::new(0.into(), 1.into())) )
           } else {
             Ok( val::real( num_val.clone() / den_val.clone() ) )
           },
 
-          (& val::RVal::N(ref t_1), & val::RVal::I(ref i))
+          (val::RVal::N(ref t_1), val::RVal::I(ref i))
           if t_1.is_arith() => if i.is_zero() {
             bail!("division by zero, aborting...")
           } else {
             Ok(val::none(t_1.clone()))
           },
 
-          (& val::RVal::N(ref t_1), & val::RVal::R(ref r))
+          (val::RVal::N(ref t_1), val::RVal::R(ref r))
           if t_1.is_arith() => if r.is_zero() {
             bail!("division by zero, aborting...")
           } else {

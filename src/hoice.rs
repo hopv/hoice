@@ -8,8 +8,8 @@
 //! (ICE paper PDF)
 
 #![doc(test(attr(deny(warnings))))]
-
 #![allow(non_upper_case_globals)]
+
 #[macro_use]
 extern crate lazy_static ;
 #[macro_use]
@@ -212,17 +212,11 @@ pub fn read_and_work<R: ::std::io::Read>(
         } else {
 
           let arc_instance = Arc::new(instance) ;
-          let solve_res = split::work(arc_instance.clone(), & profiler) ;
+          let solve_res = split::work(& arc_instance, & profiler) ;
 
-          while Arc::strong_count(& arc_instance) != 1 {}
-          instance = if let Ok(
-            instance
-          ) = Arc::try_unwrap( arc_instance ) { instance } else {
-            bail!("\
-              [bug] finalized teacher but there are still \
-              strong references to the instance\
-            ")
-          } ;
+          instance = unwrap_arc(arc_instance).chain_err(
+            || "while trying to recover instance"
+          ) ? ;
 
           match solve_res {
             Ok(Some(Either::Left(res))) => {
@@ -331,3 +325,14 @@ pub fn read_and_work<R: ::std::io::Read>(
   Ok( (model, instance) )
 }
 
+/// Waits until an `Arc` is unwrap-able.
+fn unwrap_arc<T>(arc: Arc<T>) -> Res<T> {
+  while Arc::strong_count(& arc) != 1 {}
+  if let Ok(
+    res
+  ) = Arc::try_unwrap(arc) {
+    Ok(res)
+  } else {
+    bail!("unable to unwrap `Arc`")
+  }
+}

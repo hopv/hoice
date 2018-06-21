@@ -156,7 +156,7 @@ fn terms_of_pred_apps<'a>(
 /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
 fn terms_of_terms<'a, TermIter, Terms, F>(
   quantifiers: bool, var_info: & VarInfos,
-  src: Terms, tgt: & mut HConSet<Term>,
+  src: Terms, tgt: & mut TermSet,
   app_vars: & mut VarSet, map: & mut VarHMap<Term>,
   qvars: & mut VarHMap<Typ>, fresh: & mut VarIdx,
   even_if_disjoint: bool, f: F
@@ -268,11 +268,11 @@ pub fn terms_of_app(
   instance: & Instance, pred: PrdIdx, args: & VarTerms,
   fresh: & mut VarIdx, qvars: & mut VarHMap<Typ>
 ) -> Res<
-  Option<(HConSet<Term>, VarHMap<Term>, VarSet)>
+  Option<(TermSet, VarHMap<Term>, VarSet)>
 > {
   let mut map = VarHMap::with_capacity( instance[pred].sig.len() ) ;
   let mut app_vars = VarSet::with_capacity( instance[pred].sig.len() ) ;
-  let mut terms = HConSet::with_capacity( 7 ) ;
+  let mut terms = TermSet::with_capacity( 7 ) ;
 
   // Will store the arguments that are not a variable or a constant.
   let mut postponed = Vec::with_capacity( args.len() ) ;
@@ -334,7 +334,7 @@ pub fn terms_of_app(
 /// \/ (not /\ tterms) \/ (not /\ pred_apps)`.
 pub fn terms_of_lhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarInfos,
-  lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
+  lhs_terms: & TermSet, lhs_preds: & PredApps,
   rhs: Option<(PrdIdx, & VarTerms)>,
   pred: PrdIdx, args: & VarTerms,
 ) -> Res<
@@ -456,7 +456,7 @@ pub fn terms_of_lhs_app(
 /// tterms`.
 pub fn terms_of_rhs_app(
   quantifiers: bool, instance: & Instance, var_info: & VarInfos,
-  lhs_terms: & HConSet<Term>, lhs_preds: & PredApps,
+  lhs_terms: & TermSet, lhs_preds: & PredApps,
   pred: PrdIdx, args: & VarTerms,
 ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
   log! { @4 "terms of rhs app on {} {}", instance[pred], args }

@@ -307,8 +307,8 @@ impl Graph {
   fn merge(
     instance: & Instance, pred: PrdIdx,
     substs: & VarTermsSet,
-    lft: & Vec<(Quantfed, TTermSet)>,
-    rgt: & Vec<(Quantfed, TTermSet)>,
+    lft: & [ (Quantfed, TTermSet) ],
+    rgt: & [ (Quantfed, TTermSet) ],
     max: Option<usize>,
   ) -> Res<
     Option< (Vec<(Quantfed, TTermSet)>, usize) >
@@ -326,7 +326,7 @@ impl Graph {
     // quantified variable clashes.
     let mut qvar_map = VarHMap::with_capacity(0) ;
 
-    'merge: for & (ref r_qvars, ref r_conj) in rgt {
+    for & (ref r_qvars, ref r_conj) in rgt {
       // Retrieve first legal index for new quantified variables.
       let mut fresh_index = fresh_index ;
 
@@ -352,7 +352,7 @@ impl Graph {
       // definition to `r_conj`.
       'all_combinations: while let Some(
         combination
-      ) = all_lft_combinations.next() {
+      ) = all_lft_combinations.next_combination() {
         debug_assert_eq! { combination.len(), substs.len() }
 
         // Cloning `rgt`'s definition to add stuff from `lft` for this
@@ -455,7 +455,7 @@ impl Graph {
   /// (by `estimate`).
   fn dnf_of(
     & mut self, instance: & Instance, pred: PrdIdx, max: Option<usize>,
-    previous: & Vec< (PrdIdx, Vec<(Quantfed, TTermSet)>) >
+    previous: & [ (PrdIdx, Vec<(Quantfed, TTermSet)>) ]
   ) -> Res< Option< (Vec<(Quantfed, TTermSet)>, usize) > > {
     log! { @4 "dnf_of({}, {:?})", instance[pred], max }
 
@@ -838,7 +838,7 @@ impl Graph {
         if set.contains(& tgt) { continue }
         if * cnt > 0 {
           let is_new = forward.entry(prd).or_insert_with(
-            || PrdSet::new()
+            PrdSet::new
           ).insert(tgt) ;
           debug_assert!( is_new )
         }
@@ -870,22 +870,21 @@ impl Graph {
         }
       }
       // Find a starting point.
-      let mut start = None ;
-      for prd in & pos {
-        start = Some(* prd) ;
-        break
-      }
-      if let Some(pred) = start {
+      // let mut start = None ;
+      // for prd in & pos {
+      //   start = Some(* prd) ;
+      //   break
+      // }
+      let start = if let Some(pred) = pos.iter().next() {
         log_debug! { "  found one in `pos`" }
         // There was something in `pos`, remove it and move on.
-        start = Some(pred)
+        Some(* pred)
       } else {
         log_debug! { "  no preds in `pos`, looking in `forward`" }
         // There was nothing in `pos`, select something from `forward`.
-        for (prd, _) in & forward {
-          start = Some(* prd) ;
-          break
-        }
+        forward.iter().next().map(
+          |(pred, _)| * pred
+        )
       } ;
 
       let start = if let Some(pred) = start { pred } else {

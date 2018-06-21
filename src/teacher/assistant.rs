@@ -170,7 +170,7 @@ impl Assistant {
       // move_on!(if trivial) ;
 
       if let Some(lhs) = data.constraints[cstr].lhs() {
-        'lhs: for (pred, samples) in lhs {
+        for (pred, samples) in lhs {
           let mut lhs_trivial = true ;
           for sample in samples {
             match self.try_force(data, * pred, sample) ? {
@@ -322,11 +322,11 @@ impl Assistant {
 /// Wrapper around a conjunction for smt printing.
 struct ConjWrap<'a> {
   /// Conjunction.
-  terms: & 'a HConSet<Term>,
+  terms: & 'a TermSet,
 }
 impl<'a> ConjWrap<'a> {
   /// Constructor.
-  pub fn new(terms: & 'a HConSet<Term>) -> Self {
+  pub fn new(terms: & 'a TermSet) -> Self {
     ConjWrap { terms }
   }
 }
@@ -379,7 +379,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
         continue
       }
       match val.get() {
-        & val::RVal::B(b) => {
+        val::RVal::B(b) => {
           write!(w, " ") ? ;
           if ! b {
             write!(w, "(not ") ?
@@ -391,7 +391,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
             write!(w, ")") ?
           }
         },
-        & val::RVal::I(ref i) => {
+        val::RVal::I(ref i) => {
           write!(w, " (= ") ? ;
           arg.write(
             w, |w, v| w.write_all( v.default_str().as_bytes() )
@@ -400,7 +400,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           int_to_smt!(w, i) ? ;
           write!(w, ")") ?
         },
-        & val::RVal::R(ref r) => {
+        val::RVal::R(ref r) => {
           write!(w, " (= ") ? ;
           arg.write(
             w, |w, v| w.write_all( v.default_str().as_bytes() )
@@ -409,14 +409,14 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           rat_to_smt!(w, r) ? ;
           write!(w, ")") ?
         },
-        & val::RVal::Array { .. } => {
+        val::RVal::Array { .. } => {
           write!(w, " (= ") ? ;
           arg.write(
             w, |w, v| w.write_all( v.default_str().as_bytes() )
           ) ? ;
           write!(w, " {})", val) ?
         },
-        & val::RVal::N(_) => (),
+        val::RVal::N(_) => (),
       }
     }
 

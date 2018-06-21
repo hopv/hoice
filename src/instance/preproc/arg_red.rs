@@ -12,7 +12,9 @@ pub struct ArgRed {
   /// Map from clauses to the varibales appearing in their rhs.
   rhs_vars: ClsMap< Option<(PrdIdx, VarMap<VarSet>)> >
 }
-
+impl Default for ArgRed {
+  fn default() -> Self { Self::new() }
+}
 impl ArgRed {
   /// Constructor.
   pub fn new() -> Self {
@@ -33,7 +35,7 @@ impl ArgRed {
       for var in vars {
         print!(" {},", var.default_str())
       }
-      println!("")
+      println!()
     }
     // println!("}} clauses {{") ;
     // for (idx, _) in instance.clauses().index_iter() {

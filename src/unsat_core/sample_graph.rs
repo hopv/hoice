@@ -38,7 +38,7 @@ impl Polarity {
   pub fn neg() -> Self { Polarity { pos: false } }
 
   /// True if the polarity is positive.
-  pub fn is_pos(& self) -> bool { self.pos }
+  pub fn is_pos(self) -> bool { self.pos }
 }
 impl_fmt! {
   Polarity(self, fmt) {
@@ -50,6 +50,7 @@ impl_fmt! {
 
 
 /// Known samples: positive or negative.
+#[derive(Default)]
 pub struct KnownSamples {
   /// Positive samples.
   pos: PrdHMap< VarValsMap<(VarTerms, Origin)> >,
@@ -76,7 +77,7 @@ impl KnownSamples {
             write!(w, " ({} {})", pred, args) ?
           }
         }
-        writeln!(w, "") ?
+        writeln!(w) ?
       }
     }
     writeln!(w, "{}}}", pref) ? ;
@@ -95,7 +96,7 @@ impl KnownSamples {
             write!(w, " ({} {})", pred, args) ?
           }
         }
-        writeln!(w, "") ?
+        writeln!(w) ?
       }
     }
     writeln!(w, "{}}}", pref) ? ;
@@ -175,10 +176,10 @@ impl KnownSamples {
       |map| map.keys().find(
         |other| other.is_related_to(& args)
       )
-    ).map(|other| other.clone()) ;
+    ).cloned() ;
 
     self.pos.entry(pred).or_insert_with(
-      || VarValsMap::new()
+      VarValsMap::new
     ).insert(args, (fargs, origin)) ;
 
     res
@@ -198,10 +199,10 @@ impl KnownSamples {
       |map| map.keys().find(
         |other| other.is_related_to(& args)
       )
-    ).map(|other| other.clone()) ;
+    ).cloned() ;
 
     self.neg.entry(pred).or_insert_with(
-      || VarValsMap::new()
+      VarValsMap::new
     ).insert(args, (rhs, origin)) ;
 
     res
@@ -473,13 +474,13 @@ impl TraceFrame {
         write!(w, " ({} {})", instance[pred], args) ?
       }
     }
-    writeln!(w, "") ? ;
+    writeln!(w) ? ;
     let clause = & instance[self.clause] ;
     write!(w, "{}  with", pref) ? ;
     for (var, val) in & self.values {
       write!(w, " {}: {},", clause.vars[* var], val) ?
     }
-    writeln!(w, "") ? ;
+    writeln!(w) ? ;
 
     writeln!(w, "{}}}", pref) ? ;
     Ok(())
@@ -564,7 +565,7 @@ impl UnsatProof {
       instance[self.pred], self.pos, instance[self.pred], self.neg
     ) ? ;
 
-    writeln!(w, "") ? ;
+    writeln!(w) ? ;
     writeln!(
       w, "  ( ; Derivation for ({} {}):", instance[self.pred], self.pos
     ) ? ;
@@ -575,7 +576,7 @@ impl UnsatProof {
 
     writeln!(w, "  )") ? ;
 
-    writeln!(w, "") ? ;
+    writeln!(w) ? ;
     writeln!(
       w, "  ( ; Derivation for (not ({} {})):", instance[self.pred], self.neg
     ) ? ;
@@ -602,7 +603,7 @@ returned in case of an unsat result. The graph allows to retrieve values for
 the original clauses that explain why some sample needs to be both true and
 false at the same time.
 */
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SampleGraph {
   /// Maps samples to the clause and the samples for this clause they come
   /// from.
@@ -669,9 +670,9 @@ impl SampleGraph {
       log! { @3 "}}" }
     }
     self.graph.entry(prd).or_insert_with(
-      || VarValsMap::new()
+      VarValsMap::new
     ).entry(args).or_insert_with(
-      || OTArgMap::new()
+      OTArgMap::new
     ).entry(fargs).or_insert_with(
       || vec![]
     ).push( (cls, samples) )
@@ -837,7 +838,7 @@ impl SampleGraph {
       // Adds a sample as explained.
       (insert $pred:expr, $args:expr) => ({
         let is_new = explained.entry($pred).or_insert_with(
-          || VarValsSet::new()
+          VarValsSet::new
         ).insert($args) ;
         debug_assert! { is_new }
       }) ;
@@ -1015,7 +1016,7 @@ impl SampleGraph {
                 }
               }
             }
-            writeln!(w, "") ?
+            writeln!(w) ?
           }
         }
       }
@@ -1032,7 +1033,7 @@ impl SampleGraph {
           }
         }
       }
-      writeln!(w, "") ?
+      writeln!(w) ?
     }
 
     writeln!(w, "{}}}", pref)

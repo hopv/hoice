@@ -50,7 +50,7 @@ impl Constraint {
   /// See `Constraint`'s documentation for the list of invariant.
   #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
-    if self.lhs.is_none() && ! self.rhs.is_none() {
+    if self.lhs.is_none() && self.rhs.is_some() {
       bail!("lhs is empty but rhs is not none")
     }
     if let Some(lhs) = self.lhs() {
@@ -86,11 +86,11 @@ impl Constraint {
   /// Number of samples in the lhs.
   pub fn lhs_len(& self) -> usize {
     let mut count = 0 ;
-    self.lhs.as_ref().map(
-      |lhs| for samples in lhs.values() {
+    if let Some(lhs) = self.lhs.as_ref() {
+      for samples in lhs.values() {
         count += samples.len()
       }
-    ) ;
+    }
     count
   }
 
@@ -303,28 +303,28 @@ impl Constraint {
 
   /// Checks if the constraint is trivial.
   ///
-  /// - `sample, true` if the constraint is `true => sample` (`sample` needs to
-  ///   be true)
-  /// - `sample, false` if the constraint is `sample => false` (`sample` needs
-  ///   to be false)
-  /// - `None` otherwise
+  /// - `Left(sample, true)` if the constraint is `true => sample` (`sample`
+  ///   needs to be true)
+  /// - `Left(sample, false)` if the constraint is `sample => false` (`sample`
+  ///   needs to be false)
+  /// - `Right(true)` if the constraint is trivial (`false => _` or `_ =>
+  ///   true`)
+  /// - `Right(false)` otherwise.
   ///
-  /// If the result isn't `None`, the sample returned has been removed and the
-  /// constraint is now a tautology.
-  pub fn is_trivial(& mut self) -> Either<(Sample, bool), bool> {
+  /// If the result isn't `Right(_)`, the sample returned has been removed and
+  /// the constraint is now a tautology.
+  pub fn try_trivial(& mut self) -> Either<(Sample, bool), bool> {
     if self.lhs().map(|lhs| lhs.is_empty()).unwrap_or(false) {
       let mut rhs = None ;
       ::std::mem::swap(& mut rhs, & mut self.rhs) ;
       let mut lhs = None ;
       ::std::mem::swap(& mut lhs, & mut self.lhs) ;
-      if rhs.is_none() {
-        // true => false
-        return Either::Right(true)
-      }
+
       if let Some(s) = rhs {
         Either::Left((s, true))
       } else {
-        Either::Right(false)
+        // true => false
+        return Either::Right(true)
       }
     } else if self.rhs.is_none() {
       if let Some(lhs) = self.lhs() {

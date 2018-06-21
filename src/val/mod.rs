@@ -47,11 +47,7 @@ pub fn array<Tgt: Into<Val>>(
     default
   } ;
   factory.mk(
-    RVal::Array {
-      idx_typ,
-      default: default,
-      vals: Vec::new(),
-    }
+    RVal::Array { idx_typ, default, vals: Vec::new() }
   )
 }
 
@@ -436,9 +432,9 @@ impl RVal {
   /// Extracts a boolean value.
   pub fn to_bool(& self) -> Res<Option<bool>> {
     match self {
-      & RVal::B(b) => Ok( Some(b) ),
-      & RVal::N(ref typ) if typ.is_bool() => Ok(None),
-      & RVal::N(ref typ) => bail!(
+      RVal::B(b) => Ok( Some(* b) ),
+      RVal::N(ref typ) if typ.is_bool() => Ok(None),
+      RVal::N(ref typ) => bail!(
         "expected boolean value, got non-value of type {}", typ
       ),
       _ => bail!(
@@ -451,8 +447,8 @@ impl RVal {
   pub fn to_int(& self) -> Res<Option<Int>> {
     use num::One ;
     match self {
-      & RVal::I(ref i) => Ok( Some(i.clone()) ),
-      & RVal::R(ref r) => if r.denom().abs() == Int::one() {
+      RVal::I(ref i) => Ok( Some(i.clone()) ),
+      RVal::R(ref r) => if r.denom().abs() == Int::one() {
         Ok(
           Some(
             if r.denom().is_negative() {
@@ -465,8 +461,8 @@ impl RVal {
       } else {
         bail!("expected integer value, found rational {}", r)
       },
-      & RVal::N(ref typ) if typ == & typ::int() => Ok(None),
-      & RVal::N(ref typ) => bail!(
+      RVal::N(ref typ) if typ == & typ::int() => Ok(None),
+      RVal::N(ref typ) => bail!(
         "expected integer value, got no-value of type {}", typ
       ),
       _ => bail!(
@@ -478,10 +474,10 @@ impl RVal {
   pub fn to_real(& self) -> Res<Option<Rat>> {
     use num::One ;
     match self {
-      & RVal::R(ref r) => Ok( Some(r.clone()) ),
-      & RVal::I(ref i) => Ok( Some( Rat::new(i.clone(), Int::one()) ) ),
-      & RVal::N(ref typ) if typ == & typ::real() => Ok(None),
-      & RVal::N(ref typ) => bail!(
+      RVal::R(ref r) => Ok( Some(r.clone()) ),
+      RVal::I(ref i) => Ok( Some( Rat::new(i.clone(), Int::one()) ) ),
+      RVal::N(ref typ) if typ == & typ::real() => Ok(None),
+      RVal::N(ref typ) => bail!(
         "expected real value, got no-value of type {}", typ
       ),
       _ => bail!(
@@ -497,10 +493,10 @@ impl RVal {
 
   /// Transforms a value into a term.
   pub fn to_term(& self) -> Option<::term::Term> {
-    match * self {
+    match self {
       RVal::I(ref i) => Some( ::term::int(i.clone()) ),
       RVal::R(ref r) => Some( ::term::real(r.clone()) ),
-      RVal::B(b) => Some( ::term::bool(b) ),
+      RVal::B(b) => Some( ::term::bool(* b) ),
       RVal::N(_) => None,
       RVal::Array { ref idx_typ, ref default, ref vals } => {
         let default = default.to_term().expect(
@@ -529,11 +525,11 @@ impl RVal {
   }
 
   /// Compares two values.
-  pub fn cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
+  pub fn compare(& self, other: & Self) -> Option<::std::cmp::Ordering> {
     match (self, other) {
-      (& RVal::I(ref l), & RVal::I(ref r)) => Some( l.cmp(r) ),
-      (& RVal::R(ref l), & RVal::R(ref r)) => Some( l.cmp(r) ),
-      (& RVal::B(ref l), & RVal::B(ref r)) => Some( l.cmp(r) ),
+      (RVal::I(ref l), RVal::I(ref r)) => Some( l.cmp(r) ),
+      (RVal::R(ref l), RVal::R(ref r)) => Some( l.cmp(r) ),
+      (RVal::B(ref l), RVal::B(ref r)) => Some( l.cmp(r) ),
       _ => None,
     }
   }
@@ -545,7 +541,7 @@ impl RVal {
   /// Checks if the value is zero (integer or rational).
   pub fn is_zero(& self) -> bool {
     use num::Zero ;
-    match * self {
+    match self {
       RVal::I(ref i) => i.is_zero(),
       RVal::R(ref r) => r.is_zero(),
       _ => false,
@@ -555,7 +551,7 @@ impl RVal {
   /// Checks if the value is one (integer or rational).
   pub fn is_one(& self) -> bool {
     use num::One ;
-    match * self {
+    match self {
       RVal::I(ref i) => i == & Int::one(),
       RVal::R(ref r) => r == & Rat::one(),
       _ => false,
@@ -565,7 +561,7 @@ impl RVal {
   /// Checks if the value is minus one (integer or rational).
   pub fn is_minus_one(& self) -> bool {
     use num::One ;
-    match * self {
+    match self {
       RVal::I(ref i) => i == & - Int::one(),
       RVal::R(ref r) => r == & - Rat::one(),
       _ => false,
@@ -649,9 +645,9 @@ impl RVal {
   /// ```
   pub fn mul(& self, other: & Val) -> Res<Val> {
     use num::Zero ;
-    match * self {
+    match self {
 
-      RVal::N(ref typ) if typ.is_int() => match * other.get() {
+      RVal::N(ref typ) if typ.is_int() => match other.get() {
         RVal::I(ref i) if i.is_zero() => Ok( int(0) ),
         RVal::R(ref r) if r.is_zero() => Ok( mk((0, 1)) ),
         RVal::N(ref t_2) if t_2.is_arith() => Ok(none(t_2.clone())),
@@ -662,7 +658,7 @@ impl RVal {
         ),
       },
 
-      RVal::N(ref typ) if typ.is_real() => match * other.get() {
+      RVal::N(ref typ) if typ.is_real() => match other.get() {
         RVal::I(ref i) if i.is_zero() => Ok( mk((0, 1)) ),
         RVal::R(ref r) if r.is_zero() => Ok( mk((0, 1)) ),
         RVal::N(ref t_2) if t_2.is_arith() => Ok(none(t_2.clone())),
@@ -673,7 +669,7 @@ impl RVal {
         ),
       },
 
-      RVal::I(ref lft) => match * other.get() {
+      RVal::I(ref lft) => match other.get() {
         RVal::N(ref typ) if typ.is_arith() => match (
           typ.is_int(), lft.is_zero()
         ) {
@@ -706,7 +702,7 @@ impl RVal {
 
   /// Unary minus.
   pub fn minus(& self) -> Res<Val> {
-    match * self {
+    match self {
       RVal::I(ref i) => Ok( int(- i) ),
       RVal::R(ref r) => Ok( real(- r) ),
       RVal::N(ref typ) if typ.is_arith() => Ok( none(typ.clone()) ),
@@ -898,15 +894,15 @@ impl RVal {
   /// ```
   pub fn and(& self, other: & Val) -> Res<Val> {
     match (self, other.get()) {
-      (& RVal::B(false), _) |
-      (_, & RVal::B(false)) => Ok(bool(false)),
-      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
-        bool(b_1 && b_2)
+      (RVal::B(false), _) |
+      (_, RVal::B(false)) => Ok(bool(false)),
+      (RVal::B(b_1), RVal::B(b_2)) => Ok(
+        bool(* b_1 && * b_2)
       ),
 
-      (& RVal::N(_), & RVal::B(_)) |
-      (& RVal::B(_), & RVal::N(_)) |
-      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
+      (RVal::N(_), RVal::B(_)) |
+      (RVal::B(_), RVal::N(_)) |
+      (RVal::N(_), RVal::N(_)) => Ok(none(typ::bool())),
 
       (lft, rgt) => bail!(
         "expected boolean values, found values of type {} and {}",
@@ -945,15 +941,15 @@ impl RVal {
   /// ```
   pub fn or(& self, other: & Val) -> Res<Val> {
     match (self, other.get()) {
-      (& RVal::B(true), _) |
-      (_, & RVal::B(true)) => Ok(bool(true)),
-      (& RVal::B(b_1), & RVal::B(b_2)) => Ok(
-        bool(b_1 || b_2)
+      (RVal::B(true), _) |
+      (_, RVal::B(true)) => Ok(bool(true)),
+      (RVal::B(b_1), RVal::B(b_2)) => Ok(
+        bool(* b_1 || * b_2)
       ),
 
-      (& RVal::N(_), & RVal::B(_)) |
-      (& RVal::B(_), & RVal::N(_)) |
-      (& RVal::N(_), & RVal::N(_)) => Ok(none(typ::bool())),
+      (RVal::N(_), RVal::B(_)) |
+      (RVal::B(_), RVal::N(_)) |
+      (RVal::N(_), RVal::N(_)) => Ok(none(typ::bool())),
 
       (lft, rgt) => bail!(
         "expected boolean values, found values of type {} and {}",
@@ -986,7 +982,7 @@ impl RVal {
   /// assert!{ res.is_err() }
   /// ```
   pub fn not(& self) -> Res<Val> {
-    match * self {
+    match self {
       RVal::B(b) => Ok( bool(! b) ),
       RVal::N(ref typ) if typ.is_bool() => Ok(none(typ.clone())),
       RVal::N(ref typ) => bail!(
@@ -1077,7 +1073,7 @@ impl RVal {
     } else {
       val
     } ;
-    match * self {
+    match self {
       RVal::Array { ref idx_typ, ref default, ref vals } => {
         debug_assert_eq! { idx_typ, & idx.typ() }
         debug_assert_eq! { default.typ(), val.typ() }
@@ -1165,7 +1161,7 @@ impl RVal {
   /// ```
   pub fn select<V: Into<Val>>(& self, idx: V) -> Val {
     let idx = idx.into() ;
-    match * self {
+    match self {
       RVal::Array { ref idx_typ, ref default, ref vals } => {
         debug_assert_eq! { idx_typ, & idx.typ() }
 
@@ -1221,7 +1217,7 @@ impl RVal {
 
 impl_fmt!{
   RVal(self, fmt) {
-    match * self {
+    match self {
       RVal::N(ref t) => write!(fmt, "_[{}]", t),
       RVal::I(ref i) => int_to_smt!(fmt, i),
       RVal::R(ref r) => rat_to_smt!(fmt, r),

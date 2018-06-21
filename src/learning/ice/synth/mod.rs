@@ -11,7 +11,7 @@ pub mod helpers ;
 pub mod int ;
 pub mod real ;
 
-pub type TermVals = HConMap<Term, Val> ;
+pub type TermVals = TermMap<Val> ;
 
 /// A theory synthesizer.
 ///
@@ -51,7 +51,7 @@ use self::real::RealSynth ;
 pub struct SynthSys {
   int: Option<IntSynth>,
   real: Option<RealSynth>,
-  cross_synth: HConMap<Term, Val>,
+  cross_synth: TermMap<Val>,
 }
 impl SynthSys {
   /// Constructor.
@@ -70,7 +70,7 @@ impl SynthSys {
     SynthSys {
       int: if int { Some( IntSynth::new() ) } else { None },
       real: if real { Some( RealSynth::new() ) } else { None },
-      cross_synth: HConMap::new(),
+      cross_synth: TermMap::new(),
     }
   }
 
@@ -82,14 +82,14 @@ impl SynthSys {
 
   /// Increments all synthesizers.
   pub fn increment(& mut self) {
-    self.int.as_mut().map(|i| i.increment()) ;
-    self.real.as_mut().map(|r| r.increment()) ;
+    if let Some(i) = self.int.as_mut() { i.increment() }
+    if let Some(r) = self.real.as_mut() { r.increment() }
   }
 
   /// Restarts all synthesizers.
   pub fn restart(& mut self) {
-    self.int.as_mut().map(|i| i.restart()) ;
-    self.real.as_mut().map(|r| r.restart()) ;
+    if let Some(i) = self.int.as_mut() { i.restart() }
+    if let Some(r) = self.real.as_mut() { r.restart() }
   }
 
 

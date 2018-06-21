@@ -1,6 +1,5 @@
 //! Entry point for the binary.
 
-#[allow(unused_imports)]
 extern crate hoice ;
 
 use hoice::common::* ;

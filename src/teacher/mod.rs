@@ -24,22 +24,21 @@ use self::assistant::Assistant ;
 /// The partial model stores conjunction of top terms for some of the top
 /// terms, and is expressed in terms of the predicates' original signatures.
 pub fn start_class(
-  instance: & Arc<Instance>,
+  instance: Arc<Instance>,
   partial_model: & ConjCandidates,
   profiler: & Profiler
 ) -> Res< Either<Candidates, UnsatRes> > {
-  let instance = instance.clone() ;
   log! { @debug
     "starting the learning process" ;
     "  launching solver kid..."
   }
-  let mut teacher = Teacher::new(instance.clone(), profiler, partial_model) ? ;
+  let mut teacher = Teacher::new(instance, profiler, partial_model) ? ;
 
   let res = match teach(& mut teacher) {
     Ok(res) => Ok(res),
     Err(e) => {
       match e.kind() {
-        & ErrorKind::Unsat => {
+        ErrorKind::Unsat => {
           warn! {
             "legacy unsat (by error) result triggered\n\
             unsat core will not be available\n\
@@ -87,7 +86,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
   // None at the beginning (broadcast).
   let mut learner: Option<LrnIdx> = None ;
 
-  'teach: loop {
+  loop {
 
     log_verb! {
       "all learning data:\n{}", teacher.data.string_do(
@@ -151,9 +150,8 @@ pub fn teach(teacher: & mut Teacher) -> Res<
 
         if conf.teacher.step {
           pause(
-            & format!(
-              "to look for counterexamples... (--step on)",
-            ), & teacher._profiler
+            "to look for counterexamples... (--step on)",
+            & teacher._profiler
           ) ;
         }
 
@@ -297,7 +295,7 @@ impl<'a> Teacher<'a> {
     let assistant = if conf.teacher.assistant {
       Some(
         Assistant::new(instance.clone()).chain_err(
-          || format!("while spawning assistant")
+          || "while spawning assistant".to_string()
         ) ?
       )
     } else {
@@ -407,9 +405,11 @@ impl<'a> Teacher<'a> {
     log_verb! { "broadcasting..." }
     for & (ref sender, ref name, _) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
-        if let Err(_) = sender.send(
-          FromTeacher::Data( self.data.clone() )
-        ) {
+        if sender.send(
+          FromTeacher::Data(
+            Box::new( self.data.clone() )
+          )
+        ).is_err() {
           warn!( "learner `{}` is dead...", name )
         } else {
           one_alive = true
@@ -426,13 +426,11 @@ impl<'a> Teacher<'a> {
     profile! { self tick "sending" }
     let (ref sender, ref name, _) = self.learners[learner] ;
     let alive = if let Some(sender) = sender.as_ref() {
-      if let Err(_) = sender.send(
-        FromTeacher::Data( self.data.clone() )
-      ) {
-        false
-      } else {
-        true
-      }
+      sender.send(
+        FromTeacher::Data(
+          Box::new( self.data.clone() )
+        )
+      ).is_ok()
     } else {
       false
     } ;
@@ -458,12 +456,10 @@ impl<'a> Teacher<'a> {
       () => ( unknown!("all learners are dead") ) ;
     }
 
-    'recv: loop {
+    loop {
 
       if ! drain && self.learners.iter().all(
-        |& (ref channel, _, _)| {
-          channel.is_none()
-        }
+        |& (ref channel, _, _)| channel.is_none()
       ) {
         all_dead!()
       }
@@ -525,7 +521,7 @@ impl<'a> Teacher<'a> {
           let (_pos, _neg) = samples.pos_neg_count() ;
           profile! { self "assistant pos       " => add _pos }
           profile! { self "assistant neg       " => add _neg }
-          let (pos, neg) = self.data.merge_samples(samples) ? ;
+          let (pos, neg) = self.data.merge_samples(* samples) ? ;
           profile! { self "assistant pos useful" => add pos }
           profile! { self "assistant neg useful" => add neg }
 
@@ -616,7 +612,7 @@ impl<'a> Teacher<'a> {
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    'all_preds: for pred in self.instance.pred_indices() {
+    for pred in self.instance.pred_indices() {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
 
@@ -1267,9 +1263,7 @@ impl<'a> Teacher<'a> {
       let actlit = if let Some(actlit) = lhs_actlit {
         actlit
       } else {
-        self.solver.comment(
-          & format!("\nactlit for lhs bias")
-        ) ? ;
+        self.solver.comment("\nactlit for lhs bias") ? ;
         self.solver.get_actlit() ?
       } ;
 

@@ -107,17 +107,6 @@ impl RTyp {
     }
   }
 
-  /// Given two arithmetic types, returns `Real` if one of them is `Real`.
-  pub fn arith_join(self, other: Self) -> Self {
-    debug_assert! { self.is_arith() }
-    debug_assert! { other.is_arith() }
-    if self == RTyp::Real || other == RTyp::Real {
-      RTyp::Real
-    } else {
-      RTyp::Int
-    }
-  }
-
   /// Default value of a type.
   pub fn default_val(& self) -> Val {
     match * self {

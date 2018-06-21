@@ -153,7 +153,7 @@ impl Data {
   #[allow(dead_code)]
   fn str_of(& self, c: CstrIdx) -> String {
     format!(
-      "{}",
+      "# {}\n{}", c,
       self.constraints[c].to_string_info(
         self.instance.preds()
       ).unwrap()
@@ -310,17 +310,18 @@ impl Data {
   pub fn add_pos(
     & mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
-    if self.add_pos_untracked(pred, args.clone()) {
-      // if let Some(graph) = self.graph.as_mut() {
-      //   graph.add(
-      //     pred, self.instance[clause].rhs().unwrap().1.clone(),
-      //     args.clone(), clause, PrdHMap::new()
-      //   )
-      // }
-      true
-    } else {
-      false
-    }
+    // if self.add_pos_untracked( pred, args.clone() ) {
+    //   if let Some(graph) = self.graph.as_mut() {
+    //     graph.add(
+    //       pred, self.instance[clause].rhs().unwrap().1.clone(),
+    //       args.clone(), clause, PrdHMap::new()
+    //     )
+    //   }
+    //   true
+    // } else {
+    //   false
+    // }
+    self.add_pos_untracked(pred, args)
   }
   /// Adds a positive example.
   ///
@@ -341,30 +342,31 @@ impl Data {
   pub fn add_neg(
     & mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals
   ) -> bool {
-    if self.add_neg_untracked(pred, args.clone()) {
-      // if let Some(graph) = self.graph.as_mut() {
-      //   let mut lhs = PrdHMap::with_capacity(1) ;
-      //   let mut farg_map = HConMap::new() ;
-      //   // debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
+    // if self.add_neg_untracked( pred, args.clone() ) {
+    //   if let Some(graph) = self.graph.as_mut() {
+    //     let mut lhs = PrdHMap::with_capacity(1) ;
+    //     let mut farg_map = HConMap::new() ;
+    //     // debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
 
-      //   let (
-      //     p, argss
-      //   ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
-      //   debug_assert_eq! { pred, * p }
-      //   debug_assert_eq! { 1, argss.len() }
-      //   let prev = farg_map.insert(
-      //     argss.iter().next().unwrap().clone(), args
-      //   ) ;
-      //   debug_assert! { prev.is_none() }
+    //     let (
+    //       p, argss
+    //     ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
+    //     debug_assert_eq! { pred, * p }
+    //     debug_assert_eq! { 1, argss.len() }
+    //     let prev = farg_map.insert(
+    //       argss.iter().next().unwrap().clone(), args
+    //     ) ;
+    //     debug_assert! { prev.is_none() }
 
-      //   let prev = lhs.insert(pred, farg_map) ;
-      //   debug_assert! { prev.is_none() }
-      //   graph.add_neg(clause, lhs)
-      // }
-      true
-    } else {
-      false
-    }
+    //     let prev = lhs.insert(pred, farg_map) ;
+    //     debug_assert! { prev.is_none() }
+    //     graph.add_neg(clause, lhs)
+    //   }
+    //   true
+    // } else {
+    //   false
+    // }
+    self.add_neg_untracked(pred, args)
   }
   /// Adds a negative example.
   ///
@@ -426,7 +428,7 @@ impl Data {
   /// Function used when tautologizing a constraint, to forget the samples.
   fn tauto_fun(
     map: & mut PrdMap< VarValsMap<CstrSet> >, constraint: CstrIdx,
-    pred: PrdIdx, args: VarVals
+    pred: PrdIdx, args: & VarVals
   ) -> Res<()> {
     let mut remove = false ;
     let was_there = map[pred].get_mut(& args).map(
@@ -454,7 +456,7 @@ impl Data {
     scoped! {
       let map = & mut self.map ;
       self.constraints[constraint].tautologize(
-        |pred, args| Self::tauto_fun(map, constraint, pred, args)
+        |pred, args| Self::tauto_fun(map, constraint, pred, & args)
       ).chain_err(
         || "in tautologize"
       ) ? ;
@@ -588,7 +590,7 @@ impl Data {
 
             let tautology = constraint.force_sample(
               pred, & args, pos, |pred, args| Self::tauto_fun(
-                map, constraint_idx, pred, args
+                map, constraint_idx, pred, & args
               )
             ).chain_err(
               || "in propagate"
@@ -599,7 +601,7 @@ impl Data {
               self.cstr_info.forget(constraint_idx)
             } else {
 
-              match constraint.is_trivial() {
+              match constraint.try_trivial() {
                 Either::Left((Sample { pred, args }, pos)) => {
                   // Constraint is trivial: unlink and forget.
                   if let Some(set) = map[pred].get_mut(& args) {
@@ -820,9 +822,7 @@ impl Data {
         }
       }
 
-      let set = nu_lhs.entry(pred).or_insert_with(
-        || VarValsSet::new()
-      ) ;
+      let set = nu_lhs.entry(pred).or_insert_with(VarValsSet::new) ;
 
       // Partial samples are not allowed in constraints, no subsumption
       // check in set.
@@ -831,30 +831,25 @@ impl Data {
     }
 
     let nu_rhs = if let Some(& (pred, ref args)) = rhs.as_ref() {
-      // Not a look, just makes early return easier thanks to breaking.
-      'get_rhs: loop {
-        let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
-        // Remember stuff for the unsat core.
-        // final_rhs.as_mut().map(
-        //   |opt| {
-        //     debug_assert! { opt.is_none() }
-        //     * opt = Some((pred, args.clone()))
-        //   }
-        // ) ;
+      let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
 
-        // If no partial examples and sample is new, no need to check anything.
-        if conf.teacher.partial || ! is_new {
-          if args.set_subsumed(& self.pos[pred]) {
-            profile! { self mark "add cstr", "pre-checks" }
-            profile! { self "trivial constraints" => add 1 }
-            // Positive, constraint is trivial.
-            return Ok(false)
-          } else if args.set_subsumed(& self.neg[pred]) {
-            // Negative, ignore.
-            break 'get_rhs None
-          }
+      let args = if conf.teacher.partial || ! is_new {
+        if args.set_subsumed(& self.pos[pred]) {
+          profile! { self mark "add cstr", "pre-checks" }
+          profile! { self "trivial constraints" => add 1 }
+          // Positive, constraint is trivial.
+          return Ok(false)
+        } else if args.set_subsumed(& self.neg[pred]) {
+          // Negative, ignore.
+          None
+        } else {
+          Some(args)
         }
+      } else {
+        Some(args)
+      } ;
 
+      if let Some(args) = args.as_ref() {
         // Subsumed by lhs?
         if let Some(argss) = nu_lhs.get(& pred) {
           // Partial samples are not allowed in constraints, no subsumption
@@ -866,9 +861,9 @@ impl Data {
             return Ok(false)
           }
         }
-
-        break 'get_rhs Some( Sample { pred, args } )
       }
+
+      args.map(|args| Sample { pred, args })
     } else {
       None
     } ;
@@ -930,7 +925,7 @@ impl Data {
 
     profile! { self mark "add cstr", "pre-checks" }
 
-    match constraint.is_trivial() {
+    match constraint.try_trivial() {
       Either::Left((Sample { pred, args }, pos)) => {
         let is_new = self.staged.add(pred, args, pos) ;
         Ok(is_new)
@@ -1002,7 +997,7 @@ impl Data {
       for constraint in constraints {
         let tautology = self.constraints[constraint].force(
           pred, pos, |pred, args| Self::tauto_fun(
-            map, constraint, pred, args
+            map, constraint, pred, & args
           )
         ) ? ;
 
@@ -1011,7 +1006,7 @@ impl Data {
           self.cstr_info.forget(constraint)
         } else {
 
-          match self.constraints[constraint].is_trivial() {
+          match self.constraints[constraint].try_trivial() {
             Either::Left((Sample { pred, args }, pos)) => {
               // Constraint is trivial: unlink and forget.
               if let Some(set) = map[pred].get_mut(& args) {
@@ -1383,23 +1378,23 @@ impl<'a> PebcakFmt<'a> for Data {
         write!(w, " ({})", sample) ?
       }
     }
-    write!(w, "\n) negative examples staged (\n") ? ;
+    writeln!(w, "\n) negative examples staged (") ? ;
     for (pred, set) in & self.staged.neg {
       write!(w, "  {} |", self.instance[* pred]) ? ;
       for sample in set {
         write!(w, " ({})", sample) ?
       }
-      write!(w, "\n") ?
+      writeln!(w) ?
     }
-    write!(w, ") modded (\n") ? ;
+    writeln!(w, ") modded (") ? ;
     for cstr in self.cstr_info.modded() {
-      write!(w, "  #{}\n", cstr) ?
+      writeln!(w, "  #{}", cstr) ?
     }
-    write!(w, ") neg (\n") ? ;
+    writeln!(w, ") neg (") ? ;
     for cstr in self.cstr_info.neg() {
-      write!(w, "  #{}\n", cstr) ?
+      writeln!(w, "  #{}", cstr) ?
     }
-    write!(w, ")\n") ? ;
+    writeln!(w, ")") ? ;
     // if let Some(graph) = self.graph.as_ref() {
     //   graph.write(w, "", & self.instance) ? ;
     // }
@@ -1438,13 +1433,13 @@ impl Staged {
   /// - the predicate returned is in `pos` (`neg`) if the boolean is true
   ///   (false)
   fn get_pred(& self) -> Option<(PrdIdx, bool)> {
-    for pred in self.pos.keys() {
-      return Some((* pred, true))
+    if let Some(pred) = self.pos.keys().next() {
+      Some( (* pred, true) )
+    } else if let Some(pred) = self.neg.keys().next() {
+      Some( (* pred, false) )
+    } else {
+      None
     }
-    for pred in self.neg.keys() {
-      return Some((* pred, false))
-    }
-    None
   }
 
   /// Returns some staged arguments for a predicate.
@@ -1478,7 +1473,7 @@ impl Staged {
       & mut self.neg
     } ;
     let set = map.entry(pred).or_insert_with(
-      || HConSet::with_capacity(11)
+      || VarValsSet::with_capacity(11)
     ) ;
     let (subsumed, rmed) = args.set_subsumed_rm(set) ;
     if subsumed {

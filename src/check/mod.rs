@@ -151,14 +151,17 @@ impl Output {
     }
     for & PredDec { ref pred, ref sig } in & input.pred_decs {
       if let Some(args) = map.get(pred) {
+
         if sig.len() != args.len() {
           bail!(
             "arguments of predicate {}'s definition \
             does not match its signature", conf.emph(pred)
           )
         }
-        let mut count = 0 ;
-        for (ty_1, & (ref arg, ref ty_2)) in sig.iter().zip( args.iter() ) {
+
+        for (count, (ty_1, & (ref arg, ref ty_2))) in sig.iter().zip(
+          args.iter()
+        ).enumerate() {
           if ty_1 != ty_2 {
             bail!(
               "type of argument {} ({}) in predicate {}'s definition ({}) \
@@ -166,17 +169,16 @@ impl Output {
               count, arg, conf.emph(pred), ty_2, ty_1
             )
           }
-          count += 1
         }
+
       } else {
         warn!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;
-        let mut cnt = 0 ;
-        for ty in sig {
-          args.push( (format!("v_{}", cnt), ty.clone()) ) ;
-          cnt += 1
+
+        for (cnt, ty) in sig.iter().enumerate() {
+          args.push( (format!("v_{}", cnt), ty.clone()) )
         }
         self.pred_defs.push(
           PredDef { pred: pred.clone(), args, body: None }
@@ -257,20 +259,20 @@ impl Data {
 
       let res = solver.check_sat_or_unk() ? ;
 
-      if let & Some(true) = & res {
+      if let Some(true) = res {
         okay = false ;
         let exprs: Vec<_> = args.iter().map(
           |& (ref id, _)| id.clone()
         ).collect() ;
         let model = solver.get_values(& exprs) ? ;
-        println!("") ;
+        println!() ;
         println!("({} \"", conf.bad("error")) ;
         println!("  clause {} is falsifiable with {{", count) ;
         // print!(  "   ") ;
         // for & (ref id, ref ty) in args {
         //   print!(" ({} {})", id, ty)
         // }
-        // println!("") ;
+        // println!() ;
         // println!("    (=>") ;
         // println!("      (and") ;
         // for lhs in lhs {
@@ -284,8 +286,8 @@ impl Data {
         }
         println!("  }}") ;
         println!("\")") ;
-        println!("")
-      } else if let & Some(false) = & res {
+        println!()
+      } else if let Some(false) = res {
         log_info!("clause {} is fine", count)
       } else {
         warn!(

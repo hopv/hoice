@@ -18,7 +18,7 @@ use unsat_core::UnsatRes ;
 ///
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
-  real_instance: Arc<Instance>, _profiler: & Profiler
+  real_instance: & Arc<Instance>, _profiler: & Profiler
 ) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
   let mut model = ConjCandidates::new() ;
 
@@ -45,7 +45,9 @@ pub fn work(
     }) ;
   }
 
-  let mut splitter = Splitter::new(& real_instance) ;
+  let mut splitter = Splitter::new(
+    real_instance.clone()
+  ) ;
 
   'split_loop: while let Some(preproc_res) = {
     if_not_bench! {
@@ -140,7 +142,7 @@ pub fn run_teacher(
 ) -> Res< Either<Candidates, UnsatRes> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
-    & instance, model, & teacher_profiler
+    instance, model, & teacher_profiler
   ) ;
   print_stats("teacher", teacher_profiler) ;
   solve_res
@@ -170,7 +172,7 @@ pub struct Splitter {
 impl Splitter {
 
   /// Constructor.
-  pub fn new(instance: & Arc<Instance>) -> Self {
+  pub fn new(instance: Arc<Instance>) -> Self {
     let (clauses, clause_count) = if conf.split
     && instance.neg_clauses().len() > 1 {
       // We want the predicates that appear in the most lhs last (since
@@ -263,8 +265,6 @@ impl Splitter {
       (Either::Right(false), 1)
     } ;
 
-    let instance = instance.clone() ;
-    // let model = Vec::new() ;
     Splitter {
       instance, clauses, clause_count,
       prev_clauses: ClsSet::new(), _profiler: None,
@@ -312,11 +312,7 @@ impl Splitter {
         self.prev_clauses.insert(clause) ;
         self._profiler = Some(profiler) ;
         Ok(
-          Some(
-            preproc_res.map_left(
-              |sub_instance| Arc::new(sub_instance)
-            )
-          )
+          Some( preproc_res.map_left(Arc::new) )
         )
       } else {
         Ok(None)

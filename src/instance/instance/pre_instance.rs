@@ -26,7 +26,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let solver = conf.solver.spawn("preproc", (), &* instance.as_mut()) ? ;
+    let solver = conf.solver.spawn("preproc", (), &* instance) ? ;
 
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
@@ -151,12 +151,12 @@ impl<'a> PreInstance<'a> {
         let force = if self.instance.pred_to_clauses[pred].1.is_empty() {
           // Only appears as an antecedent.
           Some(false)
-        } else if self.instance.pred_to_clauses[pred].0.is_empty() {
-          // Only appears as a consequent.
-          Some(true)
-        } else if self.instance.pred_to_clauses[pred].1.is_superset(
+        } else if self.instance.pred_to_clauses[pred].0.is_empty()
+        || self.instance.pred_to_clauses[pred].1.is_superset(
           & self.instance.pred_to_clauses[pred].0
         ) {
+          // Only appears as a consequent.
+          // ||
           // Only appears as a antecedent in clauses where it's also an
           // consequent.
           Some(true)
@@ -184,7 +184,7 @@ impl<'a> PreInstance<'a> {
 
       let mut force = vec![] ;
 
-      'all_clauses: for clause_idx in ClsRange::zero_to(
+      for clause_idx in ClsRange::zero_to(
         self.clauses.len()
       ) {
         if let Some(
@@ -295,6 +295,28 @@ impl<'a> PreInstance<'a> {
     Ok(info)
   }
 
+  /// Simplifies the terms of a clause.
+  ///
+  /// Returns true if the clause should be removed.
+  fn simplify_clause_term(& mut self, clause: ClsIdx) -> Res<bool> {
+    if self.instance[clause].terms_changed() {
+      log! { @3 "propagation..." }
+      self.simplifier.clause_propagate(
+        & mut self.instance.clauses[clause], & self.instance.preds
+      ) ? ;
+      log! { @3 "pruning..." }
+      // Remove redundant atoms.
+      if conf.preproc.prune_terms {
+        self.prune_atoms(clause) ?
+      }
+      self.instance[clause].lhs_terms_checked() ;
+      log! { @3 "trivial?" }
+      self.is_clause_trivial(clause)
+    } else {
+      Ok(false)
+    }
+  }
+
 
   /// Simplifies a clause.
   ///
@@ -302,17 +324,16 @@ impl<'a> PreInstance<'a> {
   /// of clause indices *after* `clause`. Modifying this function by making it
   /// void clause indices *before* `clause` will break the whole
   /// pre-processing.
+  // #[cfg_attr(feature = "cargo-clippy", allow(cyclomatic_complexity))]
   fn simplify_clause(& mut self, clause: ClsIdx) -> Res<RedInfo> {
     macro_rules! rm_return {
-      ($clause:ident if $should_remove:expr => $blah:expr) => (
-        if $should_remove {
-          log! { @debug
-            "  removing clause #{} by {}", clause, $blah
-          }
-          self.instance.forget_clause(clause) ? ;
-          return Ok( RedInfo::of_clauses_rmed(1) )
+      ($blah:expr) => ({
+        log! { @debug
+          "  removing clause #{} by {}", clause, $blah
         }
-      ) ;
+        self.instance.forget_clause(clause) ? ;
+        return Ok( RedInfo::of_clauses_rmed(1) )
+      }) ;
     }
 
     log! { @debug
@@ -320,57 +341,22 @@ impl<'a> PreInstance<'a> {
       clause, self.instance[clause].terms_changed()
     }
 
-    rm_return! {
-      clause if {
-        if let Some((pred, args)) = self.instance[clause].rhs() {
-          if let Some(argss) = self.instance[clause].lhs_preds().get(& pred) {
-            argss.contains(args)
-          } else {
-            false
-          }
-        } else {
-          false
-        }
-      } => "trivial implication"
+    if self.instance[clause].is_pred_trivial() {
+      rm_return!("trivial implication")
     }
-
-    log! { @3 "is unsat?" }
 
     if self.instance[clause].is_unsat() {
       unsat!("by preprocessing, clause simplification")
     }
 
-    if self.instance[clause].terms_changed() {
-      log! { @3 "propagation..." }
-      // Propagate.
-      rm_return! {
-        clause if {
-          self.simplifier.clause_propagate(
-            & mut self.instance.clauses[clause], & self.instance.preds
-          ) ? ;
-          false
-        } => "propagation"
-      }
-
-      log! { @3 "pruning..." }
-      // Remove redundant atoms.
-      if conf.preproc.prune_terms {
-        self.prune_atoms(clause) ?
-      }
-
-      log! { @3 "trivial?" }
-      // Check for triviality.
-      rm_return! {
-        clause if self.is_clause_trivial(clause) ? => "clause trivial"
-      }
-
-      self.instance[clause].lhs_terms_checked() ;
+    if self.simplify_clause_term(clause) ? {
+      rm_return!("term simplification")
     }
 
     log! { @3 "redundancy check..." }
 
-    rm_return! {
-      clause if self.is_redundant(clause) => "clause redundant"
+    if self.is_redundant(clause) {
+      rm_return!("clause redundant")
     }
 
     log! { @3 "split disj..." }
@@ -480,9 +466,9 @@ impl<'a> PreInstance<'a> {
 
   /// Removes redundant atoms.
   fn prune_atoms(& mut self, clause: ClsIdx) -> Res<()> {
-    let atoms: Vec<Term> = self.instance[clause].lhs_terms().iter().map(
-      |atom| atom.clone()
-    ).collect() ;
+    let atoms: Vec<Term> = self.instance[
+      clause
+    ].lhs_terms().iter().cloned().collect() ;
 
     if atoms.is_empty() { return Ok(()) }
 
@@ -528,6 +514,7 @@ impl<'a> PreInstance<'a> {
   ///
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
+  #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
     if let Some(res) = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
@@ -553,6 +540,7 @@ impl<'a> PreInstance<'a> {
   ///
   /// - the terms in the lhs are equivalent to `false`, or
   /// - the rhs is a predicate application contained in the lhs.
+  #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
   pub fn is_this_clause_trivial(
     & mut self, clause: & mut Clause
   ) -> Res< Option<bool> > {
@@ -654,7 +642,7 @@ impl<'a> PreInstance<'a> {
     & mut self, pred: PrdIdx, tterms: TTerms
   ) -> Res<()> {
     log! { @5 "forcing {}", conf.emph(& self.instance[pred].name) }
-    if let Some(_) = self.instance.pred_terms[pred].as_ref() {
+    if self.instance.pred_terms[pred].as_ref().is_some() {
       let mut s: Vec<u8> = Vec::new() ;
       tterms.write_smt2(
         & mut s, |w, pred, args| {
@@ -867,7 +855,7 @@ impl<'a> PreInstance<'a> {
       "updating lhs clauses ({})", self.clauses_to_simplify.len()
     }
 
-    'clause_iter: for clause in & self.clauses_to_simplify {
+    for clause in & self.clauses_to_simplify {
       let clause = * clause ;
       log! { @4
         "- working on lhs of clause {}",
@@ -945,7 +933,7 @@ impl<'a> PreInstance<'a> {
 
   /// Extends the lhs occurences of a predicate with some a term.
   ///
-  /// If `pred` appears in `pred /\ apps /\ trms => rhs` **where `rhs` is a
+  /// If `pred` appears in `pred /\ apps /\ trms => rhs` where `rhs` is a
   /// predicate application, the clause will become `pred /\ apps /\ trms /\
   /// term => rhs`.
   ///
@@ -959,9 +947,7 @@ impl<'a> PreInstance<'a> {
   ///
   /// - sub instance generation, when splitting on one clause
   pub fn extend_pred_left(
-    & mut self, preds: PrdHMap<
-      (HConSet<Term>, Vec<(Quantfed, Term)>)
-    >
+    & mut self, preds: & PrdHMap<::instance::preproc::PredExtension>
   ) -> Res<RedInfo> {
     self.check("before `extend_pred_left`") ? ;
 
@@ -981,9 +967,7 @@ impl<'a> PreInstance<'a> {
     let mut to_simplify = ClsSet::new() ;
     for pred in preds.keys() {
       to_simplify.extend(
-        self.clauses_of(* pred).0.iter().map(
-          |c| * c
-        )
+        self.clauses_of(* pred).0.iter().cloned()
       ) ;
     }
 
@@ -1004,7 +988,7 @@ impl<'a> PreInstance<'a> {
         ).unwrap()
       }
 
-      for (pred, & (ref terms, ref quantified)) in & preds {
+      for (pred, & (ref terms, ref quantified)) in preds {
         let pred = * pred ;
 
         let argss = if let Some(
@@ -1128,7 +1112,7 @@ impl<'a> PreInstance<'a> {
       let pred_argss: Vec< VarTerms > = if let Some(
         argss
       ) = self.instance.clauses[clause].drop_lhs_pred(pred) {
-        argss.iter().map(|a| a.clone()).collect()
+        argss.iter().cloned().collect()
       } else {
         bail!("inconsistent instance state")
       } ;
@@ -1145,9 +1129,9 @@ impl<'a> PreInstance<'a> {
       ) ? ;
 
       // Go over all the combinations.
-      'all_combinations: while let Some(
+      while let Some(
         combination
-      ) = all_combinations.next() {
+      ) = all_combinations.next_combination() {
 
         debug_assert_eq! { combination.len(), pred_argss.len() }
 
@@ -1303,9 +1287,7 @@ impl<'a> PreInstance<'a> {
               }
             }
 
-            self.instance.clause_force_rhs(
-              clause, prd, nu_args.into()
-            ) ?
+            self.instance.clause_force_rhs(clause, prd, nu_args) ?
           }
           // No `else`, clause's rhs is already `None`.
 
@@ -1411,7 +1393,7 @@ impl<'a> PreInstance<'a> {
   /// Only unrolls negative clauses where `(pred args)` is not the only
   /// application.
   pub fn unroll(
-    & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, TTermSet)>
+    & mut self, pred: PrdIdx, terms: & [ (Option<Quant>, TTermSet) ]
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
     let mut to_add = Vec::with_capacity(17) ;
@@ -1437,7 +1419,7 @@ impl<'a> PreInstance<'a> {
         bail!( "inconsistent instance state, `pred_to_clauses` out of sync" )
       } ;
 
-      for & (ref quant, ref tterms) in & terms {
+      for & (ref quant, ref tterms) in terms {
         let mut nu_clause = clause.clone_except_lhs_of(pred, "unrolling") ;
         let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
 
@@ -1506,7 +1488,7 @@ impl<'a> PreInstance<'a> {
   ///
   /// Only unrolls clauses which have at least one lhs predicate application.
   pub fn reverse_unroll(
-    & mut self, pred: PrdIdx, terms: Vec<(Option<Quant>, HConSet<Term>)>
+    & mut self, pred: PrdIdx, terms: & [ (Option<Quant>, TermSet) ]
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
     let mut to_add = Vec::with_capacity(17) ;
@@ -1527,7 +1509,7 @@ impl<'a> PreInstance<'a> {
         bail!("inconsistent instance state")
       } ;
 
-      for & (ref quant, ref terms) in & terms {
+      for & (ref quant, ref terms) in terms {
         let mut nu_clause = clause.clone_with_rhs(None, "r_unroll") ;
         let qual_map = nu_clause.nu_fresh_vars_for(quant) ;
 
@@ -1783,13 +1765,14 @@ impl<'a> PreInstance<'a> {
 
       let sat = self.solver.check_sat() ? ;
       self.solver.pop(1) ? ;
-      return Ok(! sat)
+      if sat {
+        return Ok(false)
+      }
     }
 
     self.solver.reset() ? ;
 
     Ok(true)
-    
   }
 
 }

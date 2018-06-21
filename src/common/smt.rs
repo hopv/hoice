@@ -76,7 +76,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
       write!(w, "true") ?
     } else {
       write!(w, "(and") ? ;
-      for term in self.terms.clone().into_iter() {
+      for term in self.terms.clone() {
         write!(w, " ") ? ;
         term.write(
           w, |w, var| var.default_write(w)
@@ -93,7 +93,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
 /// SMT-prints an implication `/\ (set \ term) => term`.
 pub struct SmtImpl<'a> {
   /// Set of terms.
-  pub set: & 'a HConSet<Term>,
+  pub set: & 'a TermSet,
   /// Term to remove from `set`.
   pub trm: & 'a Term,
 }
@@ -101,7 +101,7 @@ impl<'a> SmtImpl<'a> {
   /// Constructor.
   ///
   /// Returns `None` if `set.is_empty()`.
-  pub fn new(set: & 'a HConSet<Term>, trm: & 'a Term) -> Option<Self> {
+  pub fn new(set: & 'a TermSet, trm: & 'a Term) -> Option<Self> {
     if ! set.is_empty() {
       Some( SmtImpl { set, trm } )
     } else {
@@ -251,7 +251,7 @@ impl<Samples> SmtActSamples<Samples> {
     Ok(())
   }
 }
-impl<'a> Expr2Smt<()> for SmtActSamples<& 'a Vec<VarVals>> {
+impl<'a> Expr2Smt<()> for SmtActSamples<& 'a [ VarVals ]> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
@@ -299,7 +299,7 @@ impl<'a, T> Expr2Smt<()> for SmtActSamples< & 'a VarValsMap<T> > {
 /// Asserts that each term is equal to the corresponding value.
 pub struct EqConj<'a> {
   /// Terms.
-  pub terms: & 'a Vec<Term>,
+  pub terms: & 'a [ Term ],
   /// Values.
   pub vals: & 'a VarVals,
 }
@@ -307,7 +307,7 @@ impl<'a> EqConj<'a> {
   /// Constructor.
   ///
   /// Both lists must have the same length.
-  pub fn new(terms: & 'a Vec<Term>, vals: & 'a VarVals) -> Self {
+  pub fn new(terms: & 'a [ Term ], vals: & 'a VarVals) -> Self {
     debug_assert_eq! { terms.len(), vals.len() }
 
     EqConj { terms, vals }
@@ -423,6 +423,11 @@ pub enum FPVar {
 
 
 
+/// Input signature for a model that's not fixed yet.
+type FPSig = Vec<(FPVar, Typ)> ;
+
+
+
 /// Unit type parsing the output of the SMT solver.
 ///
 /// Parses variables of the form `v<int>` and constants. It is designed to
@@ -434,7 +439,7 @@ pub struct FullParser ;
 impl FullParser {
   /// Translates a raw model to a normal model.
   pub fn fix_model(
-    & self, mut model: Vec<(FPVar, Vec<(FPVar, Typ)>, Typ, FPVal)>
+    self, mut model: Vec<(FPVar, FPSig, Typ, FPVal)>
   ) -> Res< Vec<(VarIdx, Typ, Val)> > {
     let mut fun_defs: HashMap<String, (Sig, Term)> = HashMap::new() ;
     let mut res = Vec::with_capacity( model.len() ) ;
@@ -727,9 +732,7 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
         clause.lhs_terms_checked() ;
         conj.is_unsat(
           self, clause.vars()
-        ).map(
-          |res| Some(res)
-        )
+        ).map(Some)
       }
 
     }

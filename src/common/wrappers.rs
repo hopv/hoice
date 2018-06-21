@@ -39,12 +39,12 @@ wrap_usize!{
 }
 impl VarIdx {
   /// Default way to write variables: `v_<idx>`.
-  pub fn default_write<W>(& self, w: & mut W) -> ::std::io::Result<()>
+  pub fn default_write<W>(self, w: & mut W) -> ::std::io::Result<()>
   where W: Write {
     write!(w, "v_{}", self)
   }
   /// Default string representation of a variable.
-  pub fn default_str(& self) -> String {
+  pub fn default_str(self) -> String {
     let mut s = vec![] ;
     self.default_write(& mut s).unwrap() ;
     ::std::str::from_utf8(& s).unwrap().into()
@@ -96,7 +96,7 @@ impl VarMap< Term > {
   pub fn are_diff_vars(& self) -> bool {
     let mut iter = self.iter() ;
     while let Some(term) = iter.next() {
-      if let Some(_) = term.var_idx() {
+      if term.var_idx().is_some() {
         for other in iter.clone() {
           if term == other {
             return false

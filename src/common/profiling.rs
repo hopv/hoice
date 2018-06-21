@@ -51,6 +51,7 @@ impl ProfileTree {
     & self, _: S, _: & [ & 'static str ]
   ) {}
   #[cfg(not (feature = "bench") )]
+  #[cfg_attr(feature = "cargo-clippy", allow(print_literal))]
   fn print<S>(
     & self, pref: S, set_sum: & [ & 'static str ]
   ) where S: Into<String> {
@@ -58,7 +59,7 @@ impl ProfileTree {
     self.fold(
       None,
       |prev, scope, time, sub_time| if let Some(last) = scope.last() {
-        debug_assert! { scope.len() > 0 }
+        debug_assert! { scope.is_empty() }
         let art = match prev {
           Some(n) if n < scope.len() => "\\",
           Some(_) | None => "|",
@@ -103,7 +104,7 @@ impl ProfileTree {
     for scope in scope {
       let tmp = current ;
       current = tmp.branches.entry(scope).or_insert_with(
-        || ProfileTree::empty()
+        ProfileTree::empty
       ) ;
       last_scope = scope
     }
@@ -163,7 +164,7 @@ impl ProfileTree {
               conf.emph(& scope_str)
             }
           }
-          prev = f(prev, & this_scope, & sub_duration, sub_duration.clone())
+          prev = f(prev, & this_scope, & sub_duration, sub_duration)
         }
         stack.push(
           (
@@ -191,6 +192,7 @@ impl CanPrint for Stats {
   fn has_non_zero(& self) -> bool {
     self.values().any(|n| * n > 0)
   }
+  #[cfg_attr(feature = "cargo-clippy", allow(print_literal))]
   fn print<S>(& self, pref: S) where S: Into<String> {
     let pref = pref.into() ;
     let mut stats: Vec<_> = self.iter().collect() ;
@@ -245,6 +247,9 @@ pub struct Profiler {
 #[cfg(feature = "bench")]
 #[derive(Clone)]
 pub struct Profiler ;
+impl Default for Profiler {
+  fn default() -> Self { Self::new() }
+}
 impl Profiler {
   /// Constructor.
   #[cfg( not(feature = "bench") )]
@@ -315,7 +320,7 @@ impl Profiler {
   where F: Fn(usize) -> usize, S: Into<String> {
     let stat = stat.into() ;
     let mut map = self.stats.borrow_mut() ;
-    let val = map.get(& stat).map(|n| * n).unwrap_or(0) ;
+    let val = map.get(& stat).cloned().unwrap_or(0) ;
     let _ = map.insert(stat, f(val)) ;
     ()
   }
@@ -337,6 +342,7 @@ impl Profiler {
   ///
   /// Panics if there was no tick since the last time registration.
   #[cfg( not(feature = "bench") )]
+  #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
   pub fn mark(& self, scope: Vec<& 'static str>) {
     if scope.is_empty() {
       panic!("Profile: can't use scope `total`")
@@ -348,7 +354,7 @@ impl Profiler {
       let mut instant = None ;
       ::std::mem::swap(& mut instant, tick) ;
       if let Some(instant) = instant {
-        * sum = (* sum) + Instant::now().duration_since(instant) ;
+        * sum += Instant::now().duration_since(instant) ;
         * tick = None
       }
     } else {

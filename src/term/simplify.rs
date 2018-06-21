@@ -167,7 +167,7 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
 
     let mut cnt = 0 ;
 
-    'check_current: while cnt < res.len() {
+    while cnt < res.len() {
       use self::SimplRes::* ;
       use std::cmp::Ordering::* ;
 
@@ -504,7 +504,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     match (lhs_op, rhs_op) {
       (Op::Gt, Op::Gt) |
       (Op::Ge, Op::Ge) => return SimplRes::Cmp(
-        lhs_cst.get().cmp(& rhs_cst).unwrap()
+        lhs_cst.get().compare(& rhs_cst).unwrap()
       ),
 
       (Op::Gt, Op::Ge) |
@@ -516,12 +516,12 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         }
       } else {
         return SimplRes::Cmp(
-          lhs_cst.get().cmp(& rhs_cst).unwrap()
+          lhs_cst.get().compare(& rhs_cst).unwrap()
         )
       },
 
       (Op::Eql, Op::Ge) |
-      (Op::Eql, Op::Gt) => match lhs_cst.get().cmp(& rhs_cst) {
+      (Op::Eql, Op::Gt) => match lhs_cst.get().compare(& rhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
         Some(Equal) if rhs_op == Op::Gt => if conj {
           return SimplRes::Yields( term::fls() )
@@ -532,7 +532,7 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
       },
 
       (Op::Ge, Op::Eql) |
-      (Op::Gt, Op::Eql) => match rhs_cst.get().cmp(& lhs_cst) {
+      (Op::Gt, Op::Eql) => match rhs_cst.get().compare(& lhs_cst) {
         Some(Less) => return SimplRes::Yields( term::fls() ),
         Some(Equal) if lhs_op == Op::Gt => return SimplRes::Yields(
           term::fls()

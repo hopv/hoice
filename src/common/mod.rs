@@ -64,9 +64,7 @@ pub use self::wrappers::* ;
 lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
-  static ref version_string: String = format!(
-    "{}", crate_version!()
-  ) ;
+  static ref version_string: String = crate_version!().into() ;
   /// Version with revision info.
   pub static ref version: & 'static str = & version_string ;
 }
@@ -87,9 +85,9 @@ pub fn print_stats(_: & 'static str, _: Profiler) {}
 pub fn print_stats(name: & str, profiler: Profiler) {
   if conf.stats {
     let others = profiler.drain_others() ;
-    println!("") ;
+    println!() ;
     profiler.print( name, "", & [ "data" ] ) ;
-    println!("") ;
+    println!() ;
     for (name, other) in others {
       print_stats(& name, other)
     }
@@ -104,7 +102,7 @@ pub fn corrupted_err<T>(_: T) -> Error {
 /// Notifies the user and reads a line from stdin.
 pub fn pause(s: & str, _profiler: & Profiler) {
   let mut dummy = String::new() ;
-  println!("") ;
+  println!() ;
   println!( "; {} {}...", conf.emph("press return"), s ) ;
   let _ = profile!(
     |_profiler| wrap {
@@ -228,6 +226,8 @@ pub type Rat = ::num::BigRational ;
 
 /// A set of terms.
 pub type TermSet = HConSet<Term> ;
+/// A map from terms to stuff.
+pub type TermMap<T> = HConMap<Term, T> ;
 
 /// A signature.
 pub type Sig = VarMap<Typ> ;
@@ -264,10 +264,12 @@ pub type Quantfed = VarHMap<Typ> ;
 
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
+pub type ModelRef<'a> = & 'a [ (PrdIdx, TTerms) ] ;
 ///
 pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 ///
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
+pub type ConjModelRef<'a> = & 'a [ Vec<(PrdIdx, Vec<TTerms>)> ] ;
 
 /// Indicates a bias in a counterexample for some clause.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +322,7 @@ pub type BCex = ( Cex, Bias ) ;
 pub type Cexs = ClsHMap< Vec<BCex> > ;
 
 /// Signature trait, for polymorphic term insertion.
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Signature {
   /// Type of a variable.
   fn get(& self, VarIdx) -> Typ ;
@@ -343,6 +346,7 @@ impl Signature for VarMap<Typ> {
 
 
 /// Implemented by types lending themselves to evaluation.
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Evaluator {
   /// Retrieves the value associated with a variable.
   fn get(& self, var: VarIdx) -> & Val ;
@@ -403,7 +407,7 @@ impl CanBEvaled for Term {
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
 #[must_use]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -538,7 +542,6 @@ pub trait PebcakFmt<'a> {
 /// Indexed by `VarIdx`.
 pub trait VarIndexed<T> {
   /// Gets the value associated with a variable.
-  #[inline(always)]
   fn var_get(& self, var: VarIdx) -> Option<T> ;
 }
 impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
@@ -551,6 +554,7 @@ impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
   }
 }
 impl VarIndexed<Term> for VarTerms {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
       Some( self[var].clone() )
@@ -560,11 +564,13 @@ impl VarIndexed<Term> for VarTerms {
   }
 }
 impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
-    self.get(& var).map(|e| e.clone())
+    self.get(& var).cloned()
   }
 }
 impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
       Some( term::var( self[var].0, self[var].1.clone() ) )
@@ -574,6 +580,7 @@ impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
   }
 }
 impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     self.get(& var).map(
       |& (v, ref t)| term::var(v, t.clone())
@@ -581,6 +588,7 @@ impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
   }
 }
 impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if self.len() < * var {
       None
@@ -593,6 +601,7 @@ impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
 }
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if let Some(res) = self.0.var_get(var) {
       debug_assert!( self.1.var_get(var).is_none() ) ;
@@ -607,6 +616,7 @@ where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
 }
 impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
 where T: VarIndexed<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
     (* self).var_get(var)
   }
@@ -616,75 +626,6 @@ where T: VarIndexed<Elem> {
 
 
 
-
-
-
-
-
-
-/// Hash-related things.
-///
-/// What's inside this module is quite dangerous. The hashing functions are
-/// type-specific and will crash if applied to something else.
-mod hash {
-  #![allow(non_upper_case_globals)]
-  use std::hash::{ Hasher, BuildHasher } ;
-  /// Number of bytes in a `u64`.
-  pub const u64_bytes: usize = 8 ;
-
-  /// Empty struct used to build `HashU64`.
-  #[derive(Clone)]
-  pub struct BuildHashU64 {}
-  impl BuildHasher for BuildHashU64 {
-    type Hasher = HashU64 ;
-    fn build_hasher(& self) -> HashU64 {
-      HashU64 { buf: [0 ; u64_bytes] }
-    }
-  }
-  impl Default for BuildHashU64 {
-    fn default() -> Self {
-      BuildHashU64 {}
-    }
-  }
-
-  /// Trivial hasher for `u64`. **This hasher is only for hashing `u64`s**.
-  pub struct HashU64 {
-    buf: [u8 ; u64_bytes]
-  }
-  impl HashU64 {
-    /// Checks that a slice of bytes has the length of a `u64`. Only active
-    /// in debug.
-    #[cfg(debug_assertions)]
-    #[inline(always)]
-    fn test_bytes(bytes: & [u8]) {
-      if bytes.len() != u64_bytes {
-        panic!(
-          "[illegal] `HashU64::hash` \
-          called with non-`usize` argument ({} bytes, expected {})",
-          bytes.len(), u64_bytes
-        )
-      }
-    }
-    /// Checks that a slice of bytes has the length of a `u64`. Only active
-    /// in debug.
-    #[cfg( not(debug_assertions) )]
-    #[inline(always)]
-    fn test_bytes(_: & [u8]) {}
-  }
-  impl Hasher for HashU64 {
-    fn finish(& self) -> u64 {
-      unsafe {
-        ::std::mem::transmute(self.buf)
-      }
-    }
-    fn write(& mut self, bytes: & [u8]) {
-      Self::test_bytes(bytes) ;
-      for n in 0..u64_bytes {
-        self.buf[n] = bytes[n]
-      }
-    }
-  }
-}
 
 
 
@@ -708,11 +649,12 @@ mod hash {
 ///   1, 2, 4, 8, 16, 32, 64, 128, 256,
 /// ] ;
 /// for value in expected {
-///   let luby = luby.next() ;
+///   let luby = luby.next_value() ;
 /// # println!("{} == {} ?", value, luby) ;
 ///   assert_eq! { luby, value.into() }
 /// }
 /// ```
+#[derive(Default)]
 pub struct Luby {
   /// Current max power of two.
   max_pow: usize,
@@ -725,7 +667,7 @@ impl Luby {
     Luby { max_pow: 0, pow: 0 }
   }
   /// Next value in the series.
-  pub fn next(& mut self) -> Int {
+  pub fn next_value(& mut self) -> Int {
     if self.pow > self.max_pow {
       self.pow = 0 ;
       self.max_pow += 1
@@ -739,6 +681,7 @@ impl Luby {
 
 /// Counts up to the current value of the Luby series, outputs true and moves
 /// on to the next value when it reaches it.
+#[derive(Default)]
 pub struct LubyCount {
   /// Luby series.
   luby: Luby,
@@ -751,7 +694,7 @@ impl LubyCount {
   /// Constructor.
   pub fn new() -> Self {
     let mut luby = Luby::new() ;
-    let max = luby.next() ;
+    let max = luby.next_value() ;
     let count = 0.into() ;
     LubyCount { luby, max, count }
   }
@@ -762,7 +705,7 @@ impl LubyCount {
     self.count = & self.count + 1 ;
     let ping = self.count >= self.max ;
     if ping {
-      self.max = self.luby.next() ;
+      self.max = self.luby.next_value() ;
       self.count = 0.into()
     }
     ping
@@ -835,7 +778,7 @@ where Iter: Iterator + ExactSizeIterator + Clone, Iter::Item: Clone {
   }
 
   /// Returns the next combination if any.
-  pub fn next(& mut self) -> Option< & Vec<Iter::Item> > {
+  pub fn next_combination(& mut self) -> Option< & Vec<Iter::Item> > {
     let mut res = None ;
 
     if let Some(mut current) = ::std::mem::replace(

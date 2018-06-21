@@ -17,6 +17,16 @@ use self::{
 } ;
 
 
+
+/// Extension for a predicate.
+///
+/// Used by `extend_pred_left`.
+pub type PredExtension = (
+  TermSet, Vec<(Quantfed, Term)>
+) ;
+
+
+
 /// Runs pre-processing.
 ///
 /// The boolean indicates wether a first pass of simplification runs on the
@@ -157,7 +167,7 @@ pub fn work_on_split(
       // Maps predicates to strengthening terms.
       let mut strength_map = PrdHMap::new() ;
 
-      'strengthen: for clause in strict_neg_clauses {
+      for clause in strict_neg_clauses {
         macro_rules! inconsistent {
           () => ({
             instance.check("work_on_split (instance)") ? ;
@@ -217,10 +227,10 @@ pub fn work_on_split(
             let (terms, preds) = only_terms.destroy() ;
             debug_assert! { preds.is_empty() } ;
             let entry = strength_map.entry(pred).or_insert_with(
-              || (HConSet::<Term>::new(), Vec::new())
+              || (TermSet::new(), Vec::new())
             ) ;
             let terms = term::or(
-              terms.into_iter().map(|t| term::not(t)).collect()
+              terms.into_iter().map(term::not).collect()
             ) ;
             if qvars.is_empty() {
               entry.0.insert( terms ) ;
@@ -233,7 +243,7 @@ pub fn work_on_split(
 
       info += profile! {
         |profiler| wrap {
-          pre_instance.extend_pred_left(strength_map) ?
+          pre_instance.extend_pred_left(& strength_map) ?
         } "strengthening", "extend"
       } ;
 
@@ -734,7 +744,6 @@ impl<'a> Reductor<'a> {
 /// Reduction strategy trait.
 pub trait RedStrat {
   /// Pre-processor's name.
-  #[inline]
   fn name(& self) -> & 'static str ;
 
   /// Constructor.
@@ -1533,7 +1542,7 @@ impl RedStrat for CfgRed {
         instance, & mut to_keep, self.upper_bound
       ) ? ;
 
-      if pred_defs.len() == 0 { break }
+      if pred_defs.is_empty() { break }
 
       info.preds += pred_defs.len() ;
 
@@ -1580,7 +1589,7 @@ impl RedStrat for CfgRed {
           log! { @4 "{}) = (or", s }
           for & (ref qvars, ref conj) in & def {
             let (suff, pref) = if qvars.is_empty() { (None, "  ") } else {
-              let mut s = format!("  (exists") ;
+              let mut s = "  (exists".to_string() ;
               for (var, typ) in qvars {
                 s.push_str(" (") ;
                 s.push_str( & var.default_str() ) ;
@@ -1657,9 +1666,9 @@ pub struct BiasedUnroll {
   /// Predicates not appearing in negative clauses.
   not_in_neg_clauses: PrdSet,
   /// Positive definitions retrieved from positive clauses.
-  pos_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  pos_defs: PrdHMap< Vec<(Quantfed, TermSet)> >,
   /// Negative definitions retrieved from negative clauses.
-  neg_defs: PrdHMap< Vec<(Quantfed, HConSet<Term>)> >,
+  neg_defs: PrdHMap< Vec<(Quantfed, TermSet)> >,
   /// 
   pos_new_preds: PrdHMap<(PrdSet, PrdSet)>,
   neg_new_preds: PrdHMap<(PrdSet, PrdSet)>,
@@ -1671,7 +1680,7 @@ impl BiasedUnroll {
 
   /// Adds a positive definition for something.
   fn add_pos_def_for(
-    & mut self, pred: PrdIdx, def: (Quantfed, HConSet<Term>)
+    & mut self, pred: PrdIdx, def: (Quantfed, TermSet)
   ) {
     let defs = self.pos_defs.entry(pred).or_insert_with(|| vec![]) ;
     if defs.iter().all( |d| d != & def ) {
@@ -1681,7 +1690,7 @@ impl BiasedUnroll {
 
   /// Adds a negative definition for something.
   fn add_neg_def_for(
-    & mut self, pred: PrdIdx, def: (Quantfed, HConSet<Term>)
+    & mut self, pred: PrdIdx, def: (Quantfed, TermSet)
   ) {
     let defs = self.neg_defs.entry(pred).or_insert_with(|| vec![]) ;
     if defs.iter().all( |d| d != & def ) {
@@ -1788,9 +1797,9 @@ impl BiasedUnroll {
       println!(" }}")
     }
     println!("}}") ;
-    println!("") ;
-    println!("") ;
-    println!("") ;
+    println!() ;
+    println!() ;
+    println!() ;
   }
 
 
@@ -2023,7 +2032,7 @@ impl BiasedUnroll {
         debug_assert! { rhs.is_none() }
         let (terms, preds) = tterms.destroy() ;
         debug_assert! { preds.is_empty() }
-        let mut neg_terms = HConSet::<Term>::new() ;
+        let mut neg_terms = TermSet::new() ;
         for term in terms {
           neg_terms.insert(term) ;
         }
@@ -2048,10 +2057,7 @@ impl BiasedUnroll {
       if clause.lhs_preds().len() == 1
       && clause.rhs().is_none()
       && clause.lhs_preds().iter().next().map(
-        |(p, argss)| {
-          debug_assert_eq! { p, & pred }
-          argss.len() == 1
-        }
+        |(_, argss)| argss.len() == 1
       ).unwrap_or( false ) {
         self.retrieve_neg_def(instance, pred, clause) ? ;
         count += 1
@@ -2081,7 +2087,7 @@ impl BiasedUnroll {
   /// `terms` is understood as a conjunction.
   fn insert_terms(
     & self, clause: & mut Clause, args: & VarTerms,
-    qvars: & Quantfed, terms: & HConSet<Term>,
+    qvars: & Quantfed, terms: & TermSet,
   ) -> Res<()> {
     // Generate fresh variables for the clause if needed.
     let qual_map = clause.fresh_vars_for(qvars) ;
@@ -2115,7 +2121,7 @@ impl BiasedUnroll {
       for (p, argss) in instance[rhs_clause].lhs_preds() {
         if let Some(defs) = self.pos_defs.get(p) {
           for _ in argss {
-            estimation = defs.len() * estimation ;
+            estimation *= defs.len() ;
             if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
@@ -2242,7 +2248,7 @@ impl BiasedUnroll {
 
       if let Some((p, _)) = instance[lhs_clause].rhs() {
         if let Some(defs) = self.neg_defs.get(& p) {
-          estimation = estimation * defs.len() ;
+          estimation *= defs.len() ;
           if estimation > self.max_new_clauses {
             continue 'all_clauses
           }
@@ -2261,7 +2267,7 @@ impl BiasedUnroll {
           if argss.len() == 1 {
             ()
           } else if let Some(defs) = self.pos_defs.get(p) {
-            estimation = estimation * defs.len() ;
+            estimation *= defs.len() ;
             if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
@@ -2270,7 +2276,7 @@ impl BiasedUnroll {
           }
         } else if let Some(defs) = self.pos_defs.get(p) {
           for _ in argss {
-            estimation = estimation * defs.len() ;
+            estimation *= defs.len() ;
             if estimation > self.max_new_clauses {
               continue 'all_clauses
             }
@@ -2510,7 +2516,7 @@ impl RedStrat for BiasedUnroll {
 
     // println!("done with setup") ;
     // self.print(instance) ;
-    // println!("") ;
+    // println!() ;
 
     let mut new_stuff = true ;
 
@@ -2668,9 +2674,7 @@ impl RedStrat for Unroll {
     scoped! {
       let mut insert = |
         pred: PrdIdx, q: Option<Quant>, ts: TTermSet
-      | prd_map.entry(pred).or_insert_with(
-        || Vec::new()
-      ).push((q, ts)) ;
+      | prd_map.entry(pred).or_insert_with(Vec::new).push((q, ts)) ;
 
       'pos_clauses: for clause in instance.clauses() {
 
@@ -2731,7 +2735,7 @@ impl RedStrat for Unroll {
           conf.emph(& instance[pred].name),
           terms.len()
         }
-        info += instance.unroll(pred, terms) ?
+        info += instance.unroll(pred, & terms) ?
       }
     }
     Ok(info)
@@ -2763,15 +2767,13 @@ impl RedStrat for RUnroll {
   ) -> Res<RedInfo> {
 
     let mut prd_map: PrdHMap<
-      Vec<(Option<Quant>, HConSet<Term>)>
+      Vec<(Option<Quant>, TermSet)>
     > = PrdHMap::with_capacity(17) ;
 
     scoped! {
       let mut insert = |
-        pred: PrdIdx, q: Option<Quant>, ts: HConSet<Term>
-      | prd_map.entry(pred).or_insert_with(
-        || Vec::new()
-      ).push((q, ts)) ;
+        pred: PrdIdx, q: Option<Quant>, ts: TermSet
+      | prd_map.entry(pred).or_insert_with(Vec::new).push((q, ts)) ;
 
       'neg_clauses: for clause in instance.clauses() {
 
@@ -2837,7 +2839,7 @@ impl RedStrat for RUnroll {
               insert( pred, Quant::exists(q), terms )
             },
             ExtractRes::SuccessFalse => {
-              let mut set = HConSet::<Term>::new() ;
+              let mut set = TermSet::new() ;
               insert( pred, None, set )
             },
             ExtractRes::Failed => {
@@ -2879,7 +2881,7 @@ impl RedStrat for RUnroll {
           conf.emph(& instance[pred].name),
           terms.len()
         }
-        info += instance.reverse_unroll(pred, terms) ?
+        info += instance.reverse_unroll(pred, & terms) ?
       }
     }
     Ok(info)

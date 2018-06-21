@@ -106,7 +106,7 @@ impl<'a> InParser<'a> {
           if let Some(c) = self.next() {
             format!("{}", c)
           } else {
-            format!("<eof>")
+            "<eof>".into()
           }
         )
       )
@@ -448,23 +448,15 @@ impl<'a> InParser<'a> {
     while self.char_opt('(') {
       self.ws_cmt() ;
 
-      if self.set_logic() ? {
-        ()
-      } else if self.set_info() ? {
-        ()
-      } else if let Some(_) = self.set_option() ? {
-        ()
-      } else if self.declare_fun() ? {
-        ()
-      } else if self.define_fun() ? {
-        ()
-      } else if self.assert() ? {
-        ()
-      } else if self.tag_opt("check-sat") {
-        ()
-      } else if self.tag_opt("get-model") {
-        ()
-      } else if self.tag_opt("exit") {
+      if self.set_logic() ?
+      || self.set_info() ?
+      || self.set_option()?.is_some()
+      || self.declare_fun() ?
+      || self.define_fun() ?
+      || self.assert() ?
+      || self.tag_opt("check-sat")
+      || self.tag_opt("get-model")
+      || self.tag_opt("exit") {
         ()
       } else {
         print!("> `") ;

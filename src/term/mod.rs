@@ -568,7 +568,7 @@ impl RTerm {
     while let Some(term) = to_do.pop() {
       match * term {
         RTerm::Var(_, i) => max = Some(
-          ::std::cmp::max( i, max.unwrap_or(0.into()) )
+          ::std::cmp::max( i, max.unwrap_or_else(|| 0.into()) )
         ),
         RTerm::Int(_) |
         RTerm::Real(_) |
@@ -1207,10 +1207,10 @@ impl_fmt!{
 ///
 /// Actually contains a set of `Term`s and a map from predicates to their
 /// arguments.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct TTermSet {
   /// Set of terms.
-  terms: HConSet<Term>,
+  terms: TermSet,
   /// Predicate applications.
   preds: PrdHMap< VarTermsSet >,
 }
@@ -1219,7 +1219,7 @@ impl TTermSet {
   #[inline]
   pub fn with_capacity(capa: usize) -> Self {
     TTermSet {
-      terms: HConSet::with_capacity(capa),
+      terms: TermSet::with_capacity(capa),
       preds: PrdHMap::with_capacity(capa),
     }
   }
@@ -1227,14 +1227,14 @@ impl TTermSet {
   #[inline]
   pub fn with_capacities(term_capa: usize, pred_capa: usize) -> Self {
     TTermSet {
-      terms: HConSet::with_capacity(term_capa),
+      terms: TermSet::with_capacity(term_capa),
       preds: PrdHMap::with_capacity(pred_capa),
     }
   }
 
   /// Destroys the set.
   #[inline]
-  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<VarTermsSet>) {
+  pub fn destroy(self) -> (TermSet, PrdHMap<VarTermsSet>) {
     (self.terms, self.preds)
   }
 
@@ -1251,10 +1251,9 @@ impl TTermSet {
 
   /// Creates a top term set from a set of terms.
   #[inline]
-  pub fn of_terms(terms: HConSet<Term>, pred_capa: usize) -> Self {
+  pub fn of_terms(terms: TermSet, pred_capa: usize) -> Self {
     TTermSet {
-      terms: terms,
-      preds: PrdHMap::with_capacity(pred_capa),
+      terms, preds: PrdHMap::with_capacity(pred_capa),
     }
   }
 
@@ -1276,7 +1275,7 @@ impl TTermSet {
 
   /// Terms.
   #[inline]
-  pub fn terms(& self) -> & HConSet<Term> {
+  pub fn terms(& self) -> & TermSet {
     & self.terms
   }
   /// Predicate applications.
@@ -1287,7 +1286,7 @@ impl TTermSet {
 
   /// Terms (mutable version).
   #[inline]
-  pub fn terms_mut(& mut self) -> & mut HConSet<Term> {
+  pub fn terms_mut(& mut self) -> & mut TermSet {
     & mut self.terms
   }
   /// Predicate applications (mutable version).
@@ -1320,7 +1319,7 @@ impl TTermSet {
 
   /// Variable substitution.
   pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
-    let mut terms = HConSet::<Term>::with_capacity(self.terms.len()) ;
+    let mut terms = TermSet::with_capacity(self.terms.len()) ;
     for term in self.terms() {
       let (term, _) = term.subst(map) ;
       terms.insert(term) ;
@@ -1342,9 +1341,7 @@ impl TTermSet {
   /// Inserts a predicate application.
   #[inline]
   pub fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
-    self.preds.entry(pred).or_insert_with(
-      || VarTermsSet::new()
-    ).insert(args)
+    self.preds.entry(pred).or_insert_with(VarTermsSet::new).insert(args)
   }
   /// Inserts some predicate applications.
   pub fn insert_pred_apps<Iter, TArgss>(
@@ -1355,9 +1352,7 @@ impl TTermSet {
   TArgss: IntoIterator<Item = VarTerms, IntoIter = Iter> {
     let argss = argss.into_iter() ;
     if argss.len() == 0 { return () }
-    self.preds.entry(pred).or_insert_with(
-      || VarTermsSet::new()
-    ).extend( argss )
+    self.preds.entry(pred).or_insert_with(VarTermsSet::new).extend( argss )
   }
 
   /// Inserts a term.
@@ -1607,7 +1602,7 @@ impl TTerms {
       TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
       TTerms::Conj { ref tterms, .. } => Some(
         term::and(
-          tterms.terms().iter().map(|term| term.clone()).collect()
+          tterms.terms().iter().cloned().collect()
         )
       ),
 
@@ -1617,7 +1612,7 @@ impl TTerms {
       } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
       TTerms::Disj { ref tterms, .. } => Some(
         term::or(
-          tterms.terms().iter().map(|term| term.clone()).collect()
+          tterms.terms().iter().cloned().collect()
         )
       ),
 
@@ -1628,7 +1623,7 @@ impl TTerms {
           || ! conj.preds.is_empty() { return None }
           disj_terms.push(
             term::and(
-              conj.terms().iter().map(|term| term.clone()).collect()
+              conj.terms().iter().cloned().collect()
             )
           )
         }
@@ -1892,9 +1887,9 @@ impl TTerms {
           |_, argss| ! argss.is_empty()
         ) ;
 
-        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
         // Used to inline conjunctions.
-        let mut swap = HConSet::new() ;
+        let mut swap = TermSet::new() ;
         ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
 
         'inline_conjs: loop {
@@ -1974,9 +1969,9 @@ impl TTerms {
           }
         }
 
-        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
         // Used to inline disjunctions.
-        let mut swap = HConSet::new() ;
+        let mut swap = TermSet::new() ;
         ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
 
         'inline_disj: loop {
@@ -2101,14 +2096,14 @@ impl TTerms {
 
   /// Simplifies some top terms given some definitions for the predicates.
   pub fn simplify_pred_apps(
-    self, model: & Model, pred_terms: & PrdMap< Option<TTerms> >
+    self, model: ModelRef, pred_terms: & PrdMap< Option<TTerms> >
   ) -> Self {
     macro_rules! if_defined {
       ($pred:ident then |$def:ident| $stuff:expr) => (
         if let Some($def) = pred_terms[* $pred].as_ref() {
           $stuff
         } else {
-          for & (ref idx, ref $def) in model {
+          for (ref idx, ref $def) in model {
             if idx == $pred { $stuff }
           }
         }
@@ -2395,6 +2390,9 @@ impl Quant {
     map.len()
   }
 
+  /// True if there are no quantified variables.
+  pub fn is_empty(& self) -> bool { self.len() == 0 }
+
   /// Filters some quantified variables.
   ///
   /// Keeps all quantified variables such that `f(var)`.
@@ -2441,7 +2439,7 @@ impl Quant {
   ) -> IoRes<()>
   where
   W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
-    w.write( pref.as_bytes() ) ? ;
+    w.write_all( pref.as_bytes() ) ? ;
     let map = match * self {
       Quant::Exists(ref map) => {
         write!(w, "(exists (") ? ;
@@ -2462,3 +2460,31 @@ impl Quant {
 }
 
 
+/// A term type-checking error.
+pub enum TypError {
+  /// No type info, just an error message.
+  Msg(String),
+  /// Type info:
+  ///
+  /// - the type expected (if known),
+  /// - the type obtained,
+  /// - the index of the argument that caused it.
+  Typ {
+    expected: Option<Typ>,
+    obtained: Typ,
+    index: usize,
+  }
+}
+impl TypError {
+  /// Message constructor.
+  pub fn msg<S: Into<String>>(s: S) -> Self {
+    TypError::Msg( s.into() )
+  }
+
+  /// Type info constructor.
+  pub fn typ(
+    expected: Option<Typ>, obtained: Typ, index: usize
+  ) -> Self {
+    TypError::Typ { expected, obtained, index }
+  }
+}

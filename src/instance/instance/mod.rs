@@ -2,7 +2,6 @@
 
 use common::* ;
 use instance::info::* ;
-use learning::ice::quals::NuQuals ;
 use data::Data ;
 
 mod clause ;
@@ -102,6 +101,9 @@ pub struct Instance {
   ///
   /// Can only be set by `(set-option :produce-proofs true)`.
   proofs: bool,
+}
+impl Default for Instance {
+  fn default() -> Self { Self::new() }
 }
 impl Instance {
   /// Instance constructor.
@@ -245,9 +247,7 @@ impl Instance {
   /// clause of the original instance that the split was on.
   ///
   /// Used mainly to create different folders for log files when splitting.
-  pub fn split(& self) -> Option<ClsIdx> {
-    self.split.clone()
-  }
+  pub fn split(& self) -> Option<ClsIdx> { self.split }
 
   /// True if the unsat flag is set.
   pub fn is_unsat(& self) -> bool {
@@ -626,7 +626,7 @@ impl Instance {
     & mut self, clause_idx: ClsIdx, tterms: I
   ) {
     let clause = & mut self.clauses[clause_idx] ;
-    for tterm in tterms.into_iter() {
+    for tterm in tterms {
       match tterm {
         TTerm::P { pred, args } => {
           self.pred_to_clauses[pred].0.insert(clause_idx) ;
@@ -665,7 +665,7 @@ impl Instance {
 
   // /// Set of int constants **appearing in the predicates**. If more constants
   // /// are created after the instance building step, they will not appear here.
-  // pub fn consts(& self) -> & HConSet<Term> {
+  // pub fn consts(& self) -> & TermSet {
   //   & self.consts
   // }
 
@@ -685,115 +685,6 @@ impl Instance {
   /// Clause accessor.
   pub fn clauses(& self) -> & ClsMap<Clause> {
     & self.clauses
-  }
-
-  /// Removes all predicate applications of some predicate in the lhs of a
-  /// clause.
-  fn rm_pred_apps_in_lhs(& mut self, pred: PrdIdx, clause: ClsIdx) {
-    self.pred_to_clauses[pred].0.remove(& clause) ;
-    let prev = self.clauses[clause].drop_lhs_pred(pred) ;
-    debug_assert! { prev.is_none() }
-  }
-
-
-  /// Strengthens some predicate by some terms using the clauses lhs where the
-  /// predicate appears.
-  ///
-  /// Returns the number of clauses created.
-  ///
-  /// Currently pseudo-inactive. Can only remove predicate applications if they
-  /// are found to be trivial given the strengthening.
-  ///
-  /// For all clauses `c` where `pred` appears in the lhs, creates a new clause
-  /// that is `c` with every application of `pred` replaced by `tterms`
-  /// instantiated on `pred`'s application arguments.
-  pub fn strengthen_in_lhs(
-    & mut self, pred: PrdIdx, tterms: Vec<TTerm>
-  ) -> Res<usize> {
-    // let mut nu_clauses = Vec::with_capacity(
-    //   self.pred_to_clauses[pred].0.len()
-    // ) ;
-    let mut nu_tterms = HashSet::with_capacity( 29 ) ;
-    let mut pred_apps_to_rm = Vec::with_capacity(11) ;
-
-    'clause_iter: for clause in & self.pred_to_clauses[pred].0 {
-      // debug_assert!( nu_tterms.is_empty() ) ;
-      nu_tterms.clear() ;
-
-      log_debug!{ "  - #{}", clause }
-
-      if let Some(argss) = self[* clause].lhs_preds().get(& pred) {
-
-        log_debug!{ "    {} applications", argss.len() }
-        for args in argss {
-          'tterm_iter: for tterm in & tterms {
-            let tterm = tterm.subst_total(args) ? ;
-            if let Some(b) = tterm.bool() {
-              if ! b {
-                log_debug!{ "      new clause is trivial, skipping" }
-                continue 'clause_iter
-              }
-            } else {
-              match tterm {
-                TTerm::T(ref term) if self[
-                  * clause
-                ].lhs_terms().contains(term) => continue 'tterm_iter,
-                TTerm::P { ref pred, ref args } if self[
-                  * clause
-                ].lhs_preds().get(pred).map(
-                  |argss| argss.contains(args)
-                ).unwrap_or(false) => continue 'tterm_iter,
-                _ => ()
-              }
-              log_debug!{ "    - {}", tterm }
-              nu_tterms.insert( tterm ) ;
-            }
-          }
-        }
-
-      } else {
-        bail!(
-          "inconsistent instance state \
-          (`pred_to_clauses` in `strengthen_in_lhs`)"
-        )
-      }
-
-      if nu_tterms.is_empty() {
-        log_debug!{
-          "    no new terms, can remove applications of this predicate"
-        }
-        pred_apps_to_rm.push( (pred, * clause) )
-      } else {
-        // let mut nu_clause = self[* clause].clone() ;
-
-        // for tterm in nu_tterms.drain() {
-        //   nu_clause.lhs_insert(tterm) ;
-        // }
-
-        // let should_remove = self.simplifier.clause_propagate(
-        //   & mut nu_clause
-        // ) ? ;
-        // if should_remove {
-        //   log_info!{
-        //     "    new clause is trivial after propagation"
-        //   }
-        // } else {
-        //   nu_clauses.push(nu_clause)
-        // }
-      }
-
-    }
-
-    for (pred, clause) in pred_apps_to_rm {
-      self.rm_pred_apps_in_lhs(pred, clause)
-    }
-    // let count = nu_clauses.len() ;
-    // log_info!{ "    adding {} clauses", count }
-    // for clause in nu_clauses { self.push_clause(clause) ? }
-    self.check("after strengthening (lhs)") ? ;
-
-    // Ok(count)
-    Ok(0)
   }
 
   /// Pushes a new predicate and returns its index.
@@ -1002,374 +893,6 @@ impl Instance {
     true
   }
 
-  // /// Pushes a new clause and links, no redundancy check.
-  // fn push_clause_raw(& mut self, clause: Clause) -> bool {
-  //   let clause_index = self.clauses.next_index() ;
-  //   self.clauses.push(clause) ;
-
-  //   for pred in self.clauses[clause_index].lhs_preds().keys() {
-  //     let pred = * pred ;
-  //     let is_new = self.pred_to_clauses[pred].0.insert(clause_index) ;
-  //     debug_assert!(is_new)
-  //   }
-  //   if let Some((pred, _)) = self.clauses[clause_index].rhs() {
-  //     let is_new = self.pred_to_clauses[pred].1.insert(clause_index) ;
-  //     debug_assert!(is_new)
-  //   }
-  //   true
-  // }
-
-  /// Extracts some qualifiers from all clauses.
-  pub fn qualifiers(& self, quals: & mut NuQuals) -> Res<()> {
-    for clause in & self.clauses {
-      self.qualifiers_of_clause(clause, quals) ?
-    }
-    // Add boolean qualifiers for all predicate's bool vars.
-    for pred in & self.preds {
-      for (var, typ) in pred.sig.index_iter() {
-        let mut bool_vars = Vec::new() ;
-        if * typ == typ::bool() {
-          let var = term::var(var, typ::bool()) ;
-          quals.insert( var.clone(), pred.idx ) ? ;
-          bool_vars.push(var)
-        }
-        if bool_vars.len() > 1 {
-          quals.insert( term::and( bool_vars.clone() ), pred.idx ) ? ;
-          quals.insert( term::or( bool_vars ), pred.idx ) ? ;
-          ()
-        }
-      }
-    }
-    Ok(())
-  }
-
-  /// Extracts some qualifiers from a clause.
-  ///
-  /// # TO DO
-  ///
-  /// - write an explanation of what actually happens
-  /// - and some tests, probably
-  pub fn qualifiers_of_clause(
-    & self, clause: & Clause, quals: & mut NuQuals
-  ) -> Res<()> {
-    // if clause.from_unrolling { return Ok(()) }
-
-    let build_conj = self.clauses.len() < 2000 && conf.ice.mine_conjs ;
-
-    // Variable to term maps, based on the way the predicates are used.
-    let mut maps = vec![] ;
-
-    scoped! {
-      // Represents equalities between *pred vars* and terms over *clause
-      // variables*. These will be added to `app_quals` if the total
-      // substitution of the term by `map` succeeds.
-      let mut eq_quals = VarHMap::with_capacity(7) ;
-
-      clause.all_pred_apps_do(
-        |pred, args| {
-          debug_assert!( eq_quals.is_empty() ) ;
-
-          // Qualifiers generated while looking at predicate applications.
-          let mut app_quals: HConSet<Term> = HConSet::with_capacity(17) ;
-
-          // All the *clause var* to *pred var* maps for this predicate
-          // application.
-          let mut map: VarHMap<Term> = VarHMap::with_capacity( args.len() ) ;
-
-          for (pred_var, term) in args.index_iter() {
-            let pred_var_typ = self[pred].sig[pred_var].clone() ;
-            // Parameter's a variable?
-            if let Some(clause_var_index) = term.var_idx() {
-
-              // Clause variable's already known as parameter?
-              if let Some(other_pred_var) = map.get(& clause_var_index).map(
-                |t| t.clone()
-              ) {
-                // Equality qualifier.
-                app_quals.insert(
-                  term::eq(
-                    term::var(pred_var, pred_var_typ), other_pred_var.clone()
-                  )
-                ) ;
-              } else {
-                // Add to map.
-                let _prev = map.insert(
-                  clause_var_index, term::var(pred_var, pred_var_typ)
-                ) ;
-                debug_assert!( _prev.is_none() )
-              }
-
-            } else {
-              // Parameter's not a variable, store potential equality.
-              let _prev = eq_quals.insert(
-                pred_var, (pred_var_typ.clone(), term.clone())
-              ) ;
-              debug_assert!( _prev.is_none() ) ;
-              // Try to revert the term.
-              if let Some((var, term)) = term.invert_var(
-                pred_var, pred_var_typ
-              ) {
-                if ! map.contains_key(& var) {
-                  map.insert(var, term) ;
-                } else if let Some(other_pred_var) = map.get(& var) {
-                  app_quals.insert(
-                    term::eq( other_pred_var.clone(), term )
-                  ) ;
-                  ()
-                }
-              }
-            }
-
-          }
-
-          for (pred_var, (typ, term)) in eq_quals.drain() {
-            if let Some((term, _)) = term.subst_total(& map) {
-              app_quals.insert(
-                term::eq( term::var(pred_var, typ), term )
-              ) ;
-            }
-          }
-
-          if ! app_quals.is_empty() {
-            let build_conj = app_quals.len() > 1 ;
-            let mut conj = Vec::with_capacity( app_quals.len() ) ;
-
-            for term in & app_quals {
-              if build_conj { conj.push(term.clone()) }
-              quals.insert(term.clone(), pred) ? ;
-            }
-
-            if build_conj {
-              let term = term::and(conj) ;
-              quals.insert(term, pred) ? ;
-              ()
-            }
-          }
-
-          maps.push((pred, map, app_quals)) ;
-          Ok(())
-        }
-      ) ?
-    }
-
-    // Stores the subterms of `lhs_terms`.
-    let mut subterms = Vec::with_capacity(7) ;
-    // Stores all (sub-)terms.
-    let mut all_terms = HConSet::<Term>::with_capacity(
-      clause.lhs_terms().len()
-    ) ;
-    // Stores all top terms.
-    let mut conj = HConSet::<Term>::with_capacity(
-      clause.lhs_terms().len()
-    ) ;
-
-    // Now look for atoms and try to apply the mappings above.
-    for (pred, map, app_quals) in maps {
-      all_terms.clear() ;
-      conj.clear() ;
-      debug_assert! { all_terms.is_empty() }
-      debug_assert! { conj.is_empty() }
-
-      for term in clause.lhs_terms().iter() {
-
-        if let Some( (term, true) ) = term.subst_total(& map) {
-          all_terms.insert(term.clone()) ;
-
-          conj.insert( term.clone() ) ;
-
-          let term = if let Some(term) = term.rm_neg() {
-            term
-          } else { term } ;
-
-          quals.insert(term, pred) ? ;
-
-          ()
-        }
-
-        debug_assert!( subterms.is_empty() ) ;
-        subterms.push(term) ;
-
-        while let Some(subterm) = subterms.pop() {
-          match subterm.app_inspect() {
-            Some( (Op::Or, terms) ) |
-            Some( (Op::And, terms) ) |
-            Some( (Op::Not, terms) ) |
-            Some( (Op::Impl, terms) ) => for term in terms {
-              subterms.push(term) ;
-              if let Some( (qual, true) ) = term.subst_total(& map) {
-                let qual = if let Some(qual) = qual.rm_neg() {
-                  qual
-                } else {
-                  qual
-                } ;
-                quals.insert(qual, pred) ? ;
-              }
-            },
-            _ => if let Some( (qual, true) ) = subterm.subst_total(& map) {
-              all_terms.insert(qual) ;
-            },
-          }
-        }
-
-      }
-
-      if build_conj {
-        quals.insert(
-          term::and(
-            app_quals.iter().map(|t| t.clone()).collect()
-          ), pred
-        ) ? ;
-        if conj.len() > 1 {
-          quals.insert(
-            term::and( conj.iter().map(|t| t.clone()).collect() ), pred
-          ) ? ;
-          quals.insert(
-            term::and( conj.drain().chain(app_quals).collect() ), pred
-          ) ? ;
-        }
-      }
-
-      let mut all_terms = all_terms.iter() ;
-
-      while let Some(term) = all_terms.next() {
-
-        for other in all_terms.clone() {
-
-          match (term.app_inspect(), other.app_inspect()) {
-
-            (
-              Some((op_1 @ Op::Ge, term_args)),
-              Some((op_2 @ Op::Gt, other_args))
-            ) |
-            (
-              Some((op_1 @ Op::Gt, term_args)),
-              Some((op_2 @ Op::Ge, other_args))
-            ) |
-            (
-              Some((op_1 @ Op::Gt, term_args)),
-              Some((op_2 @ Op::Gt, other_args))
-            ) |
-            (
-              Some((op_1 @ Op::Ge, term_args)),
-              Some((op_2 @ Op::Ge, other_args))
-            ) |
-
-            (
-              Some((op_1 @ Op::Eql, term_args)),
-              Some((op_2 @ Op::Gt, other_args))
-            ) |
-            (
-              Some((op_1 @ Op::Gt, term_args)),
-              Some((op_2 @ Op::Eql, other_args))
-            ) |
-
-            (
-              Some((op_1 @ Op::Ge, term_args)),
-              Some((op_2 @ Op::Eql, other_args))
-            ) |
-            (
-              Some((op_1 @ Op::Eql, term_args)),
-              Some((op_2 @ Op::Ge, other_args))
-            ) |
-
-            (
-              Some((op_1 @ Op::Eql, term_args)),
-              Some((op_2 @ Op::Eql, other_args))
-            ) => {
-
-              if term_args[0].typ().is_arith()
-              && term_args[0].typ() == other_args[0].typ() {
-                let nu_lhs = term::add(
-                  vec![ term_args[0].clone(), other_args[0].clone() ]
-                ) ;
-
-                let mut old_vars_1 = term::vars(& term_args[0]) ;
-                let mut old_vars_2 = term::vars(& other_args[0]) ;
-                let mut nu_vars = term::vars(& nu_lhs) ;
-
-                let use_qual = self.clauses.len() < 35 || (
-                  nu_vars.len() <= 2
-                ) || (
-                  nu_vars.len() < old_vars_1.len() + old_vars_2.len()
-                ) ;
-
-                if use_qual {
-                  log! { @4
-                    "from {}", term ;
-                    "     {}", other
-                  }
-                } else {
-                  // log! { @1
-                  //   " " ;
-                  //   "skipping" ;
-                  //   "from {}", term ;
-                  //   "     {}", other ;
-                  //   "  -> {}", nu_lhs
-                  // }
-                }
-
-                if use_qual {
-                  let op = match (op_1, op_2) {
-                    (_, Op::Gt) |
-                    (Op::Gt, _) => Op::Gt,
-
-                    (_, Op::Ge) |
-                    (Op::Ge, _) => Op::Ge,
-
-                    (Op::Eql, Op::Eql) => Op::Eql,
-
-                    _ => unreachable!(),
-                  } ;
-
-                  let nu_term = term::app(
-                    op, vec![
-                      nu_lhs, term::add(
-                        vec![
-                          term_args[1].clone(), other_args[1].clone()
-                        ]
-                      )
-                    ]
-                  ) ;
-                  quals.insert(nu_term.clone(), pred) ? ;
-
-                  log! { @4 "  -> {}", nu_term }
-
-                  if op_1 == Op::Eql {
-                    let nu_lhs = term::sub(
-                      vec![ other_args[0].clone(), term_args[0].clone() ]
-                    ) ;
-                    let nu_rhs = term::sub(
-                      vec![ other_args[1].clone(), term_args[1].clone() ]
-                    ) ;
-                    let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
-                    quals.insert(nu_term, pred) ? ;
-                  } else if op_2 == Op::Eql {
-                    let nu_lhs = term::sub(
-                      vec![ term_args[0].clone(), other_args[0].clone() ]
-                    ) ;
-                    let nu_rhs = term::sub(
-                      vec![ term_args[1].clone(), other_args[1].clone() ]
-                    ) ;
-                    let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
-                    quals.insert(nu_term, pred) ? ;
-                  }
-                }
-              }
-
-            },
-
-            _ => (),
-
-          }
-
-        }
-      }
-    }
-
-    Ok(())
-
-  }
-
 
 
   /// Transforms a cex for a clause into some learning data.
@@ -1458,9 +981,9 @@ impl Instance {
       lhs.is_empty() && rhs.is_some()
     ) || (
       // Negative sample?
-      lhs.iter().next().map(
+      lhs.len() == 1 && lhs.iter().all(
         |(_, argss)| argss.len() == 1
-      ).unwrap_or(false) && rhs.is_none()
+      ) && rhs.is_none()
     ) {
       // We're generating a sample. Still need to force variables that appear
       // more than once in arguments.
@@ -1541,7 +1064,7 @@ impl Instance {
   ) -> Res<bool> {
     let metrics = data.metrics() ;
 
-    for (clause_idx, cexs) in cexs.into_iter() {
+    for (clause_idx, cexs) in cexs {
       log! { @5 "adding cexs for #{}", clause_idx }
 
       for cex in cexs {
@@ -1706,7 +1229,7 @@ impl Instance {
     }
 
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
-      'pred_clauses: for clause in lhs {
+      for clause in lhs {
         if * clause >= self.clauses.len() {
           bail!(
             "predicate {} is registered as appearing in lhs of clause {} \
@@ -1764,10 +1287,11 @@ impl Instance {
     let blah = blah.as_ref() ;
 
     for line in blah.lines() {
-      write!(w, "; {}\n", line) ?
+      writeln!(w, "; {}", line) ?
     }
-    write!(w, "\n") ? ;
-    write!(w, "(set-logic HORN)\n\n") ? ;
+    writeln!(w) ? ;
+    writeln!(w, "(set-logic HORN)") ? ;
+    writeln!(w) ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
@@ -1777,20 +1301,20 @@ impl Instance {
         for typ in & pred.sig {
           write!(w, " {}", typ) ?
         }
-        write!(w, " ) Bool\n)\n") ?
+        writeln!(w, " ) Bool\n)") ?
       }
     }
 
-    write!(
-      w, "\n; Original clauses' names ({}) {{\n", self.old_names.len()
+    writeln!(
+      w, "\n; Original clauses' names ({}) {{", self.old_names.len()
     ) ? ;
     for (idx, name) in & self.old_names {
-      write!(w, ";   #{}: `{}`.\n", idx, name) ?
+      writeln!(w, ";   #{}: `{}`.", idx, name) ?
     }
-    write!(w, "; }}\n") ? ;
+    writeln!(w, "; }}") ? ;
 
     for (idx, clause) in self.clauses.index_iter() {
-      write!(w, "\n; Clause #{}\n", idx) ? ;
+      writeln!(w, "\n; Clause #{}", idx) ? ;
 
       // Print source.
       let from = clause.from() ;
@@ -1798,7 +1322,7 @@ impl Instance {
       if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
-      write!(w, "\n") ? ;
+      writeln!(w) ? ;
 
       clause.write(
         w, |w, p, args| {
@@ -1817,10 +1341,11 @@ impl Instance {
           }
         }
       ) ? ;
-      write!(w, "\n\n") ?
+      writeln!(w) ? ;
+      writeln!(w) ?
     }
 
-    write!(w, "\n(check-sat)\n") ? ;
+    writeln!(w, "\n(check-sat)") ? ;
 
     Ok(())
   }
@@ -1859,7 +1384,7 @@ impl Instance {
 
   /// Writes a conjunction of top terms.
   pub fn write_tterms_conj<W: Write>(
-    & self, w: & mut W, conj: & Vec<TTerms>
+    & self, w: & mut W, conj: & [ TTerms ]
   ) -> Res<()> {
     if conj.is_empty() {
       write!(w, "true") ?
@@ -1896,7 +1421,7 @@ impl Instance {
 
   /// Writes some definitions.
   pub fn write_definitions<W: Write>(
-    & self, w: & mut W, pref: & str, model: & ConjModel
+    & self, w: & mut W, pref: & str, model: ConjModelRef
   ) -> Res<()> {
 
     for defs in model {
@@ -1938,7 +1463,7 @@ impl Instance {
 
   /// Writes a model.
   pub fn write_model<W: Write>(
-    & self, model: & ConjModel, w: & mut W
+    & self, model: ConjModelRef, w: & mut W
   ) -> Res<()> {
     writeln!(w, "(model") ? ;
     self.write_definitions(w, "  ", model) ? ;
@@ -2098,7 +1623,7 @@ impl<'a> PebcakFmt<'a> for Instance {
         for typ in & pred.sig {
           write!(w, " {}", typ) ?
         }
-        write!(w, " ) Bool\n)\n") ? ;
+        writeln!(w, " ) Bool\n)") ? ;
         if pred.sig.len() != self.old_preds[pred_idx].0.len() {
           write!(w, "; original signature:\n;") ? ;
           for (var, typ) in self.old_preds[pred_idx].0.index_iter() {
@@ -2112,7 +1637,7 @@ impl<'a> PebcakFmt<'a> for Instance {
               w, " {} -> {},", src.default_str(), tgt.default_str()
             ) ?
           }
-          writeln!(w, "") ?
+          writeln!(w) ?
         }
       }
     }
@@ -2133,7 +1658,7 @@ impl<'a> PebcakFmt<'a> for Instance {
         tterms.expr_to_smt2(
           w, & (& empty_prd_set, & empty_prd_set, & self.preds)
         ).unwrap() ;
-        write!(w, "\n)\n") ?
+        writeln!(w, "\n)") ?
       }
     } else {
       for pred in & self.sorted_pred_terms {
@@ -2146,30 +1671,30 @@ impl<'a> PebcakFmt<'a> for Instance {
         tterms.expr_to_smt2(
           w, & (& empty_prd_set, & empty_prd_set, & self.preds)
         ).unwrap() ;
-        write!(w, "\n)\n", ) ?
+        writeln!(w, "\n)", ) ?
       }
     }
 
-    write!(
-      w, "\n; Original clauses' names ({}) {{\n", self.old_names.len()
+    writeln!(
+      w, "\n; Original clauses' names ({}) {{", self.old_names.len()
     ) ? ;
     for (idx, name) in & self.old_names {
-      write!(w, "; Original clause #{} is called `{}`.\n", idx, name) ?
+      writeln!(w, "; Original clause #{} is called `{}`.", idx, name) ?
     }
-    write!(w, "; }}\n") ? ;
+    writeln!(w, "; }}") ? ;
 
     for (idx, clause) in self.clauses.index_iter() {
-      write!(w, "\n; Clause #{}\n", idx) ? ;
+      writeln!(w, "\n; Clause #{}", idx) ? ;
       let from = clause.from() ;
       write!(w, ";   from: #{}", from) ? ;
       if let Some(name) = self.old_names.get(& from) {
         write!(w, ": {}", name) ?
       }
-      write!(w, "\n") ? ;
+      writeln!(w) ? ;
       clause.pebcak_io_fmt(w, & self.preds) ?
     }
 
-    write!(w, "\npred to clauses:\n") ? ;
+    writeln!(w, "\npred to clauses:") ? ;
     for (pred, & (ref lhs, ref rhs)) in self.pred_to_clauses.index_iter() {
       write!(w, "  {}: lhs {{", self[pred]) ? ;
       for lhs in lhs {
@@ -2179,7 +1704,7 @@ impl<'a> PebcakFmt<'a> for Instance {
       for rhs in rhs {
         write!(w, " {}", rhs) ?
       }
-      write!(w, " }}\n") ?
+      writeln!(w, " }}") ?
     }
 
     Ok(())

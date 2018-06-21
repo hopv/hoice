@@ -17,8 +17,8 @@ lazy_static! {
 
 lazy_static! {
   /// Cache for terms' variables.
-  static ref var_cache: RwLock< HConMap<Term, VarSet> > = RwLock::new(
-    HConMap::with_capacity( conf.instance.term_capa )
+  static ref var_cache: RwLock< TermMap<VarSet> > = RwLock::new(
+    TermMap::with_capacity( conf.instance.term_capa )
   ) ;
 }
 
@@ -28,9 +28,9 @@ fn scan_vars(t: & Term) -> VarSet {
   let mut to_do = vec![ t ] ;
   let mut set = VarSet::with_capacity(11) ;
   while let Some(term) = to_do.pop() {
-    match ** term {
+    match term.get() {
       RTerm::Var(_, i) => {
-        let _ = set.insert(i) ; ()
+        let _ = set.insert(* i) ; ()
       },
       RTerm::Int(_) => (),
       RTerm::Real(_) => (),
@@ -233,11 +233,13 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
         please notify the developer(s)".into()
       ) ;
       match e {
-        Either::Left((exp, (found, index))) => res.chain_err(
+        term::TypError::Typ {
+          expected, obtained, index
+        } => res.chain_err(
           || format!(
             "expected an expression of sort {}, found {} ({})",
-            exp.map(|t| format!("{}", t)).unwrap_or("?".into()),
-            args[index], found
+            expected.map(|t| format!("{}", t)).unwrap_or_else(|| "?".into()),
+            args[index], obtained
           )
         ).chain_err(
           || "in this operator application"
@@ -253,7 +255,7 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
             String::from_utf8_lossy(buff).into_owned()
           }
         ),
-        Either::Right(blah) => res.chain_err(|| blah)
+        term::TypError::Msg(blah) => res.chain_err(|| blah)
       }.unwrap_err()
   ) ;
 
@@ -267,9 +269,7 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline(always)]
-pub fn try_app(op: Op, args: Vec<Term>) -> Result<
-  Term, Either< (Option<Typ>, (Typ, usize)), String >
-> {
+pub fn try_app(op: Op, args: Vec<Term>) -> Result<Term, term::TypError> {
   let typ = op.type_check(& args) ? ;
   Ok( normalize(op, args, typ) )
 }
@@ -306,11 +306,23 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
 pub fn add(kids: Vec<Term>) -> Term {
   app(Op::Add, kids)
 }
+/// Creates a sum, binary version.
+#[inline(always)]
+pub fn add2(kid_1: Term, kid_2: Term) -> Term {
+  app(Op::Add, vec![kid_1, kid_2])
+}
+
 /// Creates a subtraction.
 #[inline(always)]
 pub fn sub(kids: Vec<Term>) -> Term {
   app(Op::Sub, kids)
 }
+/// Creates a subtraction, binary version.
+#[inline(always)]
+pub fn sub2(kid_1: Term, kid_2: Term) -> Term {
+  app(Op::Sub, vec![kid_1, kid_2])
+}
+
 /// Creates a unary minus.
 #[inline(always)]
 pub fn u_minus(kid: Term) -> Term {
@@ -323,10 +335,13 @@ pub fn mul(kids: Vec<Term>) -> Term {
 }
 /// Creates a multiplication by a constant.
 #[inline(always)]
-pub fn cmul(cst: Val, term: Term) -> Term {
+pub fn cmul<V>(cst: V, term: Term) -> Term
+where V: Into<val::RVal> {
   app(
     Op::CMul, vec![
-      cst.to_term().expect("illegal constant passed to CMul constructor"),
+      cst.into().to_term().expect(
+        "illegal constant passed to CMul constructor"
+      ),
       term
     ]
   )
@@ -574,7 +589,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     },
 
     Op::And => {
-      let mut set = HConSet::<Term>::new() ;
+      let mut set = TermSet::new() ;
       let mut cnt = 0 ;
       
       while cnt < args.len() {
@@ -590,9 +605,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           } else {
             return NormRes::Term( fls() )
           }
-        } else if let Some(conj) = args[cnt].conj_inspect().map(
-          |conj| conj.clone()
-        ) {
+        } else if let Some(conj) = args[cnt].conj_inspect().cloned() {
           for term in conj {
             args.push(term)
           }
@@ -617,7 +630,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     },
 
     Op::Or => {
-      let mut set = HConSet::<Term>::new() ;
+      let mut set = TermSet::new() ;
       let mut cnt = 0 ;
       
       while cnt < args.len() {
@@ -633,9 +646,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
           } else {
             return NormRes::Term( tru() )
           }
-        } else if let Some(disj) = args[cnt].disj_inspect().map(
-          |disj| disj.clone()
-        ) {
+        } else if let Some(disj) = args[cnt].disj_inspect().cloned() {
           for term in disj {
             args.push(term)
           }
@@ -661,7 +672,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         return NormRes::Term( bool(! b) )
       }
 
-      match * args[0] {
+      match args[0].get() {
         RTerm::App { op: Op::Not, ref args, .. } => {
           return NormRes::Term( args[0].clone() )
         },
@@ -870,11 +881,11 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         )
       } ;
 
-      let mut c_args = HConMap::<Term, Val>::new() ;
+      let mut c_args = TermMap::<Val>::new() ;
       let mut changed = false ;
 
       while let Some(arg) = args.pop() {
-        if let Some(kids) = arg.add_inspect().map(|kids| kids.clone()) {
+        if let Some(kids) = arg.add_inspect().cloned() {
           args.extend(kids)
         } else if let Some(v) = arg.val() {
           sum = sum.add(& v).expect(
@@ -943,7 +954,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         }
       }
 
-      if args.len() == 0 {
+      if args.is_empty() {
         return NormRes::Term(
           sum.to_term().expect(
             "coefficient cannot be unknown"
@@ -983,11 +994,11 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       debug_assert! { cst.val().is_some() }
 
       if let Some(val) = term.val() {
-        let cst_val = cst.val().expect(
-          & format!("illegal c_mul application: {} {}", cst, term)
+        let cst_val = cst.val().unwrap_or_else(
+          || panic!("illegal c_mul application: {} {}", cst, term)
         ) ;
-        let res = cst_val.mul(& val).expect(
-          & format!("illegal c_mul application: {} {}", cst, term)
+        let res = cst_val.mul(& val).unwrap_or_else(
+          |_| panic!("illegal c_mul application: {} {}", cst, term)
         ).to_term().expect(
           "cannot be unknown"
         ) ;
@@ -1086,15 +1097,15 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       } ;
 
       while cnt < args.len() {
-        if let Some(kids) = args[cnt].mul_inspect().map(|kids| kids.clone()) {
+        if let Some(kids) = args[cnt].mul_inspect().cloned() {
           args.swap_remove(cnt) ;
           args.extend(kids)
-        } else if let Some(i) = args[cnt].int_val().map( |v| v.clone() ) {
+        } else if let Some(i) = args[cnt].int_val().cloned() {
           args.swap_remove(cnt) ;
           coef = coef.mul( & val::int(i) ).expect(
             "during multiplication simplification"
           )
-        } else if let Some(r) = args[cnt].real_val().map( |v| v.clone() ) {
+        } else if let Some(r) = args[cnt].real_val().cloned() {
           args.swap_remove(cnt) ;
           coef = coef.mul( & val::real(r) ).expect(
             "during multiplication simplification"
@@ -1104,7 +1115,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         }
       }
 
-      if args.len() == 0 {
+      if args.is_empty() {
         return NormRes::Term(
           coef.to_term().expect(
             "coefficient cannot be unknown"
@@ -1157,9 +1168,10 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         )
       }
 
-      match Op::IDiv.eval( vec![args[0].as_val(), args[1].as_val()] ) {
-
-        Ok(val) => if val.typ().is_int() {
+      if let Ok(val) = Op::IDiv.eval(
+        vec![args[0].as_val(), args[1].as_val()]
+      ) {
+        if val.typ().is_int() {
           if let Some(val) = val.to_term() {
             return NormRes::Term(val)
           } else {
@@ -1170,8 +1182,7 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
             "unexpected result while evaluating `({} {} {})`",
             op, args[0], args[1]
           )
-        },
-        Err(_) => (),
+        }
       }
 
       (op, args)
@@ -1247,12 +1258,9 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         } else {
           // Normalize gt to ge for integers.
           if op == Op::Gt {
-            match rhs_val.get() {
-              & val::RVal::I(ref i) => {
-                rhs = term::int(i + 1) ;
-                op = Op::Ge
-              },
-              _ => (),
+            if let val::RVal::I(ref i) = rhs_val.get() {
+              rhs = term::int(i + 1) ;
+              op = Op::Ge
             }
           }
 
@@ -1296,18 +1304,16 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
     Op::Le => {
       args.reverse() ;
       return NormRes::App(
-        typ::bool(), Op::Ge, args.into_iter().map(
-          |arg| NormRes::Term(arg)
-        ).collect()
+        typ::bool(), Op::Ge,
+        args.into_iter().map(NormRes::Term).collect()
       )
     },
 
     Op::Lt => {
       args.reverse() ;
       return NormRes::App(
-        typ::bool(), Op::Gt, args.into_iter().map(
-          |arg| NormRes::Term(arg)
-        ).collect()
+        typ::bool(), Op::Gt,
+        args.into_iter().map(NormRes::Term).collect()
       )
     },
 

@@ -12,7 +12,7 @@ pub fn new(
   info: & 'static str, cls: ClsIdx,
 ) -> Clause {
   let from = cls ;
-  let lhs_terms = HConSet::with_capacity( lhs.len() ) ;
+  let lhs_terms = TermSet::with_capacity( lhs.len() ) ;
   let lhs_preds = PredApps::with_capacity( lhs.len() ) ;
   let mut clause = Clause {
     vars, lhs_terms, lhs_preds, rhs,
@@ -37,7 +37,7 @@ pub struct Clause {
   /// Variables of the clause.
   pub vars: VarInfos,
   /// Terms of the left-hand side.
-  lhs_terms: HConSet<Term>,
+  lhs_terms: TermSet,
   /// Predicate applications of the left-hand side.
   lhs_preds: PredApps,
   /// Single term right-hand side.
@@ -258,7 +258,7 @@ impl Clause {
       terms_changed, preds_changed,
       from_unrolling: self.from_unrolling,
       info,
-      from: self.from.clone(),
+      from: self.from,
     }
   }
 
@@ -300,7 +300,7 @@ impl Clause {
       terms_changed, preds_changed,
       from_unrolling: self.from_unrolling,
       info,
-      from: self.from.clone()
+      from: self.from
     }
   }
 
@@ -309,8 +309,8 @@ impl Clause {
   fn prune(& mut self) {
     use std::cmp::Ordering::* ;
     use term::simplify::SimplRes::* ;
-    let mut to_rm = HConSet::<Term>::new() ;
-    let mut to_add = HConSet::<Term>::new() ;
+    let mut to_rm = TermSet::new() ;
+    let mut to_add = TermSet::new() ;
 
     let mut prune_things = true ;
 
@@ -371,7 +371,7 @@ impl Clause {
     & mut self, map: & Map
   ) -> bool {
     let mut changed = false ;
-    let mut lhs_terms = HConSet::with_capacity( self.lhs_terms.len() ) ;
+    let mut lhs_terms = TermSet::with_capacity( self.lhs_terms.len() ) ;
     ::std::mem::swap(& mut lhs_terms, & mut self.lhs_terms) ;
     for term in lhs_terms.drain() {
       let (term, b) = term.subst(map) ;
@@ -508,7 +508,7 @@ impl Clause {
   }
 
   /// Inserts a term in an LHS. Externalized for ownership reasons.
-  fn lhs_insert_term(lhs_terms: & mut HConSet<Term>, term: Term) -> bool {
+  fn lhs_insert_term(lhs_terms: & mut TermSet, term: Term) -> bool {
     // println!("inserting {}", term) ;
     let mut new_stuff = false ;
     let mut stack = vec![term] ;
@@ -538,7 +538,7 @@ impl Clause {
   ///
   /// Removes the terms from `set` that are implied (strictly) by `term`.
   fn clever_insert(
-    mut term: Term, set: & mut HConSet<Term>
+    mut term: Term, set: & mut TermSet
   ) -> bool {
     use std::cmp::Ordering::* ;
     use term::simplify::SimplRes::* ;
@@ -628,6 +628,21 @@ impl Clause {
     ).unwrap_or(false)
   }
 
+
+  /// True if the same predicate application appears both in the lhs and the
+  /// rhs.
+  pub fn is_pred_trivial(& self) -> bool {
+    if let Some((pred, args)) = self.rhs() {
+      if let Some(argss) = self.lhs_preds.get(& pred) {
+        argss.contains(args)
+      } else {
+        false
+      }
+    } else {
+      false
+    }
+  }
+
   /// True iff the lhs terms changed since the last call to
   /// [`lhs_terms_checked`][checked].
   ///
@@ -708,7 +723,7 @@ impl Clause {
 
   /// LHS accessor (terms).
   #[inline]
-  pub fn lhs_terms(& self) -> & HConSet<Term> {
+  pub fn lhs_terms(& self) -> & TermSet {
     & self.lhs_terms
   }
   /// LHS accessor (predicate applications).
@@ -791,13 +806,13 @@ impl Clause {
       }
     }
     write!(w, " )") ? ;
-    write!(
+    writeln!(
       w, "\n  \
         ; {} inactive variable(s)\n  \
         ; unroll: {}\n  \
         ; terms_changed: {}\n  \
         ; preds_changed: {}\n  \
-        ; created by `{}`\n\
+        ; created by `{}`\
       ",
       inactive, self.from_unrolling,
       self.terms_changed, self.preds_changed, self.info
@@ -826,9 +841,9 @@ impl Clause {
         }
       }
 
-      write!(w, "\n") ? ;
+      writeln!(w) ? ;
       if let Some(suff) = suff {
-        write!(w, "{}\n", suff) ?
+        writeln!(w, "{}", suff) ?
       }
       ("    ", Some("  )"))
     } else {
@@ -841,9 +856,9 @@ impl Clause {
     } else {
       write!(w, "false") ?
     }
-    write!(w, "\n") ? ;
+    writeln!(w) ? ;
     if let Some(suff) = suff {
-      write!(w, "{}\n", suff) ?
+      writeln!(w, "{}", suff) ?
     }
     write!(w, "))")
   }
@@ -879,24 +894,24 @@ impl<'a, 'b> ::rsmt2::print::Expr2Smt<
     }
 
     for term in & self.lhs_terms {
-      writer.write_all( " ".as_bytes() ) ? ;
+      write!(writer, " ") ? ;
       term.write( writer, |w, var| var.default_write(w) ) ?
     }
 
     for (pred, argss) in & self.lhs_preds {
       if true_preds.contains(pred) {
-        writer.write_all( " true".as_bytes() ) ?
+        write!(writer, " true") ?
       } else if false_preds.contains(pred) {
-        writer.write_all( " false".as_bytes() ) ?
+        write!(writer, " false") ?
       } else {
         for args in argss {
-          writer.write_all( " (".as_bytes() ) ? ;
+          write!(writer, " (") ? ;
           writer.write_all( prd_info[* pred].name.as_bytes() ) ? ;
           for arg in args.iter() {
-            writer.write_all( " ".as_bytes() ) ? ;
+            write!(writer, " ") ? ;
             arg.write(writer, |w, var| var.default_write(w)) ?
           }
-          writer.write_all( ")".as_bytes() ) ?
+          write!(writer, ")") ?
         }
       }
     }

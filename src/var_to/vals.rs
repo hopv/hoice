@@ -33,7 +33,7 @@ pub fn of<V: Into<Val>, A: IntoIterator<Item = V>>(
   args: A
 ) -> VarVals {
   let mut map = VarMap::new() ;
-  for val in args.into_iter() {
+  for val in args {
     map.push( val.into() )
   }
   new(map)

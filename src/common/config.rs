@@ -1101,7 +1101,7 @@ impl Config {
   #[inline]
   pub fn check_timeout(& self) -> Res<()> {
     if let Some(max) = self.timeout.as_ref() {
-      if & Instant::now() > max {
+      if Instant::now() > * max {
         bail!( ErrorKind::Timeout )
       }
     }
@@ -1112,7 +1112,7 @@ impl Config {
   pub fn until_timeout(& self) -> Option<Duration> {
     if let Some(timeout) = self.timeout.as_ref() {
       let now = Instant::now() ;
-      if & now > timeout {
+      if now > * timeout {
         Some( Duration::new(0,0) )
       } else {
         Some( * timeout - now )
@@ -1431,7 +1431,6 @@ impl Styles {
 /// Can color things.
 pub trait ColorExt {
   /// The styles in the colorizer: emph, happy, sad, and bad.
-  #[inline]
   fn styles(& self) -> & Styles ;
   /// String emphasis.
   #[inline]
@@ -1499,6 +1498,7 @@ pub fn int_of_matches(matches: & Matches, key: & str) -> usize {
 }
 
 /// Validates integer input.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn int_validator(s: String) -> Result<(), String> {
   use std::str::FromStr ;
   match usize::from_str(& s) {
@@ -1510,6 +1510,7 @@ pub fn int_validator(s: String) -> Result<(), String> {
 }
 
 /// Validates integer input between some bounds.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn bounded_int_validator(
   s: String, lo: usize, hi: usize
 ) -> Result<(), String> {
@@ -1531,22 +1532,13 @@ pub fn bounded_int_validator(
 }
 
 /// Validates boolean input.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn bool_validator(s: String) -> Result<(), String> {
-  if let Some(_) = bool_of_str(& s) {
+  if bool_of_str(& s).is_some() {
     Ok(())
   } else {
     Err(
       format!("expected `on/true` or `off/false`, got `{}`", s)
     )
-  }
-}
-
-
-/// Checks whether a directory exists.
-pub fn dir_exists(path: String) -> Result<(), String> {
-  if ::std::path::Path::new(& path).is_dir() {
-    Ok(())
-  } else {
-    Err( format!("`{}` is not a directory", path) )
   }
 }

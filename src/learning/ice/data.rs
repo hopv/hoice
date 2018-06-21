@@ -440,7 +440,7 @@ impl CData {
   }
 
   /// Iterator over some data.
-  pub fn iter<'a>(& 'a self, include_unc: bool) -> CDataIter<'a> {
+  pub fn iter(& self, include_unc: bool) -> CDataIter {
     CDataIter {
       pos: self.pos.iter(),
       neg: self.neg.iter(),
@@ -477,6 +477,7 @@ impl<'a> ::std::iter::Iterator for CDataIter<'a> {
 /// splitting the data.
 ///
 /// See the paper for more details.
+#[derive(Default)]
 pub struct EntropyBuilder { num: f64, den: usize }
 impl EntropyBuilder {
   /// Constructor.
@@ -515,10 +516,10 @@ impl EntropyBuilder {
   pub fn entropy(self) -> Res<f64> {
     let proba = self.proba() ;
     let (pos, neg) = (
-      if proba == 0. { 0. } else {
+      if proba.abs() < ::std::f64::EPSILON { 0. } else {
         proba * proba.log2()
       },
-      if proba == 1. { 0. } else {
+      if (proba - 1.).abs() < ::std::f64::EPSILON { 0. } else {
         (1. - proba) * (1. - proba).log2()
       }
     ) ;
@@ -562,10 +563,10 @@ impl EntropyBuilder {
         debug_assert! { lhs_len > 0 }
 
         match constraint.rhs() {
-          None => sum_neg = sum_neg + 1. / (lhs_len as f64),
+          None => sum_neg += 1. / (lhs_len as f64),
           Some( & Sample { pred, ref args } )
           if pred == prd
-          && args == sample => sum_imp_rhs = sum_imp_rhs + 1. / (
+          && args == sample => sum_imp_rhs += 1. / (
             1. + (lhs_len as f64)
           ),
           _ => {
@@ -579,9 +580,7 @@ impl EntropyBuilder {
                 )
               )
             }
-            sum_imp_lhs = sum_imp_lhs + 1. / (
-              1. + (lhs_len as f64)
-            )
+            sum_imp_lhs += 1. / ( 1. + (lhs_len as f64) )
           },
         }
       }

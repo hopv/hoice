@@ -101,7 +101,7 @@ pub struct IceLearner<'core> {
   /// Luby counter for restarts.
   luby: Option<LubyCount>,
   /// Known qualifiers, factored for no reallocation. Used by synthesis.
-  known_quals: HConSet<Term>,
+  known_quals: TermSet,
   /// Gain pivot.
   gain_pivot: f64,
   /// Gain pivot synth.
@@ -121,7 +121,7 @@ impl<'core> IceLearner<'core> {
     ) ? ;
 
     profile!{ |core._profiler| tick "mining" }
-    let qualifiers = NuQuals::new( instance.clone(), mine ).chain_err(
+    let qualifiers = NuQuals::new( & instance, mine ).chain_err(
       || "while creating qualifier structure"
     ) ? ;
     profile!{ |core._profiler| mark "mining" }
@@ -146,7 +146,7 @@ impl<'core> IceLearner<'core> {
         core,
         finished: Vec::with_capacity(103),
         unfinished: Vec::with_capacity(103),
-        classifier: HConMap::with_capacity(1003),
+        classifier: VarValsMap::with_capacity(1003),
         dec_mem, candidate, predicates,
         sort_rng_1: {
           Rng::from_seed( [ 42 ; 16 ] )
@@ -163,7 +163,7 @@ impl<'core> IceLearner<'core> {
         luby: if mine { None } else {
           Some( LubyCount::new() )
         },
-        known_quals: HConSet::new(),
+        known_quals: TermSet::new(),
         gain_pivot: conf.ice.gain_pivot,
         gain_pivot_synth: conf.ice.gain_pivot_synth,
         count: 0,
@@ -184,7 +184,7 @@ impl<'core> IceLearner<'core> {
         add self.qualifiers.real_qual_count()
     }
 
-    'learn: loop {
+    loop {
 
       match profile! (
         |self.core._profiler| wrap { self.recv() } "waiting"
@@ -268,12 +268,12 @@ impl<'core> IceLearner<'core> {
     self.core.merge_set_prof( "data", data.destroy() ) ;
 
     if self.count % conf.ice.gain_pivot_mod == 0 {
-      self.gain_pivot = self.gain_pivot + conf.ice.gain_pivot_inc ;
+      self.gain_pivot += conf.ice.gain_pivot_inc ;
       if self.gain_pivot > 0.999 {
         self.gain_pivot = 0.999
       }
       if let Some(gain_pivot_synth) = self.gain_pivot_synth.as_mut() {
-        * gain_pivot_synth = * gain_pivot_synth + conf.ice.gain_pivot_inc ;
+        * gain_pivot_synth += conf.ice.gain_pivot_inc ;
         if * gain_pivot_synth > 0.999 {
           * gain_pivot_synth = 0.999
         }
@@ -349,7 +349,7 @@ impl<'core> IceLearner<'core> {
           if pos_len == 0 && neg_len > 0 {
             msg! { debug self => "legal_pred (1)" }
             // Maybe we can assert everything as negative right away?
-            if self.is_legal_pred(pred, false) ? {
+            if self.force_if_legal(pred, false) ? {
               msg! { @verb
                 self =>
                 "{} only has negative ({}) and unclassified ({}) data\n\
@@ -374,7 +374,7 @@ impl<'core> IceLearner<'core> {
           if neg_len == 0 && pos_len > 0 {
             msg! { debug self => "legal_pred (2)" }
             // Maybe we can assert everything as positive right away?
-            if self.is_legal_pred(pred, true) ? {
+            if self.force_if_legal(pred, true) ? {
               msg! { @verb
                 self =>
                 "{} only has positive ({}) and unclassified ({}) data\n\
@@ -453,7 +453,7 @@ impl<'core> IceLearner<'core> {
 
     self.check_exit() ? ;
 
-    'pred_iter: while let Some(
+    while let Some(
       (_unc, _cla, pred)
     ) = self.predicates.pop() {
       msg! {
@@ -570,12 +570,12 @@ impl<'core> IceLearner<'core> {
 
       // Checking whether we can close this branch.
 
-      if data.neg().is_empty() && self.is_legal(
+      if data.neg().is_empty() && self.force_legal(
         pred, data.unc(), true
       ).chain_err(|| "while checking possibility of assuming positive") ? {
         if_verb! {
           let mut s = format!(
-            "  no more negative data, is_legal check ok\n  \
+            "  no more negative data, force_legal check ok\n  \
             forcing {} unclassifieds positive...", data.unc().len()
           ) ;
 
@@ -635,12 +635,12 @@ impl<'core> IceLearner<'core> {
         continue 'learning
       }
 
-      if data.pos().is_empty() && self.is_legal(
+      if data.pos().is_empty() && self.force_legal(
         pred, & data.unc(), false
       ).chain_err(|| "while checking possibility of assuming negative") ? {
         if_verb! {
           let mut s = format!(
-            "  no more positive data, is_legal check ok\n  \
+            "  no more positive data, force_legal check ok\n  \
             forcing {} unclassifieds negative...", data.unc().len()
           ) ;
 
@@ -764,7 +764,7 @@ impl<'core> IceLearner<'core> {
     )  ;
 
     if_debug! {
-      let mut s = format!("data:") ;
+      let mut s = "data:".to_string() ;
       s = format!("{}\n  pos {{", s) ;
       for sample in data.pos() {
         s = format!("{}\n    {}", s, sample)
@@ -794,7 +794,9 @@ impl<'core> IceLearner<'core> {
               let _ = core.msg(
                 format!(
                   "{}: {}", qual,
-                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                  res.map(|g| format!("{}", g)).unwrap_or_else(
+                    || "none".into()
+                  )
                 )
               ) ;
               pause_msg(core, "to continue (--qual_step on)") ;
@@ -822,7 +824,9 @@ impl<'core> IceLearner<'core> {
               let _ = self_core.msg(
                 format!(
                   "; {}: {}", qual,
-                  res.map(|g| format!("{}", g)).unwrap_or("none".into())
+                  res.map(|g| format!("{}", g)).unwrap_or_else(
+                    || "none".into()
+                  )
                 )
               ) ;
               pause_msg(self_core, "to continue (--qual_step on)") ;
@@ -895,7 +899,8 @@ impl<'core> IceLearner<'core> {
       pred, & data, & mut best_synth_qual, simple
     ) ;
     profile!{ self mark "learning", "qual", "synthesis" } ;
-    if let None = res ? {
+
+    if res?.is_none() {
       return Ok(None)
     }
 
@@ -1020,10 +1025,10 @@ impl<'core> IceLearner<'core> {
             }
             if let Some( (ref mut old_term, ref mut old_gain) ) = * best {
               let diff = gain - * old_gain ;
-              if diff > 0.000_000_000_001 {
+              if diff > ::std::f64::EPSILON {
                 * old_gain = gain ;
                 * old_term = term
-              } else if * old_gain == gain
+              } else if (* old_gain - gain).abs() < ::std::f64::EPSILON
               && term::vars(old_term).len() < term::vars(& term).len() {
                 * old_term = term
               }
@@ -1082,8 +1087,8 @@ impl<'core> IceLearner<'core> {
   /// **NB**: if assuming the data positive / negative is legal,
   /// the data will be forced to be positive / negative in the solver
   /// automatically. Otherwise, the actlit is deactivated.
-  pub fn is_legal(
-    & mut self, pred: PrdIdx, unc: & Vec<VarVals>, pos: bool
+  pub fn force_legal(
+    & mut self, pred: PrdIdx, unc: & [ VarVals ], pos: bool
   ) -> Res<bool> {
     if unc.is_empty() { return Ok(true) }
     profile!{ self tick "learning", "smt", "legal" }
@@ -1116,7 +1121,7 @@ impl<'core> IceLearner<'core> {
   /// **NB**: if assuming the data positive / negative is legal, the data will
   /// be forced to be positive / negative in the solver automatically.
   /// Otherwise, the actlit is deactivated (`assert (not <actlit>)`).
-  pub fn is_legal_pred(
+  pub fn force_if_legal(
     & mut self, pred: PrdIdx, pos: bool
   ) -> Res<bool> {
     profile!{ self tick "learning", "smt", "all legal" }

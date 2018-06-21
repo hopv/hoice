@@ -13,6 +13,10 @@ pub struct IntSynth {
   /// The int type.
   typ: Typ,
 }
+impl Default for IntSynth {
+  fn default() -> Self { Self::new() }
+}
+
 impl IntSynth {
   /// Creates a new integer synthesizer.
   pub fn new() -> Self {
@@ -93,20 +97,16 @@ impl TheoSynth for IntSynth {
   fn project(
     & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
-    match ** typ {
-      typ::RTyp::Real => for (var, val) in sample.index_iter() {
-        match val.get() {
-          & val::RVal::I(_) => {
-            let val = Op::ToReal.eval( vec![ val.clone() ] ) ? ;
-            let prev = map.insert(
-              term::to_real( term::var(var, typ::int()) ), val
-            ) ;
-            debug_assert_eq!( prev, None )
-          },
-          _ => (),
+    if typ.is_real() {
+      for (var, val) in sample.index_iter() {
+        if let val::RVal::I(_) = val.get() {
+          let val = Op::ToReal.eval( vec![ val.clone() ] ) ? ;
+          let prev = map.insert(
+            term::to_real( term::var(var, typ::int()) ), val
+          ) ;
+          debug_assert_eq!( prev, None )
         }
-      },
-      _ => (),
+      }
     }
     Ok(())
   }
@@ -124,14 +124,11 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match val.get() {
-      & val::RVal::I(ref val) => {
-        let var = term::var(var_idx, typ::int()) ;
-        arith_synth_non_lin! {
-          previous_int, f, int | var = ( val.clone() )
-        }
-      },
-      _ => (),
+    if let val::RVal::I(ref val) = val.get() {
+      let var = term::var(var_idx, typ::int()) ;
+      arith_synth_non_lin! {
+        previous_int, f, int | var = ( val.clone() )
+      }
     }
   }
 
@@ -172,22 +169,18 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val.get() {
-      val::RVal::I(ref i) => {
-        let var = term::var(var_idx, val.typ().clone()) ;
-        simple_arith_synth! { previous_int, f, int | var = ( i.clone() ) }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      simple_arith_synth! { previous_int, f, int | var = ( i.clone() ) }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val.get() {
-      val::RVal::I(ref val) => {
-        simple_arith_synth! { previous_int, f, int | term = val.clone() }
-      }
-      val => bail!(
+    if let val::RVal::I(ref val) = val.get() {
+      simple_arith_synth! { previous_int, f, int | term = val.clone() }
+    } else {
+      bail!(
         "int synthesis expects projected integers (2), \
         got {} for {}", val, term
       )
@@ -210,26 +203,22 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val.get() {
-      val::RVal::I(ref i) => {
-        let var = term::var(var_idx, val.typ().clone()) ;
-        arith_synth_non_lin! {
-          previous_int, f, int | var = ( i.clone() )
-        }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      arith_synth_non_lin! {
+        previous_int, f, int | var = ( i.clone() )
+      }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val.get() {
-      & val::RVal::I(ref val) => {
-        arith_synth_non_lin! {
-          previous_int, f, int | term = val.clone()
-        }
+    if let val::RVal::I(ref val) = val.get() {
+      arith_synth_non_lin! {
+        previous_int, f, int | term = val.clone()
       }
-      val => bail!(
+    } else {
+      bail!(
         "int synthesis expects projected integers (3), \
         got {} for {}", val, term
       )
@@ -251,26 +240,22 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val.get() {
-      val::RVal::I(ref i) => {
-        let var = term::var(var_idx, val.typ().clone()) ;
-        arith_synth_three_terms! {
-          previous_int, f, int | var = ( i.clone() )
-        }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      arith_synth_three_terms! {
+        previous_int, f, int | var = ( i.clone() )
+      }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val.get() {
-      & val::RVal::I(ref val) => {
-        arith_synth_three_terms! {
-          previous_int, f, int | term = val.clone()
-        }
+    if let val::RVal::I(ref val) = val.get() {
+      arith_synth_three_terms! {
+        previous_int, f, int | term = val.clone()
       }
-      val => bail!(
+    } else {
+      bail!(
         "int synthesis expects projected integers (4), \
         got {} for {}", val, term
       )

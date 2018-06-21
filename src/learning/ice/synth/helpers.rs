@@ -122,7 +122,7 @@ macro_rules! arith_synth_non_lin {
 
     (
       term::sub(
-        vec![ lft, term::cmul(val::int(div), rgt), term::int(rem) ]
+        vec![ lft, term::cmul(div, rgt), term::int(rem) ]
       ),
       term::int(0)
     )
@@ -132,9 +132,7 @@ macro_rules! arith_synth_non_lin {
   (@lhs real $term:expr, $val:expr, $other_term:expr, $other_val:expr) => ((
     term::sub(
       vec![
-        $term.clone(), term::cmul(
-          val::real($val / $other_val), $other_term.clone()
-        )
+        $term.clone(), term::cmul( $val / $other_val, $other_term.clone() )
       ]
     ),
     term::real( Rat::new(0.into(), 1.into()) )
@@ -340,8 +338,7 @@ where F: FnMut(Term) -> Res<bool> {
       let var = term::var(var_idx, typ::int()) ;
 
       let done = ::learning::ice::synth::helpers::sum_diff_synth(
-        & ( var.clone(), val.clone() ), & previous,
-        len, |term| f(term)
+        & ( var.clone(), val.clone() ), & previous, len, & mut f
       ) ? ;
 
       if done {
@@ -355,8 +352,7 @@ where F: FnMut(Term) -> Res<bool> {
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
     let done = sum_diff_synth(
-      & ( term.clone(), val.clone() ), & previous,
-      len, |term| f(term)
+      & ( term.clone(), val.clone() ), & previous, len, & mut f
     ) ? ;
 
     if done {
@@ -374,7 +370,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Arith sum/diff synth.
 pub fn sum_diff_synth<F>(
-  term: & (Term, Val), others: & Vec<(Term, Val)>,
+  term: & (Term, Val), others: & [ (Term, Val) ],
   len: usize, mut f: F,
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
@@ -389,7 +385,7 @@ where F: FnMut(Term) -> Res<bool> {
         )
       ) {
         stack.push( (pair, others) )
-      } else if let Some(_) = stack.pop() {
+      } else if stack.pop().is_some() {
         ()
       } else {
         return Ok(false)
@@ -411,7 +407,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Arith sum/diff synth.
 fn iter_sum_diff_synth<F, T>(
-  terms: & Vec<(& (Term, Val), T)>, mut f: F
+  terms: & [ (& (Term, Val), T) ], mut f: F
 ) -> Res<bool>
 where F : FnMut(Term) -> Res<bool> {
   if terms.is_empty() {
