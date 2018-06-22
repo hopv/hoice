@@ -524,6 +524,23 @@ impl RVal {
     }
   }
 
+  /// Ite operator.
+  pub fn ite(& self, thn: Val, els: Val) -> Res<Val> {
+    if thn == els {
+      return Ok(thn)
+    }
+
+    debug_assert_eq! { thn.typ(), els.typ() }
+
+    let res = match self.to_bool() ? {
+      Some(true) => thn,
+      Some(false) => els,
+      None => none( thn.typ() ),
+    } ;
+
+    Ok(res)
+  }
+
   /// Compares two values.
   pub fn compare(& self, other: & Self) -> Option<::std::cmp::Ordering> {
     match (self, other) {
@@ -700,6 +717,64 @@ impl RVal {
     }
   }
 
+  /// Division.
+  pub fn div(& self, other: & Val) -> Res<Val> {
+    let res = if self.is_zero() {
+      real( Rat::new(0.into(), 1.into()) )
+    } else {
+
+      match self {
+
+        RVal::N(_) => none( typ::real() ),
+
+        RVal::I(ref num) => match other.get() {
+          RVal::N(_) => none( typ::real() ),
+          RVal::I(ref den) => real(
+            Rat::new( num.clone(), den.clone() )
+          ),
+          RVal::R(ref den) => real(
+            Rat::new( num * den.denom(), den.numer().clone() )
+          ),
+          ref den => bail!(
+            "expected arith values, found {} and {}", num, den
+          ),
+        },
+
+        RVal::R(ref num) => match other.get() {
+          RVal::N(_) => none( typ::real() ),
+          RVal::I(ref den) => real( num / den ),
+          RVal::R(ref den) => real(
+            Rat::new( num.numer() * den.denom(), num.denom() * den.numer() )
+          ),
+          ref den => bail!(
+            "expected arith values, found {} and {}", num, den
+          ),
+        }
+        ref num => bail!(
+          "expected arith values, found {} and {}", num, other
+        ),
+      }
+    } ;
+
+    Ok(res)
+  }
+
+  /// Integer division.
+  pub fn idiv(& self, other: & Val) -> Res<Val> {
+    let num = try_val!( int self ) ;
+    let den = try_val!( int other ) ;
+    if den.is_zero() {
+      bail!("division by zero, aborting...")
+    }
+    let mut res = & num / & den ;
+    use num::Signed ;
+    if num.is_negative() ^ den.is_negative()
+    && den.clone() * & res != num {
+      res = res - 1
+    }
+    Ok( val::int(res) )
+  }
+
   /// Unary minus.
   pub fn minus(& self) -> Res<Val> {
     match self {
@@ -711,6 +786,41 @@ impl RVal {
       ),
     }
   }
+
+
+  /// Remainder.
+  pub fn rem(& self, other: & Val) -> Res<Val> {
+    use num::Integer ;
+    let b = try_val!(int self) ;
+    let res = if b.is_one() {
+      val::int(0)
+    } else {
+      let a = try_val!(int other) ;
+      val::int( a.div_rem(& b).1 )
+    } ;
+    Ok(res)
+  }
+
+
+  /// Modulo.
+  pub fn modulo(& self, other: & Val) -> Res<Val> {
+    use num::{ Integer, Signed } ;
+    let b = try_val!(int other) ;
+    let res = if b.is_one() {
+      val::int(0)
+    } else {
+      let a = try_val!(int self) ;
+      let res = a.mod_floor(& b) ;
+      let res = if res.is_negative() {
+        b.abs() - res.abs()
+      } else {
+        res
+      } ;
+      val::int(res)
+    } ;
+    Ok(res)
+  }
+
 
   /// Greater than.
   ///
@@ -857,6 +967,33 @@ impl RVal {
   pub fn l_t(& self, other: & Val) -> Res<Val> {
     arith_bin_rel! { * self, lt, * other.get() }
   }
+
+  /// Real to int conversion.
+  pub fn real_to_int(& self) -> Res<Val> {
+    let res = if let Some(rat) = self.to_real() ? {
+      let res = rat.denom() / rat.denom() ;
+      if rat.denom().is_negative() ^ rat.numer().is_negative() {
+        val::int(- res)
+      } else {
+        val::int(res)
+      }
+    } else {
+      val::none( typ::int() )
+    } ;
+    Ok(res)
+  }
+
+  /// Int to real conversion.
+  pub fn int_to_real(& self) -> Res<Val> {
+    let res = if let Some(int) = self.to_int() ? {
+      val::real(
+        Rat::new( int, 1.into() )
+      )
+    } else {
+      val::none( typ::real() )
+    } ;
+    Ok(res)
+  }
 }
 
 
@@ -992,6 +1129,18 @@ impl RVal {
         "expected boolean value, found value of type {}", self.typ()
       ),
     }
+  }
+
+  /// Implication.
+  pub fn implies(& self, other: & Val) -> Res<Val> {
+    let res = match ( self.to_bool() ?, other.to_bool() ? ) {
+      ( Some(false), _ ) |
+      ( _,  Some(true) ) => bool(true),
+      ( None, _ ) |
+      ( _, None ) => none( typ::bool() ),
+      _ => bool(false),
+    } ;
+    Ok(res)
   }
 
   /// True iff the value is true.

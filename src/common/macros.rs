@@ -379,13 +379,18 @@ macro_rules! msg {
 /// ```
 macro_rules! try_val {
   (int $e:expr) => (
-    if let Some(i) = $e.to_int()? { i } else {
-      return Ok( $crate::term::val::none($crate::term::typ::int()) )
+    if let Some(i) = $e.to_int() ? { i } else {
+      return Ok( $crate::val::none($crate::term::typ::int()) )
+    }
+  ) ;
+  (real $e:expr) => (
+    if let Some(r) = $e.to_real() ? { r } else {
+      return Ok( $crate::val::none($crate::term::typ::real()) )
     }
   ) ;
   (bool $e:expr) => (
-    if let Some(b) = $e.to_bool()? { b } else {
-      return Ok( $crate::term::val::none($crate::term::typ::bool()) )
+    if let Some(b) = $e.to_bool() ? { b } else {
+      return Ok( $crate::val::none($crate::term::typ::bool()) )
     }
   ) ;
 }

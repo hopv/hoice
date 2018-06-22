@@ -189,7 +189,7 @@ fn qual_of_terms<F: FnMut(Term) -> Res<()>>(
     ( Some((_, othrs)), Some((op @ Op::Ge, terms)) ) |
 
     ( Some((op @ Op::Eql, terms)), Some((Op::Eql, othrs)) ) =>
-    if terms[0].typ().is_bool() && othrs[0].typ().is_bool() {
+    if ! terms[0].typ().is_bool() && terms[0].typ() == othrs[0].typ() {
       mk_terms!(
         op, add(terms[0], othrs[0]), add(terms[1], othrs[1]) ;
         op, sub(terms[0], othrs[1]), sub(terms[1], othrs[0]) ;
@@ -406,6 +406,7 @@ fn mine_instance(instance: & Instance, quals: & mut NuQuals) -> Res<()> {
   for clause in instance.clauses() {
     qualifiers_of_clause(instance, clause, quals) ?
   }
+
   Ok(())
 }
 
