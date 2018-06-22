@@ -12,12 +12,6 @@
 //! [exit]: learners/enum.LError.html#variant.Exit
 //! (Exit variant of the LError enum)
 
-#![cfg_attr(
-  feature = "cargo-clippy", allow(
-    renamed_and_removed_lints,unused_doc_comments
-  )
-)]
-
 use common::* ;
 
 

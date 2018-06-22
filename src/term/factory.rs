@@ -545,7 +545,7 @@ fn normalize(
 
 
 /// Normalization result.
-enum NormRes {
+pub enum NormRes {
   /// Just a term.
   Term(Term),
   /// More stuff to do.
@@ -556,23 +556,15 @@ enum NormRes {
 
 /// Normalizes an operation application.
 fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
+  use term::simplify ;
 
   let (op, args) = match op {
 
-    Op::Ite => if args.len() == 3 {
-      if let Some(b) = args[0].bool() {
-        return NormRes::Term(
-          if b { args[1].clone() } else { args[2].clone() }
-        )
-      }
-      if args[1] == args[2] {
-        return NormRes::Term( args[1].clone() )
+    Op::Ite => {
+      if let Some(res) = simplify::ite(& mut args) {
+        return res
       }
       (op, args)
-    } else {
-      panic!(
-        "trying to apply `Ite` operator to {} (!= 3) arguments", args.len()
-      )
     },
 
     Op::Impl => match (args.pop(), args.pop()) {

@@ -3,6 +3,8 @@
 pub use std::cmp::Ordering ;
 use std::ops::Deref ;
 
+use term::factory::NormRes;
+
 use common::* ;
 
 
@@ -568,4 +570,51 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
 
   SimplRes::None
 }
+
+
+
+
+/// Fails if the number of arguments is wrong.
+macro_rules! arity {
+  ($op:expr => $args:expr, $len:expr) => (
+    if $args.len() != $len {
+      panic!(
+        "illegal application of `{}` to {} arguments", $op, $args.len()
+      )
+    }
+  ) ;
+}
+macro_rules! simpl_fun {
+  ( $(fn $name:ident($args:pat) $body:expr);* $(;)* ) => (
+    $(
+      pub fn $name($args: & mut Vec<Term>) -> Option<NormRes> {
+        $body
+      }
+    )*
+  ) ;
+}
+
+
+simpl_fun! {
+
+  // If-then-else.
+  fn ite(args) {
+    arity!("ite" => args, 3) ;
+    if let Some(b) = args[0].bool() {
+      return Some(
+        NormRes::Term(
+          if b { args[1].clone() } else { args[2].clone() }
+        )
+      )
+    }
+    if args[1] == args[2] {
+      return Some(
+        NormRes::Term( args[1].clone() )
+      )
+    }
+    None
+  } ;
+}
+
+
 

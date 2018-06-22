@@ -464,19 +464,19 @@ mod test {
       ) ;
       assert_eq!( res, $value.into() )
     }) ;
-    ( bool $model:expr => $expr:expr ) => ({
-      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
-      println!(
-        "{} evaluated with {} is {}, expecting true", $expr, $model, res
-      ) ;
-      assert!( res )
-    }) ;
     ( bool not $model:expr => $expr:expr ) => ({
       let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
       println!(
         "{} evaluated with {} is {}, expecting false", $expr, $model, res
       ) ;
       assert!( ! res )
+    }) ;
+    ( bool $model:expr => $expr:expr ) => ({
+      let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
+      println!(
+        "{} evaluated with {} is {}, expecting true", $expr, $model, res
+      ) ;
+      assert!( res )
     }) ;
   }
 }
