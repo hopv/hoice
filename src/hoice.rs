@@ -9,9 +9,6 @@
 
 #![doc(test(attr(deny(warnings))))]
 #![allow(non_upper_case_globals)]
-// Remove this once error-chain is updated.
-#![allow(renamed_and_removed_lints)]
-#![allow(unused_doc_comments)]
 
 #[macro_use]
 extern crate lazy_static ;

@@ -162,7 +162,7 @@ pub fn conj_term_insert(
 
 
 /// Simplifies a conjunction.
-pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
+pub fn conj_vec_simpl(terms: & mut Vec<Term>) {
   let mut res = Vec::with_capacity( terms.len() ) ;
 
   'add_terms: while let Some(term) = terms.pop() {
@@ -196,8 +196,10 @@ pub fn conj_vec_simpl(mut terms: Vec<Term>) -> Vec<Term> {
   }
 
   res.shrink_to_fit() ;
+  res.sort_unstable() ;
+  res.dedup() ;
 
-  res
+  ::std::mem::swap(terms, & mut res)
 }
 
 
@@ -330,8 +332,12 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
 
   if res.is_some() {
 
-    if let Some(solver) = simpl_solver.write().unwrap().as_mut() {
-      solver.push(1).unwrap() ;
+    if let Some(solver) = simpl_solver.write().expect(
+      "could not retrieve term simplification solver"
+    ).as_mut() {
+      solver.push(1).expect(
+        "error on `push` during term simplification"
+      ) ;
       let mut vars = VarSet::new() ;
       lhs.iter(
         |term| if let Some(idx) = term.var_idx() {
@@ -339,7 +345,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
           if is_new {
             solver.declare_const(
               & format!("{}", term), term.typ().get()
-            ).unwrap()
+            ).expect(
+              "error on `declare_const` during term simplification (lhs)"
+            )
           }
         }
       ) ;
@@ -349,7 +357,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
           if is_new {
             solver.declare_const(
               & format!("{}", term), term.typ().get()
-            ).unwrap()
+            ).expect(
+              "error on `declare_const` during term simplification (rhs)"
+            )
           }
         }
       ) ;
@@ -371,9 +381,13 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         SimplRes::None => unreachable!(),
       } ;
 
-      solver.assert(& format!("(not {})", check)).unwrap() ;
+      solver.assert(& format!("(not {})", check)).expect(
+        "error on `assert` during term simplification"
+      ) ;
 
-      if solver.check_sat().unwrap() {
+      if solver.check_sat().expect(
+        "could not retrieve check-sat result in conjunction simplification"
+      ) {
         log! { @0
           " " ;
           "{}", lhs.deref() ;
@@ -384,7 +398,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         panic! { "simplification failure" }
       }
 
-      solver.pop(1).unwrap()
+      solver.pop(1).expect(
+        "error on `pop` during term simplification"
+      )
     }
   }
 
@@ -486,7 +502,13 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     if ! args[0].typ().is_arith() {
       return SimplRes::None
     }
-    (op, & args[0], args[1].val().unwrap())
+    (
+      op,
+      & args[0],
+      args[1].val().expect(
+        "error during value unwrapping in term simplification (lhs)"
+      ),
+    )
   } else {
     return SimplRes::None
   } ;
@@ -496,7 +518,13 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     if ! args[0].typ().is_arith() {
       return SimplRes::None
     }
-    (op, & args[0], args[1].val().unwrap())
+    (
+      op,
+      & args[0],
+      args[1].val().expect(
+        "error during value unwrapping in term simplification (rhs)"
+      ),
+    )
   } else {
     return SimplRes::None
   } ;
@@ -506,7 +534,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     match (lhs_op, rhs_op) {
       (Op::Gt, Op::Gt) |
       (Op::Ge, Op::Ge) => return SimplRes::Cmp(
-        lhs_cst.get().compare(& rhs_cst).unwrap()
+        lhs_cst.get().compare(& rhs_cst).expect(
+          "error during comparison unwrapping in term simplification (same op)"
+        )
       ),
 
       (Op::Gt, Op::Ge) |
@@ -518,7 +548,9 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
         }
       } else {
         return SimplRes::Cmp(
-          lhs_cst.get().compare(& rhs_cst).unwrap()
+          lhs_cst.get().compare(& rhs_cst).expect(
+          "error during comparison unwrapping in term simplification (diff op)"
+        )
         )
       },
 
@@ -554,12 +586,18 @@ where T1: Deref<Target=RTerm>, T2: Deref<Target=RTerm> {
     }
 
   } else if lhs_op == Op::Ge && rhs_op == Op::Ge
-  && lhs_cst == rhs_cst.minus().unwrap()
+  && lhs_cst == rhs_cst.minus().expect(
+    "error during rhs inversion in term simplification"
+  )
   && rhs_vars == & term::u_minus( lhs_vars.clone() ) {
 
     if conj {
       return SimplRes::Yields(
-        term::eq(lhs_vars.clone(), lhs_cst.to_term().unwrap())
+        term::eq(
+          lhs_vars.clone(), lhs_cst.to_term().expect(
+            "error during lhs cst to term conversion in term simplification"
+          )
+        )
       )
     } else {
       return SimplRes::Yields(
@@ -595,7 +633,118 @@ macro_rules! simpl_fun {
 }
 
 
+// Polymorphic operations.
+
 simpl_fun! {
+  // Equal.
+  fn eql(args) {
+    if args.len() == 2 {
+
+      if args[0] == args[1] {
+        return Some(
+          NormRes::Term( term::tru() )
+      )
+
+      } else if let Some(b) = args[0].bool() {
+
+        return Some(
+          NormRes::Term(
+            if b {
+              args[1].clone()
+            } else {
+              term::not( args[1].clone() )
+            }
+          )
+        )
+
+      } else if let Some(b) = args[1].bool() {
+
+        return Some(
+          NormRes::Term(
+            if b {
+              args[0].clone()
+            } else {
+              term::not( args[0].clone() )
+            }
+          )
+        )
+
+      } else if let (Some(r_1), Some(r_2)) = (
+        args[0].real(), args[1].real()
+      ) {
+
+        return Some(
+          NormRes::Term( term::bool( r_1 == r_2 ) )
+        )
+
+      } else if let (Some(i_1), Some(i_2)) = (
+        args[0].int(), args[1].int()
+      ) {
+
+        return Some(
+          NormRes::Term( term::bool( i_1 == i_2 ) )
+        )
+
+      } else if args[0].typ().is_arith() {
+
+        // println!("  (= {} {})", args[0], args[1]) ;
+        if ! args[1].is_zero() {
+          let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
+          let typ = rhs.typ() ;
+          let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
+            NormRes::App(
+              typ.clone(), Op::Sub, vec![
+                NormRes::Term(lhs), NormRes::Term(rhs)
+              ]
+            )
+          } ;
+          return Some(
+            NormRes::App(
+              typ::bool(), Op::Eql, vec![
+                lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
+              ]
+            )
+          )
+        } else {
+          // Rhs is zero, now normalize lhs. This is a bit ugly...
+          let mut u_minus_lhs = term::u_minus(args[0].clone()) ;
+          if u_minus_lhs.uid() < args[0].uid() {
+            ::std::mem::swap(& mut args[0], & mut u_minus_lhs)
+          }
+        }
+
+      }
+
+    } else {
+
+      args.sort_unstable() ;
+      let len = args.len() ;
+      let mut args = args.drain(0..) ;
+      let mut conj = vec![] ;
+      if let Some(first) = args.next() {
+        for arg in args {
+          conj.push(
+            NormRes::App(
+              typ::bool(), Op::Eql, vec![
+                NormRes::Term( first.clone() ),
+                NormRes::Term(arg)
+              ]
+            )
+          )
+        }
+        if ! conj.is_empty() {
+          return Some(
+            NormRes::App(typ::bool(), Op::And, conj)
+          )
+        }
+      }
+      panic!(
+        "illegal application of `=` to {} (< 2) argument", len
+      )
+    }
+
+    None
+  } ;
 
   // If-then-else.
   fn ite(args) {
@@ -614,7 +763,77 @@ simpl_fun! {
     }
     None
   } ;
+
+  // Distinct.
+  fn distinct(args) {
+    if args.len() == 2 {
+      return Some(
+        NormRes::App(
+          typ::bool(), Op::Not, vec![
+            NormRes::App(
+              typ::bool(), Op::Eql, args.drain(0..).map(
+                NormRes::Term
+              ).collect()
+            ),
+          ]
+        )
+      )
+    } else {
+      args.sort_unstable() ;
+      None
+    }
+  }
 }
 
+
+// Boolean operations.
+
+simpl_fun! {
+  fn and(args) {
+    args.sort_unstable() ;
+    args.dedup() ;
+
+    let mut cnt = 0 ;
+    
+    while cnt < args.len() {
+      if let Some(b) = args[cnt].bool() {
+        if b {
+          args.swap_remove(cnt) ;
+          ()
+        } else {
+          return Some(
+            NormRes::Term( term::fls() )
+          )
+        }
+      } else if let Some(conj) = args[cnt].conj_inspect().cloned() {
+        for term in conj {
+          args.push(term)
+        }
+        args.swap_remove(cnt) ;
+        args.sort_unstable() ;
+        args.dedup() ;
+        cnt = 0
+      } else {
+        cnt += 1
+      }
+    }
+
+    // if conf.term_simpl >= 3 {
+      conj_vec_simpl(args) ;
+    // }
+
+    if args.is_empty() {
+      return Some(
+        NormRes::Term( term::tru() )
+      )
+    } else if args.len() == 1 {
+      return Some(
+        NormRes::Term( args.pop().unwrap() )
+      )
+    }
+
+    None
+  }
+}
 
 

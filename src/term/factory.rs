@@ -560,10 +560,28 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
 
   let (op, args) = match op {
 
+    // Polymorphic operators.
+    Op::Eql => if let Some(res) = simplify::eql(& mut args) {
+      return res
+    } else {
+      (op, args)
+    },
     Op::Ite => {
       if let Some(res) = simplify::ite(& mut args) {
         return res
       }
+      (op, args)
+    },
+    Op::Distinct => if let Some(res) = simplify::distinct(& mut args) {
+      return res
+    } else {
+      (op, args)
+    },
+
+    // Boolean operators.
+    Op::And => if let Some(res) = simplify::and(& mut args) {
+      return res
+    } else {
       (op, args)
     },
 
@@ -578,47 +596,6 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         )
       },
       _ => panic!("illegal application of `Impl` to less than 2 arguments")
-    },
-
-    Op::And => {
-      let mut set = TermSet::new() ;
-      let mut cnt = 0 ;
-      
-      while cnt < args.len() {
-        let is_new = set.insert( args[cnt].clone() ) ;
-
-        if ! is_new {
-          args.swap_remove(cnt) ;
-          ()
-        } else if let Some(b) = args[cnt].bool() {
-          if b {
-            args.swap_remove(cnt) ;
-            ()
-          } else {
-            return NormRes::Term( fls() )
-          }
-        } else if let Some(conj) = args[cnt].conj_inspect().cloned() {
-          for term in conj {
-            args.push(term)
-          }
-          args.swap_remove(cnt) ;
-        } else {
-          cnt += 1
-        }
-      }
-
-      // if conf.term_simpl >= 3 {
-        args = term::simplify::conj_vec_simpl(args) ;
-      // }
-
-      if args.is_empty() {
-        return NormRes::Term( term::tru() )
-      } else if args.len() == 1 {
-        return NormRes::Term( args.pop().unwrap() )
-      } else {
-        args.sort_unstable() ;
-        (op, args)
-      }
     },
 
     Op::Or => {
@@ -714,105 +691,6 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       }
 
       (op, args)
-    },
-
-    Op::Eql => {
-      // println!("(= {} {})", args[0], args[1]) ;
-      if args.len() == 2 {
-
-        if args[0] == args[1] {
-          return NormRes::Term( tru() )
-
-        } else if let Some(b) = args[0].bool() {
-
-          return NormRes::Term(
-            if b {
-              args[1].clone()
-            } else {
-              not( args[1].clone() )
-            }
-          )
-
-        } else if let Some(b) = args[1].bool() {
-
-          return NormRes::Term(
-            if b {
-              args[0].clone()
-            } else {
-              not( args[0].clone() )
-            }
-          )
-
-        } else if let (Some(r_1), Some(r_2)) = (
-          args[0].real(), args[1].real()
-        ) {
-
-          return NormRes::Term( term::bool( r_1 == r_2 ) )
-
-        } else if let (Some(i_1), Some(i_2)) = (
-          args[0].int(), args[1].int()
-        ) {
-
-          return NormRes::Term( term::bool( i_1 == i_2 ) )
-
-        } else if args[0].typ().is_arith() {
-
-          // println!("  (= {} {})", args[0], args[1]) ;
-          if ! args[1].is_zero() {
-            let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
-            let typ = rhs.typ() ;
-            let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
-              NormRes::App(
-                typ.clone(), Op::Sub, vec![
-                  NormRes::Term(lhs), NormRes::Term(rhs)
-                ]
-              )
-            } ;
-            return NormRes::App(
-              typ::bool(), Op::Eql, vec![
-                lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
-              ]
-            )
-          } else {
-            // Rhs is zero, now normalize lhs. This is a bit ugly...
-            let mut u_minus_lhs = term::u_minus(args[0].clone()) ;
-            if u_minus_lhs.uid() < args[0].uid() {
-              ::std::mem::swap(& mut args[0], & mut u_minus_lhs)
-            }
-            (op, args)
-          }
-
-        } else {
-          args.sort_unstable() ;
-          (op, args)
-        }
-
-      } else {
-
-        args.sort_unstable() ;
-        let len = args.len() ;
-        let mut args = args.into_iter() ;
-        let mut conj = vec![] ;
-        if let Some(first) = args.next() {
-          for arg in args {
-            conj.push(
-              NormRes::App(
-                typ::bool(), Op::Eql, vec![
-                  NormRes::Term( first.clone() ),
-                  NormRes::Term(arg)
-                ]
-              )
-            )
-          }
-          if ! conj.is_empty() {
-            return NormRes::App(typ::bool(), Op::And, conj)
-          }
-        }
-        panic!(
-          "illegal application of {} to {} (< 2) argument", op, len
-        )
-
-      }
     },
 
     Op::Sub => {
@@ -1343,7 +1221,6 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
       (op, args)
     },
 
-    Op::Distinct |
     Op::Store |
     Op::Select |
     Op::Rem => (op, args),
