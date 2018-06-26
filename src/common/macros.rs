@@ -427,10 +427,20 @@ macro_rules! rat_to_smt {
   ($writer:expr, $r:expr) => ({
     let (num, den) = ( $r.numer(), $r.denom() ) ;
     debug_assert!( ! den.is_negative() ) ;
-    if ! num.is_negative() {
-      write!($writer, "(/ {} {})", num, den)
+    if num.is_zero() {
+      write!($writer, "0.0")
+    } else if ! num.is_negative() {
+      if den.is_one() {
+        write!($writer, "{}.0", num)
+      } else {
+        write!($writer, "(/ {} {})", num, den)
+      }
     } else {
-      write!($writer, "(- (/ {} {}))", - num, den)
+      if den.is_one() {
+        write!($writer, "(- {}.0)", - num)
+      } else {
+        write!($writer, "(- (/ {} {}))", - num, den)
+      }
     }
   })
 }

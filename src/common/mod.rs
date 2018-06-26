@@ -271,6 +271,29 @@ pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
 pub type ConjModelRef<'a> = & 'a [ Vec<(PrdIdx, Vec<TTerms>)> ] ;
 
+/// A model or unsat.
+#[derive(Clone, PartialEq, Eq)]
+pub enum MaybeModel<M: Clone + PartialEq + Eq> {
+  /// Unsat result.
+  Unsat,
+  /// A model.
+  Model(M),
+}
+impl<M: Clone + PartialEq + Eq> MaybeModel<M> {
+  /// True if unsat.
+  pub fn is_unsat(& self) -> bool {
+    * self == MaybeModel::Unsat
+  }
+  /// Turns itself to an option.
+  pub fn into_option(self) -> Option<M> {
+    if let MaybeModel::Model(model) = self {
+      Some(model)
+    } else {
+      None
+    }
+  }
+}
+
 /// Indicates a bias in a counterexample for some clause.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bias {

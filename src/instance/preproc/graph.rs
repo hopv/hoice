@@ -3,7 +3,10 @@
 
 use common::* ;
 use var_to::terms::VarTermsSet ;
-use instance::preproc::utils ;
+use instance::{
+  preproc::utils, preproc::utils::ExtractionCxt,
+  instance::PreInstance,
+} ;
 
 
 
@@ -454,7 +457,8 @@ impl Graph {
   /// Returns `None` if inlining would have generated more clauses than `max`
   /// (by `estimate`).
   fn dnf_of(
-    & mut self, instance: & Instance, pred: PrdIdx, max: Option<usize>,
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx, max: Option<usize>,
     previous: & [ (PrdIdx, Vec<(Quantfed, TTermSet)>) ]
   ) -> Res< Option< (Vec<(Quantfed, TTermSet)>, usize) > > {
     log! { @4 "dnf_of({}, {:?})", instance[pred], max }
@@ -490,7 +494,7 @@ impl Graph {
       } else {
         bail!("instance inconsistency")
       } ;
-      match utils::terms_of_rhs_app(
+      match extractor.terms_of_rhs_app(
         true, instance, & clause.vars,
         clause.lhs_terms(), clause.lhs_preds(),
         pred, args
@@ -648,12 +652,13 @@ impl Graph {
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
-  pub fn inline(
-    & mut self, instance: & Instance, keep: & mut PrdSet,
-    mut upper_bound: usize
+  pub fn inline<'a>(
+    & mut self, instance: & mut PreInstance<'a>,
+    keep: & mut PrdSet, mut upper_bound: usize,
   ) -> Res<
     Vec< (PrdIdx, Vec<(Quantfed, TTermSet)>) >
   > {
+    let (extractor, instance) = instance.extraction() ;
     let mut res = Vec::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
@@ -704,7 +709,7 @@ impl Graph {
       }
 
       let def = if let Some((def, estimation)) = self.dnf_of(
-        instance, pred,
+        instance, extractor, pred,
         if ! forced_inlining { Some(upper_bound) } else { None },
         & res
       ) ? {

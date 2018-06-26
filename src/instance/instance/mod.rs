@@ -3,6 +3,7 @@
 use common::* ;
 use instance::info::* ;
 use data::Data ;
+use var_to::terms::VarTermsSet;
 
 mod clause ;
 mod pre_instance ;
@@ -385,25 +386,33 @@ impl Instance {
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial_conj(& self) -> Res< Option< Option<ConjModel> > > {
+  pub fn is_trivial_conj(& self) -> Res<
+    Option< MaybeModel<ConjModel> >
+  > {
     match self.is_trivial() {
       None => Ok(None),
-      Some(false) => Ok( Some(None) ),
+      Some(false) => Ok( Some(MaybeModel::Unsat) ),
       Some(true) => self.extend_model(
         PrdHMap::new()
-      ).map(|res| Some(Some(res))),
+      ).map(
+        |res| Some( MaybeModel::Model(res) )
+      ),
     }
   }
 
   /// Returns a model for the instance when all the predicates have terms
   /// assigned to them.
-  pub fn is_trivial_model(& self) -> Res< Option<Option<Model>> > {
+  pub fn is_trivial_model(& self) -> Res<
+    Option< MaybeModel<Model> >
+  > {
     match self.is_trivial() {
       None => Ok(None),
-      Some(false) => Ok( Some(None) ),
+      Some(false) => Ok( Some(MaybeModel::Unsat) ),
       Some(true) => self.model_of(
         PrdMap::new()
-      ).map(|res| Some(Some(res))),
+      ).map(
+        |res| Some( MaybeModel::Model(res) )
+      ),
     }
   }
 
@@ -544,14 +553,6 @@ impl Instance {
 
     self.sorted_pred_terms.shrink_to_fit() ;
 
-    // If there are no clusters just create one cluster per clause.
-    // if self.clusters.is_empty() {
-    //   log_info! { "instance has no clusters, creating single clause clusters" }
-    //   for (idx, clause) in self.clauses.index_iter() {
-    //     self.clusters.push( Cluster::of_clause(idx, clause) )
-    //   }
-    // }
-
     Ok(())
   }
 
@@ -662,12 +663,6 @@ impl Instance {
     }
     Ok(())
   }
-
-  // /// Set of int constants **appearing in the predicates**. If more constants
-  // /// are created after the instance building step, they will not appear here.
-  // pub fn consts(& self) -> & TermSet {
-  //   & self.consts
-  // }
 
   /// Range over the predicate indices.
   pub fn pred_indices(& self) -> PrdRange {
@@ -891,190 +886,6 @@ impl Instance {
       debug_assert!(is_new)
     }
     true
-  }
-
-
-
-  /// Transforms a cex for a clause into some learning data.
-  ///
-  /// Returns `true` if some new data was generated.
-  pub fn clause_cex_to_data(
-    & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
-  ) -> Res<()> {
-    let (mut cex, bias) = cex ;
-    let clause = & self[clause_idx] ;
-
-    if_log! { @6
-      let mut s = String::new() ;
-      for (var, val) in cex.index_iter() {
-        s.push_str(& format!("{}: {}, ", var.default_str(), val))
-      }
-      log! { @6
-        "lhs preds: {}", clause.lhs_pred_apps_len() ;
-        "      rhs: {}", if clause.rhs().is_some() { "some" } else { "none" } ;
-        "     bias: {}", bias ;
-        "      cex: {}", s
-      }
-    }
-
-    // Factored set of variables when fixing cex for arguments.
-    let mut known_vars = VarSet::new() ;
-
-    macro_rules! fix_cex {
-      ($args:expr) => ({
-        log! { @6 "fixing {}", $args }
-        for arg in $args.iter() {
-          for var in term::vars(arg) {
-            if ! cex[var].is_known() {
-              // Value for `var` is a non-value.
-              let is_new = known_vars.insert(var) ;
-              // Variable appears in more than one arg, force its value.
-              if ! is_new {
-                cex[var] = cex[var].typ().default_val()
-              }
-            }
-          }
-        }
-      })
-    }
-
-    let (lhs, rhs) = match bias {
-
-      // Consider the whole lhs of the clause positive.
-      Bias::Lft => (vec![], clause.rhs()),
-
-      // Consider the rhs of the clause negative.
-      Bias::Rgt => (
-        clause.lhs_preds().iter().map(
-          |(pred, argss)| (* pred, argss.clone())
-        ).collect(),
-        None
-      ),
-
-      // Consider the rhs of the clause negative, and all lhs applications
-      // positive except this one.
-      Bias::NuRgt(pred, args) => {
-        use var_to::terms::VarTermsSet ;
-        debug_assert! { clause.lhs_preds().get(& pred).is_some() }
-        debug_assert! {
-          clause.lhs_preds().get(& pred).unwrap().contains(& args)
-        }
-        let mut argss = VarTermsSet::with_capacity(1) ;
-        argss.insert(args) ;
-        ( vec![(pred, argss)], None )
-      },
-
-      // No bias.
-      Bias::Non => (
-        clause.lhs_preds().iter().map(
-          |(pred, argss)| (* pred, argss.clone())
-        ).collect(),
-        clause.rhs()
-      ),
-
-    } ;
-
-    // Force non-values in the cex if we're dealing with a constraint, not a
-    // sample.
-    if (
-      // Positive sample?
-      lhs.is_empty() && rhs.is_some()
-    ) || (
-      // Negative sample?
-      lhs.len() == 1 && lhs.iter().all(
-        |(_, argss)| argss.len() == 1
-      ) && rhs.is_none()
-    ) {
-      // We're generating a sample. Still need to force variables that appear
-      // more than once in arguments.
-      for (_, argss) in & lhs {
-        debug_assert_eq! { argss.len(), 1 }
-        for args in argss {
-          fix_cex!(args)
-        }
-      }
-      if let Some((_, args)) = rhs.as_ref() {
-        fix_cex!(args)
-      }
-    } else {
-      // We're dealing with a constraint, not a sample. Force non-values.
-      for val in cex.iter_mut() {
-        if ! val.is_known() {
-          * val = val.typ().default_val()
-        }
-      }
-    }
-
-    // Evaluates some arguments for a predicate.
-    macro_rules! eval {
-      ($args:expr) => ({
-        use var_to::vals::RVarVals ;
-        let mut sample = RVarVals::with_capacity( $args.len() ) ;
-        for arg in $args.get() {
-          let val = arg.eval(& cex) ? ;
-          sample.push(val)
-        }
-        sample
-      }) ;
-    }
-
-    // Evaluate antecedents.
-    let mut antecedents = vec![] ;
-    for (pred, argss) in lhs {
-      for args in argss {
-        let sample = eval!(args) ;
-        antecedents.push((pred, sample))
-      }
-    }
-
-    let consequent = if let Some((pred, args)) = rhs {
-      let sample = eval!(args) ;
-      Some( (pred, sample) )
-    } else {
-      None
-    } ;
-
-    if_log! { @6
-      let mut s = String::new() ;
-      if ! antecedents.is_empty() {
-        for (pred, sample) in & antecedents {
-          s.push_str( & format!("({} {}) ", self[* pred], sample) )
-        }
-      } else {
-        s.push_str("true ")
-      }
-      s.push_str("=> ") ;
-      if let Some((pred, sample)) = consequent.as_ref() {
-        s.push_str( & format!("({} {})", self[* pred], sample) )
-      } else {
-        s.push_str("false")
-      }
-      log! { @6 "{}", s }
-    }
-
-    data.add_data(clause_idx, antecedents, consequent)
-  }
-
-
-
-
-  /// Turns some teacher counterexamples into learning data.
-  pub fn cexs_to_data(
-    & self, data: & mut Data, cexs: Cexs
-  ) -> Res<bool> {
-    let metrics = data.metrics() ;
-
-    for (clause_idx, cexs) in cexs {
-      log! { @5 "adding cexs for #{}", clause_idx }
-
-      for cex in cexs {
-        self.clause_cex_to_data(data, clause_idx, cex) ?
-      }
-    }
-
-    data.propagate() ? ;
-
-    Ok( metrics != data.metrics() )
   }
 
 
@@ -1538,9 +1349,234 @@ impl Instance {
     Ok(())
   }
 
-
-
 }
+
+
+/// Lhs part of a cex.
+type CexLhs = Vec< (PrdIdx, VarTermsSet) > ;
+/// Lhs part of a cex, reference version.
+type CexLhsRef<'a> = & 'a [ (PrdIdx, VarTermsSet) ] ;
+/// Rhs part of a cex.
+type CexRhs<'a> = Option<(PrdIdx, & 'a VarTerms)> ;
+
+
+/// Cex-related functions.
+impl Instance {
+
+  /// Retrieves the lhs and rhs cex part from a bias.
+  fn break_cex(
+    & self, clause_idx: ClsIdx, bias: Bias
+  ) -> (CexLhs, CexRhs) {
+    let clause = & self[clause_idx] ;
+    match bias {
+
+      // Consider the whole lhs of the clause positive.
+      Bias::Lft => (vec![], clause.rhs()),
+
+      // Consider the rhs of the clause negative.
+      Bias::Rgt => (
+        clause.lhs_preds().iter().map(
+          |(pred, argss)| (* pred, argss.clone())
+        ).collect(),
+        None
+      ),
+
+      // Consider the rhs of the clause negative, and all lhs applications
+      // positive except this one.
+      Bias::NuRgt(pred, args) => {
+        use var_to::terms::VarTermsSet ;
+        debug_assert! { clause.lhs_preds().get(& pred).is_some() }
+        debug_assert! {
+          clause.lhs_preds().get(& pred).unwrap().contains(& args)
+        }
+        let mut argss = VarTermsSet::with_capacity(1) ;
+        argss.insert(args) ;
+        ( vec![(pred, argss)], None )
+      },
+
+      // No bias.
+      Bias::Non => (
+        clause.lhs_preds().iter().map(
+          |(pred, argss)| (* pred, argss.clone())
+        ).collect(),
+        clause.rhs()
+      ),
+
+    }
+  }
+
+
+
+
+  /// Forces non-values in the cex if needed.
+  pub fn force_non_values(
+    & self, cex: & mut Cex, lhs: CexLhsRef, rhs: & CexRhs
+  ) {
+    // Factored set of variables when fixing cex for arguments.
+    let mut known_vars = VarSet::new() ;
+
+    macro_rules! fix_cex {
+      ($args:expr) => ({
+        log! { @6 "fixing {}", $args }
+        for arg in $args.iter() {
+          for var in term::vars(arg) {
+            if ! cex[var].is_known() {
+              // Value for `var` is a non-value.
+              let is_new = known_vars.insert(var) ;
+              // Variable appears in more than one arg, force its value.
+              if ! is_new {
+                cex[var] = cex[var].typ().default_val()
+              }
+            }
+          }
+        }
+      })
+    }
+
+    // Force non-values in the cex if we're dealing with a constraint, not a
+    // sample.
+    if (
+      // Positive sample?
+      lhs.is_empty() && rhs.is_some()
+    ) || (
+      // Negative sample?
+      lhs.len() == 1 && lhs.iter().all(
+        |(_, argss)| argss.len() == 1
+      ) && rhs.is_none()
+    ) {
+      // We're generating a sample. Still need to force variables that appear
+      // more than once in arguments.
+      for (_, argss) in lhs {
+        debug_assert_eq! { argss.len(), 1 }
+        for args in argss {
+          fix_cex!(args)
+        }
+      }
+      if let Some((_, args)) = rhs.as_ref() {
+        fix_cex!(args)
+      }
+    } else {
+      // We're dealing with a constraint, not a sample. Force non-values.
+      for val in cex.iter_mut() {
+        if ! val.is_known() {
+          * val = val.typ().default_val()
+        }
+      }
+    }
+  }
+
+
+
+
+  /// Transforms a cex for a clause into some learning data.
+  ///
+  /// Returns `true` if some new data was generated.
+  pub fn clause_cex_to_data(
+    & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
+  ) -> Res<()> {
+    let (mut cex, bias) = cex ;
+    let clause = & self[clause_idx] ;
+
+    if_log! { @6
+      let mut s = String::new() ;
+      for (var, val) in cex.index_iter() {
+        s.push_str(& format!("{}: {}, ", var.default_str(), val))
+      }
+      log! { @6
+        "lhs preds: {}", clause.lhs_pred_apps_len() ;
+        "      rhs: {}", if clause.rhs().is_some() { "some" } else { "none" } ;
+        "     bias: {}", bias ;
+        "      cex: {}", s
+      }
+    }
+
+    let (lhs, rhs) = self.break_cex(clause_idx, bias) ;
+    self.force_non_values(& mut cex, & lhs, & rhs) ;
+
+    // Evaluates some arguments for a predicate.
+    macro_rules! eval {
+      ($args:expr) => ({
+        use var_to::vals::RVarVals ;
+        let mut sample = RVarVals::with_capacity( $args.len() ) ;
+        for arg in $args.get() {
+          let val = arg.eval(& cex) ? ;
+          sample.push(val)
+        }
+        sample
+      }) ;
+    }
+
+    // Evaluate antecedents.
+    let mut antecedents = vec![] ;
+    for (pred, argss) in lhs {
+      for args in argss {
+        let sample = eval!(args) ;
+        antecedents.push((pred, sample))
+      }
+    }
+
+    let consequent = if let Some((pred, args)) = rhs {
+      let sample = eval!(args) ;
+      Some( (pred, sample) )
+    } else {
+      None
+    } ;
+
+    if_log! { @6
+      let mut s = String::new() ;
+      if ! antecedents.is_empty() {
+        for (pred, sample) in & antecedents {
+          s.push_str( & format!("({} {}) ", self[* pred], sample) )
+        }
+      } else {
+        s.push_str("true ")
+      }
+      s.push_str("=> ") ;
+      if let Some((pred, sample)) = consequent.as_ref() {
+        s.push_str( & format!("({} {})", self[* pred], sample) )
+      } else {
+        s.push_str("false")
+      }
+      log! { @6 "{}", s }
+    }
+
+    data.add_data(clause_idx, antecedents, consequent)
+  }
+
+
+
+
+  /// Turns some teacher counterexamples into learning data.
+  pub fn cexs_to_data(
+    & self, data: & mut Data, cexs: Cexs
+  ) -> Res<bool> {
+    let metrics = data.metrics() ;
+
+    for (clause_idx, cexs) in cexs {
+      log! { @5 "adding cexs for #{}", clause_idx }
+
+      for cex in cexs {
+        self.clause_cex_to_data(data, clause_idx, cex) ?
+      }
+    }
+
+    data.propagate() ? ;
+
+    Ok( metrics != data.metrics() )
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 impl ::std::ops::Index<PrdIdx> for Instance {
   type Output = PrdInfo ;
   fn index(& self, index: PrdIdx) -> & PrdInfo {

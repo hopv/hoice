@@ -159,46 +159,135 @@ fn qual_info_of(
 
 /// Generates qualifiers from two terms.
 fn qual_of_terms<F: FnMut(Term) -> Res<()>>(
-  mut f: F, term: & Term, othr: & Term
+  mut f: F, term: & Term, othr: & Term, clause_count: usize
 ) -> Res<()> {
-  macro_rules! mk_terms {
-    (
-      $( $op:ident, $( $fun:ident($($terms:expr),*) ),* );*
-      $(;)*
-    ) => ({
-      $(
-        f(
-          term::app(
-            $op, vec![
-              $( term::$fun( vec![ $($terms.clone()),* ] ) ),*
-            ]
-          )
-        ) ?
-      );*
-    }) ;
-  }
-
   match (
     term.app_inspect(), othr.app_inspect()
   ) {
 
-    ( Some((op @ Op::Gt, terms)), Some((_, othrs)) ) |
-    ( Some((_, othrs)), Some((op @ Op::Gt, terms)) ) |
+    (
+      Some((op_1 @ Op::Ge, term_args)),
+      Some((op_2 @ Op::Gt, othr_args))
+    ) |
+    (
+      Some((op_1 @ Op::Gt, term_args)),
+      Some((op_2 @ Op::Ge, othr_args))
+    ) |
+    (
+      Some((op_1 @ Op::Gt, term_args)),
+      Some((op_2 @ Op::Gt, othr_args))
+    ) |
+    (
+      Some((op_1 @ Op::Ge, term_args)),
+      Some((op_2 @ Op::Ge, othr_args))
+    ) |
 
-    ( Some((op @ Op::Ge, terms)), Some((_, othrs)) ) |
-    ( Some((_, othrs)), Some((op @ Op::Ge, terms)) ) |
+    (
+      Some((op_1 @ Op::Eql, term_args)),
+      Some((op_2 @ Op::Gt, othr_args))
+    ) |
+    (
+      Some((op_1 @ Op::Gt, term_args)),
+      Some((op_2 @ Op::Eql, othr_args))
+    ) |
 
-    ( Some((op @ Op::Eql, terms)), Some((Op::Eql, othrs)) ) =>
-    if ! terms[0].typ().is_bool() && terms[0].typ() == othrs[0].typ() {
-      mk_terms!(
-        op, add(terms[0], othrs[0]), add(terms[1], othrs[1]) ;
-        op, sub(terms[0], othrs[1]), sub(terms[1], othrs[0]) ;
-      )
+    (
+      Some((op_1 @ Op::Ge, term_args)),
+      Some((op_2 @ Op::Eql, othr_args))
+    ) |
+    (
+      Some((op_1 @ Op::Eql, term_args)),
+      Some((op_2 @ Op::Ge, othr_args))
+    ) |
+
+    (
+      Some((op_1 @ Op::Eql, term_args)),
+      Some((op_2 @ Op::Eql, othr_args))
+    ) => {
+
+      if term_args[0].typ().is_arith()
+      && term_args[0].typ() == othr_args[0].typ() {
+        let nu_lhs = term::add(
+          vec![ term_args[0].clone(), othr_args[0].clone() ]
+        ) ;
+
+        let mut old_vars_1 = term::vars(& term_args[0]) ;
+        let mut old_vars_2 = term::vars(& othr_args[0]) ;
+        let mut nu_vars = term::vars(& nu_lhs) ;
+
+        let use_qual = clause_count < 35 || (
+          nu_vars.len() <= 2
+        ) || (
+          nu_vars.len() < old_vars_1.len() + old_vars_2.len()
+        ) ;
+
+        if use_qual {
+          log! { @4
+            "from {}", term ;
+            "     {}", othr
+          }
+        } else {
+          // log! { @1
+          //   " " ;
+          //   "skipping" ;
+          //   "from {}", term ;
+          //   "     {}", othr ;
+          //   "  -> {}", nu_lhs
+          // }
+        }
+
+        if use_qual {
+          let op = match (op_1, op_2) {
+            (_, Op::Gt) |
+            (Op::Gt, _) => Op::Gt,
+
+            (_, Op::Ge) |
+            (Op::Ge, _) => Op::Ge,
+
+            (Op::Eql, Op::Eql) => Op::Eql,
+
+            _ => unreachable!(),
+          } ;
+
+          let nu_term = term::app(
+            op, vec![
+              nu_lhs, term::add(
+                vec![
+                  term_args[1].clone(), othr_args[1].clone()
+                ]
+              )
+            ]
+          ) ;
+          f( nu_term.clone() ) ? ;
+
+          log! { @4 "  -> {}", nu_term }
+
+          if op_1 == Op::Eql {
+            let nu_lhs = term::sub(
+              vec![ othr_args[0].clone(), term_args[0].clone() ]
+            ) ;
+            let nu_rhs = term::sub(
+              vec![ othr_args[1].clone(), term_args[1].clone() ]
+            ) ;
+            let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
+            f(nu_term) ? ;
+          } else if op_2 == Op::Eql {
+            let nu_lhs = term::sub(
+              vec![ term_args[0].clone(), othr_args[0].clone() ]
+            ) ;
+            let nu_rhs = term::sub(
+              vec![ term_args[1].clone(), othr_args[1].clone() ]
+            ) ;
+            let nu_term = term::app( op, vec![ nu_lhs, nu_rhs ] ) ;
+            f(nu_term) ? ;
+          }
+        }
+      }
+
     },
 
     _ => (),
   }
-
   Ok(())
 }
 
@@ -260,7 +349,9 @@ fn qualifiers_of_clause(
     ) ?
   }
 
-  apply_mappings(quals, clause, build_conj, maps) ? ;
+  apply_mappings(
+    quals, clause, build_conj, maps, instance.clauses().len()
+  ) ? ;
 
   Ok(())
 
@@ -273,7 +364,7 @@ fn qualifiers_of_clause(
 /// Applies a mapping for some predicate on a clause.
 fn apply_mappings(
   quals: & mut NuQuals, clause: & Clause, build_conj: bool,
-  maps: Vec<(PrdIdx, VarHMap<Term>, TermSet)>,
+  maps: Vec<(PrdIdx, VarHMap<Term>, TermSet)>, clause_count: usize,
 ) -> Res<()> {
   // Stores the subterms of `lhs_terms`.
   let mut subterms = Vec::with_capacity(7) ;
@@ -365,7 +456,8 @@ fn apply_mappings(
     while let Some(term) = all_terms.next() {
       for other in all_terms.clone() {
         qual_of_terms(
-          |qual| { quals.insert(qual, pred) ? ; Ok(()) }, term, other
+          |qual| { quals.insert(qual, pred) ? ; Ok(()) },
+          term, other, clause_count
         ) ?
       }
     }

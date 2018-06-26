@@ -166,13 +166,85 @@ impl ::std::ops::Deref for Pos {
 }
 
 
+
+
+/// Result of parsing a clause.
+enum ClauseRes {
+  /// Clause parsed, but it was redundant.
+  Skipped,
+  /// Clause parsed and added.
+  Added(ClsIdx),
+}
+impl ClauseRes {
+  /// Turns itself in an option.
+  pub fn into_option(self) -> Option<ClsIdx> {
+    if let ClauseRes::Added(i) = self {
+      Some(i)
+    } else {
+      None
+    }
+  }
+}
+
+
+
+/// Term stack frame used in the parser to avoid recursion.
+struct TermFrame {
+  /// Operator when going up.
+  op: Op,
+  /// Position of the operator.
+  op_pos: Pos,
+  /// Position of the arguments.
+  args_pos: Vec<Pos>,
+  /// Arguments.
+  args: Vec<Term>,
+  /// Let-binding count.
+  let_count: LetCount,
+}
+impl TermFrame {
+  /// Constructor.
+  pub fn new(
+    op: Op, op_pos: Pos, let_count: LetCount
+  ) -> Self {
+    TermFrame {
+      op, op_pos, let_count,
+      args_pos: Vec::with_capacity(11),
+      args: Vec::with_capacity(11),
+    }
+  }
+
+  /// Pushes an argument.
+  pub fn push_arg(& mut self, pos: Pos, arg: Term) {
+    debug_assert_eq! { self.args_pos.len(), self.args.len() }
+    self.args_pos.push(pos) ;
+    self.args.push(arg)
+  }
+
+  /// True if the frame has no arguments.
+  pub fn is_empty(& self) -> bool {
+    debug_assert_eq! { self.args_pos.len(), self.args.len() }
+    self.args_pos.is_empty()
+  }
+
+  /// Retrieves the let-binding count and sets the internal one to zero.
+  pub fn let_count(& mut self) -> LetCount {
+    ::std::mem::replace( & mut self.let_count, 0.into() )
+  }
+
+  /// Destroys the frame.
+  pub fn destroy(self) -> (
+    Op, Pos, Vec<Pos>, Vec<Term>
+  ) {
+    (self.op, self.op_pos, self.args_pos, self.args)
+  }
+}
+
+
 /// Parser context.
 #[derive(Default)]
 pub struct ParserCxt {
   /// Term stack to avoid recursion.
-  term_stack: Vec<
-    (Op, Pos, Vec<Pos>, Vec<Term>, LetCount)
-  >,
+  term_stack: Vec<TermFrame>,
   /// Memory for backtracking.
   mem: Vec<Cursor>,
   /// Map from predicate names to predicate indices.
@@ -219,6 +291,9 @@ struct LetCount {
 impl LetCount {
   /// True if zero.
   pub fn is_zero(self) -> bool{ self.n == 0 }
+}
+impl From<usize> for LetCount {
+  fn from(n: usize) -> Self { LetCount { n } }
 }
 
 
@@ -1046,18 +1121,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Type checks an operator application.
-  fn build_app(
-    & self, op: Op, op_pos: Pos, args: Vec<Term>, pos: & [ Pos ]
-  ) -> Res<Term> {
-    debug_assert_eq! { args.len(), pos.len() }
+  fn build_app(& self, frame: TermFrame) -> Res<(Term, Pos)> {
+    let (op, op_pos, args_pos, args) = frame.destroy() ;
+
     match term::try_app(op, args) {
-      Ok(typ) => Ok(typ),
+      Ok(term) => Ok((term, op_pos)),
       Err(
         term::TypError::Typ { expected, obtained, index }
       ) => if let Some(exp) = expected {
         err_chain! {
           self.error(
-            pos[index], format!(
+            args_pos[index], format!(
               "expected an expression of sort {}, found {}", exp, obtained
             )
           )
@@ -1066,7 +1140,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else {
         err_chain! {
           self.error(
-            pos[index], format!(
+            args_pos[index], format!(
               "expected the expression starting here has sort {} \
               which is illegal", obtained
             )
@@ -1295,9 +1369,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         let op_pos = self.pos() ;
 
         if let Some(op) = self.op_opt() ? {
-          let kid_pos = Vec::with_capacity(11) ;
-          let kids = Vec::with_capacity(11) ;
-          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
+          let frame = TermFrame::new(op, op_pos, bind_count) ;
+          self.cxt.term_stack.push(frame) ;
           continue 'read_kids
 
         } else if self.tag_opt("(") {
@@ -1374,31 +1447,34 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
       } ;
 
-      'go_up: while let Some(
-        (op, op_pos, mut kid_pos, mut kids, bind_count)
-      ) = self.cxt.term_stack.pop() {
-        debug_assert_eq! { kid_pos.len(), kids.len() }
-        kid_pos.push( term_pos ) ;
-        kids.push(term) ;
+      'go_up: while let Some(mut frame) = self.cxt.term_stack.pop() {
         self.ws_cmt() ;
+
+        frame.push_arg(term_pos, term) ;
+
         if self.tag_opt(")") {
-          if kids.is_empty() {
+          if frame.is_empty() {
             bail!(
               self.error(
-                op_pos, format!(
+                frame.op_pos, format!(
                   "Illegal nullary application of operator `{}`",
-                  conf.bad(op.as_str())
+                  conf.bad( frame.op.as_str() )
                 )
               )
             )
           }
-          term = self.build_app(op, op_pos, kids, & kid_pos) ? ;
-          term_pos = op_pos ;
+
+          let bind_count = frame.let_count() ;
+          let (nu_term, nu_term_pos) = self.build_app(frame) ? ;
+          term = nu_term ;
+          term_pos = nu_term_pos ;
           self.ws_cmt() ;
+
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
+
         } else {
-          self.cxt.term_stack.push( (op, op_pos, kid_pos, kids, bind_count) ) ;
+          self.cxt.term_stack.push(frame) ;
           continue 'read_kids
         }
       }
@@ -1943,7 +2019,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
   fn forall(
     & mut self, instance: & mut Instance
-  ) -> Res< Option< Option<ClsIdx> > > {
+  ) -> Res< Option<ClauseRes> > {
     if ! self.tag_opt(keywords::forall) {
       return Ok(None)
     }
@@ -1989,7 +2065,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag(")") ?
     }
 
-    Ok(Some(idx))
+    Ok( Some(idx) )
   }
 
 
@@ -2003,7 +2079,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
   fn nexists(
     & mut self, instance: & mut Instance
-  ) -> Res< Option<Option<ClsIdx>> > {
+  ) -> Res< Option<ClauseRes> > {
     if ! self.tag_opt(keywords::op::not_) {
       return Ok(None)
     }
@@ -2055,7 +2131,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag(")") ?
     }
 
-    Ok(Some(idx))
+    Ok( Some(idx) )
   }
 
 
@@ -2065,7 +2141,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: & HashMap<& 's str, VarIdx>,
     instance: & mut Instance,
     negated: bool,
-  ) -> Res< Option<ClsIdx> > {
+  ) -> Res< ClauseRes > {
     profile! { self tick "parsing", "clause" }
     self.ws_cmt() ;
 
@@ -2108,9 +2184,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     profile! { self mark "parsing", "clause" }
 
     if at_least_one {
-      Ok(Some(idx))
+      Ok( ClauseRes::Added(idx) )
     } else {
-      Ok(None)
+      Ok( ClauseRes::Skipped )
     }
   }
 
@@ -2200,10 +2276,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag(")") ? ;
       idx
     } else if self.tag_opt("true") {
-      None
+      ClauseRes::Skipped
     } else if self.tag_opt("false") {
       instance.set_unsat() ;
-      None
+      ClauseRes::Skipped
     } else {
       bail!(
         self.error_here("expected negation, qualifier, `true` or `false`")
@@ -2222,7 +2298,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       let (_, ident) = self.ident().chain_err(
         || "expected identifier after `:named` tag"
       ) ? ;
-      if let Some(idx) = idx {
+      if let Some(idx) = idx.into_option() {
         instance.set_old_clause_name(idx, ident.into()) ?
       }
       self.ws_cmt() ;

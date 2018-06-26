@@ -755,6 +755,86 @@ impl Data {
   }
 
 
+  /// Prunes the lhs and the rhs of a constraint.
+  ///
+  /// Removes samples that are known to be true/false. Returns `None` if the
+  /// constraint is trivial.
+  pub fn prune_cstr(
+    & mut self, lhs: Vec<(PrdIdx, RVarVals)>, rhs: Option<(PrdIdx, RVarVals)>
+  ) -> Res< Option<(
+    PrdHMap<VarValsSet>, Option<Sample>
+  )> > {
+    let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
+
+    // Look at the lhs and remove stuff we know is true.
+    'lhs_iter: for (pred, args) in lhs {
+      let (args, is_new) = var_to::vals::new_is_new( args ) ;
+
+      // If no partial examples and sample is new, no need to check anything.
+      if conf.teacher.partial || ! is_new {
+        if args.set_subsumed(& self.pos[pred]) {
+          // Positive, skip.
+          continue 'lhs_iter
+        } else if args.set_subsumed(& self.neg[pred]) {
+          // Negative, constraint is trivial.
+          profile! { self mark "add cstr", "pre-checks" }
+          profile! { self "trivial constraints" => add 1 }
+          return Ok(None)
+        }
+      }
+
+      let set = nu_lhs.entry(pred).or_insert_with(VarValsSet::new) ;
+
+      // Partial samples are not allowed in constraints, no subsumption
+      // check in set.
+      set.insert(args) ;
+      ()
+    }
+
+    let nu_rhs = if let Some((pred, args)) = rhs {
+      let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
+
+      let args = if conf.teacher.partial || ! is_new {
+        if args.set_subsumed(& self.pos[pred]) {
+          profile! { self mark "add cstr", "pre-checks" }
+          profile! { self "trivial constraints" => add 1 }
+          // Positive, constraint is trivial.
+          return Ok(None)
+        } else if args.set_subsumed(& self.neg[pred]) {
+          // Negative, ignore.
+          None
+        } else {
+          Some(args)
+        }
+      } else {
+        Some(args)
+      } ;
+
+      if let Some(args) = args.as_ref() {
+        // Subsumed by lhs?
+        if let Some(argss) = nu_lhs.get(& pred) {
+          // Partial samples are not allowed in constraints, no subsumption
+          // check.
+          if argss.contains(& args) {
+            profile! { self mark "add cstr", "pre-checks" }
+            profile! { self "trivial constraints" => add 1 }
+            // Trivially implied by lhs.
+            return Ok(None)
+          }
+        }
+      }
+
+      args.map(|args| Sample { pred, args })
+    } else {
+      None
+    } ;
+
+    nu_lhs.shrink_to_fit() ;
+
+    Ok( Some((nu_lhs, nu_rhs)) )
+  }
+
+
   /// Adds a constraint.
   ///
   /// Returns `true` and if something new was added.
@@ -789,129 +869,11 @@ impl Data {
 
     profile! { self tick "add cstr", "pre-checks" }
 
-    let mut nu_lhs = PrdHMap::with_capacity( lhs.len() ) ;
-    // This stores the information for the unsat core, if needed. That is, if
-    // `self.graph` is some.
-    // let mut final_lhs = self.graph.as_ref().map(
-    //   |_| PrdHMap::with_capacity( lhs.len() )
-    // ) ;
-    // let mut final_rhs = self.graph.as_ref().map(
-    //   |_| None
-    // ) ;
-
-    // Look at the lhs and remove stuff we know is true.
-    'lhs_iter: for & (pred, ref args) in & lhs {
-      let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
-      // Remember stuff for the unsat core.
-      // final_lhs.as_mut().map(
-      //   |lhs| lhs.entry(pred).or_insert_with(
-      //     || vec![]
-      //   ).push( args.clone() )
-      // ) ;
-
-      // If no partial examples and sample is new, no need to check anything.
-      if conf.teacher.partial || ! is_new {
-        if args.set_subsumed(& self.pos[pred]) {
-          // Positive, skip.
-          continue 'lhs_iter
-        } else if args.set_subsumed(& self.neg[pred]) {
-          // Negative, constraint is trivial.
-          profile! { self mark "add cstr", "pre-checks" }
-          profile! { self "trivial constraints" => add 1 }
-          return Ok(false)
-        }
-      }
-
-      let set = nu_lhs.entry(pred).or_insert_with(VarValsSet::new) ;
-
-      // Partial samples are not allowed in constraints, no subsumption
-      // check in set.
-      set.insert(args) ;
-      ()
-    }
-
-    let nu_rhs = if let Some(& (pred, ref args)) = rhs.as_ref() {
-      let (args, is_new) = var_to::vals::new_is_new( args.clone() ) ;
-
-      let args = if conf.teacher.partial || ! is_new {
-        if args.set_subsumed(& self.pos[pred]) {
-          profile! { self mark "add cstr", "pre-checks" }
-          profile! { self "trivial constraints" => add 1 }
-          // Positive, constraint is trivial.
-          return Ok(false)
-        } else if args.set_subsumed(& self.neg[pred]) {
-          // Negative, ignore.
-          None
-        } else {
-          Some(args)
-        }
-      } else {
-        Some(args)
-      } ;
-
-      if let Some(args) = args.as_ref() {
-        // Subsumed by lhs?
-        if let Some(argss) = nu_lhs.get(& pred) {
-          // Partial samples are not allowed in constraints, no subsumption
-          // check.
-          if argss.contains(& args) {
-            profile! { self mark "add cstr", "pre-checks" }
-            profile! { self "trivial constraints" => add 1 }
-            // Trivially implied by lhs.
-            return Ok(false)
-          }
-        }
-      }
-
-      args.map(|args| Sample { pred, args })
+    let (nu_lhs, nu_rhs) = if let Some(res) = self.prune_cstr(lhs, rhs) ? {
+      res
     } else {
-      None
+      return Ok(false)
     } ;
-
-    nu_lhs.shrink_to_fit() ;
-
-    // // Do we need to remember stuff for the unsat core?
-    // if let Some(lhs) = final_lhs {
-    //   let rhs = if let Some(rhs) = final_rhs {
-    //     rhs
-    //   } else {
-    //     bail!("constructing unsat core, but rhs is inexistant")
-    //   } ;
-    //   let graph = if let Some(graph) = self.graph.as_mut() {
-    //     graph
-    //   } else {
-    //     bail!("constructing unsat core, but sample dependency graph is `None`")
-    //   } ;
-
-    //   let mut full_lhs = PrdHMap::with_capacity(lhs.len()) ;
-
-    //   let clause_preds = self.instance[clause].lhs_preds() ;
-
-    //   debug_assert_eq! { lhs.len(), clause_preds.len() }
-
-    //   for (
-    //     (c_pred, c_argss), (pred, argss)
-    //   ) in clause_preds.iter().zip( lhs.into_iter() ) {
-    //     let mut this_pred = HConMap::new() ;
-    //     debug_assert_eq! { * c_pred, pred }
-    //     debug_assert_eq! { c_argss.len(), argss.len() }
-    //     for (f_args, c_args) in c_argss.iter().zip( argss.into_iter() ) {
-    //       let prev = this_pred.insert(f_args.clone(), c_args) ;
-    //       debug_assert! { prev.is_none() }
-    //     }
-    //     let prev = full_lhs.insert(pred, this_pred) ;
-    //     debug_assert! { prev.is_none() }
-    //   }
-
-    //   if let Some((pred, args)) = rhs {
-    //     graph.add(
-    //       pred, self.instance[clause].rhs().unwrap().1.clone(),
-    //       args, clause, full_lhs
-    //     )
-    //   } else {
-    //     graph.add_neg(clause, full_lhs)
-    //   }
-    // }
 
     let mut constraint = Constraint::new(nu_lhs, nu_rhs) ;
     constraint.check().chain_err(
@@ -941,30 +903,9 @@ impl Data {
 
         Ok(is_new)
       },
-      Either::Right(true) => {
-        // The data isn't unsat at this point, need to add something so that
-        // it's unsat.
-        if let Some((pred, args)) = rhs {
-          let args = var_to::vals::new(args) ;
-          self.add_pos_untracked(pred, args) ;
-        } else {
-          // The whole lhs is true, and implies false. Let's just add one of
-          // the samples in the lhs.
-          let mut lhs = lhs ;
-          if let Some((pred, args)) = lhs.pop() {
-            let args = var_to::vals::new(args) ;
-            self.add_neg_untracked(pred, args) ;
-          } else {
-            bail!("data was asked to add a `true => false` constraint")
-          }
-        }
-
-        self.propagate() ? ;
-
-        unsat!(
-          "by `true => false` in constraint (data, add_cstr)"
-        )
-      },
+      Either::Right(true) => unsat!(
+        "by `true => false` in constraint (data, add_cstr)"
+      ),
     }
   }
 
@@ -1124,102 +1065,20 @@ impl Data {
       || self.string_do(& (), |s| s.to_string()).unwrap()
     ).chain_err(|| blah)
   }
+
+
+  /// Checks the data is consistent.
   #[cfg(debug_assertions)]
   fn check_internal(& self) -> Res<()> {
     if ! self.staged.is_empty() {
       bail!("there are staged samples...")
     }
 
-    for constraint in self.cstr_info.modded() {
-      if * constraint >= self.constraints.len()
-      || self.constraints[* constraint].is_tautology() {
-        bail!("modded_constraints is out of sync")
-      }
-    }
-
-    for constraint in self.cstr_info.neg() {
-      if * constraint >= self.constraints.len() {
-        bail!("neg_constraints is out of sync")
-      }
-      if self.constraints[* constraint].rhs().is_some() {
-        bail!(
-          "neg_constraints contains non-negative constraint {}",
-          self.constraints[* constraint].to_string_info(
-            self.instance.preds()
-          ).unwrap()
-        )
-      }
-      if self.constraints[* constraint].is_tautology() {
-        bail!(
-          "neg_constraints contains tautology {}",
-          self.constraints[* constraint].to_string_info(
-            self.instance.preds()
-          ).unwrap()
-        )
-      }
-    }
-    for (index, constraint) in self.constraints.index_iter() {
-      if ! constraint.is_tautology()
-      && constraint.rhs().is_none()
-      && ! self.cstr_info.neg().contains(& index) {
-        bail!(
-          "unregistered negative constraint {}",
-          constraint.to_string_info(
-            self.instance.preds()
-          ).unwrap()
-        )
-      }
-    }
-
-    for set in & self.pos {
-      for sample in set {
-        for s in set {
-          if sample.subsumes(s)
-          && sample != s {
-            bail!(
-              "positive samples are redundant: {} => {}", sample, s
-            )
-          }
-        }
-      }
-    }
-    for set in & self.neg {
-      for sample in set {
-        for s in set {
-          if sample.subsumes(s)
-          && sample != s {
-            bail!(
-              "negative samples are redundant: {} => {}", sample, s
-            )
-          }
-        }
-      }
-    }
-
-    // Pos/neg data cannot appear in constraints.
-    for pred in self.instance.pred_indices() {
-      let pos = self.pos[pred].iter().map(
-        |p| (p, "positive")
-      ) ;
-      let neg = self.neg[pred].iter().map(
-        |n| (n, "negative")
-      ) ;
-      for (sample, polarity) in pos.chain(neg) {
-        for (s, set) in & self.map[pred] {
-          if sample.subsumes(s) {
-            let mut s: String = "{".into() ;
-            for idx in set {
-              s.push_str(& format!(" {}", idx))
-            }
-            s.push_str(" }") ;
-            bail!(
-              "({} {}) is {} but appears in constraint(s) {}",
-              self.instance[pred], sample, polarity, s
-            )
-          }
-        }
-      }
-    }
+    self.check_modded() ? ;
+    self.check_neg() ? ;
+    self.check_pos() ? ;
+    self.check_constraint_data() ? ;
+    self.check_redundant() ? ;
 
 
     macro_rules! constraint_map {
@@ -1279,7 +1138,132 @@ impl Data {
       }
     }
 
-    // No redundant constraints.
+    for constraint in & self.constraints {
+      constraint.check().chain_err(
+        || format!(
+          "while checking {}", constraint.to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      ) ?
+    }
+
+    Ok(())
+  }
+
+  /// Checks modded constraints.
+  #[cfg(debug_assertions)]
+  fn check_modded(& self) -> Res<()> {
+    for constraint in self.cstr_info.modded() {
+      if * constraint >= self.constraints.len()
+      || self.constraints[* constraint].is_tautology() {
+        bail!("modded_constraints is out of sync")
+      }
+    }
+    Ok(())
+  }
+
+  /// Checks negative constraints.
+  #[cfg(debug_assertions)]
+  fn check_neg(& self) -> Res<()> {
+    for constraint in self.cstr_info.neg() {
+      if * constraint >= self.constraints.len() {
+        bail!("neg_constraints is out of sync")
+      }
+      if self.constraints[* constraint].rhs().is_some() {
+        bail!(
+          "neg_constraints contains non-negative constraint {}",
+          self.constraints[* constraint].to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      }
+      if self.constraints[* constraint].is_tautology() {
+        bail!(
+          "neg_constraints contains tautology {}",
+          self.constraints[* constraint].to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      }
+    }
+    for (index, constraint) in self.constraints.index_iter() {
+      if ! constraint.is_tautology()
+      && constraint.rhs().is_none()
+      && ! self.cstr_info.neg().contains(& index) {
+        bail!(
+          "unregistered negative constraint {}",
+          constraint.to_string_info(
+            self.instance.preds()
+          ).unwrap()
+        )
+      }
+    }
+    Ok(())
+  }
+
+  /// Checks positive constraints.
+  #[cfg(debug_assertions)]
+  fn check_pos(& self) -> Res<()> {
+    for set in & self.pos {
+      for sample in set {
+        for s in set {
+          if sample.subsumes(s)
+          && sample != s {
+            bail!(
+              "positive samples are redundant: {} => {}", sample, s
+            )
+          }
+        }
+      }
+    }
+    for set in & self.neg {
+      for sample in set {
+        for s in set {
+          if sample.subsumes(s)
+          && sample != s {
+            bail!(
+              "negative samples are redundant: {} => {}", sample, s
+            )
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Checks pos/neg data does not appear in constraints.
+  #[cfg(debug_assertions)]
+  fn check_constraint_data(& self) -> Res<()> {
+    for pred in self.instance.pred_indices() {
+      let pos = self.pos[pred].iter().map(
+        |p| (p, "positive")
+      ) ;
+      let neg = self.neg[pred].iter().map(
+        |n| (n, "negative")
+      ) ;
+      for (sample, polarity) in pos.chain(neg) {
+        for (s, set) in & self.map[pred] {
+          if sample.subsumes(s) {
+            let mut s: String = "{".into() ;
+            for idx in set {
+              s.push_str(& format!(" {}", idx))
+            }
+            s.push_str(" }") ;
+            bail!(
+              "({} {}) is {} but appears in constraint(s) {}",
+              self.instance[pred], sample, polarity, s
+            )
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Checks that there are no redundant constraints.
+  #[cfg(debug_assertions)]
+  fn check_redundant(& self) -> Res<()> {
     let mut constraint_iter = self.constraints.iter() ;
     while let Some(c_1) = constraint_iter.next() {
       c_1.check() ? ;
@@ -1301,19 +1285,10 @@ impl Data {
         }
       }
     }
-
-    for constraint in & self.constraints {
-      constraint.check().chain_err(
-        || format!(
-          "while checking {}", constraint.to_string_info(
-            self.instance.preds()
-          ).unwrap()
-        )
-      ) ?
-    }
-
     Ok(())
   }
+
+
   #[cfg(not(debug_assertions))]
   #[inline]
   pub fn check(& self, _: & 'static str) -> Res<()> { Ok(()) }

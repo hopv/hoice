@@ -1207,7 +1207,7 @@ impl_fmt!{
 ///
 /// Actually contains a set of `Term`s and a map from predicates to their
 /// arguments.
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TTermSet {
   /// Set of terms.
   terms: TermSet,
@@ -1535,7 +1535,7 @@ fn remove_vars_from_pred_apps(
 
 
 /// A formula composed of top terms.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
   True,
@@ -2347,7 +2347,7 @@ impl<'a, 'b> ::rsmt2::print::Expr2Smt<
 /// # Invariant
 ///
 /// The variable partial maps are never empty.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Quant {
   /// Exists.
   Exists( VarHMap<Typ> ),

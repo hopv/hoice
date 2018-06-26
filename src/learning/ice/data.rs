@@ -26,7 +26,7 @@ impl CData {
       pos.len() + neg.len() + unc.len()
     ) as f64 ;
     CData {
-      pos, neg, unc, len
+      pos, neg, unc, len,
     }
   }
 

@@ -795,8 +795,8 @@ impl Clause {
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-
     write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
+
     let mut inactive = 0 ;
     for var in & self.vars {
       if var.active {
@@ -805,6 +805,10 @@ impl Clause {
         inactive += 1 ;
       }
     }
+    if inactive == self.vars.len() {
+      write!(w, " (unused Bool)") ?
+    }
+
     write!(w, " )") ? ;
     writeln!(
       w, "\n  \

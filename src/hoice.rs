@@ -196,7 +196,7 @@ pub fn read_and_work<R: ::std::io::Read>(
         model = if let Some(maybe_model) = instance.is_trivial_conj() ? {
           // Pre-processing already decided satisfiability.
           log! { @info "solved by pre-processing" }
-          if maybe_model.is_some() {
+          if ! maybe_model.is_unsat() {
             println!("sat")
           } else {
             println!("unsat") ;
@@ -208,7 +208,7 @@ pub fn read_and_work<R: ::std::io::Read>(
               bail!("unsat cores/proofs from preprocessing")
             }
           }
-          maybe_model
+          maybe_model.into_option()
         } else {
 
           let arc_instance = Arc::new(instance) ;
@@ -269,25 +269,11 @@ pub fn read_and_work<R: ::std::io::Read>(
 
 
       // Print unsat core if available.
-      Parsed::GetUnsatCore => if let Some(ref mut unsat) = unsat {
-        unsat.write_core(& mut stdout(), & instance) ?
-      } else {
-        bail!(
-          "unsat cores are only available {}",
-          conf.emph("after an unsat result"),
-        )
-      },
+      Parsed::GetUnsatCore => println!("unsupported"),
 
 
       // Print unsat core if available.
-      Parsed::GetProof => if let Some(ref mut unsat) = unsat {
-        unsat.write_proof(& mut stdout(), & instance) ?
-      } else {
-        bail!(
-          "unsat proofs are only available {}",
-          conf.emph("after an unsat result"),
-        )
-      },
+      Parsed::GetProof => println!("unsupported"),
 
 
       // Print model if available.

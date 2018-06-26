@@ -5,7 +5,9 @@ use common::{
   *,
   smt::{ SmtImpl, ClauseTrivialExt },
 } ;
-use instance::Clause ;
+use instance::{
+  Clause, preproc::utils::ExtractionCxt
+} ;
 
 
 /// Wraps an instance for pre-processing.
@@ -22,6 +24,9 @@ pub struct PreInstance<'a> {
 
   /// Set of variables used by some simplification techniques.
   vars: VarSet,
+
+  /// Term extraction context.
+  extraction: ExtractionCxt,
 }
 impl<'a> PreInstance<'a> {
   /// Constructor.
@@ -36,6 +41,7 @@ impl<'a> PreInstance<'a> {
         instance, solver, simplifier,
         clauses_to_simplify,
         vars: VarSet::new(),
+        extraction: ExtractionCxt::new(),
       }
     )
   }
@@ -43,6 +49,11 @@ impl<'a> PreInstance<'a> {
   /// Accessor for the solver.
   pub fn solver(& mut self) -> & mut Solver<()> {
     & mut self.solver
+  }
+
+  /// Accessor for the extraction context and the instance.
+  pub fn extraction(& mut self) -> (& mut ExtractionCxt, & mut Instance) {
+    (& mut self.extraction, self.instance)
   }
 
   /// Destroys the pre instance, kills the internal solver.
@@ -422,6 +433,7 @@ impl<'a> PreInstance<'a> {
     }
 
     if let Some((disj, f_subs, others)) = split {
+
       debug_assert! { ! f_subs.is_empty() }
 
       let was_there = clause!().rm_term(& disj) ;
@@ -448,18 +460,85 @@ impl<'a> PreInstance<'a> {
         }
         ()
       }
+
+    } else {
+
+      let mut split: Option<(VarIdx, _, _)> = None ;
+
+      // We haven't split. Maybe we can split on the arguments of the rhs.
+      if let Some((_, args)) = clause!().rhs() {
+
+        'args: for (index, arg) in args.index_iter() {
+
+          if let Some((c, t, e)) = arg.ite_inspect() {
+            debug_assert! { split.is_none() }
+            if f(c)
+            || { c.rm_neg().as_ref().map(|c| f(c)).unwrap_or(false) } {
+              split = Some(
+                (
+                  index,
+                  ( c.clone(), t.clone() ),
+                  ( term::not( c.clone() ), e.clone() ),
+                )
+              )
+            }
+            break 'args
+          }
+        }
+      }
+
+      if let Some( (index, (lhs_1, rhs_1), (lhs_2, rhs_2)) ) = split {
+
+        let (pred, args) = clause!().unset_rhs().unwrap() ;
+
+        // let (mut args_1, mut args_2) = (args.clone(), args) ;
+        let mut args_1 = args.get().clone() ;
+        let mut args_2 = args.get().clone() ;
+
+        args_1[index] = rhs_1 ;
+        args_2[index] = rhs_2 ;
+
+        let mut other_clause = clause!().clone_with_rhs(
+          Some( TTerm::P { pred, args: var_to::terms::new(args_2) } ),
+          "split"
+        ) ;
+
+        clause!().set_rhs( pred, var_to::terms::new(args_1) ) ? ;
+        clause!().insert_term(lhs_1) ;
+
+        other_clause.insert_term(lhs_2) ;
+        info += self.simplify_clause(idx) ? ;
+
+        if let Some(idx) = self.instance.push_clause( other_clause ) ? {
+          info += self.simplify_clause(idx) ?
+        }
+      }
+
     }
 
     Ok(info)
   }
 
 
+  /// Checks whether a term is worth splitting on.
+  fn should_split(term: & Term) -> bool {
+    term.var_idx().is_some() || term.neg_inspect().map(
+      |sub| sub.var_idx().is_some()
+    ).unwrap_or(false) || term.eq_inspect().is_some()
+  }
+
+
   /// Clever disjunction splitting.
   fn split(& mut self, idx: ClsIdx) -> Res<RedInfo> {
     self.split_on(
-      idx, |sub| sub.var_idx().is_some() || sub.neg_inspect().map(
-        |sub| sub.var_idx().is_some()
-      ).unwrap_or(false) || sub.eq_inspect().is_some()
+      idx, |sub| if let Some(subs) = sub.conj_inspect() {
+        for sub in subs {
+          if Self::should_split(sub) { return true }
+        }
+        false
+      } else {
+        Self::should_split(sub)
+      }
     )
   }
 
@@ -1203,6 +1282,40 @@ impl<'a> PreInstance<'a> {
 
 
 
+  /// Retrieves the only clause a predicate appears in.
+  ///
+  /// Only legal if
+  ///
+  /// - `self.clauses_to_simplify.is_empty()`
+  /// - `pred` appears as a rhs in a single clause, and does not appear as a
+  ///   lhs in said clause.
+  fn rm_only_lhs_clause_of(& mut self, pred: PrdIdx) -> Res<ClsIdx> {debug_assert! { self.clauses_to_simplify.is_empty() }
+    self.instance.unlink_pred_lhs(
+      pred, & mut self.clauses_to_simplify
+    ) ;
+    if let Some(clause) = self.clauses_to_simplify.pop() {
+      if self.clauses_to_simplify.pop().is_some() {
+        bail!(
+          "{} appears in more than one lhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      if self.instance.preds_of_clause(clause).1 == Some(pred) {
+        bail!(
+          "{} appears as both lhs and rhs",
+          conf.emph(& self.instance[pred].name)
+        )
+      }
+      Ok(clause)
+    } else {
+      bail!(
+        "{} appears in no lhs",
+        conf.emph(& self.instance[pred].name)
+      )
+    }
+  }
+
+
 
 
   /// Forces the rhs occurrences of a predicate to be equal to something.
@@ -1336,34 +1449,9 @@ impl<'a> PreInstance<'a> {
 
     info += self.simplify_clauses() ? ;
 
-    // Make sure there's exactly one lhs clause for `pred`.
-    debug_assert! { self.clauses_to_simplify.is_empty() }
-    self.instance.unlink_pred_lhs(
-      pred, & mut self.clauses_to_simplify
-    ) ;
-    let clause_to_rm = if let Some(clause) = self.clauses_to_simplify.pop() {
-      if self.clauses_to_simplify.pop().is_some() {
-        bail!(
-          "illegal context for `force_pred_right`, \
-          {} appears in more than one lhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      if self.instance.preds_of_clause(clause).1 == Some(pred) {
-        bail!(
-          "illegal context for `force_pred_right`, \
-          {} appears as both lhs and rhs",
-          conf.emph(& self.instance[pred].name)
-        )
-      }
-      clause
-    } else {
-      bail!(
-        "illegal context for `force_pred_right`, \
-        {} appears in no lhs",
-        conf.emph(& self.instance[pred].name)
-      )
-    } ;
+    let clause_to_rm = self.rm_only_lhs_clause_of(pred).chain_err(
+      || "illegal context for `force_pred_right`"
+    ) ? ;
 
     // Actually force the predicate.
     self.force_pred(
@@ -1557,6 +1645,92 @@ impl<'a> PreInstance<'a> {
   }
 
 
+  /// Removes some arguments for a predicate.
+  ///
+  /// Returns `true` if something happened.
+  pub fn rm_args_of(
+    & mut self, pred: PrdIdx, to_keep: & VarSet
+  ) -> Res<usize> {
+    macro_rules! rm_args {
+      (from $args:expr, keep nothing, swap $nu_args:expr) => ({
+        debug_assert!( $nu_args.is_empty() ) ;
+        ::std::mem::swap($nu_args, $args) ;
+        $nu_args.clear() ;
+      }) ;
+      (from $args:expr, keep $to_keep:expr, to $nu_args:expr) => ({
+        debug_assert!( $nu_args.is_empty() ) ;
+        for (var, arg) in $args.index_iter() {
+          if $to_keep.contains(& var) {
+            $nu_args.push( arg.clone() )
+          }
+        }
+      }) ;
+    }
+
+    log! { @4
+      "working on {} ({}/{})",
+      self[pred], to_keep.len(), self[pred].sig.len()
+    }
+
+    let mut rmed = 0 ;
+    let mut var_map = VarMap::with_capacity( to_keep.len() ) ;
+    let mut nu_sig = VarMap::with_capacity( to_keep.len() ) ;
+
+    for (var, typ) in self[pred].sig.index_iter() {
+      if to_keep.contains(& var) {
+        // Re-route current **new** var to the original variable `var` is
+        // pointing to.
+        var_map.push( self.old_preds[pred].1[var] ) ;
+        nu_sig.push(typ.clone())
+      } else {
+        rmed += 1
+      }
+    }
+
+    // Update `preds` with the new signature.
+    self.instance.preds[pred].sig = nu_sig ;
+    // Update `old_preds`'s map.
+    self.instance.old_preds[pred].1 = var_map ;
+
+    // Propagate removal to clauses.
+    let (ref lhs, ref rhs) = self.instance.pred_to_clauses[pred] ;
+
+    for clause in lhs {
+
+      self.instance.clauses[
+        * clause
+      ].lhs_map_args_of(
+        pred, |args| {
+          let mut nu_args = VarMap::with_capacity(
+            args.len() - to_keep.len()
+          ) ;
+          rm_args! { from args, keep to_keep, to nu_args }
+          nu_args.into()
+        }
+      ) ;
+
+      conf.check_timeout() ?
+    }
+
+    for clause in rhs {
+      debug_assert! { self.instance.clauses[* clause].rhs().is_some() }
+      self.instance.clauses[* clause].rhs_map_args(
+        |p, args| {
+          debug_assert_eq!( pred, p ) ;
+          let mut nu_args = VarMap::with_capacity(
+            args.len() - to_keep.len()
+          ) ;
+          rm_args! { from args, keep to_keep, to nu_args }
+          ( p, nu_args.into() )
+        }
+      ) ;
+      conf.check_timeout() ?
+    }
+
+    Ok(rmed)
+  }
+
+
   /// Removes all predicate arguments not in `to_keep`.
   ///
   /// Simplifies before returning.
@@ -1582,22 +1756,6 @@ impl<'a> PreInstance<'a> {
 
     let mut info = RedInfo::new() ;
 
-    macro_rules! rm_args {
-      (from $args:expr, keep nothing, swap $nu_args:expr) => ({
-        debug_assert!( $nu_args.is_empty() ) ;
-        ::std::mem::swap($nu_args, $args) ;
-        $nu_args.clear() ;
-      }) ;
-      (from $args:expr, keep $to_keep:expr, to $nu_args:expr) => ({
-        debug_assert!( $nu_args.is_empty() ) ;
-        for (var, arg) in $args.index_iter() {
-          if $to_keep.contains(& var) {
-            $nu_args.push( arg.clone() )
-          }
-        }
-      }) ;
-    }
-
     // Remove args from forced predicates.
     for tterms_opt in & mut self.instance.pred_terms {
       if let Some(tterms) = tterms_opt.as_mut() {
@@ -1609,74 +1767,17 @@ impl<'a> PreInstance<'a> {
 
     // Remove args from applications in clauses.
     for (pred, to_keep) in to_keep {
-      if to_keep.len() == self[pred].sig.len() { continue }
-      did_something = true ;
-
-      log! { @4 "- {}", self[pred] }
       debug_assert!( to_keep.len() <= self[pred].sig.len() ) ;
+      log! { @4 "- {}", self[pred] }
       if to_keep.len() == self[pred].sig.len() {
         log! { @4 "skipping" }
         continue
       }
-      log! { @4
-        "working on {} ({}/{})",
-        self[pred], to_keep.len(), self[pred].sig.len()
-      }
 
-      let mut var_map = VarMap::with_capacity( to_keep.len() ) ;
-      let mut nu_sig = VarMap::with_capacity( to_keep.len() ) ;
-      for (var, typ) in self[pred].sig.index_iter() {
-        if to_keep.contains(& var) {
-          // Re-route current **new** var to the original variable `var` is
-          // pointing to.
-          var_map.push( self.old_preds[pred].1[var] ) ;
-          nu_sig.push(typ.clone())
-        } else {
-          info.args_rmed += 1
-        }
-      }
+      did_something = true ;
 
-      // Update `preds` with the new signature.
-      self.instance.preds[pred].sig = nu_sig ;
-      // Update `old_preds`'s map.
-      self.instance.old_preds[pred].1 = var_map ;
-
-      // Propagate removal to clauses.
-      let (ref lhs, ref rhs) = self.instance.pred_to_clauses[pred] ;
-
-      for clause in lhs {
-
-        self.instance.clauses[
-          * clause
-        ].lhs_map_args_of(
-          pred, |args| {
-            let mut nu_args = VarMap::with_capacity(
-              args.len() - to_keep.len()
-            ) ;
-            rm_args! { from args, keep to_keep, to nu_args }
-            nu_args.into()
-          }
-        ) ;
-
-        conf.check_timeout() ?
-      }
-
-      for clause in rhs {
-        debug_assert! { self.instance.clauses[* clause].rhs().is_some() }
-        self.instance.clauses[* clause].rhs_map_args(
-          |p, args| {
-            debug_assert_eq!( pred, p ) ;
-            let mut nu_args = VarMap::with_capacity(
-              args.len() - to_keep.len()
-            ) ;
-            rm_args! { from args, keep to_keep, to nu_args }
-            ( p, nu_args.into() )
-          }
-        ) ;
-        conf.check_timeout() ?
-      }
-
-      ()
+      let rmed = self.rm_args_of(pred, & to_keep) ? ;
+      info.args_rmed += rmed
     }
 
     if ! did_something { return Ok(info) }
@@ -1883,6 +1984,98 @@ impl ClauseSimplifier {
   }
 
 
+  /// Works on an equality.
+  ///
+  /// Returns `true` if the equality was not registered as a substitution
+  /// (`skip`).
+  fn work_on_eq(
+    & mut self, clause: & mut Clause, eq: & Term
+  ) -> Res<bool> {
+    macro_rules! skip {
+      () => ({
+        log! { @5 "skipping" }
+        return Ok(true)
+      }) ;
+    }
+
+    let args = if let Some(args) = eq.eq_inspect() {
+      args
+    } else {
+      bail!("illegal call to `work_on_eq` on {}", eq)
+    } ;
+
+    if args.len() != 2 {
+      skip!()
+    }
+
+    match eq.as_subst() {
+
+      Some((var, term)) => {
+        if self.subst.get(& var).is_some() {
+          skip!()
+        }
+
+        let vars = term::vars(& term) ;
+        if vars.contains(& var)
+        || self.var_set.contains(& var)
+        || term::vars(& term).into_iter().any(
+          |v| v == var || self.subst.get(& v).is_some()
+        ) {
+          skip!()
+        }
+
+        log! { @4 "{} -> {}", var.default_str(), term }
+
+        let prev = self.subst.insert(var, term) ;
+        debug_assert_eq! { prev, None }
+
+        self.var_set.extend( vars )
+      },
+
+      // Two terms.
+      None => {
+        debug_assert_eq! { args[1].typ(), args[0].typ() }
+        let nu_term = if args[0].typ().is_bool() {
+          let not_lhs = term::not( args[0].clone() ) ;
+          let not_rhs = term::not( args[1].clone() ) ;
+          if clause.lhs_terms().contains(& args[0])
+          || self.terms_to_add.iter().any(
+            |t| t == & args[0]
+          ) {
+            args[1].clone()
+          } else if clause.lhs_terms().contains(& args[1])
+          || self.terms_to_add.iter().any(
+            |t| t == & args[1]
+          ) {
+            args[0].clone()
+          } else if clause.lhs_terms().contains(& not_lhs)
+          || self.terms_to_add.iter().any(
+            |t| t == & not_lhs
+          ) {
+            not_rhs
+          } else if clause.lhs_terms().contains(& not_rhs)
+          || self.terms_to_add.iter().any(
+            |t| t == & not_rhs
+          ) {
+            not_lhs
+          } else {
+            skip!()
+          }
+        } else {
+          skip!()
+        } ;
+
+        log! { @5 "{} -> {}", eq, nu_term }
+
+        clause.insert_term( nu_term ) ;
+      },
+
+    }
+
+    Ok(false)
+  }
+
+
   /// Propagates equalities in a clause.
   pub fn clause_propagate(
     & mut self, clause: & mut Clause, _preds: & PrdInfos
@@ -1927,84 +2120,10 @@ impl ClauseSimplifier {
         let was_there = clause.rm_term(& eq) ;
         debug_assert! { was_there }
 
-        macro_rules! skip {
-          () => ({
-            log! { @5 "skipping" }
-            self.terms_to_add.push( eq.clone() ) ;
-            continue 'outter
-          }) ;
-        }
+        let skip = self.work_on_eq(clause, & eq) ? ;
 
-        let args = eq.kids().expect(
-          "not an equality after checking that it is one"
-        ) ;
-        if args.len() != 2 {
-          skip!()
-        }
-
-
-        match eq.as_subst() {
-
-          Some((var, term)) => {
-            if self.subst.get(& var).is_some() {
-              skip!()
-            }
-
-            let vars = term::vars(& term) ;
-            if vars.contains(& var)
-            || self.var_set.contains(& var)
-            || term::vars(& term).into_iter().any(
-              |v| v == var || self.subst.get(& v).is_some()
-            ) {
-              skip!()
-            }
-
-            log! { @4 "{} -> {}", var.default_str(), term }
-
-            let prev = self.subst.insert(var, term) ;
-            debug_assert_eq! { prev, None }
-
-            self.var_set.extend( vars )
-          },
-
-          // Two terms.
-          None => {
-            debug_assert_eq! { args[1].typ(), args[0].typ() }
-            let nu_term = if args[0].typ().is_bool() {
-              let not_lhs = term::not( args[0].clone() ) ;
-              let not_rhs = term::not( args[1].clone() ) ;
-              if clause.lhs_terms().contains(& args[0])
-              || self.terms_to_add.iter().any(
-                |t| t == & args[0]
-              ) {
-                args[1].clone()
-              } else if clause.lhs_terms().contains(& args[1])
-              || self.terms_to_add.iter().any(
-                |t| t == & args[1]
-              ) {
-                args[0].clone()
-              } else if clause.lhs_terms().contains(& not_lhs)
-              || self.terms_to_add.iter().any(
-                |t| t == & not_lhs
-              ) {
-                not_rhs
-              } else if clause.lhs_terms().contains(& not_rhs)
-              || self.terms_to_add.iter().any(
-                |t| t == & not_rhs
-              ) {
-                not_lhs
-              } else {
-                skip!()
-              }
-            } else {
-              skip!()
-            } ;
-
-            log! { @5 "{} -> {}", eq, nu_term }
-
-            clause.insert_term( nu_term ) ;
-          },
-
+        if skip {
+          self.terms_to_add.push(eq)
         }
 
       } else {

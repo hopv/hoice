@@ -4,7 +4,9 @@
 //! using single dispatch. That way, they can be combined however we want.
 
 use common::* ;
-use instance::* ;
+use instance::{
+  *, preproc::utils::ExtractionCxt,
+} ;
 
 pub mod utils ;
 use self::utils::{ ExtractRes } ;
@@ -199,11 +201,11 @@ pub fn work_on_split(
           clause.to_string_info( instance.preds() ) ?
         }
 
-        use instance::preproc::utils::{ ExtractRes, terms_of_lhs_app } ;
+        use instance::preproc::utils::ExtractRes ;
 
         match profile!(
           |profiler| wrap {
-            terms_of_lhs_app(
+            pre_instance.extraction().0.terms_of_lhs_app(
               true, & instance, & clause.vars,
               clause.lhs_terms(), clause.lhs_preds(), None,
               pred, args
@@ -350,8 +352,7 @@ impl<'a> Reductor<'a> {
       Reductor {
         instance, simplify, arg_red,
         s_one_rhs, s_one_lhs, one_rhs, one_lhs,
-        cfg_red,
-        biased_unroll, runroll,
+        cfg_red, biased_unroll, runroll,
       }
     )
   }
@@ -873,22 +874,26 @@ impl RedStrat for SimpleOneRhs {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
-          debug_assert_eq!( pred, _this_pred ) ;
+        let res = {
+          let (extraction, instance) = instance.extraction() ;
 
-          // Does `pred` appear in the lhs?
-          match instance[clause].lhs_preds().get(& pred) {
-            Some(apps) if ! apps.is_empty() => {
-              ExtractRes::SuccessFalse
-            },
-            _ => utils::terms_of_rhs_app(
-              false, instance, instance[clause].vars(),
-              instance[clause].lhs_terms(), instance[clause].lhs_preds(),
-              pred, args
-            ) ?,
+          if let Some((_this_pred, args)) = instance[clause].rhs() {
+            debug_assert_eq!( pred, _this_pred ) ;
+
+            // Does `pred` appear in the lhs?
+            match instance[clause].lhs_preds().get(& pred) {
+              Some(apps) if ! apps.is_empty() => {
+                ExtractRes::SuccessFalse
+              },
+              _ => extraction.terms_of_rhs_app(
+                false, instance, instance[clause].vars(),
+                instance[clause].lhs_terms(), instance[clause].lhs_preds(),
+                pred, args
+              ) ?,
+            }
+          } else {
+            bail!("inconsistent instance state")
           }
-        } else {
-          bail!("inconsistent instance state")
         } ;
 
         if res.is_failed() { continue }
@@ -1036,6 +1041,8 @@ impl RedStrat for SimpleOneLhs {
       }
 
       let res = {
+        let (extraction, instance) = instance.extraction() ;
+
         let clause = & instance[clause_idx] ;
         // log_debug!{
         //   "from {}", clause.to_string_info( instance.preds() ) ?
@@ -1055,7 +1062,7 @@ impl RedStrat for SimpleOneLhs {
           Some((p, _)) if p == pred => {
             ExtractRes::SuccessTrue
           },
-          _ => utils::terms_of_lhs_app(
+          _ => extraction.terms_of_lhs_app(
             false, instance, clause.vars(),
             clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
             pred, args
@@ -1207,22 +1214,26 @@ impl RedStrat for OneRhs {
           "trying to unfold {}", instance[pred]
         }
 
-        let res = if let Some((_this_pred, args)) = instance[clause].rhs() {
-          debug_assert_eq!( pred, _this_pred ) ;
+        let res = {
+          let (extraction, instance) = instance.extraction() ;
 
-          // Does `pred` appear in the lhs?
-          match instance[clause].lhs_preds().get(& pred) {
-            Some(apps) if ! apps.is_empty() => {
-              ExtractRes::SuccessFalse
-            },
-            _ => utils::terms_of_rhs_app(
-              true, instance, instance[clause].vars(),
-              instance[clause].lhs_terms(), instance[clause].lhs_preds(),
-              pred, args
-            ) ?,
+          if let Some((_this_pred, args)) = instance[clause].rhs() {
+            debug_assert_eq!( pred, _this_pred ) ;
+
+            // Does `pred` appear in the lhs?
+            match instance[clause].lhs_preds().get(& pred) {
+              Some(apps) if ! apps.is_empty() => {
+                ExtractRes::SuccessFalse
+              },
+              _ => extraction.terms_of_rhs_app(
+                true, instance, instance[clause].vars(),
+                instance[clause].lhs_terms(), instance[clause].lhs_preds(),
+                pred, args
+              ) ?,
+            }
+          } else {
+            bail!("inconsistent instance state")
           }
-        } else {
-          bail!("inconsistent instance state")
         } ;
 
         if res.is_failed() {
@@ -1376,6 +1387,8 @@ impl RedStrat for OneLhs {
       }
 
       let res = {
+        let (extraction, instance) = instance.extraction() ;
+
         let clause = & instance[clause_idx] ;
         // log_debug!{
         //   "from {}", clause.to_string_info( instance.preds() ) ?
@@ -1395,7 +1408,7 @@ impl RedStrat for OneLhs {
           Some((p, _)) if p == pred => {
             ExtractRes::SuccessTrue
           },
-          _ => utils::terms_of_lhs_app(
+          _ => extraction.terms_of_lhs_app(
             true, instance, clause.vars(),
             clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
             pred, args
@@ -1807,7 +1820,7 @@ impl BiasedUnroll {
   ///
   /// Returns `true` if there's nothing to do.
   fn setup<'a>(
-    & mut self, instance: & PreInstance<'a>
+    & mut self, instance: & mut PreInstance<'a>
   ) -> Res<bool> {
     self.max_new_clauses = ::std::cmp::min(
       10, instance.clauses().len() / 20
@@ -1853,8 +1866,9 @@ impl BiasedUnroll {
     ) && self.not_in_neg_clauses.is_empty() ;
 
     if ! do_nothing {
-      self.retrieve_all_pos_defs(instance) ? ;
-      self.retrieve_all_neg_defs(instance) ? ;
+      let (extractor, instance) = instance.extraction() ;
+      self.retrieve_all_pos_defs(instance, extractor) ? ;
+      self.retrieve_all_neg_defs(instance, extractor) ? ;
 
       let pos_neg = (
         self.in_pos_clauses.clone(), self.in_neg_clauses.clone()
@@ -1881,7 +1895,8 @@ impl BiasedUnroll {
   ///
   /// The clause has to be positive.
   pub fn retrieve_pos_def(
-    & mut self, instance: & Instance, pred: PrdIdx, clause: & Clause
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx, clause: & Clause,
   ) -> Res<()> {
     // Check what we're asked to do makes sense.
     let args = if let Some((p, args)) = clause.rhs() {
@@ -1909,7 +1924,7 @@ impl BiasedUnroll {
     //   "from clause {}", clause.to_string_info(instance.preds()).unwrap()
     // ) ;
 
-    match utils::terms_of_rhs_app(
+    match extractor.terms_of_rhs_app(
       true, instance, clause.vars(),
       clause.lhs_terms(), clause.lhs_preds(),
       pred, args
@@ -1935,7 +1950,8 @@ impl BiasedUnroll {
 
   /// Retrieves all the partial positive definitions for some predicate.
   fn retrieve_pos_defs(
-    & mut self, instance: & Instance, pred: PrdIdx,
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx,
   ) -> Res<usize> {
     log! {
       @verb "retrieving positive partial definitions for {}",
@@ -1945,7 +1961,7 @@ impl BiasedUnroll {
     for clause in instance.clauses_of(pred).1 {
       let clause = & instance[* clause] ;
       if clause.lhs_preds().is_empty() {
-        self.retrieve_pos_def(instance, pred, clause) ? ;
+        self.retrieve_pos_def(instance, extractor, pred, clause) ? ;
         count += 1
       }
     }
@@ -1954,12 +1970,12 @@ impl BiasedUnroll {
 
   /// Retrieves all partial positive definitions.
   fn retrieve_all_pos_defs(
-    & mut self, instance: & Instance
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt
   ) -> Res<()> {
     log! { @4 "retrieve all positive definitions" }
     for pred in self.in_pos_clauses.clone() {
       log! { @4 "-> {}", instance[pred] }
-      let count = self.retrieve_pos_defs(instance, pred) ? ;
+      let count = self.retrieve_pos_defs(instance, extractor, pred) ? ;
       if count == 0 {
         bail!("failed to retrieve positive definition for {}", instance[pred])
       }
@@ -1972,7 +1988,8 @@ impl BiasedUnroll {
   ///
   /// The clause has to be strictly negative.
   pub fn retrieve_neg_def(
-    & mut self, instance: & Instance, pred: PrdIdx, clause: & Clause
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx, clause: & Clause
   ) -> Res<()> {
     // Check what we're asked to do makes sense.
     if clause.rhs().is_some() {
@@ -2013,7 +2030,7 @@ impl BiasedUnroll {
     //   "from clause {}", clause.to_string_info(instance.preds()).unwrap()
     // ) ;
 
-    match utils::terms_of_lhs_app(
+    match extractor.terms_of_lhs_app(
       true, instance, clause.vars(),
       clause.lhs_terms(), clause.lhs_preds(),
       None,
@@ -2045,7 +2062,8 @@ impl BiasedUnroll {
 
   /// Retrieves all the partial negative definitions for some predicate.
   fn retrieve_neg_defs(
-    & mut self, instance: & Instance, pred: PrdIdx,
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx,
   ) -> Res<usize> {
     log! {
       @verb "retrieving negative partial definitions for {}",
@@ -2059,7 +2077,7 @@ impl BiasedUnroll {
       && clause.lhs_preds().iter().next().map(
         |(_, argss)| argss.len() == 1
       ).unwrap_or( false ) {
-        self.retrieve_neg_def(instance, pred, clause) ? ;
+        self.retrieve_neg_def(instance, extractor, pred, clause) ? ;
         count += 1
       }
     }
@@ -2068,10 +2086,10 @@ impl BiasedUnroll {
 
   /// Retrieves all partial negative definitions.
   fn retrieve_all_neg_defs(
-    & mut self, instance: & Instance
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
   ) -> Res<()> {
     for pred in self.in_neg_clauses.clone() {
-      let count = self.retrieve_neg_defs(instance, pred) ? ;
+      let count = self.retrieve_neg_defs(instance, extractor, pred) ? ;
       if count == 0 {
         bail!("failed to retrieve negative definition for {}", instance[pred])
       }
@@ -2218,8 +2236,9 @@ impl BiasedUnroll {
       for mut clause in nu_clauses {
         clause.from_unrolling = true ;
         if let Some(index) = instance.push_clause(clause) ? {
+          let (extractor, instance) = instance.extraction() ;
           self.retrieve_pos_def(
-            instance, pred, & instance[index]
+            instance, extractor, pred, & instance[index]
           ) ? ;
           info.clauses_added += 1
         }
@@ -2467,8 +2486,9 @@ impl BiasedUnroll {
 
         clause.from_unrolling = true ;
         if let Some(index) = instance.push_clause(clause) ? {
+          let (extractor, instance) = instance.extraction() ;
           self.retrieve_neg_def(
-            instance, pred, & instance[index]
+            instance, extractor, pred, & instance[index]
           ) ? ;
           info.clauses_added += 1
         }
@@ -2676,6 +2696,8 @@ impl RedStrat for Unroll {
         pred: PrdIdx, q: Option<Quant>, ts: TTermSet
       | prd_map.entry(pred).or_insert_with(Vec::new).push((q, ts)) ;
 
+      let (extractor, instance) = instance.extraction() ;
+
       'pos_clauses: for clause in instance.clauses() {
 
         if ! clause.lhs_preds().is_empty() {
@@ -2688,7 +2710,7 @@ impl RedStrat for Unroll {
           if self.ignore.contains(& pred) {
             continue 'pos_clauses
           }
-          match utils::terms_of_rhs_app(
+          match extractor.terms_of_rhs_app(
             true, instance, & clause.vars,
             clause.lhs_terms(), clause.lhs_preds(),
             pred, args
@@ -2775,6 +2797,8 @@ impl RedStrat for RUnroll {
         pred: PrdIdx, q: Option<Quant>, ts: TermSet
       | prd_map.entry(pred).or_insert_with(Vec::new).push((q, ts)) ;
 
+      let (extractor, instance) = instance.extraction() ;
+
       'neg_clauses: for clause in instance.clauses() {
 
         if clause.rhs().is_some() { continue 'neg_clauses }
@@ -2802,7 +2826,7 @@ impl RedStrat for RUnroll {
           }
 
           // Negative constraint with only one pred app, reverse-unrolling.
-          match utils::terms_of_lhs_app(
+          match extractor.terms_of_lhs_app(
             true, instance, & clause.vars,
             clause.lhs_terms(), & PredApps::with_capacity(0),
             None, pred, args

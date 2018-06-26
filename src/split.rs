@@ -75,10 +75,14 @@ pub fn work(
 
     let mut instance = match preproc_res {
       Either::Left(instance) => instance,
-      Either::Right(None) => unsat!{
+      Either::Right(
+        MaybeModel::Unsat
+      ) => unsat!{
         "by preprocessing"
       },
-      Either::Right(Some(this_model)) => {
+      Either::Right(
+        MaybeModel::Model(this_model)
+      ) => {
         log_info! { "sat by preproc\n\n" }
         model! { add this_model }
 
@@ -297,7 +301,7 @@ impl Splitter {
 
   /// Returns the next instance to work on.
   pub fn next_instance(& mut self, _prof: & Profiler) -> Res<
-    Option< Either<Arc<Instance>, Option<Model>> >
+    Option< Either<Arc<Instance>, MaybeModel<Model>> >
   > {
     match self.clauses {
       Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
@@ -340,7 +344,7 @@ impl Splitter {
 fn preproc(
   instance: & Instance, clause: ClsIdx,
   prev_clauses: & ClsSet, profiler: & Profiler
-) -> Res< Either<Instance, Option<Model>>> {
+) -> Res< Either<Instance, MaybeModel<Model>>> {
 
   debug_assert! {
     instance[clause].rhs().is_none()
