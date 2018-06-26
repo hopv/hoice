@@ -135,6 +135,11 @@ pub fn real<R: Into<Rat>>(r: R) -> Term {
   } ;
   factory.mk( RTerm::Real(r) )
 }
+/// Creates a real constant from a float.
+#[inline]
+pub fn real_of_float(f: f64) -> Term {
+  real( rat_of_float(f) )
+}
 /// Creates the constant `0`.
 #[inline(always)]
 pub fn int_zero() -> Term {

@@ -382,6 +382,31 @@ fn cst_or_5() {
   )
 }
 
+#[test]
+fn add_real_1() {
+  let v_1 = term::var( 0, typ::real() ) ;
+  let add = term::add( vec![ term::real_of_float(-2.0), v_1.clone() ] ) ;
+  let model = model!( val::real( rat_of_float(1.0) ) ) ;
+  assert_eval!( real model => add, - 1.0 ) ;
+}
+
+#[test]
+fn ite_1() {
+  let v_1 = term::var( 0, typ::real() ) ;
+  let ite = term::ite(
+    term::eq(
+      term::add( vec![ term::real_of_float(-2.0), v_1.clone() ] ),
+      term::real_of_float(0.0)
+    ),
+    term::real_of_float(1.0),
+    term::add(
+      vec![ term::real_of_float(1.0), v_1.clone() ]
+    )
+  ) ;
+  let model = model!( val::real( rat_of_float(1.0) ) ) ;
+  assert_eval!( real model => ite, 2.0 ) ;
+}
+
 // #[test]
 // fn models() {
 //   let v_1 = term::bool_var(0) ;

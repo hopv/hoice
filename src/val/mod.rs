@@ -1430,6 +1430,12 @@ impl From<i64> for RVal {
     RVal::I( i.into() )
   }
 }
+impl From<f64> for RVal {
+  fn from(f: f64) -> RVal {
+    rat_of_float(f).into()
+  }
+}
+
 impl<Num, Den> From<(Num, Den)> for RVal
 where Num: Into<Int>, Den: Into<Int> {
   fn from(rat: (Num, Den)) -> RVal {

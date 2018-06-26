@@ -42,6 +42,8 @@ pub struct ExtractionCxt {
   qvars: VarHMap<Typ>,
   /// Index of the next fresh variable.
   fresh: VarIdx,
+  /// True if quantifier generation is active.
+  quantifiers: bool,
 }
 impl Default for ExtractionCxt {
   fn default() -> Self { Self::new() }
@@ -60,6 +62,7 @@ impl ExtractionCxt {
       map: VarHMap::with_capacity(11),
       qvars: VarHMap::with_capacity(11),
       fresh: 0.into(),
+      quantifiers: true,
     }
   }
 
@@ -67,14 +70,13 @@ impl ExtractionCxt {
   ///
   /// Returns `true` if the process failed.
   pub fn add_qvars(
-    & mut self, quantifiers: bool, var_info: & VarInfos,
-    app_vars: & mut VarSet, vars: VarSet,
+    & mut self, var_info: & VarInfos, app_vars: & mut VarSet, vars: VarSet,
   ) -> bool {
     for var in vars {
       let is_new = app_vars.insert(var) ;
 
       if is_new {
-        if ! quantifiers {
+        if ! self.quantifiers {
           return true
         }
         let fresh = self.next_fresh() ;
@@ -101,16 +103,12 @@ impl ExtractionCxt {
   /// Returns `None` on failure. Failure happens when some quantifiers are
   /// needed but `quantifiers` is false.
   fn args_of_pred_app(
-    & mut self,
-    quantifiers: bool, var_info: & VarInfos,
-    args: & VarTerms, app_vars: & mut VarSet,
+    & mut self, var_info: & VarInfos, args: & VarTerms, app_vars: & mut VarSet,
   ) -> Res< TExtractRes<VarTerms> > {
-    log! { @6 "args_of_pred_app ({})", quantifiers }
+    log! { @6 "args_of_pred_app ({})", self.quantifiers }
     let mut nu_args = VarMap::with_capacity( args.len() ) ;
     for arg in args.iter() {
-      let abort = self.add_qvars(
-        quantifiers, var_info, app_vars, term::vars(arg)
-      ) ;
+      let abort = self.add_qvars( var_info, app_vars, term::vars(arg) ) ;
       if abort {
         return Ok( TExtractRes::Failed )
       }
@@ -132,8 +130,7 @@ impl ExtractionCxt {
   /// The `pred` argument is a special predicate that will be skipped when
   /// handling `src`, but it's arguments will be returned.
   fn terms_of_pred_apps<'a>(
-    & mut self,
-    quantifiers: bool, var_info: & VarInfos,
+    & mut self, var_info: & VarInfos,
     src: & 'a PredApps, tgt: & mut TTermSet,
     pred: PrdIdx, app_vars: & mut VarSet,
   ) -> Res< TExtractRes< Option<& 'a VarTermsSet > > > {
@@ -148,9 +145,7 @@ impl ExtractionCxt {
       }
 
       for args in argss {
-        match self.args_of_pred_app(
-          quantifiers, var_info, args, app_vars
-        ) ? {
+        match self.args_of_pred_app(var_info, args, app_vars) ? {
           TExtractRes::Success(nu_args) => {
             tgt.insert_pred_app(prd, nu_args) ;
             ()
@@ -174,8 +169,7 @@ impl ExtractionCxt {
   ///
   /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
   fn terms_of_terms<'a, TermIter, Terms, F>(
-    & mut self,
-    quantifiers: bool, var_info: & VarInfos,
+    & mut self, var_info: & VarInfos,
     src: Terms, tgt: & mut TermSet,
     app_vars: & mut VarSet, even_if_disjoint: bool, f: F
   ) -> Res< TExtractRes<bool> >
@@ -232,9 +226,7 @@ impl ExtractionCxt {
           // invalidate `fixed_point` since terms that were previously disjoint
           // might now intersect.
           fixed_point = false ;
-          let abort = self.add_qvars(
-            quantifiers, var_info, app_vars, vars
-          ) ;
+          let abort = self.add_qvars(var_info, app_vars, vars) ;
           if abort {
             return Ok( TExtractRes::Failed )
           }
@@ -278,8 +270,7 @@ impl ExtractionCxt {
   ///
   /// - more doc with examples
   pub fn terms_of_app(
-    & mut self,
-    quantifiers: bool, var_info: & VarInfos,
+    & mut self, var_info: & VarInfos,
     instance: & Instance, pred: PrdIdx, args: & VarTerms,
   ) -> Res<
     Option<(TermSet, VarSet)>
@@ -329,7 +320,7 @@ impl ExtractionCxt {
         let is_new = app_vars.insert(v) ;
         debug_assert!( is_new )
       } else if let TExtractRes::Failed = self.terms_of_terms(
-        quantifiers, var_info, Some(arg), & mut terms,
+        var_info, Some(arg), & mut terms,
         & mut app_vars, true, |term| term::eq(
           term::var(var, term.typ()), term
         )
@@ -352,6 +343,70 @@ impl ExtractionCxt {
 
 
 
+  fn terms_of_lhs_part<'a>(
+    & mut self, instance: & Instance, var_info: & VarInfos,
+    (lhs_terms, lhs_preds): (& TermSet, & 'a PredApps),
+    (pred, args): (PrdIdx, & VarTerms),
+  ) -> Res<
+    ExtractRes<( TTermSet, VarSet, Option<& 'a VarTermsSet> )>
+  > {
+    log!{ @5 "extracting application's terms" }
+
+    let (terms, mut app_vars) = if let Some(res) = self.terms_of_app(
+      var_info, instance, pred, args
+    ) ? {
+      res
+    } else {
+      log! { @5 "failed to extract terms of application" }
+      return Ok(ExtractRes::Failed)
+    } ;
+
+    if_log! { @5
+      log! { @5 => "terms:" }
+      for term in & terms {
+        log!{ @5 => "- {}", term }
+      }
+      log! { @5 => "map:" }
+      for (var, term) in & self.map {
+        log! { @5 => "- v_{} -> {}", var, term }
+      }
+      log! { @5 =>
+        "working on lhs predicate applications ({})", lhs_preds.len()
+      }
+    }
+
+    let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
+
+    // Predicate applications need to be in the resulting term. Depending on
+    // the definition they end up having, the constraint might be trivial.
+    let pred_argss = match self.terms_of_pred_apps(
+      var_info, lhs_preds, & mut tterms, pred, & mut app_vars
+    ) ? {
+      TExtractRes::Success(res) => res,
+      TExtractRes::Failed => {
+        log!{ @5 "qualifiers required for lhs pred apps, failing" }
+        return Ok( ExtractRes::Failed )
+      },
+    } ;
+
+    log! { @5 "working on lhs terms ({})", lhs_terms.len() }
+
+    if let TExtractRes::Success(trivial) = self.terms_of_terms(
+      var_info, lhs_terms, tterms.terms_mut(), & mut app_vars, false, identity
+    ) ? {
+      if trivial { return Ok( ExtractRes::Trivial ) }
+    } else {
+      log_debug! { "  could not extract terms of terms" }
+      return Ok( ExtractRes::Failed )
+    }
+
+    Ok(
+      ExtractRes::Success((tterms, app_vars, pred_argss))
+    )
+  }
+
+
+
   /// Returns the weakest predicate `p` such that `(p args) /\ lhs_terms /\
   /// {lhs_preds \ (p args)} => rhs`.
   ///
@@ -362,9 +417,9 @@ impl ExtractionCxt {
   pub fn terms_of_lhs_app(
     & mut self,
     quantifiers: bool, instance: & Instance, var_info: & VarInfos,
-    lhs_terms: & TermSet, lhs_preds: & PredApps,
+    (lhs_terms, lhs_preds): (& TermSet, & PredApps),
     rhs: Option<(PrdIdx, & VarTerms)>,
-    pred: PrdIdx, args: & VarTerms,
+    (pred, args): (PrdIdx, & VarTerms),
   ) -> Res<
     ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>
   > {
@@ -375,62 +430,48 @@ impl ExtractionCxt {
     // Index of the first quantified variable: fresh for `pred`'s variables.
     self.fresh = instance.original_sig_of(pred).next_index() ;
     self.map.clear() ;
-
-    log!{ @5 "extracting application's terms" }
-
-    let (
-      terms, mut app_vars
-    ) = if let Some(res) = self.terms_of_app(
-      quantifiers, var_info, instance, pred, args
-    ) ? {
-      res
-    } else {
-      log! { @5 "failed to extract terms of application" }
-      return Ok(ExtractRes::Failed)
-    } ;
-
-    if_log! { @5
-      log! { @5 "terms:" }
-      for term in & terms {
-        log!{ @5 "- {}", term }
-      }
-      log! { @5 "map:" }
-      for (var, term) in & self.map {
-        log! { @5 "- v_{} -> {}", var, term }
-      }
-      log! { @5
-        "working on lhs predicate applications ({})", lhs_preds.len()
-      }
-    }
-
-    let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
+    self.quantifiers = quantifiers ;
 
     // Predicate applications need to be in the resulting term. Depending on
     // the definition they end up having, the constraint might be trivial.
-    match self.terms_of_pred_apps(
-      quantifiers, var_info, lhs_preds, & mut tterms, pred, & mut app_vars
+    let (tterms, mut app_vars) = match self.terms_of_lhs_part(
+      instance, var_info, (lhs_terms, lhs_preds), (pred, args)
     ) ? {
-      TExtractRes::Success( Some(pred_argss) ) => match pred_argss.len() {
-        1 => (),
+
+      ExtractRes::Success(
+        (tterms, app_vars, pred_argss)
+      ) => match pred_argss.map( |argss| argss.len() ).unwrap_or(0) {
+        1 => (tterms, app_vars),
         len => bail!(
           "illegal call to `terms_of_lhs_app`, \
-          predicate {} is applied {} time(s), expected 1",
+          predicate {} is applied {} times, expected 1",
           instance[pred], len
-        ),
+        )
       },
-      TExtractRes::Success(None) => (),
-      TExtractRes::Failed => {
-        log!{ @5 "qualifiers required for lhs pred apps, failing" }
+
+      ExtractRes::SuccessTrue => return Ok(
+        ExtractRes::SuccessTrue
+      ),
+      ExtractRes::SuccessFalse => return Ok(
+        ExtractRes::SuccessFalse
+      ),
+
+      ExtractRes::Trivial => return Ok(
+        ExtractRes::Trivial
+      ),
+
+      ExtractRes::Failed => {
+        log! { @5
+          "could not extract terms of predicate app ({})", instance[pred]
+        }
         return Ok( ExtractRes::Failed )
       },
-    }
+    } ;
 
     let pred_app = if let Some((pred, args)) = rhs {
-      log! { @5
-        "working on rhs predicate application"
-      }
+      log! { @5 "working on rhs predicate application" }
       if let TExtractRes::Success(nu_args) = self.args_of_pred_app(
-        quantifiers, var_info, args, & mut app_vars,
+        var_info, args, & mut app_vars,
       ) ? {
         Some((pred, nu_args))
       } else {
@@ -442,21 +483,7 @@ impl ExtractionCxt {
       None
     } ;
 
-    log! { @5
-      "working on lhs terms ({})", lhs_terms.len()
-    }
-
-    if let TExtractRes::Success(trivial) = self.terms_of_terms(
-      quantifiers, var_info, lhs_terms, tterms.terms_mut(),
-      & mut app_vars, false, identity
-    ) ? {
-      if trivial { return Ok( ExtractRes::Trivial ) }
-    } else {
-      log!{ @5 "qualifiers required for lhs terms, failing" }
-      return Ok( ExtractRes::Failed )
-    }
-
-    debug_assert! { quantifiers || self.qvars.is_empty() }
+    debug_assert! { self.quantifiers || self.qvars.is_empty() }
 
     if pred_app.is_none() && tterms.is_empty() {
       Ok( ExtractRes::SuccessFalse )
@@ -480,82 +507,55 @@ impl ExtractionCxt {
     & mut self,
     quantifiers: bool, instance: & Instance, var_info: & VarInfos,
     lhs_terms: & TermSet, lhs_preds: & PredApps,
-    pred: PrdIdx, args: & VarTerms,
+    (pred, args): (PrdIdx, & VarTerms)
   ) -> Res< ExtractRes<(Quantfed, TTermSet)> > {
     log! { @4
-      "terms of rhs app on {} {} ({})", instance[pred], args, quantifiers
+      "terms of rhs app on {} {} ({})", instance[pred], args, self.quantifiers
     }
 
     // Index of the first quantified variable: fresh for `pred`'s variables.
     self.fresh = instance.original_sig_of(pred).next_index() ;
     self.map.clear() ;
-
-    log!{ @5 "extracting application's terms" }
-
-    let (
-      terms, mut app_vars
-    ) = if let Some(res) = self.terms_of_app(
-      quantifiers, var_info, instance, pred, args
-    ) ? {
-      res
-    } else {
-      log! { @5 "could not extract terms of app" }
-      return Ok(ExtractRes::Failed)
-    } ;
-
-    if_log! { @5
-      log! { @5 "terms:" }
-      for term in & terms {
-        log! { @5 "- {}", term }
-      }
-      log! { @5 "map:" }
-      for (var, term) in & self.map {
-        log! { @5 "- v_{} -> {}", var, term }
-      }
-    }
-
-    log! { @5
-      "working on lhs predicate applications ({})", lhs_preds.len()
-    }
-
-    let mut tterms = TTermSet::of_terms(terms, lhs_preds.len()) ;
+    self.quantifiers = quantifiers ;
 
     // Predicate applications need to be in the resulting term. Depending on
     // the definition they end up having, the constraint might be trivial.
-    match self.terms_of_pred_apps(
-      quantifiers, var_info, lhs_preds, & mut tterms, pred, & mut app_vars
+    let tterms = match self.terms_of_lhs_part(
+      instance, var_info, (lhs_terms, lhs_preds), (pred, args)
     ) ? {
-      TExtractRes::Success( Some(pred_argss) ) => if ! pred_argss.is_empty() {
+
+      ExtractRes::Success(
+        (tterms, _, pred_argss)
+      ) => if pred_argss.map( |argss| argss.is_empty() ).unwrap_or(true) {
+        tterms
+      } else {
         bail!(
           "illegal call to `terms_of_rhs_app`, \
           predicate {} appears in the lhs",
           instance[pred]
         )
       },
-      TExtractRes::Success(None) => (),
-      TExtractRes::Failed => {
+
+      ExtractRes::SuccessTrue => return Ok(
+        ExtractRes::SuccessTrue
+      ),
+      ExtractRes::SuccessFalse => return Ok(
+        ExtractRes::SuccessFalse
+      ),
+
+      ExtractRes::Trivial => return Ok(
+        ExtractRes::Trivial
+      ),
+
+      ExtractRes::Failed => {
         log! { @5
           "could not extract terms of predicate app ({})", instance[pred]
         }
         return Ok( ExtractRes::Failed )
       },
-    }
+    } ;
 
-    log! { @5
-      "working on lhs terms ({})", lhs_terms.len()
-    }
-
-    if let TExtractRes::Success(trivial) = self.terms_of_terms(
-      quantifiers, var_info, lhs_terms, tterms.terms_mut(),
-      & mut app_vars, false, identity
-    ) ? {
-      if trivial { return Ok( ExtractRes::Trivial ) }
-    } else {
-      log_debug! { "  could not extract terms of terms" }
-      return Ok( ExtractRes::Failed )
-    }
-
-    debug_assert! { quantifiers || self.qvars.is_empty() }
+    debug_assert! { self.quantifiers || self.qvars.is_empty() }
 
     if tterms.is_empty() {
       Ok(ExtractRes::SuccessTrue)

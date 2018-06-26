@@ -481,7 +481,7 @@ mod eval {
       let (els, thn, cnd) = (
         args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
       ) ;
-      cnd.ite(els, thn)
+      cnd.ite(thn, els)
     }
   }
 

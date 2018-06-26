@@ -142,6 +142,10 @@ macro_rules! log {
       log! { log!(|pref_of| $flag) => $($tail)* }
     }
   ) ;
+
+  ( @$flag:tt => $($tail:tt)* ) => (
+    log! { log!(|pref_of| $flag) => $($tail)* }
+  ) ;
   ( @$flag:tt $($tail:tt)* ) => (
     if log!(|cond_of| $flag) {
       log! { log!(|pref_of| $flag) => $($tail)* }
@@ -457,7 +461,7 @@ mod test {
   macro_rules! model {
     ( $($values:expr),* ) => (
       $crate::common::VarMap::of(
-        vec![ $( $values.into() ),* ]
+        vec![ $( $values ),* ]
       )
     ) ;
   }
@@ -474,6 +478,15 @@ mod test {
       ) ;
       assert_eq!( res, $value.into() )
     }) ;
+
+    ( real $model:expr => $expr:expr, $value:expr ) => ({
+      let res = $expr.eval(& $model).unwrap().to_real().unwrap().unwrap() ;
+      println!(
+        "{} evaluated with {} is {}, expecting {}", $expr, $model, res, $value
+      ) ;
+      assert_eq!( res, rat_of_float($value) )
+    }) ;
+
     ( bool not $model:expr => $expr:expr ) => ({
       let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
       println!(
@@ -481,6 +494,7 @@ mod test {
       ) ;
       assert!( ! res )
     }) ;
+
     ( bool $model:expr => $expr:expr ) => ({
       let res = $expr.eval(& $model).unwrap().to_bool().unwrap().unwrap() ;
       println!(

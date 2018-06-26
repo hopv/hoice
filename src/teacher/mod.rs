@@ -771,7 +771,10 @@ impl<'a> Teacher<'a> {
     }
 
     if map.is_empty() || ! conf.teacher.max_bias {
-      log_verb! { "looking for counterexamples in implication clauses..." }
+      log_verb! {
+        "looking for counterexamples in implication clauses ({})...",
+        instance.imp_clauses().len()
+      }
 
       for clause in instance.imp_clauses() {
         run!(clause, true)

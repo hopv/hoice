@@ -223,6 +223,12 @@ pub fn cmp_data_metrics(
 pub type Int = ::num::BigInt ;
 /// Rationals.
 pub type Rat = ::num::BigRational ;
+/// Converts a float into a rational.
+pub fn rat_of_float(f: f64) -> Rat {
+  Rat::from_float(f).expect(
+    "can't construct a rational from NaN"
+  )
+}
 
 /// A set of terms.
 pub type TermSet = HConSet<Term> ;
@@ -262,13 +268,22 @@ unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Quantified variables for a top term.
 pub type Quantfed = VarHMap<Typ> ;
 
+/// Dnf definition for a predicate.
+pub type Dnf = Vec< (Quantfed, TTermSet) > ;
+/// Dnf definition for a predicate, reference version.
+pub type DnfRef<'a> = & 'a [ (Quantfed, TTermSet) ] ;
+
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
+/// Reference version of a model.
 pub type ModelRef<'a> = & 'a [ (PrdIdx, TTerms) ] ;
-///
+
+/// A conjunction of candidates.
 pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
-///
+
+/// A model where definitions are conjunctions.
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
+/// A model of conjunctions, reference version.
 pub type ConjModelRef<'a> = & 'a [ Vec<(PrdIdx, Vec<TTerms>)> ] ;
 
 /// A model or unsat.

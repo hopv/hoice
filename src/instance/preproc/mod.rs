@@ -207,8 +207,8 @@ pub fn work_on_split(
           |profiler| wrap {
             pre_instance.extraction().0.terms_of_lhs_app(
               true, & instance, & clause.vars,
-              clause.lhs_terms(), clause.lhs_preds(), None,
-              pred, args
+              ( clause.lhs_terms(), clause.lhs_preds() ),
+              None, (pred, args)
             )
           } "strengthening", "extraction"
         ) ? {
@@ -409,27 +409,6 @@ impl<'a> Reductor<'a> {
         $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
       ) ;
 
-      // (
-      //   |simplify| simplify $preproc:expr, $count:ident, $info:expr
-      // ) => (
-      // ) ; 
-      // (
-      //   |$name:ident| simplify $preproc:expr, $count:ident, $info:expr
-      // ) => (
-      //   $info += if let Some(simplify) = self.simplify.as_mut() {
-      //     simplify.apply(& mut self.instance) ?
-      //   } else {
-      //     bail!("simplify should always be active")
-      //   } ;
-      //   preproc_dump!(
-      //     self.instance =>
-      //     format!("preproc_{:0>4}_{}_simplify", $count, $preproc.name()),
-      //     format!(
-      //       "Instance after running `{}` and simplifying.", $preproc.name()
-      //     )
-      //   ) ? ;
-      // ) ;
-
       ($preproc:ident) => ( run!($preproc bool) ) ;
       ($preproc:ident $($tail:tt)*) => (
         if let Some(preproc) = self.$preproc.as_mut() {
@@ -445,15 +424,13 @@ impl<'a> Reductor<'a> {
           }
 
           if red_info.non_zero() {
-            // red_info += self.instance.force_trivial() ? ;
+
             count += 1 ;
             preproc_dump!(
               self.instance =>
               format!("preproc_{:0>4}_{}", count, preproc.name()),
               format!("Instance after running `{}`.", preproc.name())
             ) ? ;
-
-            // run! { |$preproc| simplify preproc, count, red_info }
 
             profile!{
               |_profiler| format!(
@@ -596,18 +573,6 @@ impl<'a> Reductor<'a> {
 
     conf.check_timeout() ? ;
 
-    // let max_clause_add = if conf.preproc.mult_unroll
-    // && ! self.instance.clauses().is_empty() {
-    //   let clause_count = self.instance.clauses().len() ;
-    //   ::std::cmp::min(
-    //     clause_count, (
-    //       50. * ( clause_count as f64 ).log(2.)
-    //     ).round() as usize
-    //   )
-    // } else {
-    //   0
-    // } ;
-
 
     if self.instance.split().is_none() && self.instance.clauses().len() > 20 {
       let biased_info = run!(biased_unroll info) ;
@@ -625,60 +590,6 @@ impl<'a> Reductor<'a> {
         }
       }
     }
-
-
-
-    // let strict_neg_count = self.instance.strict_neg_clauses().fold(
-    //   0, |acc, _| acc + 1
-    // ) ;
-
-    // let (
-    //   mut added, mut r_added,
-    //   mut added_pre, mut r_added_pre,
-    // ) = if conf.preproc.unroll {
-    //   (
-    //     0, 0, run!(runroll info).clause_diff(), run!(unroll info).clause_diff()
-    //   )
-    // } else if strict_neg_count <= 1
-    // && self.instance.split().is_none() {
-    //   // This is a special case, triggered one the first preproc run (split is
-    //   // none) and if there's only one negative clause. In this case, force run
-    //   // reverse unroll so that we can split later.
-    //   (0, 0, run!(runroll info).clause_diff(), 0)
-    // } else {
-    //   (0, 0, 0, 0)
-    // } ;
-
-
-    // loop {
-    //   added += added_pre ;
-    //   r_added += r_added_pre ;
-
-    //   if_verb! { 
-    //     log_verb! {
-    //       "{}: forward {} ({})", conf.emph("unrolling"), added, added_pre
-    //     }
-    //     log_verb! {
-    //       "           bakward {} ({})", r_added, r_added_pre
-    //     }
-    //     log_verb! {
-    //       "             total {} / {}", added + r_added, max_clause_add
-    //     }
-    //   }
-
-    //   if (
-    //     added_pre == 0 && r_added_pre == 0
-    //   ) || added + r_added > max_clause_add {
-    //     // (R)Unrolling is not producing anything anymore or has gone above the
-    //     // threshold.
-    //     break
-    //   } else if added_pre == 0 || added > r_added {
-    //     // Unrolling is stuck or has produced more clauses than runrolling.
-    //     r_added_pre = run!(runroll info).clause_diff()
-    //   } else {
-    //     added_pre = run!(unroll info).clause_diff()
-    //   }
-    // }
 
     preproc_dump!(
       self.instance =>
@@ -888,7 +799,7 @@ impl RedStrat for SimpleOneRhs {
               _ => extraction.terms_of_rhs_app(
                 false, instance, instance[clause].vars(),
                 instance[clause].lhs_terms(), instance[clause].lhs_preds(),
-                pred, args
+                (pred, args)
               ) ?,
             }
           } else {
@@ -1064,8 +975,8 @@ impl RedStrat for SimpleOneLhs {
           },
           _ => extraction.terms_of_lhs_app(
             false, instance, clause.vars(),
-            clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
-            pred, args
+            ( clause.lhs_terms(), clause.lhs_preds() ),
+            clause.rhs(), (pred, args)
           ) ?,
         }
       } ;
@@ -1228,7 +1139,7 @@ impl RedStrat for OneRhs {
               _ => extraction.terms_of_rhs_app(
                 true, instance, instance[clause].vars(),
                 instance[clause].lhs_terms(), instance[clause].lhs_preds(),
-                pred, args
+                (pred, args)
               ) ?,
             }
           } else {
@@ -1410,8 +1321,8 @@ impl RedStrat for OneLhs {
           },
           _ => extraction.terms_of_lhs_app(
             true, instance, clause.vars(),
-            clause.lhs_terms(), clause.lhs_preds(), clause.rhs(),
-            pred, args
+            ( clause.lhs_terms(), clause.lhs_preds() ),
+            clause.rhs(), (pred, args)
           ) ?,
         }
       } ;
@@ -1927,7 +1838,7 @@ impl BiasedUnroll {
     match extractor.terms_of_rhs_app(
       true, instance, clause.vars(),
       clause.lhs_terms(), clause.lhs_preds(),
-      pred, args
+      (pred, args)
     ) ? {
       ExtractRes::Failed => bail!(
         "term extraction failed for {}", instance[pred]
@@ -2032,9 +1943,8 @@ impl BiasedUnroll {
 
     match extractor.terms_of_lhs_app(
       true, instance, clause.vars(),
-      clause.lhs_terms(), clause.lhs_preds(),
-      None,
-      pred, args
+      ( clause.lhs_terms(), clause.lhs_preds() ),
+      None, (pred, args)
     ) ? {
       ExtractRes::Failed => bail!(
         "term extraction failed for {}", instance[pred]
@@ -2713,7 +2623,7 @@ impl RedStrat for Unroll {
           match extractor.terms_of_rhs_app(
             true, instance, & clause.vars,
             clause.lhs_terms(), clause.lhs_preds(),
-            pred, args
+            (pred, args)
           ) ? {
             ExtractRes::Success((q, ts)) => insert(
               pred, Quant::forall(q), ts
@@ -2828,8 +2738,8 @@ impl RedStrat for RUnroll {
           // Negative constraint with only one pred app, reverse-unrolling.
           match extractor.terms_of_lhs_app(
             true, instance, & clause.vars,
-            clause.lhs_terms(), & PredApps::with_capacity(0),
-            None, pred, args
+            ( clause.lhs_terms(), & PredApps::with_capacity(0) ),
+            None, (pred, args)
           ) ? {
 
             ExtractRes::Success((q, apps, ts)) => {
