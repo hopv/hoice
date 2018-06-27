@@ -1,30 +1,32 @@
 //! Contains stuff related to ICE's projected data representation.
 
 use common::* ;
-use common::data::{ Data, Sample } ;
+use data::{
+  Data, Sample,
+} ;
 
 
 /// Projected data to classify.
 #[derive(Clone)]
 pub struct CData {
   /// Positive samples.
-  pos: Vec<Args>,
+  pos: Vec<VarVals>,
   /// Negative samples.
-  neg: Vec<Args>,
+  neg: Vec<VarVals>,
   /// Unclassified samples.
-  unc: Vec<Args>,
+  unc: Vec<VarVals>,
   /// Total number of samples.
   len: f64,
 }
 impl CData {
   /// Constructor.
   #[inline]
-  pub fn new(pos: Vec<Args>, neg: Vec<Args>, unc: Vec<Args>) -> Self {
+  pub fn new(pos: Vec<VarVals>, neg: Vec<VarVals>, unc: Vec<VarVals>) -> Self {
     let len = (
       pos.len() + neg.len() + unc.len()
     ) as f64 ;
     CData {
-      pos, neg, unc, len
+      pos, neg, unc, len,
     }
   }
 
@@ -38,43 +40,43 @@ impl CData {
 
   /// Destroys the data.
   #[inline]
-  pub fn destroy(self) -> (Vec<Args>, Vec<Args>, Vec<Args>) {
+  pub fn destroy(self) -> (Vec<VarVals>, Vec<VarVals>, Vec<VarVals>) {
     (self.pos, self.neg, self.unc)
   }
 
   /// Adds a positive sample.
   #[inline]
-  pub fn add_pos(& mut self, pos: Args) {
+  pub fn add_pos(& mut self, pos: VarVals) {
     self.len += 1. ;
     self.pos.push(pos)
   }
   /// Positive samples.
   #[inline]
-  pub fn pos(& self) -> & Vec<Args> {
+  pub fn pos(& self) -> & Vec<VarVals> {
     & self.pos
   }
 
   /// Adds a negative sample.
   #[inline]
-  pub fn add_neg(& mut self, neg: Args) {
+  pub fn add_neg(& mut self, neg: VarVals) {
     self.len += 1. ;
     self.neg.push(neg)
   }
   /// Negative samples.
   #[inline]
-  pub fn neg(& self) -> & Vec<Args> {
+  pub fn neg(& self) -> & Vec<VarVals> {
     & self.neg
   }
 
   /// Adds a unclassified sample.
   #[inline]
-  pub fn add_unc(& mut self, unc: Args) {
+  pub fn add_unc(& mut self, unc: VarVals) {
     self.len += 1. ;
     self.unc.push(unc)
   }
   /// Unclassified samples.
   #[inline]
-  pub fn unc(& self) -> & Vec<Args> {
+  pub fn unc(& self) -> & Vec<VarVals> {
     & self.unc
   }
 
@@ -87,7 +89,7 @@ impl CData {
   /// - nowhere if `f(e).is_some()`.
   #[inline]
   pub fn classify<F>(& mut self, mut f: F)
-  where F: FnMut(& Args) -> Option<bool> {
+  where F: FnMut(& VarVals) -> Option<bool> {
     let mut cnt = 0 ;
     while cnt < self.unc.len() {
       if let Some(pos) = f(& self.unc[cnt]) {
@@ -118,7 +120,7 @@ impl CData {
   /// Shannon-entropy-based information gain of a qualifier (simple, ignores
   /// unclassified data).
   pub fn simple_gain<Trm: CanBEvaled>(
-    & self, qual: & Trm
+    & self, qual: & Trm, verb: bool
   ) -> Res< Option<f64> > {
     let my_entropy = Self::shannon_entropy(
       self.pos.len() as f64, self.neg.len() as f64
@@ -153,6 +155,15 @@ impl CData {
         Self::shannon_entropy( q_pos,  q_neg),
         Self::shannon_entropy(nq_pos, nq_neg)
       ) ;
+
+      if verb {
+        println!("   q_pos: {}",  q_pos) ;
+        println!("   q_neg: {}",  q_neg) ;
+        println!("  nq_pos: {}", nq_pos) ;
+        println!("  nq_neg: {}", nq_neg) ;
+        println!("   q_entropy: {}", q_entropy) ;
+        println!("  nq_entropy: {}", nq_entropy) ;
+      }
 
       // Entropy can be 0 because we're in simple gain, which ignores
       // unclassified data.
@@ -269,7 +280,9 @@ impl CData {
     }
 
     profile! { |_profiler| tick "learning", "qual", "gain", "unc eval" }
+    // println!("{}", qual) ;
     for unc in & self.unc {
+      // println!("  {}", unc) ;
       match qual.evaluate( unc.get() ).chain_err(
         || format!("while evaluating qualifier {} on {}", qual, unc)
       ) ? {
@@ -427,7 +440,7 @@ impl CData {
   }
 
   /// Iterator over some data.
-  pub fn iter<'a>(& 'a self, include_unc: bool) -> CDataIter<'a> {
+  pub fn iter(& self, include_unc: bool) -> CDataIter {
     CDataIter {
       pos: self.pos.iter(),
       neg: self.neg.iter(),
@@ -438,12 +451,12 @@ impl CData {
 
 /// Iterator over CData.
 pub struct CDataIter<'a> {
-  pos: ::std::slice::Iter<'a, Args>,
-  neg: ::std::slice::Iter<'a, Args>,
-  unc: Option<::std::slice::Iter<'a, Args>>,
+  pos: ::std::slice::Iter<'a, VarVals>,
+  neg: ::std::slice::Iter<'a, VarVals>,
+  unc: Option<::std::slice::Iter<'a, VarVals>>,
 }
 impl<'a> ::std::iter::Iterator for CDataIter<'a> {
-  type Item = & 'a Args ;
+  type Item = & 'a VarVals ;
   fn next(& mut self) -> Option<Self::Item> {
     let next = self.pos.next() ;
     if next.is_some() { return next }
@@ -464,6 +477,7 @@ impl<'a> ::std::iter::Iterator for CDataIter<'a> {
 /// splitting the data.
 ///
 /// See the paper for more details.
+#[derive(Default)]
 pub struct EntropyBuilder { num: f64, den: usize }
 impl EntropyBuilder {
   /// Constructor.
@@ -483,7 +497,7 @@ impl EntropyBuilder {
 
   /// Adds the degree of an unclassified example.
   pub fn add_unc(
-    & mut self, data: & Data, prd: PrdIdx, sample: & Args
+    & mut self, data: & Data, prd: PrdIdx, sample: & VarVals
   ) -> Res<()> {
     let degree = Self::degree(data, prd, sample) ? ;
     self.den += 1 ;
@@ -502,10 +516,10 @@ impl EntropyBuilder {
   pub fn entropy(self) -> Res<f64> {
     let proba = self.proba() ;
     let (pos, neg) = (
-      if proba == 0. { 0. } else {
+      if proba.abs() < ::std::f64::EPSILON { 0. } else {
         proba * proba.log2()
       },
-      if proba == 1. { 0. } else {
+      if (proba - 1.).abs() < ::std::f64::EPSILON { 0. } else {
         (1. - proba) * (1. - proba).log2()
       }
     ) ;
@@ -527,7 +541,7 @@ impl EntropyBuilder {
 
   /// Degree of a sample, refer to the paper for details.
   pub fn degree(
-    data: & Data, prd: PrdIdx, sample: & Args
+    data: & Data, prd: PrdIdx, sample: & VarVals
   ) -> Res<f64> {
     let (
       mut sum_imp_rhs,
@@ -549,10 +563,10 @@ impl EntropyBuilder {
         debug_assert! { lhs_len > 0 }
 
         match constraint.rhs() {
-          None => sum_neg = sum_neg + 1. / (lhs_len as f64),
+          None => sum_neg += 1. / (lhs_len as f64),
           Some( & Sample { pred, ref args } )
           if pred == prd
-          && args == sample => sum_imp_rhs = sum_imp_rhs + 1. / (
+          && args == sample => sum_imp_rhs += 1. / (
             1. + (lhs_len as f64)
           ),
           _ => {
@@ -566,9 +580,7 @@ impl EntropyBuilder {
                 )
               )
             }
-            sum_imp_lhs = sum_imp_lhs + 1. / (
-              1. + (lhs_len as f64)
-            )
+            sum_imp_lhs += 1. / ( 1. + (lhs_len as f64) )
           },
         }
       }
@@ -579,3 +591,4 @@ impl EntropyBuilder {
     Ok(res)
   }
 }
+

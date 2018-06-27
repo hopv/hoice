@@ -3,6 +3,7 @@
 use common::* ;
 
 
+
 /// Operators.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Op {
@@ -44,19 +45,31 @@ pub enum Op {
   And,
   /// Disjunction.
   Or,
+
   /// If-then-else.
   Ite,
+  /// Distinct.
+  Distinct,
+
   /// Conversion from `Int` to `Real`.
   ToInt,
   /// Conversion from `Real` to `Int`.
   ToReal,
+
+  /// Updater for arrays.
+  Store,
+  /// Accessor for arrays.
+  Select,
 }
+
+
+
 impl Op {
   /// String representation.
-  pub fn as_str(& self) -> & str {
+  pub fn as_str(self) -> & 'static str {
     use self::Op::* ;
     use keywords::op::* ;
-    match * self {
+    match self {
       Add => add_,
       Sub => sub_,
       Mul => mul_,
@@ -77,36 +90,34 @@ impl Op {
       Ite => ite_,
       ToInt => to_int_,
       ToReal => to_real_,
+      Store => store_,
+      Select => select_,
+      Distinct => distinct_,
     }
   }
 
 
   /// Type checking.
   ///
-  /// Checks that a potentially incomplete list of types makes sense for an
-  /// operator.
-  ///
-  /// If there is an error, returns the type the last argument should have (if
-  /// this type it should have is known) and the one found.
+  /// If there is an error, returns the type the spurious argument should have
+  /// (if it is known) and the one found.
   pub fn type_check(
-    & self, args: & Vec<Term>
-  ) -> Result<
-    Typ, Either< (Option<Typ>, (Typ, usize)), String >
-  > {
+    self, args: & [ Term ]
+  ) -> Result<Typ, term::TypError> {
     use Op::* ;
     let mut args_iter = args.iter().enumerate() ;
     macro_rules! err {
       (lft $($lft:tt)*) => (
-        return Err( Either::Left($($lft)*) )
+        return Err( term::TypError::typ($($lft)*) )
       ) ;
 
       (rgt $($lft:tt)*) => (
-        return Err( Either::Right($($lft)*) )
+        return Err( term::TypError::msg( format!($($lft)*)) )
       ) ;
 
       (nullary) => (
         err!(rgt
-          format!("illegal nullary application of `{}`", self)
+          "illegal nullary application of `{}`", self
         )
       ) ;
     }
@@ -115,10 +126,8 @@ impl Op {
       ( [ $min:tt, . ] => $e:expr ) => (
         if args_iter.len() < $min {
           err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args_iter.len(), $min
-            )
+            "illegal application of `{}` to {} arguments (> {})",
+            self, args_iter.len(), $min
           )
         } else {
           $e
@@ -128,10 +137,8 @@ impl Op {
       ( [ $min:tt, $max:tt ] => $e:expr ) => (
         if args_iter.len() > $max {
           err!(rgt
-            format!(
-              "illegal application of `{}` to {} arguments (> {})",
-              self, args_iter.len(), $max
-            )
+            "illegal application of `{}` to {} arguments (> {})",
+            self, args_iter.len(), $max
           )
         } else {
           arity_check!( [ $min, .] => $e )
@@ -144,11 +151,11 @@ impl Op {
         if let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
           if ! typ.is_arith() {
-            err!(lft (None, (typ, index)))
+            err!(lft None, typ, index)
           }
           while let Some((index, next)) = args_iter.next() {
             if typ != next.typ() {
-              err!(lft (Some(typ), (next.typ(), index)) )
+              err!(lft Some(typ), next.typ(), index)
             }
           }
           typ
@@ -160,11 +167,11 @@ impl Op {
       (bool) => ({
         while let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
-          if typ != Typ::Bool {
-            err!(lft (Some(Typ::Bool), (typ, index)) )
+          if typ != typ::bool() {
+            err!(lft Some(typ::bool()), typ, index)
           }
         }
-        Typ::Bool
+        typ::bool()
       }) ;
 
       () => ({
@@ -172,7 +179,7 @@ impl Op {
           let typ = fst.typ() ;
           while let Some((index, next)) = args_iter.next() {
             if typ != next.typ() {
-              err!(lft (Some(typ), (next.typ(), index)) )
+              err!(lft Some(typ), next.typ(), index)
             }
           }
           typ
@@ -184,50 +191,90 @@ impl Op {
       ($typ:expr) => ({
         while let Some((index, fst)) = args_iter.next() {
           if fst.typ() != $typ {
-            err!(lft (Some($typ), (fst.typ(), index)))
+            err!(lft Some($typ), fst.typ(), index)
           }
         }
         $typ
       }) ;
     }
 
-    let res = match * self {
+    let res = match self {
       Add | Sub | Mul | Div | CMul => {
         all_same!(arith)
       },
       IDiv | Rem | Mod => arity_check!(
         [ 2, 2 ] => {
-          all_same!(Typ::Int)
+          all_same!(typ::int())
         }
       ),
       Gt | Ge | Le | Lt => arity_check!(
         [ 2, 2 ] => {
           all_same!(arith) ;
-          Typ::Bool
+          typ::bool()
         }
       ),
+
+      Distinct |
       Eql => {
         all_same!() ;
-        Typ::Bool
+        typ::bool()
       },
       Not => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Bool)
+        [ 1, 1 ] => all_same!(typ::bool())
       ),
       And | Or | Impl => all_same!(bool),
       ToInt => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Real)
+        [ 1, 1 ] => {
+          all_same!(typ::real()) ;
+          typ::int()
+        }
       ),
       ToReal => arity_check!(
-        [ 1, 1 ] => all_same!(Typ::Int)
+        [ 1, 1 ] => {
+          all_same!(typ::int()) ;
+          typ::real()
+        }
       ),
       Ite => arity_check!(
         [ 3, 3 ] => if let Some((index, cond)) = args_iter.next() {
           if ! cond.typ().is_bool() {
-            err!(lft (Some(Typ::Bool), (cond.typ(), index)))
+            err!(lft Some(typ::bool()), cond.typ(), index)
           }
           all_same!()
         } else {
           err!(nullary)
+        }
+      ),
+
+      Store => arity_check!(
+        [ 3, 3 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
+          if args[1].typ() != * src {
+            err!(
+              lft Some(src.clone()), args[1].typ(), 1
+            )
+          } else if args[2].typ() != * tgt {
+            err!(
+              lft Some(tgt.clone()), args[2].typ(), 2
+            )
+          } else {
+            args[0].typ()
+          }
+        } else {
+          err!(lft None, args[0].typ(), 0)
+        }
+      ),
+
+      Select => arity_check!(
+        [ 2, 2 ] => if let Some((src, tgt)) = args[0].typ().array_inspect() {
+          if args[1].typ() != * src {
+            err!(
+              lft Some(src.clone()), args[1].typ(), 1
+            )
+          } else {
+            tgt.clone()
+          }
+        } else {
+          err!(lft None, args[0].typ(), 0)
         }
       ),
     } ;
@@ -236,338 +283,46 @@ impl Op {
 
 
   /// Evaluation.
-  pub fn eval(& self, mut args: Vec<Val>) -> Res<Val> {
+  pub fn eval(self, args: Vec<Val>) -> Res<Val> {
     use term::Op::* ;
     if args.is_empty() {
       bail!("evaluating operator on 0 elements")
     }
 
-    // print!("evaluating `({}", self) ;
-    // for val in & args {
-    //   print!(" {}", val)
-    // }
-    // println!(")`") ;
+    match self {
+      // Arithmetic operators.
+      Add => eval::add(args),
+      Sub => eval::sub(args),
+      CMul | Mul => eval::mul(args),
+      Div => eval::div(args),
+      IDiv => eval::idiv(args),
+      Rem => eval::rem(args),
+      Mod => eval::modulo(args),
 
-    macro_rules! arith_app {
-      (relation $op:tt $str:tt => $args:expr) => ({
-        let mut args = $args.into_iter() ;
-        if let (
-          Some(fst), Some(mut pre)
-        ) = (args.next(), args.next()) {
-          let mut res = fst.$op( pre.clone() ) ? ;
-          for arg in args {
-            res = res.and( pre.$op( arg.clone() ) ? ) ? ;
-            pre = arg
-          }
-          Ok(res)
-        } else {
-          bail!("`{}` applied to 0 or 1 argument(s)")
-        }
-      }) ;
-      ($op:tt $str:tt => $args:expr) => ({
-        let mut args = $args.into_iter() ;
-        if let Some(mut acc) = args.next() {
-          for arg in args {
-            acc = acc.$op(arg) ?
-          }
-          Ok(acc)
-        } else {
-          bail!("`{}` applied to zero arguments", $str)
-        }
-      }) ;
-    }
+      // Relations over arithmetic.
+      Gt => eval::gt(args),
+      Ge => eval::ge(args),
+      Le => eval::le(args),
+      Lt => eval::lt(args),
 
-    match * self {
-      Add => arith_app!(add "+" => args),
+      // Polymorphic operators.
+      Distinct => eval::distinct(args),
+      Eql => eval::eql(args),
+      Ite => eval::ite(args),
 
-      Sub => if args.len() == 1 {
-        args.pop().unwrap().minus()
-      } else {
-        arith_app!(sub "-" => args)
-      },
+      // Boolean operators.
+      Not => eval::not(args),
+      And => eval::and(args),
+      Or => eval::or(args),
+      Impl => eval::implies(args),
 
-      Mul => {
-        let mut res: Val = 1.into() ;
-        for arg in args.into_iter() {
-          res = res.mul(arg) ?
-        }
-        Ok(res)
-      },
+      // Cast operators.
+      ToInt => eval::to_int(args),
+      ToReal => eval::to_real(args),
 
-      CMul => {
-        let mut res: Val = 1.into() ;
-        for arg in args.into_iter() {
-          res = res.mul(arg) ?
-        }
-        Ok(res)
-      },
-
-      Div => {
-        let (den, num) = (
-          if let Some(den) = args.pop() { den } else {
-            bail!(
-              "illegal application of division to less than two arguments"
-            )
-          },
-          if let Some(num) = args.pop() { num } else {
-            bail!(
-              "illegal application of division to less than two arguments"
-            )
-          }
-        ) ;
-        if args.pop().is_some() {
-          bail!("unexpected division over {} numbers", args.len())
-        }
-
-        let res = match (num.clone(), den.clone()) {
-          (num, Val::N) => if num.is_zero() {
-            Ok(num)
-          } else {
-            Ok(Val::N)
-          },
-
-          (Val::I(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
-          } else if & num % & den == Int::zero() {
-            Ok( Val::I( num / den ) )
-          } else {
-            Ok( Val::R( Rat::new(num, den) ) )
-          },
-
-          (Val::I(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::I(num) )
-          } else {
-            Ok( Val::R( Rat::new(num, 1.into()) / den ) )
-          },
-
-          (Val::R(num), Val::I(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
-          } else {
-            Ok( Val::R( num / Rat::new(den, 1.into()) ) )
-          },
-
-          (Val::R(num), Val::R(den)) => if num.is_zero() {
-            Ok( Val::R(num) )
-          } else {
-            Ok( Val::R( num / den ) )
-          },
-
-          (Val::B(_), _) | (_, Val::B(_)) => bail!(
-            "illegal application of division to booleans"
-          ),
-
-          (Val::N, _) => Ok(Val::N),
-        } ;
-
-        // println!("(/ {} {}) = {}", num, den, res.as_ref().unwrap()) ;
-
-        res
-
-      },
-
-      IDiv => if args.len() != 2 {
-        bail!("unexpected division over {} numbers", args.len())
-      } else {
-        let den = try_val!( int args.pop().unwrap() ) ;
-        let num = try_val!( int args.pop().unwrap() ) ;
-        if den.is_zero() {
-          bail!("denominator is zero...")
-        }
-        let mut res = & num / & den ;
-        use num::Signed ;
-        if num.is_negative() ^ den.is_negative() {
-          if den.clone() * & res != num {
-            res = res - 1
-          }
-        }
-        // println!("(div {} {}) = {}", num, den, res) ;
-        Ok( Val::I(res) )
-      },
-
-      Rem => if args.len() != 2 {
-        bail!(
-          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
-        )
-      } else {
-        use num::Integer ;
-        let b = try_val!( int args.pop().unwrap() ) ;
-        if b == 1.into() {
-          Ok( 0.into() )
-        } else {
-          let a = try_val!( int args.pop().unwrap() ) ;
-          Ok( Val::I( a.div_rem(& b).1 ) )
-        }
-      },
-
-      Mod => if args.len() != 2 {
-        bail!(
-          format!("evaluating `{}` with {} (!= 2) arguments", self, args.len())
-        )
-      } else {
-        use num::{ Integer, Signed } ;
-        let b = try_val!( int args.pop().unwrap() ) ;
-        if b == 1.into() {
-          Ok( 0.into() )
-        } else {
-          let a = try_val!( int args.pop().unwrap() ) ;
-          let res = a.mod_floor(& b) ;
-          let res = if res.is_negative() {
-            b.abs() - res.abs()
-          } else {
-            res
-          } ;
-          Ok( Val::I( res ) )
-        }
-      },
-
-      // Bool operators.
-
-      Gt => arith_app! {
-        relation gt ">" => args
-      },
-
-      Ge => arith_app! {
-        relation ge ">=" => args
-      },
-
-      Le => arith_app! {
-        relation le "<=" => args
-      },
-
-      Lt => arith_app! {
-        relation lt "<" => args
-      },
-
-      Eql => {
-        let mem ;
-        let mut res = true ;
-        for_first!{
-          args.into_iter() => {
-            |fst| mem = fst,
-            then |nxt| {
-              // println!("{} != {} : {}", mem, nxt, mem != nxt) ;
-              if ! mem.same_type( & nxt ) {
-                return Ok(Val::N)
-              }
-              if mem != nxt {
-                res = false ;
-                break
-              }
-            },
-          } else unreachable!()
-        }
-        Ok( Val::B(res) )
-      },
-
-      Not => if args.len() != 1 {
-        bail!(
-          format!("evaluating `Not` with {} (!= 1) arguments", args.len())
-        )
-      } else {
-        if let Some(b) = args.pop().unwrap().to_bool() ? {
-          Ok( Val::B(! b) )
-        } else {
-          Ok(Val::N)
-        }
-      },
-
-      And => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(false) => return Ok( Val::B(false) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(true) )
-        }
-      },
-
-      Or => {
-        let mut unknown = false ;
-        for arg in args {
-          match arg.to_bool() ? {
-            Some(true) => return Ok( Val::B(true) ),
-            None => unknown = true,
-            _ => ()
-          }
-        }
-        if unknown {
-          Ok( Val::N )
-        } else {
-          Ok( Val::B(false) )
-        }
-      },
-
-      Impl => if args.len() != 2 {
-        bail!(
-          format!("evaluating `Impl` with {} (!= 2) arguments", args.len())
-        )
-      } else {
-        // Safe because of the check above.
-        let rhs = args.pop().unwrap() ;
-        let lhs = args.pop().unwrap() ;
-        match ( lhs.to_bool() ?, rhs.to_bool() ? ) {
-          (_, Some(true)) | (Some(false), _) => Ok( Val::B(true) ),
-          (Some(lhs), Some(rhs)) => Ok( Val::B(rhs || ! lhs) ),
-          _ => Ok(Val::N),
-        }
-      },
-
-      Ite => if args.len() != 3 {
-        bail!(
-          format!("evaluating `Ite` with {} (!= 3) arguments", args.len())
-        )
-      } else {
-        let (els, thn, cnd) = (
-          args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
-        ) ;
-        match cnd.to_bool() ? {
-          Some(true) => Ok(thn),
-          Some(false) => Ok(els),
-          _ => Ok(Val::N),
-        }
-      }
-
-      ToInt => if let Some(val) = args.pop() {
-        if ! args.is_empty() {
-          bail!(
-            "expected two arguments for `{}`, found {}", ToInt, args.len() + 1
-          )
-        }
-        if let Some(rat) = val.to_real() ? {
-          let res = rat.denom() / rat.denom() ;
-          if rat.denom().is_negative() ^ rat.denom().is_negative() {
-            Ok( Val::I(- res) )
-          } else {
-            Ok( Val::I(res) )
-          }
-        } else {
-          Ok(Val::N)
-        }
-      } else {
-        bail!("expected one argument for `{}`, found none", ToInt)
-      },
-
-      ToReal => if let Some(val) = args.pop() {
-        if ! args.is_empty() {
-          bail!(
-            "expected two arguments for `{}`, found {}", ToReal, args.len() + 1
-          )
-        }
-        if let Some(i) = val.to_int() ? {
-          Ok( Val::R( Rat::new(i.clone(), 1.into()) ) )
-        } else {
-          Ok(Val::N)
-        }
-      } else {
-        bail!("expected one argument for `{}`, found none", ToReal)
-      },
-
+      // Array operators.
+      Store => eval::store(args),
+      Select => eval::select(args),
     }
   }
 }
@@ -576,3 +331,246 @@ impl_fmt!{
     fmt.write_str( self.as_str() )
   }
 }
+
+
+
+
+/// Evaluation-related stuff.
+mod eval {
+  use common::* ;
+
+  /// Applies an operation on arithmetic arguments.
+  macro_rules! arith_app {
+    (relation $op:tt $str:tt => $args:expr) => ({
+      let mut args = $args.into_iter() ;
+      if let (
+        Some(fst), Some(mut pre)
+      ) = (args.next(), args.next()) {
+
+        let mut res = fst.get().$op( & pre ) ? ;
+
+        for arg in args {
+          res = res.and( & pre.get().$op( & arg ) ? ) ? ;
+          pre = arg
+        }
+        Ok(res)
+      } else {
+        bail!("`{}` applied to 0 or 1 argument(s)")
+      }
+    }) ;
+    ($op:tt $str:tt => $args:expr) => ({
+      let mut args = $args.into_iter() ;
+      if let Some(mut acc) = args.next() {
+        for arg in args {
+          acc = acc.$op(& arg) ?
+        }
+        Ok(acc)
+      } else {
+        bail!("`{}` applied to zero arguments", $str)
+      }
+    }) ;
+  }
+
+  /// Arity check.
+  macro_rules! arity {
+    ($op:expr => $args:expr, $len:expr) => (
+      if $args.len() != $len {
+        bail!(
+          "illegal application of `{}` to {} arguments", $op, $args.len()
+        )
+      }
+    ) ;
+  }
+
+  /// Creates an evaluation function.
+  macro_rules! eval_fun {
+    ( $(fn $name:ident($args:pat) $body:expr);* $(;)* ) => (
+      $(
+        pub fn $name($args: Vec<Val>) -> Res<Val> { $body }
+      )*
+    ) ;
+  }
+
+  // Arithmetic operators.
+
+  eval_fun! {
+    // Addition.
+    fn add(args) arith_app!(add "+" => args) ;
+
+    // Subtraction.
+    fn sub(mut args) if args.len() == 1 {
+      args.pop().unwrap().minus()
+    } else {
+      arith_app!(sub "-" => args)
+    } ;
+
+    // Multiplication
+    fn mul(args) arith_app!(mul "*" => args) ;
+
+    // Division.
+    fn div(args) arith_app!(div "/" => args) ;
+
+    // Integer division.
+    fn idiv(args) {
+      arity!("div" => args, 2) ;
+      args[0].idiv(& args[1])
+    } ;
+
+    // Remainder.
+    fn rem(args) {
+      arity!("rem" => args, 2) ;
+      args[0].rem(& args[1])
+    } ;
+
+    // Modulo.
+    fn modulo(args) {
+      arity!("mod" => args, 2) ;
+      args[0].modulo(& args[1])
+    } ;
+  }
+
+  // Relations over arithmetic.
+  eval_fun! {
+    // Greater than.
+    fn gt(args) arith_app!(relation g_t ">"  => args) ;
+    // Greater than or equal to.
+    fn ge(args) arith_app!(relation g_e ">=" => args) ;
+    // Less than.
+    fn lt(args) arith_app!(relation l_t "<"  => args) ;
+    // Less than or equal to.
+    fn le(args) arith_app!(relation l_e "<=" => args) ;
+  }
+
+  // Polymorphic operators.
+  eval_fun! {
+    // Distinct.
+    fn distinct(mut args) {
+      while let Some(arg) = args.pop() {
+        for other in & args {
+          if let Some(equal) = arg.eql(& other).to_bool() ? {
+            if equal {
+              return Ok( val::bool(false) )
+            }
+          } else {
+            return Ok( val::none( typ::bool() ) )
+          }
+        }
+      }
+      Ok( val::bool(true) )
+    } ;
+
+    // Equal.
+    fn eql(mut args) {
+      if let Some(fst) = args.pop() {
+        for other in & args {
+          if let Some(equal) = fst.eql(other).to_bool() ? {
+            if ! equal {
+              return Ok( val::bool(false) )
+            }
+          } else {
+            return Ok( val::none( typ::bool() ) )
+          }
+        }
+      }
+      Ok( val::bool(true) )
+    } ;
+
+    // If-then-else.
+    fn ite(mut args) {
+      arity!("ite" => args, 3) ;
+      let (els, thn, cnd) = (
+        args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
+      ) ;
+      cnd.ite(thn, els)
+    }
+  }
+
+  // Boolean operators.
+  eval_fun! {
+    // Not.
+    fn not(args) {
+      arity!("not" => args, 1) ;
+      args[0].not()
+    } ;
+
+    // Conjunction.
+    fn and(args) {
+      for arg in args {
+        match arg.to_bool() ? {
+          Some(true) => (),
+          Some(false) => return Ok( val::bool(false) ),
+          None => return Ok( val::none( typ::bool() ) ),
+        }
+      }
+      Ok( val::bool(true) )
+    } ;
+
+    // Disjunction.
+    fn or(args) {
+      let mut res = val::bool(false) ;
+      for arg in args {
+        match arg.to_bool() ? {
+          Some(true) => return Ok( val::bool(true) ),
+          Some(false) => (),
+          None => res = val::none( typ::bool() ),
+        }
+      }
+      Ok(res)
+    } ;
+
+    // Implication.
+    fn implies(args) {
+      arity!("=>" => args, 2) ;
+      args[0].implies( & args[1] )
+    } ;
+  }
+
+  // Cast operators.
+  eval_fun! {
+    // To int.
+    fn to_int(args) {
+      arity!("to-int" => args, 1) ;
+      args[0].real_to_int()
+    } ;
+
+    // To real.
+    fn to_real(args) {
+      arity!("to-real" => args, 1) ;
+      args[0].int_to_real()
+    } ;
+  }
+
+  // Array operators.
+  eval_fun! {
+    // Store.
+    fn store(mut args) {
+      arity!("store" => args, 3) ;
+      let (val, idx, array) = (
+        args.pop().unwrap(),
+        args.pop().unwrap(),
+        args.pop().unwrap(),
+      ) ;
+      Ok( array.store(idx, val) )
+    } ;
+
+    // Select.
+    fn select(mut args) {
+      arity!("select" => args, 2) ;
+      let (idx, array) = (
+        args.pop().unwrap(),
+        args.pop().unwrap(),
+      ) ;
+      Ok( array.select(idx) )
+    } ;
+  }
+
+}
+
+
+
+
+
+
+
+
+

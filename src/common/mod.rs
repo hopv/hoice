@@ -4,10 +4,13 @@ pub use std::io::{ Read, Write } ;
 pub use std::io::Result as IoRes ;
 pub use std::sync::{ Arc, RwLock } ;
 pub use std::sync::mpsc::{ Receiver, Sender } ;
+pub use std::collections::{ BTreeMap, BTreeSet } ;
+
+pub use rand::prng::XorShiftRng as Rng ;
 
 pub use mylib::common::hash::* ;
 
-pub use hashconsing::HashConsign ;
+pub use hashconsing::{ HashConsign, HashConsed } ;
 pub use hashconsing::coll::* ;
 
 pub use rsmt2::{ SmtRes, Solver } ;
@@ -22,27 +25,37 @@ pub use term ;
 pub use term::{
   RTerm, Term, TTerm,
   TTermSet, TTerms,
-  Val, Op, Typ, Quant,
+  Op, Typ, Quant,
+  typ,
 } ;
-pub use term::args::{
-  HTArgs, HTArgss
+
+pub use val ;
+pub use val::Val ;
+
+pub use fun ;
+pub use fun::Fun ;
+
+pub use var_to ;
+pub use var_to::{
+  VarVals, VarTerms,
+  vals::SubsumeExt,
 } ;
+
 pub use instance::Instance ;
 pub use common::consts::keywords ;
 
 mod wrappers ;
-pub mod config ;
 
 #[macro_use]
 pub mod macros ;
-pub mod data ;
+pub mod config ;
+
 #[macro_use]
 pub mod msg ;
 pub mod consts ;
 pub mod profiling ;
 pub mod smt ;
 
-pub use self::data::{ RArgs, Args, ArgsSet } ;
 pub use self::config::* ;
 pub use self::profiling::{ Profiler, CanPrint } ;
 pub use self::wrappers::* ;
@@ -51,9 +64,7 @@ pub use self::wrappers::* ;
 lazy_static!{
   /// Configuration from clap.
   pub static ref conf: Config = Config::clap() ;
-  static ref version_string: String = format!(
-    "{}", crate_version!()
-  ) ;
+  static ref version_string: String = crate_version!().into() ;
   /// Version with revision info.
   pub static ref version: & 'static str = & version_string ;
 }
@@ -63,6 +74,9 @@ lazy_static!{
 
 // |===| Helpers.
 
+/// Stdout.
+pub use ::std::io::stdout ;
+
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg(feature = "bench")]
 pub fn print_stats(_: & 'static str, _: Profiler) {}
@@ -71,9 +85,9 @@ pub fn print_stats(_: & 'static str, _: Profiler) {}
 pub fn print_stats(name: & str, profiler: Profiler) {
   if conf.stats {
     let others = profiler.drain_others() ;
-    println!("") ;
+    println!() ;
     profiler.print( name, "", & [ "data" ] ) ;
-    println!("") ;
+    println!() ;
     for (name, other) in others {
       print_stats(& name, other)
     }
@@ -88,7 +102,7 @@ pub fn corrupted_err<T>(_: T) -> Error {
 /// Notifies the user and reads a line from stdin.
 pub fn pause(s: & str, _profiler: & Profiler) {
   let mut dummy = String::new() ;
-  println!("") ;
+  println!() ;
   println!( "; {} {}...", conf.emph("press return"), s ) ;
   let _ = profile!(
     |_profiler| wrap {
@@ -117,30 +131,127 @@ pub fn mk_dir<P: AsRef<::std::path::Path>>(path: P) -> Res<()> {
 }
 
 
+/// Compares two data metrics.
+///
+/// Takes the amount of classified and unknown data from two data collections
+/// and returns `Greater` if the first collection is considered better.
+/// Typically because it has more classified data, or no unknown data.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::cmp::Ordering::* ;
+/// use hoice::common::cmp_data_metrics as cmp ;
+///
+/// # println! ( "10, 0, 5, 0" ) ;
+/// assert_eq! { cmp(10,  0,  5,  0), Greater }
+/// # println! ( "5, 0, 10, 0" ) ;
+/// assert_eq! { cmp( 5,  0, 10,  0), Less }
+///
+/// # println! ( "\n10, 0, 15, 10" ) ;
+/// assert_eq! { cmp(10,  0, 15, 10), Greater }
+/// # println! ( "15, 10, 10, 0" ) ;
+/// assert_eq! { cmp(15, 10, 10,  0), Less }
+///
+/// # println! ( "\n15, 10, 15, 70" ) ;
+/// assert_eq! { cmp(15, 10, 15, 70), Greater }
+/// # println! ( "15, 70, 15, 10" ) ;
+/// assert_eq! { cmp(15, 70, 15, 10), Less }
+///
+/// # println! ( "\n15, 70, 20, 90" ) ;
+/// assert_eq! { cmp(15, 70, 20, 90), Greater }
+/// # println! ( "20, 90, 15, 70" ) ;
+/// assert_eq! { cmp(20, 90, 15, 70), Less }
+///
+/// # println! ( "\n20, 70, 15, 70" ) ;
+/// assert_eq! { cmp(20, 70, 15, 70), Greater }
+/// # println! ( "15, 70, 20, 70" ) ;
+/// assert_eq! { cmp(15, 70, 20, 70), Less }
+/// ```
+pub fn cmp_data_metrics(
+  classified_1: usize,
+  unknown_1: usize,
+  classified_2: usize,
+  unknown_2: usize,
+) -> ::std::cmp::Ordering {
+  use std::cmp::Ordering::* ;
+
+  match (unknown_1 == 0, unknown_2 == 0) {
+    (true, false) => Greater,
+    (false, true) => Less,
+
+    (true, true) => classified_1.cmp(& classified_2),
+
+    (false, false) => match (classified_1 == 0, classified_2 == 0) {
+
+      (true, false) => Less,
+      (false, true) => Greater,
+
+      (true, true) => unknown_1.cmp(& unknown_2),
+
+      (false, false) => match (
+        classified_1.cmp(& classified_2), unknown_1.cmp(& unknown_2)
+      ) {
+
+        (Greater, Greater) => (classified_1 - classified_2).cmp(
+          & (unknown_1 - unknown_2)
+        ),
+        (Greater, _) |
+        (Equal, Less) => Greater,
+
+        (Less, Less) => (classified_2 - classified_1).cmp(
+          & (unknown_2 - unknown_1)
+        ).reverse(),
+        (Less, _) |
+        (Equal, Greater) => Less,
+
+        (Equal, Equal) => Equal,
+
+      },
+
+    },
+  }
+}
+
+
+
+
+
 // |===| Type and traits aliases.
 
 /// Integers.
 pub type Int = ::num::BigInt ;
 /// Rationals.
 pub type Rat = ::num::BigRational ;
+/// Converts a float into a rational.
+pub fn rat_of_float(f: f64) -> Rat {
+  Rat::from_float(f).expect(
+    "can't construct a rational from NaN"
+  )
+}
+
+/// A set of terms.
+pub type TermSet = HConSet<Term> ;
+/// A map from terms to stuff.
+pub type TermMap<T> = HConMap<Term, T> ;
 
 /// A signature.
 pub type Sig = VarMap<Typ> ;
 
 /// A predicate application.
-pub type PredApp = (PrdIdx, HTArgs) ;
+pub type PredApp = (PrdIdx, VarTerms) ;
 
 /// Some predicate applications.
-pub type PredApps = PrdHMap< HTArgss > ;
+pub type PredApps = PrdHMap< var_to::terms::VarTermsSet > ;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
   /// Insert a predicate application. Returns true if the application is new.
-  fn insert_pred_app(& mut self, PrdIdx, HTArgs) -> bool ;
+  fn insert_pred_app(& mut self, PrdIdx, VarTerms) -> bool ;
 }
 impl PredAppsExt for PredApps {
-  fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
+  fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
     self.entry(pred).or_insert_with(
-      || HTArgss::with_capacity(4)
+      || var_to::terms::VarTermsSet::with_capacity(4)
     ).insert(args)
   }
 }
@@ -157,19 +268,99 @@ unsafe impl<T: Send> Send for PrdMap<T> {}
 /// Quantified variables for a top term.
 pub type Quantfed = VarHMap<Typ> ;
 
+/// Dnf definition for a predicate.
+pub type Dnf = Vec< (Quantfed, TTermSet) > ;
+/// Dnf definition for a predicate, reference version.
+pub type DnfRef<'a> = & 'a [ (Quantfed, TTermSet) ] ;
+
 /// Associates predicates to some quantified variables and some top terms.
 pub type Model = Vec< (PrdIdx, TTerms) > ;
-///
+/// Reference version of a model.
+pub type ModelRef<'a> = & 'a [ (PrdIdx, TTerms) ] ;
+
+/// A conjunction of candidates.
 pub type ConjCandidates = PrdHMap< Vec<TTerms> > ;
-///
+
+/// A model where definitions are conjunctions.
 pub type ConjModel = Vec< Vec<(PrdIdx, Vec<TTerms>)> > ;
+/// A model of conjunctions, reference version.
+pub type ConjModelRef<'a> = & 'a [ Vec<(PrdIdx, Vec<TTerms>)> ] ;
+
+/// A model or unsat.
+#[derive(Clone, PartialEq, Eq)]
+pub enum MaybeModel<M: Clone + PartialEq + Eq> {
+  /// Unsat result.
+  Unsat,
+  /// A model.
+  Model(M),
+}
+impl<M: Clone + PartialEq + Eq> MaybeModel<M> {
+  /// True if unsat.
+  pub fn is_unsat(& self) -> bool {
+    * self == MaybeModel::Unsat
+  }
+  /// Turns itself to an option.
+  pub fn into_option(self) -> Option<M> {
+    if let MaybeModel::Model(model) = self {
+      Some(model)
+    } else {
+      None
+    }
+  }
+}
+
+/// Indicates a bias in a counterexample for some clause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bias {
+  /// Left bias: the whole LHS of the clause should be considered positive.
+  Lft,
+  /// Right bias: the RHS should be considered negative.
+  Rgt,
+  /// Right bias: the RHS should be considered negative, and the whole LHS
+  /// should be considered positive **except** for the predicate application
+  /// mentioned.
+  NuRgt(PrdIdx, VarTerms),
+  /// No bias.
+  Non,
+}
+impl Bias {
+  /// True if `Non`.
+  pub fn is_none(& self) -> bool {
+    * self == Bias::Non
+  }
+
+  /// Pretty string representation.
+  pub fn to_string(& self, instance: & Instance) -> String {
+    match * self {
+      Bias::NuRgt(pred, ref args) => format!(
+        "right({} {})", instance[pred], args
+      ),
+      Bias::Lft => "left".into(),
+      Bias::Rgt => "right".into(),
+      Bias::Non => "none".into(),
+    }
+  }
+}
+impl_fmt! {
+  Bias(self, fmt) {
+    match * self {
+      Bias::Lft => write!(fmt, "left"),
+      Bias::Rgt => write!(fmt, "right"),
+      Bias::NuRgt(pred, ref args) => write!(fmt, "right({} {})", pred, args),
+      Bias::Non => write!(fmt, "none"),
+    }
+  }
+}
 
 /// Alias type for a counterexample for a clause.
-pub type Cex = RArgs ;
+pub type Cex = var_to::vals::RVarVals ;
+/// Alias type for a counterexample for a clause.
+pub type BCex = ( Cex, Bias ) ;
 /// Alias type for a counterexample for a sequence of clauses.
-pub type Cexs = ClsHMap< Vec<Cex> > ;
+pub type Cexs = ClsHMap< Vec<BCex> > ;
 
 /// Signature trait, for polymorphic term insertion.
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Signature {
   /// Type of a variable.
   fn get(& self, VarIdx) -> Typ ;
@@ -181,18 +372,19 @@ impl Signature for VarMap<
 > {
   fn len(& self) -> usize { VarMap::len(self) }
   fn get(& self, var: VarIdx) -> Typ {
-    self[var].typ
+    self[var].typ.clone()
   }
 }
 impl Signature for VarMap<Typ> {
   fn len(& self) -> usize { VarMap::len(self) }
   fn get(& self, var: VarIdx) -> Typ {
-    self[var]
+    self[var].clone()
   }
 }
 
 
 /// Implemented by types lending themselves to evaluation.
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Evaluator {
   /// Retrieves the value associated with a variable.
   fn get(& self, var: VarIdx) -> & Val ;
@@ -228,6 +420,13 @@ where E: Evaluator {
 }
 
 
+
+
+
+
+
+
+
 /// Something that can be evaluated to a boolean.
 pub trait CanBEvaled: ::std::fmt::Display {
   /// Evaluates self.
@@ -246,7 +445,7 @@ impl CanBEvaled for Term {
 /// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
 /// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
 #[must_use]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RedInfo {
   /// Number of predicates eliminated.
   pub preds: usize,
@@ -381,7 +580,6 @@ pub trait PebcakFmt<'a> {
 /// Indexed by `VarIdx`.
 pub trait VarIndexed<T> {
   /// Gets the value associated with a variable.
-  #[inline(always)]
   fn var_get(& self, var: VarIdx) -> Option<T> ;
 }
 impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
@@ -393,7 +591,8 @@ impl<Elem: Clone> VarIndexed<Elem> for VarMap<Elem> {
     }
   }
 }
-impl VarIndexed<Term> for HTArgs {
+impl VarIndexed<Term> for VarTerms {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
       Some( self[var].clone() )
@@ -403,28 +602,44 @@ impl VarIndexed<Term> for HTArgs {
   }
 }
 impl<Elem: Clone> VarIndexed<Elem> for VarHMap<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
-    self.get(& var).map(|e| e.clone())
+    self.get(& var).cloned()
   }
 }
 impl VarIndexed<Term> for VarMap<(VarIdx, Typ)> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if var < self.len() {
-      Some( term::var( self[var].0, self[var].1 ) )
+      Some( term::var( self[var].0, self[var].1.clone() ) )
     } else {
       None
     }
   }
 }
 impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     self.get(& var).map(
-      |& (v, t)| term::var(v, t)
+      |& (v, ref t)| term::var(v, t.clone())
     )
+  }
+}
+impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
+  #[inline]
+  fn var_get(& self, var: VarIdx) -> Option<Term> {
+    if self.len() < * var {
+      None
+    } else if let Ok(res) = self[var].to_term() {
+      res
+    } else {
+      None
+    }
   }
 }
 impl<Elem, T, U> VarIndexed<Elem> for (T, U)
 where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
     if let Some(res) = self.0.var_get(var) {
       debug_assert!( self.1.var_get(var).is_none() ) ;
@@ -439,6 +654,7 @@ where T: VarIndexed<Elem>, U: VarIndexed<Elem> {
 }
 impl<'a, Elem, T> VarIndexed<Elem> for & 'a T
 where T: VarIndexed<Elem> {
+  #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Elem> {
     (* self).var_get(var)
   }
@@ -448,75 +664,6 @@ where T: VarIndexed<Elem> {
 
 
 
-
-
-
-
-
-
-/// Hash-related things.
-///
-/// What's inside this module is quite dangerous. The hashing functions are
-/// type-specific and will crash if applied to something else.
-mod hash {
-  #![allow(non_upper_case_globals)]
-  use std::hash::{ Hasher, BuildHasher } ;
-  /// Number of bytes in a `u64`.
-  pub const u64_bytes: usize = 8 ;
-
-  /// Empty struct used to build `HashU64`.
-  #[derive(Clone)]
-  pub struct BuildHashU64 {}
-  impl BuildHasher for BuildHashU64 {
-    type Hasher = HashU64 ;
-    fn build_hasher(& self) -> HashU64 {
-      HashU64 { buf: [0 ; u64_bytes] }
-    }
-  }
-  impl Default for BuildHashU64 {
-    fn default() -> Self {
-      BuildHashU64 {}
-    }
-  }
-
-  /// Trivial hasher for `u64`. **This hasher is only for hashing `u64`s**.
-  pub struct HashU64 {
-    buf: [u8 ; u64_bytes]
-  }
-  impl HashU64 {
-    /// Checks that a slice of bytes has the length of a `u64`. Only active
-    /// in debug.
-    #[cfg(debug_assertions)]
-    #[inline(always)]
-    fn test_bytes(bytes: & [u8]) {
-      if bytes.len() != u64_bytes {
-        panic!(
-          "[illegal] `HashU64::hash` \
-          called with non-`usize` argument ({} bytes, expected {})",
-          bytes.len(), u64_bytes
-        )
-      }
-    }
-    /// Checks that a slice of bytes has the length of a `u64`. Only active
-    /// in debug.
-    #[cfg( not(debug_assertions) )]
-    #[inline(always)]
-    fn test_bytes(_: & [u8]) {}
-  }
-  impl Hasher for HashU64 {
-    fn finish(& self) -> u64 {
-      unsafe {
-        ::std::mem::transmute(self.buf)
-      }
-    }
-    fn write(& mut self, bytes: & [u8]) {
-      Self::test_bytes(bytes) ;
-      for n in 0..u64_bytes {
-        self.buf[n] = bytes[n]
-      }
-    }
-  }
-}
 
 
 
@@ -540,11 +687,12 @@ mod hash {
 ///   1, 2, 4, 8, 16, 32, 64, 128, 256,
 /// ] ;
 /// for value in expected {
-///   let luby = luby.next() ;
+///   let luby = luby.next_value() ;
 /// # println!("{} == {} ?", value, luby) ;
 ///   assert_eq! { luby, value.into() }
 /// }
 /// ```
+#[derive(Default)]
 pub struct Luby {
   /// Current max power of two.
   max_pow: usize,
@@ -557,7 +705,7 @@ impl Luby {
     Luby { max_pow: 0, pow: 0 }
   }
   /// Next value in the series.
-  pub fn next(& mut self) -> Int {
+  pub fn next_value(& mut self) -> Int {
     if self.pow > self.max_pow {
       self.pow = 0 ;
       self.max_pow += 1
@@ -571,6 +719,7 @@ impl Luby {
 
 /// Counts up to the current value of the Luby series, outputs true and moves
 /// on to the next value when it reaches it.
+#[derive(Default)]
 pub struct LubyCount {
   /// Luby series.
   luby: Luby,
@@ -583,7 +732,7 @@ impl LubyCount {
   /// Constructor.
   pub fn new() -> Self {
     let mut luby = Luby::new() ;
-    let max = luby.next() ;
+    let max = luby.next_value() ;
     let count = 0.into() ;
     LubyCount { luby, max, count }
   }
@@ -594,9 +743,120 @@ impl LubyCount {
     self.count = & self.count + 1 ;
     let ping = self.count >= self.max ;
     if ping {
-      self.max = self.luby.next() ;
+      self.max = self.luby.next_value() ;
       self.count = 0.into()
     }
     ping
   }
 }
+
+
+
+
+/// Iterator over all the combinations of some length of a collection of
+/// something.
+///
+/// In the following, `len` is the length of the combinations we generate.
+///
+/// # Fields
+///
+/// `current` is `None` if there are no more combinations. Otherwise it stores
+/// a list of pairs of length `len`, where `current[i]` stores
+///
+/// - the `i`th element `e` of the **next** combination ;
+/// - the elements that follow `e` in the original collection, as an iterator.
+///
+/// `next` will be used to pass the next combination, if any, when the `next`
+/// function is called.
+///
+/// `head` is the first element of the collection.
+///
+/// `tail` is the rest of the collection.
+///
+/// # Invariants
+///
+/// - `self.current.as_ref().map(|v| v.len()).unwrap_or(self.len())`
+///   is equal to `self.len`
+/// - `self.next.capacity() == self.len()`
+/// - There's `self.len - 1` elements in `self.tail`
+pub struct CombinationIter<Iter: Iterator + Clone> {
+  current: Option< Vec< (Iter::Item, Iter) > >,
+  len: usize,
+  next: Vec<Iter::Item>,
+  head: Iter::Item,
+  tail: Iter,
+}
+
+impl<Iter> CombinationIter<Iter>
+where Iter: Iterator + ExactSizeIterator + Clone, Iter::Item: Clone {
+
+  /// Constructor.
+  ///
+  /// Fails if `coll.next().is_none()`, or if `len == 0`.
+  pub fn new(mut coll: Iter, len: usize) -> Res<Self> {
+    if len == 0 {
+      bail!("trying to create all combinations of length 0, illegal")
+    }
+    let (head, tail) = if let Some(first) = coll.next() {
+      (first, coll)
+    } else {
+      bail!("trying to create all combinations of an empty collection")
+    } ;
+
+    Ok(
+      CombinationIter {
+        current: Some(
+          vec![ (head.clone(), tail.clone()) ; len ]
+        ),
+        len,
+        next: Vec::with_capacity(len),
+        head, tail
+      }
+    )
+  }
+
+  /// Returns the next combination if any.
+  pub fn next_combination(& mut self) -> Option< & Vec<Iter::Item> > {
+    let mut res = None ;
+
+    if let Some(mut current) = ::std::mem::replace(
+      & mut self.current, None
+    ) {
+      self.next.clear() ;
+
+      // Construct result, easy part.
+      for (item, _) in & current {
+        self.next.push( item.clone() )
+      }
+      // Remember we have a next.
+      res = Some(& self.next) ;
+
+      // Tricky part.
+      //
+      // Remove from `current` the pairs that don't have a next element, until
+      // we find one that does (starting from the end).
+      'find_next: while let Some((_, mut curr)) = current.pop() {
+        if let Some(next) = curr.next() {
+          // Found an element with a next.
+          current.push( (next, curr) ) ;
+          // Now we restart all elements after this one (the elements we
+          // removed).
+          while current.len() < self.len {
+            current.push(
+              // Starting again from the beginning for this element.
+              ( self.head.clone(), self.tail.clone() )
+            )
+          }
+          // Done, update current and break out.
+          self.current = Some(current) ;
+          break 'find_next
+        }
+      }
+    }
+    res
+  }
+
+}
+
+
+

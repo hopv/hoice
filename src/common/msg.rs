@@ -3,10 +3,12 @@
 use std::sync::mpsc::channel ;
 use std::cell::RefCell ;
 
-use common::* ;
-use common::data::Data ;
+use common::{
+  *,
+  profiling::Profiler,
+} ;
 
-use common::profiling::Profiler ;
+use data::Data ;
 
 
 /// Sender / receiver pair alias type.
@@ -55,7 +57,7 @@ pub enum MsgKind {
   /// Some candidates, from learners.
   Cands(Candidates),
   /// Some samples from the assistant.
-  Samples(Data),
+  Samples(Box<Data>),
   /// A message.
   Msg(String),
   /// An error.
@@ -91,7 +93,7 @@ impl From<Candidates> for MsgKind {
 }
 impl From<Data> for MsgKind {
   fn from(data: Data) -> MsgKind {
-    MsgKind::Samples(data)
+    MsgKind::Samples( Box::new(data) )
   }
 }
 impl From<String> for MsgKind {
@@ -137,7 +139,7 @@ impl Msg {
   /// Creates a samples message.
   pub fn samples(id: Id, samples: Data) -> Self {
     debug_assert! { id.is_assistant() }
-    Msg { id, msg: MsgKind::Samples(samples) }
+    Msg { id, msg: MsgKind::Samples( Box::new(samples) ) }
   }
 
   /// Channel to the teacher.
@@ -150,7 +152,7 @@ pub enum FromTeacher {
   /// Exit message.
   Exit,
   /// Learning data.
-  Data(Data),
+  Data(Box<Data>),
 }
 impl FromTeacher {
   /// Channel from the teacher.
@@ -205,8 +207,15 @@ impl MsgCore {
   /// Merges a profiler with the subprofiler `name`.
   pub fn merge_prof(& self, name: & 'static str, prof: Profiler) {
     self._subs.borrow_mut().entry(name).or_insert_with(
-      || Profiler::new()
+      Profiler::new
     ).merge(prof)
+  }
+
+  /// Merges a profiler with the subprofiler `name`.
+  pub fn merge_set_prof(& self, name: & 'static str, prof: Profiler) {
+    self._subs.borrow_mut().entry(name).or_insert_with(
+      Profiler::new
+    ).merge_set(prof)
   }
 
   /// Sends some candidates.
@@ -312,7 +321,7 @@ impl MsgCore {
   pub fn recv(& self) -> Res<Data> {
     match self.recver.recv() {
       Ok(FromTeacher::Exit) => bail!(ErrorKind::Exit),
-      Ok( FromTeacher::Data(data) ) => Ok(data),
+      Ok( FromTeacher::Data(data) ) => Ok(* data),
       Err(_) => deco!(),
     }
   }
@@ -346,7 +355,7 @@ pub trait Learner: Sync + Send {
 /// Messages from assistant.
 pub enum FromAssistant {
   /// Positive and negative samples.
-  Samples(Data),
+  Samples(Box<Data>),
   /// Message.
   Msg(String),
   /// Error.
@@ -361,7 +370,7 @@ unsafe impl Send for FromAssistant {}
 /// Messages to the assistant.
 pub enum ToAssistant {
   /// Implication constraints.
-  Samples(Data),
+  Samples(Box<Data>),
   /// Exit message.
   Exit,
 }
@@ -396,7 +405,7 @@ impl AssistantCore {
   /// **meaning the teacher is disconnected**.
   pub fn send_samples(& self, samples: Data) -> bool {
     self.sender.send(
-      FromAssistant::Samples(samples)
+      FromAssistant::Samples( Box::new(samples) )
     ).is_ok()
   }
 
@@ -426,9 +435,8 @@ impl AssistantCore {
   /// Sends an error to the teacher. Returns `false` iff sending fails,
   /// **meaning the teacher is disconnected**.
   pub fn err(& self, err: Error) -> bool {
-    match * err.kind() {
-      ErrorKind::Unsat => return self.unsat(),
-      _ => (),
+    if let ErrorKind::Unsat = * err.kind() {
+      return self.unsat()
     }
     self.sender.send(
       FromAssistant::Err(err)
@@ -472,7 +480,7 @@ impl AssistantCore {
   /// Error if disconnected.
   pub fn recv(& self) -> Res< Option<Data> > {
     match self.recver.recv() {
-      Ok( ToAssistant::Samples(data) ) => Ok( Some(data) ),
+      Ok( ToAssistant::Samples(data) ) => Ok( Some(* data) ),
       Ok(ToAssistant::Exit) => Ok(None),
       Err(_) => bail!("disconnected from teacher"),
     }

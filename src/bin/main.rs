@@ -5,7 +5,6 @@ extern crate hoice ;
 use hoice::common::* ;
 
 fn main() {
-
   // Work and report error if any.
   if let Err(errs) = ::hoice::work() {
     let errs = match * errs.kind() {
@@ -18,7 +17,7 @@ fn main() {
       ).into(),
       _ => errs
     } ;
-    print_err(errs) ;
+    print_err(& errs) ;
     ::std::process::exit(2)
   } else {
     ::std::process::exit(0)

@@ -88,10 +88,20 @@ error_chain!{
       description("could not spawn z3")
       display("could not spawn z3")
     }
+    #[doc = "Not really an error, unknown early return."]
+    Unknown {
+      description("unknown")
+      display("unknown")
+    }
     #[doc = "Not really an error, unsat early return."]
     Unsat {
       description("unsat")
       display("unsat")
+    }
+    #[doc = "Not really an error, unsat early return because of some clause."]
+    UnsatFrom(clause: ClsIdx) {
+      description("unsat")
+      display("unsat by #{}", clause)
     }
     #[doc = "Not really an error, exit early return."]
     Exit {
@@ -114,9 +124,30 @@ impl Error {
   pub fn is_unsat(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unsat => true,
+      ErrorKind::UnsatFrom(_) => true,
       _ => false,
     }
   }
+
+  /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
+  ///
+  /// [unknown]: enum.ErrorKind.html#variant.Unknown
+  /// (ErrorKind's Unknown variant)
+  pub fn is_unknown(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::Unknown => true,
+      _ => false,
+    }
+  }
+
+  /// Returns the clause explaining an unsat result if any.
+  pub fn unsat_cause(& self) -> Option<ClsIdx> {
+    match * self.kind() {
+      ErrorKind::UnsatFrom(clause) => Some(clause),
+      _ => None,
+    }
+  }
+
 
   /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
   ///
@@ -143,7 +174,7 @@ impl Error {
 
 
 /// Prints an error.
-pub fn print_err(errs: Error) {
+pub fn print_err(errs: & Error) {
   println!(
     "({} \"", conf.bad("error")
   ) ;

@@ -2,7 +2,29 @@
 //! between predicates.
 
 use common::* ;
-use instance::preproc::utils ;
+use var_to::terms::VarTermsSet ;
+use instance::{
+  preproc::utils, preproc::utils::ExtractionCxt,
+  instance::PreInstance,
+} ;
+
+
+
+/// Result of a DNF merge.
+struct MergeRes {
+  /// The dnf.
+  def: Dnf,
+  /// Clause generation estimation.
+  estimation: usize,
+}
+impl MergeRes {
+  /// Constructor.
+  fn new(def: Dnf, estimation: usize) -> Self {
+    MergeRes { def, estimation }
+  }
+}
+
+
 
 /// Maps predicates to the predicates they depend on.
 pub type Dep = PrdMap< PrdMap<usize> > ;
@@ -266,9 +288,9 @@ impl Graph {
       to_do.remove(& pred) ;
       if let Some(tgts) = forward.get(& pred) {
         if_debug! {
-          log_debug! { "    following {}", _instance[pred] } ;
+          log_debug! { "following {}", _instance[pred] } ;
           for pred in tgts {
-            log_debug! { "    - {}", _instance[* pred] }
+            log_debug! { "- {}", _instance[* pred] }
           }
         }
 
@@ -279,115 +301,458 @@ impl Graph {
     Ok(res)
   }
 
+
+
   /// Merges two DNFs with quantifiers.
+  ///
+  /// Also returns the clause generation estimation.
+  ///
+  /// Returns `None` if inlining would have generated more clauses than `max`
+  /// (by `estimate`).
   ///
   /// Used when inlining a predicate application of `p`. `lft` is understood as
   /// (part of) the definition of `p` different from `pred`. `subst` are its
   /// arguments.
   ///
   /// The arguments of `p` are applied to `lft`, and the quantified variables
-  /// are bumped, to the first variable index used by neither the formal
+  /// are bumped to the first variable index used by neither the formal
   /// arguments of `pred` and the quantified variables in `rgt`.
   ///
   /// Renames the quantified variables so that they don't clash.
+  ///
+  /// # TODO
+  ///
+  /// - improve performance, `rgt` could just receive the result
   fn merge(
     instance: & Instance, pred: PrdIdx,
-    substs: & HTArgss,
-    lft: & Vec<(Quantfed, TTermSet)>,
-    rgt: & Vec<(Quantfed, TTermSet)>
-  ) -> Res< Vec<(Quantfed, TTermSet)> > {
-    log_debug! { "    merging..." }
-    let first_index = instance.original_sig_of(pred).next_index() ;
-    log_debug! { "    first index: {}", first_index }
+    substs: & VarTermsSet, lft: DnfRef, rgt: DnfRef, max: Option<usize>,
+  ) -> Res< Option< MergeRes > > {
+    log! {
+      @6 "merging for {}, {} substitutions", instance[pred], substs.len()
+    }
+    let fresh_index = instance.original_sig_of(pred).next_index() ;
+    log! { @6 "fresh index: {}", fresh_index }
 
     let mut result = Vec::with_capacity( lft.len() * rgt.len() ) ;
+    let mut estimation = 0 ;
 
-    'merge: for & (ref r_qvars, ref r_conj) in rgt {
+    // This will map `lft` quantified variables to fresh index to avoid
+    // quantified variable clashes.
+    let mut qvar_map = VarHMap::with_capacity(0) ;
+
+    for & (ref r_qvars, ref r_conj) in rgt {
       // Retrieve first legal index for new quantified variables.
-      let mut first_index = first_index ;
+      let mut fresh_index = fresh_index ;
+
       for (idx, _) in r_qvars {
-        log_debug! { "    - rgt qvar {}", idx }
-        if * idx >= first_index { first_index = (1 + ** idx).into() }
+        log! { @7 "- rgt qvar {}", idx }
+        if * idx >= fresh_index {
+          fresh_index = (1 + ** idx).into()
+        }
       }
-      log_debug! { "    first legal index: {}", first_index }
+      log! { @7 "first legal index: {}", fresh_index }
 
-      // Generate map for substitution and update left qvars.
-      let mut map = VarHMap::with_capacity(0) ;
-      conf.check_timeout() ? ;
-      for & (ref l_qvars, ref l_conj) in lft {
-        let mut curr_qvar = first_index ;
-        map.clear() ;
-        map.reserve( l_qvars.len() ) ;
-        let mut qvars = r_qvars.clone() ;
-        qvars.reserve( l_qvars.len() ) ;
-        for (qvar, typ) in l_qvars {
-          log_debug! { "    - lft qvar {}", qvar }
-          let prev = map.insert(* qvar, term::var(curr_qvar, * typ)) ;
-          debug_assert!( prev.is_none() ) ;
-          let prev = qvars.insert( curr_qvar, * typ ) ;
-          debug_assert!( prev.is_none() ) ;
-          curr_qvar.inc()
-        }
-        if_debug! {
-          log_debug! { "    map {{" }
-          for (var, term) in & map {
-            log_debug! { "      {} -> {}", var.default_str(), term }
-          }
-          log_debug! { "    }}" }
-          log_debug! { "    qvars {{" }
-          for (var, typ) in & qvars {
-            log_debug! { "      {}: {}", var.default_str(), typ }
-          }
-          log_debug! { "    }}" }
-        }
+      // All combinations of elements of `lft` of len `substs`.
+      let mut all_lft_combinations = CombinationIter::new(
+        lft.iter(), substs.len()
+      ).chain_err(
+        || format!(
+          "while generating all combinations during merge for predicate {}",
+          instance[pred]
+        )
+      ) ? ;
 
-        conf.check_timeout() ? ;
+      // For each combination of elements of `lft` of len `substs`, add a new
+      // definition to `r_conj`.
+      while let Some(
+        combination
+      ) = all_lft_combinations.next_combination() {
 
-        'all_substitutions: for subst in substs {
-          let mut conj = r_conj.clone() ;
-          conj.reserve( l_conj.terms().len(), l_conj.preds().len() ) ;
-          for term in l_conj.terms() {
-            let (term, _) = term.subst( & (& map, subst) ) ;
-            conj.insert_term( term ) ;
-          }
-          for (pred, argss) in l_conj.preds() {
-            let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
-            for args in argss {
-              let mut nu_args = VarMap::with_capacity( args.len() ) ;
-              for arg in args.iter() {
-                let (arg, _) = arg.subst( & (& map, subst) ) ;
-                nu_args.push(arg)
+        // Done with this combination.
+        if let Some(res) = Self::merge_combination(
+          r_conj, r_qvars, & mut qvar_map,
+          combination, substs, & mut fresh_index
+        ) ? {
+
+          // Only add if new (loose syntactic check).
+          if result.iter().all(
+            |other| other != & res
+          ) {
+            result.push(res) ;
+
+            if let Some(max) = max {
+              if let Some(e) = Self::estimate(
+                instance, pred, result.len(), max
+              ) {
+                estimation += e
+              } else {
+                return Ok(None)
               }
-              nu_argss.insert( nu_args.into() ) ;
             }
-            conj.insert_pred_apps( * pred, nu_argss )
           }
-          let curr = (qvars.clone(), conj) ;
-          for prev in & result {
-            if prev == & curr { continue 'all_substitutions }
-          }
-          result.push(curr)
+
         }
+
       }
     }
 
-    Ok(result)
+    Ok(
+      Some( MergeRes::new(result, estimation) )
+    )
   }
+
+
+  /// Handles a merge combination.
+  fn merge_combination(
+    r_conj: & TTermSet, r_qvars: & Quantfed, qvar_map: & mut VarHMap<Term>,
+    combination: & [ & (Quantfed, TTermSet) ], substs: & VarTermsSet,
+    fresh_index: & mut VarIdx,
+  ) -> Res< Option<(Quantfed, TTermSet)> > {
+    debug_assert_eq! { combination.len(), substs.len() }
+
+    // Cloning `rgt`'s definition to add stuff from `lft` for this
+    // combination.
+    // Cloning `rgt`'s qvars to add the renamed qvars from `lft`.
+    let (mut r_conj, mut r_qvars) = ( r_conj.clone(), r_qvars.clone() ) ;
+
+    // Work on the current combination: apply a substitution to a member of
+    // `lft`.
+    for ( (l_qvars, l_conj), subst ) in combination.iter().zip(
+      substs.iter()
+    ) {
+      conf.check_timeout() ? ;
+      log! { @7 "working on substitution..." }
+
+      // Fresh map for this substitution.
+      qvar_map.clear() ;
+
+      // Generate fresh indices for `l_qvars` to avoid index clashes.
+      qvar_map.reserve( l_qvars.len() ) ;
+      r_qvars.reserve( l_qvars.len() ) ;
+      for (qvar, typ) in l_qvars {
+        let prev = qvar_map.insert(
+          * qvar, term::var( * fresh_index, typ.clone() )
+        ) ;
+        debug_assert!( prev.is_none() ) ;
+        // Update the new qvars for the result.
+        let prev = r_qvars.insert( * fresh_index, typ.clone() ) ;
+        debug_assert!( prev.is_none() ) ;
+        // Increment the fresh_index.
+        fresh_index.inc()
+      }
+
+      // Apply substitution and add to `r_conj`.
+
+      r_conj.reserve(
+        l_conj.terms().len(), l_conj.preds().len()
+      ) ;
+      // Working on terms.
+      for term in l_conj.terms() {
+        log! { @8 "subst on {}", term }
+        let (term, _) = term.subst( & (& * qvar_map, subst) ) ;
+        log! { @8 "-> {}", term }
+
+        let is_false = term::simplify::conj_term_insert(
+          term, r_conj.terms_mut()
+        ) ;
+
+        if is_false {
+          return Ok(None)
+        }
+      }
+
+      // Working on pred applications.
+      for (pred, argss) in l_conj.preds() {
+        let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
+        for args in argss {
+          let mut nu_args = VarMap::with_capacity( args.len() ) ;
+          for arg in args.iter() {
+            let (arg, _) = arg.subst( & (& * qvar_map, subst) ) ;
+            nu_args.push(arg)
+          }
+          nu_argss.insert( nu_args.into() ) ;
+        }
+        r_conj.insert_pred_apps( * pred, nu_argss )
+      }
+    }
+
+    Ok( Some((r_qvars, r_conj)) )
+  }
+
+
+
+  /// Retrieves the definition of a predicate from all its RHS occurences.
+  ///
+  /// Also returns the clause generation estimation.
+  ///
+  /// Returns `None` if inlining would have generated more clauses than `max`
+  /// (by `estimate`).
+  fn dnf_of(
+    & mut self, instance: & Instance, extractor: & mut ExtractionCxt,
+    pred: PrdIdx, max: Option<usize>,
+    previous: & [ (PrdIdx, Dnf) ]
+  ) -> Res< Option<MergeRes> > {
+    log! { @4 "dnf_of({}, {:?})", instance[pred], max }
+
+    let forced_inlining = max.is_none() ;
+
+    let mut estimation = 0 ;
+
+    let clauses = instance.rhs_clauses_of(pred) ;
+    let mut def = Vec::with_capacity( clauses.len() ) ;
+
+    conf.check_timeout() ? ;
+
+    'clause_iter: for clause in clauses {
+      let mut to_merge: Vec<
+        (PrdIdx, VarTermsSet, & Dnf)
+      > = Vec::with_capacity(7) ;
+
+      let clause = & instance[* clause] ;
+      let args = if let Some((p, args)) = clause.rhs() {
+        debug_assert_eq! { p, pred }
+        args
+      } else {
+        bail!("instance inconsistency")
+      } ;
+
+      match extractor.terms_of_rhs_app(
+        true, instance, & clause.vars,
+        clause.lhs_terms(), clause.lhs_preds(), (pred, args)
+      ) ? {
+        utils::ExtractRes::Success((qvars, mut tterms)) => {
+          log! { @5
+            "from clause {}", clause.to_string_info(& instance.preds()) ?
+          }
+
+          if ! forced_inlining && ! tterms.preds().is_empty() {
+            for (pred, def) in previous {
+              if tterms.preds().is_empty() { break }
+              if let Some(argss) = tterms.preds_mut().remove(pred) {
+                to_merge.push( (* pred, argss, def) )
+              }
+            }
+          }
+
+          if let Some(partial_def) = Self::handle_partial_def_of(
+            instance, (def.len(), max), & mut estimation,
+            pred, & mut to_merge, qvars, tterms
+          ) ? {
+            def.extend( partial_def )
+          } else {
+            return Ok(None)
+          }
+
+          if_log! { @5
+            log! { @5 "current definition:" }
+            Self::log_definition(instance, & def)
+          }
+
+        },
+        utils::ExtractRes::SuccessTrue => bail!(
+          "unimplemented, predicate is true ({} {})", instance[pred], args
+        ),
+        utils::ExtractRes::Trivial |
+        utils::ExtractRes::SuccessFalse => continue 'clause_iter,
+        _ => bail!("failed to extract lhs terms"),
+      }
+    }
+
+    Ok(
+      Some( MergeRes::new(def, estimation) )
+    )
+  }
+
+
+  /// Prints a definition for some predicate.
+  #[allow(dead_code)]
+  fn log_definition(_instance: & Instance, _def: DnfRef) {
+    for (qvars, tterms) in _def {
+      log! { @5 "and" }
+      if ! qvars.is_empty() {
+        log! { @5 "  qvars {{" }
+        for (var, typ) in qvars {
+          log! { @5 "    {}: {}", var.default_str(), typ }
+        }
+        log! { @5 "  }}" }
+      }
+      for term in tterms.terms() {
+        log! { @5 "  {}", term }
+      }
+      for (pred, argss) in tterms.preds() {
+        for args in argss {
+          log! { @5 "  ({} {})", _instance[* pred], args }
+        }
+      }
+    }
+    log! { @5 => " " }
+  }
+
+
+
+  /// Handles a conjunction that's part of a definition for a predicate.
+  fn handle_partial_def_of(
+    instance: & Instance,
+    (def_len, max): (usize, Option<usize>), estimation: & mut usize,
+    pred: PrdIdx, to_merge: & mut Vec< (PrdIdx, VarTermsSet, & Dnf) >,
+    qvars: Quantfed, tterms: TTermSet
+  ) -> Res< Option<Dnf> > {
+    let res = if to_merge.is_empty() {
+      if let Some(max) = max.map(
+        |max: usize| if * estimation > max { 0 } else {
+          max - * estimation
+        }
+      ) {
+        if let Some(e) = Self::estimate(instance, pred, def_len + 1, max) {
+          * estimation += e
+        } else {
+          return Ok(None)
+        }
+      }
+      Some( vec![ (qvars, tterms) ] )
+    } else if let Some(def) = Self::sub_handle_partial_def_of(
+      instance, max, estimation, pred, to_merge, qvars, tterms
+    ) ? {
+      Some(def)
+    } else {
+      None
+    } ;
+
+    Ok(res)
+  }
+
+
+
+  /// Handles a conjunction that's part of a definition for a predicate.
+  fn sub_handle_partial_def_of(
+    instance: & Instance, max: Option<usize>, estimation: & mut usize,
+    pred: PrdIdx, to_merge: & mut Vec< (PrdIdx, VarTermsSet, & Dnf) >,
+    qvars: Quantfed, tterms: TTermSet
+  ) -> Res< Option<Dnf> > {
+    if_log! { @5
+      log! { @5 => "qvars {{" }
+      for (var, typ) in & qvars {
+        log! { @5 => "  {}: {}", var.default_str(), typ }
+      }
+      log! { @5 => "}}" }
+      log! { @5 => "conj {{" }
+      for term in tterms.terms() {
+        log! { @5 => "  {}", term }
+      }
+      for (pred, argss) in tterms.preds() {
+        for args in argss {
+          log! { @5 => "  ({} {})", instance[* pred], args }
+        }
+      }
+      log! { @5 => "}}" }
+    }
+
+    let mut curr = vec![ (qvars, tterms) ] ;
+
+    for (_this_pred, argss, p_def) in to_merge.drain(0..) {
+      conf.check_timeout() ? ;
+
+      if_log! { @6
+        Self::log_merge_defs(
+          _this_pred, instance, & argss, p_def, & curr
+        )
+      }
+
+      if let Some(res) = Self::merge(
+        instance, pred, & argss, p_def, & curr, max.map(
+          |max: usize| if * estimation > max { 0 } else {
+            max - * estimation
+          }
+        )
+      ) ? {
+        curr = res.def ;
+        * estimation += res.estimation ;
+      } else {
+        return Ok(None)
+      }
+    }
+
+    Ok( Some(curr) )
+  }
+
+
+  /// Prints definition before merging.
+  #[allow(dead_code)]
+  fn log_merge_defs(
+    _this_pred: PrdIdx, _instance: & Instance,
+    _argss: & VarTermsSet, _p_def: DnfRef, _curr: DnfRef
+  ) {
+    log! { @6 => "curr {{" }
+    let mut first = true ;
+    for & (ref qv, ref tterms) in _curr {
+      if first { first = false } else { log! { @6 => " " } }
+      for (var, typ) in qv {
+        log! { @6 => "  {}: {}", var.default_str(), typ }
+      }
+      for term in tterms.terms() {
+        log! { @6 => "  {}", term }
+      }
+      for (pred, _argss) in tterms.preds() {
+        for args in _argss {
+          log! { @6 => "  ({} {})", _instance[* pred], args }
+        }
+      }
+    }
+    log! { @6 => "}}" }
+    Self::log_merge_defs_sub(_this_pred, _instance, _argss, _p_def)
+  }
+
+  /// Prints definition before merging.
+  #[allow(dead_code)]
+  fn log_merge_defs_sub(
+    _this_pred: PrdIdx, _instance: & Instance,
+    _argss: & VarTermsSet, _p_def: DnfRef
+  ) {
+    log! { @6 => "argss for {} {{", _instance[_this_pred] }
+    for args in _argss {
+      let mut pref = "  > " ;
+      for (var, arg) in args.index_iter() {
+        log! { @6 => "{}{} -> {}", pref, var.default_str(), arg }
+        pref = "    "
+      }
+    }
+    log! { @6 => "}}" }
+    log! { @6 => "defs {{" }
+    let mut first = true ;
+
+    for & (ref qv, ref tterms) in _p_def {
+      if first { first = false } else { log! { @6 => " " } }
+      for (var, typ) in qv {
+        log! { @6 => "  {}: {}", var.default_str(), typ }
+      }
+      for term in tterms.terms() {
+        log! { @6 => "  {}", term }
+      }
+      for (pred, _argss) in tterms.preds() {
+        for args in _argss {
+          log! { @6 => "  ({} {})", _instance[* pred], args }
+        }
+      }
+    }
+    log! { @6 => "}}" }
+  }
+
 
 
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
-  pub fn inline(
-    & mut self, instance: & Instance, keep: & mut PrdSet,
-    upper_bound: usize
-  ) -> Res<
-    PrdHMap< Vec<(Quantfed, TTermSet)> >
-  > {
-    let mut res = PrdHMap::with_capacity(
+  pub fn inline<'a>(
+    & mut self, instance: & mut PreInstance<'a>,
+    keep: & mut PrdSet, mut upper_bound: usize,
+  ) -> Res< Vec< (PrdIdx, Dnf) > > {
+    let (extractor, instance) = instance.extraction() ;
+    let mut res = Vec::with_capacity(
       instance.preds().len() - keep.len()
     ) ;
-    let mut increase: usize = 0 ;
+    macro_rules! res_contains {
+      ($pred:expr) => ( res.iter().any( |(pred, _)| pred == $pred ) ) ;
+    }
 
     let forced_inlining = keep.len() == 0 ;
 
@@ -401,235 +766,152 @@ impl Graph {
       'find_pred: for (prd, srcs) in self.bakward.index_iter() {
         if keep.contains(& prd)
         || instance.forced_terms_of(prd).is_some()
-        || res.contains_key(& prd) { continue 'find_pred }
+        || res_contains!(& prd) { continue 'find_pred }
         log_debug! { "looking at {}", instance[prd] }
         'check_src: for (src, cnt) in srcs.index_iter() {
           if * cnt == 0 { continue 'check_src }
           log_debug! { "depends on {}", instance[src] }
           if ! keep.contains(& src)
-          && ! res.contains_key(& src) { continue 'find_pred }
+          && ! res_contains!(& src) { continue 'find_pred }
         }
         pred = Some(prd) ;
         break 'find_pred
       }
 
       let pred = if let Some(p) = pred { p } else {
-        log! { @debug "  no predicate illeligible for inlining" }
+        log_debug! { "no predicate illeligible for inlining" }
         break 'construct
       } ;
-      log! { @debug "  inlining {}", instance[pred] }
 
-      // read_line("to continue...") ;
-
-      let (lhs_clauses, clauses) = instance.clauses_of(pred) ;
-      let mut def = Vec::with_capacity( clauses.len() ) ;
-
-      conf.check_timeout() ? ;
-
-      'clause_iter: for clause in clauses {
-        let mut to_merge: Vec<(
-          PrdIdx, HTArgss, & Vec<(Quantfed, TTermSet)>
-        )> = Vec::with_capacity(7) ;
-
-        let clause = & instance[* clause] ;
-        let args = if let Some((p, args)) = clause.rhs() {
-          debug_assert_eq! { p, pred }
-          args
-        } else {
-          bail!("instance inconsistency")
-        } ;
-        match utils::terms_of_rhs_app(
-          true, instance, & clause.vars,
-          clause.lhs_terms(), clause.lhs_preds(),
-          pred, args
-        ) ? {
-          utils::ExtractRes::Success((qvars, mut tterms)) => {
-            log! { @debug
-              "from clause {}", clause.to_string_info(& instance.preds()) ?
-            }
-            if ! forced_inlining && ! tterms.preds().is_empty() {
-              for (pred, def) in & res {
-                if tterms.preds().is_empty() { break }
-                if let Some(argss) = tterms.preds_mut().remove(pred) {
-                  to_merge.push( (* pred, argss, def) )
-                }
-              }
-            }
-            debug_assert! {{
-              let mut okay = true ;
-              if ! forced_inlining {
-                for (pred, _) in tterms.preds() {
-                  if ! keep.contains( pred ) {
-                    println!("can't find {} in keep", instance[* pred]) ;
-                    okay = false
-                  }
-                }
-              }
-              okay
-            }}
-
-            if to_merge.is_empty() {
-              def.push( (qvars, tterms) )
-            } else {
-
-              if_debug! {
-                log_debug! { "  qvars {{" }
-                for (var, typ) in & qvars {
-                  log_debug! { "    {}: {}", var.default_str(), typ }
-                }
-                log_debug! { "  }}" }
-                log_debug! { "  conj {{" }
-                for term in tterms.terms() {
-                  log_debug! { "    {}", term }
-                }
-                for (pred, argss) in tterms.preds() {
-                  for args in argss {
-                    log_debug! { "    ({} {})", instance[* pred], args }
-                  }
-                }
-                log_debug! { "  }}" }
-              }
-
-              let mut curr = vec![ (qvars, tterms) ] ;
-
-              for (_this_pred, argss, p_def) in to_merge.drain(0..) {
-                conf.check_timeout() ? ;
-                if_debug! {
-                  let mut first = true ;
-                  log_debug! { "  args for {} {{", instance[_this_pred] }
-                  for (var, arg) in args.index_iter() {
-                    log_debug! { "    {} -> {}", var.default_str(), arg }
-                  }
-                  log_debug! { "  }}" }
-                  log_debug! { "  curr {{" }
-                  for & (ref qv, ref tterms) in & curr {
-                    if first { first = false } else { log_debug! { " " } }
-                    for (var, typ) in qv {
-                      log_debug! { "    {}: {}", var.default_str(), typ }
-                    }
-                    for term in tterms.terms() {
-                      log_debug! { "    {}", term }
-                    }
-                    for (pred, argss) in tterms.preds() {
-                      for args in argss {
-                        log_debug! { "    ({} {})", instance[* pred], args }
-                      }
-                    }
-                  }
-                  log_debug! { "  }}" }
-                  log_debug! { "  def {{" }
-                  first = true ;
-                  for & (ref qv, ref tterms) in p_def {
-                    if first { first = false } else { log_debug! { " " } }
-                    for (var, typ) in qv {
-                      log_debug! { "    {}: {}", var.default_str(), typ }
-                    }
-                    for term in tterms.terms() {
-                      log_debug! { "    {}", term }
-                    }
-                    for (pred, argss) in tterms.preds() {
-                      for args in argss {
-                        log_debug! { "    ({} {})", instance[* pred], args }
-                      }
-                    }
-                  }
-                  log_debug! { "  }}" }
-                }
-                curr = Self::merge(
-                  instance, pred, & argss, p_def, & curr
-                ) ?
-              }
-              // if_debug! {
-              //   log_debug! { "  finally {{" }
-              //   let dnf: Vec<_> = (& curr as & Vec<_>).clone() ;
-              //   log_debug! { "    {}", TTerms::dnf(dnf) }
-              //   log_debug! { "  }}" }
-              // }
-              for pair in curr {
-                def.push(pair)
-              }
-            }
-          },
-          utils::ExtractRes::SuccessTrue => {
-            bail!("unimplemented, predicate is true")
-          },
-          utils::ExtractRes::Trivial |
-          utils::ExtractRes::SuccessFalse => continue 'clause_iter,
-          _ => bail!("failed to extract lhs terms"),
-        }
-        
-      }
-
-      let mut this_pred_increase: usize = 0 ;
+      log_debug! { "investigating inlining {}", instance[pred] }
 
       macro_rules! keep_and_continue {
         ($pred:expr) => (
           keep.insert($pred) ;
           continue 'construct
-        )
+        ) ;
+        () => ({
+          keep.insert(pred) ;
+          continue 'construct
+        }) ;
+      }
+
+      let def = if let Some(res) = self.dnf_of(
+        instance, extractor, pred,
+        if ! forced_inlining { Some(upper_bound) } else { None },
+        & res
+      ) ? {
+        upper_bound += res.estimation ;
+        log! { @4
+          "inlining {} (blow-up estimation: {})",
+          instance[pred], res.estimation
+        }
+        res.def
+      } else {
+        keep_and_continue!()
+      } ;
+
+      if_log! { @4
+        log! { @4 => "definition:" }
+        Self::log_definition(instance, & def)
       }
 
       conf.check_timeout() ? ;
-      for clause in lhs_clauses {
-        let count = if let Some(argss) = instance[
-          * clause
-        ].lhs_preds().get(& pred) {
-          argss.len()
-        } else {
-          bail!("inconsistent instance state")
-        } ;
 
-        let mut this_increase = def.len() ;
-        for _ in 1 .. count {
-          if let Some(val) = this_increase.checked_mul( def.len() ) {
-            this_increase = val
-          } else {
-            keep_and_continue! { pred }
-          }
-        }
-        if let Some(val) = this_pred_increase.checked_add(this_increase) {
-          this_pred_increase = val
-        } else {
-          keep_and_continue! { pred }
-        }
+      debug_assert! { ! res_contains!(& pred) }
 
-      }
-
-      let rmed = instance.clauses_of(pred).1.len() ;
-      this_pred_increase = if this_pred_increase >= rmed {
-        this_pred_increase - rmed
-      } else {
-        0
-      } ;
-
-      if forced_inlining {
-        let prev = res.insert( pred, def ) ;
-        debug_assert! { prev.is_none() }
-      } else {
-
-        if let Some(sum_increase) = this_pred_increase.checked_add(increase) {
-          log_info! {
-            "  blow-up prediction for {}: {} + {} = {} / {}",
-            instance[pred], this_pred_increase, increase,
-            sum_increase, upper_bound
-          }
-          if sum_increase >= upper_bound {
-            log_info! { "  -> blows up" }
-            keep_and_continue! { pred }
-          } else {
-            log_info! { "  -> inlining" }
-            increase = sum_increase ;
-            let prev = res.insert( pred, def ) ;
-            debug_assert! { prev.is_none() }
-          }
-        } else {
-          keep_and_continue! { pred }
-        }
-
-      }
+      res.push( (pred, def) )
     }
 
     Ok( res )
+  }
+
+
+  /// Estimates clause creation blow-up.
+  ///
+  /// Estimates whether inlining `pred` with a DNF of length `len` will
+  /// generate more than `max` clauses. If yes, returns `None`, and returns its
+  /// prediction otherwise.
+  fn estimate(
+    instance: & Instance, pred: PrdIdx, len: usize, max: usize
+  ) -> Option<usize> {
+    let max = max + instance.clauses_of(pred).1.len() ;
+    let mut estimation: usize = 0 ;
+
+    // println!("{}: {} / {}", instance[pred], len, max) ;
+
+    for clause in instance.clauses_of(pred).0 {
+      let argss_len = instance[* clause].lhs_preds().get(& pred).map(
+        |argss| argss.len()
+      ).expect("inconsistent instance state") ;
+      // println!("  #{}: {}", clause, argss_len) ;
+
+      let mut inc = len ;
+      for _ in 1 .. argss_len {
+        if inc > max {
+          return None
+        } else if let Some(nu_inc) = inc.checked_mul(len) {
+          inc = nu_inc
+        } else {
+          return None
+        }
+      }
+
+      if let Some(e) = estimation.checked_add(inc) {
+        estimation = e ;
+        if estimation <= max {
+          // println!("  est: {}", estimation) ;
+          continue
+        }
+      }
+      // println!("blows up") ;
+      log! { @6
+        "inlining for {} blows up: {} > {} (len: {})",
+        instance[pred], estimation, max, len
+      }
+      return None
+    }
+
+    Some(estimation)
+  }
+
+
+
+
+  /// Finds a predicate to start breaking cycles from in the graph.
+  fn find_starting_pred(
+    & self, instance: & Instance, pos: & PrdSet, forward: & PrdHMap<PrdSet>
+  ) -> Option<PrdIdx> {
+    if_log! { @3
+      log! { @3 => "  looking for a starting point with" }
+      log! { @3 => "  - pos {{" }
+      for prd in pos {
+        log! { @3 => "    {}", instance[* prd] }
+      }
+      log! { @3 => "  }}" }
+      log! { @3 => "  - forward {{" }
+      for (prd, set) in forward {
+        let mut s = String::new() ;
+        for prd in set {
+          s = format!("{} {}", s, instance[* prd])
+        }
+        log! { @3 => "    {} ->{}", instance[* prd], s }
+      }
+      log! { @3 => " }}" }
+    }
+
+    // Find a starting point.
+    if let Some(pred) = pos.iter().next() {
+      log! { @3 "  found one in `pos`" }
+      // There was something in `pos`, remove it and move on.
+      Some(* pred)
+    } else {
+      log! { @3 "  no preds in `pos`, looking in `forward`" }
+      // There was nothing in `pos`, select something from `forward`.
+      forward.iter().next().map(
+        |(pred, _)| * pred
+      )
+    }
   }
 
 
@@ -642,6 +924,65 @@ impl Graph {
     & mut self, instance: & Instance
   ) -> Res<PrdSet> {
     log_debug! { "breaking cycles in pred dep graph..." }
+
+    let (mut set, mut pos, mut forward) = self.get_current_graph(instance) ? ;
+
+    let mut cnt = 0 ;
+
+    conf.check_timeout() ? ;
+    'break_cycles: while ! forward.is_empty() {
+
+      cnt += 1 ;
+      self.to_dot(instance, format!("pred_red_{}", cnt), & set) ? ;
+
+      let start = self.find_starting_pred(instance, & pos, & forward) ;
+
+      let start = if let Some(pred) = start { pred } else {
+        log! { @3 "  no starting point found, done" }
+        break 'break_cycles
+      } ;
+
+      log! { @3 "  starting point is {}, following it", instance[start] }
+
+      // Follow it.
+      let weights = Self::follow(instance, start, & forward) ? ;
+      if weights.is_empty() {
+        bail!("`follow` failed to construct weights...")
+      }
+
+      if let Some(pred) = Self::find_heaviest(instance, & weights) ? {
+        log! { @3
+          "  removing it from everything" ;
+          "  remembering {}", instance[pred]
+        }
+        // Remove the representative from everything.
+        Self::forget(pred, & mut pos, & mut forward) ;
+
+        let is_new = set.insert(pred) ;
+        debug_assert!( is_new ) ;
+
+        log! { @3 "" }
+
+      } else {
+        // There's no cycle, forget everything in weight and keep going.
+        for (pred, _weight) in weights {
+          log! { @3 "  - forgetting {} ({})", instance[pred], _weight }
+          Self::forget(pred, & mut pos, & mut forward) ;
+          debug_assert!( _weight < 2 )
+        }
+      }
+
+    }
+
+    set.shrink_to_fit() ;
+    Ok(set)
+  }
+
+
+  /// Retrieves positive predicates and arrows in the current dependency graph.
+  fn get_current_graph(
+    & self, instance: & Instance
+  ) -> Res< (PrdSet, PrdSet, PrdHMap<PrdSet>) > {
     let mut set = PrdSet::with_capacity(instance.preds().len() / 3) ;
 
     conf.check_timeout() ? ;
@@ -669,122 +1010,59 @@ impl Graph {
         if set.contains(& tgt) { continue }
         if * cnt > 0 {
           let is_new = forward.entry(prd).or_insert_with(
-            || PrdSet::new()
+            PrdSet::new
           ).insert(tgt) ;
           debug_assert!( is_new )
         }
       }
     }
+    Ok( (set, pos, forward) )
+  }
 
-    let mut cnt = 0 ;
 
-    conf.check_timeout() ? ;
-    'break_cycles: while ! forward.is_empty() {
+  /// Forgets a predicate from the positive and forward set.
+  fn forget(
+    pred: PrdIdx, pos: & mut PrdSet, forward: & mut PrdHMap<PrdSet>
+  ) {
+    pos.remove(& pred) ;
+    forward.remove(& pred) ;
+    for (_, set) in forward.iter_mut() {
+      set.remove(& pred) ;
+    }
+  }
 
-      cnt += 1 ;
-      self.to_dot(instance, format!("pred_red_{}", cnt), & set) ? ;
 
-      if_debug! {
-        log_debug! { "  looking for a starting point with" }
-        log_debug! { "  - pos {{" }
-        for prd in & pos {
-          log_debug! { "    {}", instance[* prd] }
-        }
-        log_debug! { "  }}" }
-        log_debug! { "  - forward {{" }
-        for (prd, set) in & forward {
-          let mut s = String::new() ;
-          for prd in set {
-            s = format!("{} {}", s, instance[* prd])
-          }
-          log_debug! { "    {} ->{}", instance[* prd], s }
-        }
+  /// Looks for the heaviest predicate.
+  ///
+  /// Returns `None` if there are no cycles (max weight < 2).
+  fn find_heaviest(
+    _instance: & Instance, weights: & PrdHMap<usize>
+  ) -> Res< Option<PrdIdx> > {
+    log! { @3 "  looking for the heaviest predicate" }
+
+    // Representant.
+    let mut rep = None ;
+    for (prd, weight) in weights {
+      let (prd, weight) = (* prd, * weight) ;
+      log! { @3 "    {} -> {}", _instance[prd], weight }
+      let curr_weight = if let Some(
+        & (_, w)
+      ) = rep.as_ref() { w } else { 0 } ;
+      if weight > curr_weight {
+        rep = Some((prd, weight))
       }
-      // Find a starting point.
-      let mut start = None ;
-      for prd in & pos {
-        start = Some(* prd) ;
-        break
-      }
-      if let Some(pred) = start {
-        log_debug! { "  found one in `pos`" }
-        // There was something in `pos`, remove it and move on.
-        start = Some(pred)
-      } else {
-        log_debug! { "  no preds in `pos`, looking in `forward`" }
-        // There was nothing in `pos`, select something from `forward`.
-        for (prd, _) in & forward {
-          start = Some(* prd) ;
-          break
-        }
-      } ;
-
-      let start = if let Some(pred) = start { pred } else {
-        log_debug! { "  no starting point found, done" }
-        break 'break_cycles
-      } ;
-
-      log_debug! { "  starting point is {}, following it", instance[start] }
-
-      // Follow it.
-      let weights = Self::follow(instance, start, & forward) ? ;
-      if weights.is_empty() {
-        bail!("`follow` failed to construct weights...")
-      }
-
-      log_debug! { "  looking for the heaviest predicate" }
-
-      // Representant.
-      let mut rep = None ;
-      for (prd, weight) in & weights {
-        let (prd, weight) = (* prd, * weight) ;
-        log_debug! { "    {} -> {}", instance[prd], weight }
-        let curr_weight = if let Some(
-          & (_, w)
-        ) = rep.as_ref() { w } else { 0 } ;
-        if weight > curr_weight {
-          rep = Some((prd, weight))
-        }
-      }
-
-      let rep = if let Some((prd, weight)) = rep {
-        if weight < 2 {
-          log_debug! { "  no cycle, forgetting everything" }
-          // There's no cycle, forget everything in weight and keep going.
-          for (prd, _weight) in weights {
-            log_debug! { "  - forgetting {} ({})", instance[prd], _weight }
-            pos.remove(& prd) ;
-            forward.remove(& prd) ;
-            for (_, set) in forward.iter_mut() {
-              set.remove(& prd) ;
-            }
-            debug_assert!( _weight < 2 )
-          }
-          continue 'break_cycles
-        } else {
-          log_debug! { "  heaviest is {} ({})", instance[prd], weight }
-          prd
-        }
-      } else {
-        unreachable!()
-      } ;
-
-      log_debug! { "  removing it from everything" }
-      // Remove the representative from everything.
-      pos.remove(& rep) ;
-      forward.remove(& rep) ;
-      for (_, set) in forward.iter_mut() {
-        set.remove(& rep) ;
-      }
-
-      log_debug! { "  remembering {}", instance[rep] }
-      let is_new = set.insert(rep) ;
-      debug_assert!( is_new ) ;
-
-      log_debug! { "  " }
     }
 
-    set.shrink_to_fit() ;
-    Ok(set)
+    if let Some((pred, weight)) = rep {
+      log! { @3 "  heaviest is {} ({})", _instance[pred], weight }
+      if weight < 2 {
+        log! { @3 "no cycle, forgetting everything" }
+        Ok(None)
+      } else {
+        Ok( Some(pred) )
+      }
+    } else {
+      bail!("try to find heaviest predicate in empty weight map")
+    }
   }
 }

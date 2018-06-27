@@ -3,7 +3,7 @@
 //! Used to reason separately on each positive/negative clause.
 
 use common::* ;
-
+use unsat_core::UnsatRes ;
 
 
 
@@ -18,8 +18,8 @@ use common::* ;
 ///
 /// Assumes the instance is **already pre-processed**.
 pub fn work(
-  real_instance: Arc<Instance>, _profiler: & Profiler
-) -> Res< Option<ConjCandidates> > {
+  real_instance: & Arc<Instance>, _profiler: & Profiler
+) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
   let mut model = ConjCandidates::new() ;
 
   macro_rules! model {
@@ -45,21 +45,25 @@ pub fn work(
     }) ;
   }
 
-  let mut splitter = Splitter::new(& real_instance) ;
+  let mut splitter = Splitter::new(
+    real_instance.clone()
+  ) ;
 
   'split_loop: while let Some(preproc_res) = {
-    if let Some((clause, handled, total)) = splitter.info() {
-      log! { conf.stats || conf.split_step, || @info
-        "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
-        conf.emph("|"),
-        conf.happy("="),
-        conf.sad("="),
-        conf.happy("="),
-        conf.emph("|"),
-        clause, handled + 1, total
-      }
-      if conf.split_step {
-        pause("to start sub-preprocessing", _profiler) ;
+    if_not_bench! {
+      if let Some((clause, handled, total)) = splitter.info() {
+        log! { conf.stats || conf.split_step, || @info
+          "\n{}{}{}{}{} Splitting on negative clause #{} ({} of {})",
+          conf.emph("|"),
+          conf.happy("="),
+          conf.sad("="),
+          conf.happy("="),
+          conf.emph("|"),
+          clause, handled + 1, total
+        }
+        if conf.split_step {
+          pause("to start sub-preprocessing", _profiler) ;
+        }
       }
     }
     splitter.next_instance(& _profiler)
@@ -67,17 +71,21 @@ pub fn work(
     if let Some(prof) = splitter.profiler() {
       print_stats("sub-preproc", prof)
     }
-    profile! { |_profiler| "sub-systems" => add 1 }
+    profile! { |_profiler| "sub-system(s)" => add 1 }
 
     let mut instance = match preproc_res {
       Either::Left(instance) => instance,
-      Either::Right(None) => {
-        log! { @info "unsat by preproc\n\n" }
-        bail!(ErrorKind::Unsat)
+      Either::Right(
+        MaybeModel::Unsat
+      ) => unsat!{
+        "by preprocessing"
       },
-      Either::Right(Some(this_model)) => {
-        log! { @info "sat by preproc\n\n" }
+      Either::Right(
+        MaybeModel::Model(this_model)
+      ) => {
+        log_info! { "sat by preproc\n\n" }
         model! { add this_model }
+
         continue 'split_loop
       },
     } ;
@@ -86,13 +94,15 @@ pub fn work(
       if conf.split_step {
         pause("to continue", _profiler) ;
       } else {
-        log! { @info "Skipping learning..." }
+        log_info! { "Skipping learning..." }
       }
+
       continue 'split_loop
+
     } else if conf.split_step {
       pause("to start solving", _profiler) ;
     } else {
-      log! { @info "Starting learning..." }
+      log_info! { "Starting learning..." }
     }
 
     let res = profile!(
@@ -101,29 +111,28 @@ pub fn work(
       } "solving"
     ) ? ;
 
-    if let Some(candidates) = res {
-      log! { @info "sat\n\n" }
-      let mut this_model = instance.model_of(candidates) ? ;
-      // profile! { |_profiler| tick "waiting" }
-      // while Arc::strong_count(& instance) != 1 {}
-      // profile! { |_profiler| mark "waiting" }
-      if let Some(instance) = Arc::get_mut(& mut instance) {
-        instance.simplify_pred_defs(& mut this_model) ?
-      }
-      model!(add this_model) ;
+    match res {
+      Either::Left(candidates) => {
+        log_info! { "sat\n\n" }
+        let mut this_model = instance.model_of(candidates) ? ;
+        // profile! { |_profiler| tick "waiting" }
+        // while Arc::strong_count(& instance) != 1 {}
+        // profile! { |_profiler| mark "waiting" }
+        if let Some(instance) = Arc::get_mut(& mut instance) {
+          instance.simplify_pred_defs(& mut this_model) ?
+        }
+        model!(add this_model) ;
+        // let mut model = real_instance.extend_model(model.clone()) ? ;
+        // real_instance.write_model(& model, & mut stdout()) ?
+      },
 
-      // let mut model = real_instance.extend_model(model.clone()) ? ;
-      // let stdout = & mut ::std::io::stdout() ;
-      // real_instance.write_model(& model, stdout) ?
-    } else {
-      log! { @info "unsat\n\n" }
-      bail!(ErrorKind::Unsat)
+      Either::Right(reason) => return Ok( Some( Either::Right(reason) ) ),
     }
 
   }
 
   if conf.infer {
-    Ok( Some(model) )
+    Ok( Some( Either::Left(model) ) )
   } else {
     Ok(None)
   }
@@ -134,10 +143,10 @@ pub fn work(
 pub fn run_teacher(
   instance: Arc<Instance>,
   model: & ConjCandidates,
-) -> Res< Option<Candidates> > {
+) -> Res< Either<Candidates, UnsatRes> > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
-    & instance, model, & teacher_profiler
+    instance, model, & teacher_profiler
   ) ;
   print_stats("teacher", teacher_profiler) ;
   solve_res
@@ -157,6 +166,8 @@ pub struct Splitter {
   /// `Right(once)` means that this splitting is inactive, and `next_instance`
   /// will return `self.instance` if `! once` and `None` otherwise.
   clauses: Either<Vec<ClsIdx>, bool>,
+  /// Total number of clauses considered.
+  clause_count: usize,
   /// Negative clauses for which we already have a solution.
   prev_clauses: ClsSet,
   /// Profiler.
@@ -165,8 +176,8 @@ pub struct Splitter {
 impl Splitter {
 
   /// Constructor.
-  pub fn new(instance: & Arc<Instance>) -> Self {
-    let clauses = if conf.split
+  pub fn new(instance: Arc<Instance>) -> Self {
+    let (clauses, clause_count) = if conf.split
     && instance.neg_clauses().len() > 1 {
       // We want the predicates that appear in the most lhs last (since
       // we're popping).
@@ -205,31 +216,61 @@ impl Splitter {
       ).collect() ;
 
       clauses.sort_unstable_by(
-        |& (_, count_1), & (_, count_2)| count_1.cmp(& count_2)
-      ) ;
-
-      if_verb! {
-        if conf.preproc.split_sort {
-          log! { @verb
-            "sorted clauses:"
-          }
-          for & (clause, count) in clauses.iter() {
-            log! { @verb "#{} ({})", clause, count }
-            log! { @debug
-              "{}", instance[clause].to_string_info(instance.preds()).unwrap()
-            }
+        |& (c_1, count_1), & (c_2, count_2)| {
+          if   instance[c_1].is_strict_neg()
+          && ! instance[c_2].is_strict_neg() {
+            ::std::cmp::Ordering::Greater
+          } else if ! instance[c_1].is_strict_neg()
+          && instance[c_2].is_strict_neg() {
+            ::std::cmp::Ordering::Less
+          } else if instance[c_1].from_unrolling
+          && ! instance[c_2].from_unrolling {
+            ::std::cmp::Ordering::Greater
+          } else if ! instance[c_1].from_unrolling
+          && instance[c_2].from_unrolling {
+            ::std::cmp::Ordering::Less
+          } else {
+            count_1.cmp(& count_2)
           }
         }
-      }
+      ) ;
 
-      Either::Left(clauses.into_iter().map(|(c,_)| c).collect())
+      // if_verb! {
+      //   if conf.preproc.split_sort {
+      //     log_verb! {
+      //       "sorted clauses:"
+      //     }
+      //     for & (clause, count) in clauses.iter() {
+      //       log_verb! { "#{} ({})", clause, count }
+      //       log_debug! {
+      //         "{}", instance[clause].to_string_info(instance.preds()).unwrap()
+      //       }
+      //     }
+      //   }
+      // }
+
+      let clauses: Vec<_> = clauses.into_iter()
+      .map(|(c,_)| c
+      // .filter_map(
+      //   |(c,_)| if instance[c].from_unrolling {
+      //     Some(c)
+      //   } else {
+      //     Some(c)
+      //   }
+      ).collect() ;
+
+      let len = clauses.len() ;
+      if len <= 1 {
+        (Either::Right(false), len)
+      } else {
+        (Either::Left(clauses), len)
+      }
     } else {
-      Either::Right(false)
+      (Either::Right(false), 1)
     } ;
-    let instance = instance.clone() ;
-    // let model = Vec::new() ;
+
     Splitter {
-      instance, clauses,
+      instance, clauses, clause_count,
       prev_clauses: ClsSet::new(), _profiler: None,
     }
   }
@@ -247,7 +288,7 @@ impl Splitter {
     match self.clauses {
       Either::Left(ref clauses) => {
         if let Some(clause) = clauses.last() {
-          let total = self.instance.neg_clauses().len() ;
+          let total = self.clause_count ;
           let count = total - clauses.len() ;
           Some((* clause, count, total))
         } else {
@@ -260,7 +301,7 @@ impl Splitter {
 
   /// Returns the next instance to work on.
   pub fn next_instance(& mut self, _prof: & Profiler) -> Res<
-    Option< Either<Arc<Instance>, Option<Model>> >
+    Option< Either<Arc<Instance>, MaybeModel<Model>> >
   > {
     match self.clauses {
       Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
@@ -275,11 +316,7 @@ impl Splitter {
         self.prev_clauses.insert(clause) ;
         self._profiler = Some(profiler) ;
         Ok(
-          Some(
-            preproc_res.map_left(
-              |sub_instance| Arc::new(sub_instance)
-            )
-          )
+          Some( preproc_res.map_left(Arc::new) )
         )
       } else {
         Ok(None)
@@ -307,7 +344,7 @@ impl Splitter {
 fn preproc(
   instance: & Instance, clause: ClsIdx,
   prev_clauses: & ClsSet, profiler: & Profiler
-) -> Res< Either<Instance, Option<Model>>> {
+) -> Res< Either<Instance, MaybeModel<Model>>> {
 
   debug_assert! {
     instance[clause].rhs().is_none()

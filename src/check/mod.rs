@@ -26,7 +26,22 @@ pub type Typ = String ;
 /// A signature.
 pub type Sig = Vec<Typ> ;
 
+
+/// A function definition.
+#[derive(Clone)]
+pub struct FunDef {
+  /// Name.
+  pub name: String,
+  /// Arguments.
+  pub args: Args,
+  /// Return type.
+  pub typ: Typ,
+  /// Body.
+  pub body: Term,
+}
+
 /// A predicate declaration.
+#[derive(Clone)]
 pub struct PredDec {
   /// Predicate.
   pub pred: Pred,
@@ -44,6 +59,7 @@ pub type Args = Vec<(Ident, Typ)> ;
 pub type Term = String ;
 
 /// A predicate definition.
+#[derive(Clone)]
 pub struct PredDef {
   /// Predicate.
   pub pred: Pred,
@@ -54,6 +70,7 @@ pub struct PredDef {
 }
 
 /// A clause.
+#[derive(Clone)]
 pub struct Clause {
   /// Arguments.
   pub args: Args,
@@ -65,6 +82,8 @@ pub struct Clause {
 pub struct Input {
   /// Predicate declarations.
   pub pred_decs: Vec<PredDec>,
+  /// Function definitions.
+  pub fun_defs: Vec<FunDef>,
   /// Clauses.
   pub clauses: Vec<Clause>,
 }
@@ -73,7 +92,7 @@ impl Input {
   pub fn of_file<P: AsRef<::std::path::Path>>(file: P) -> Res<Self> {
     use std::fs::OpenOptions ;
     let file = file.as_ref() ;
-    info!{
+    log_info!{
       "loading horn clause file {}...", conf.emph(file.to_string_lossy())
     }
     let mut buff = String::new() ;
@@ -103,7 +122,7 @@ impl Output {
   /// Loads some input data from a file.
   pub fn of_file(file: & str) -> Res<Self> {
     use std::fs::OpenOptions ;
-    info!{ "loading hoice output file {}...", conf.emph(file) }
+    log_info!{ "loading hoice output file {}...", conf.emph(file) }
     let mut buff = String::new() ;
     OpenOptions::new().read(true).open(file).chain_err(
       || format!( "while opening file {}", conf.emph(file) )
@@ -120,7 +139,7 @@ impl Output {
   /// Checks the signature of the predicates match the declarations of an input
   /// `smt2` file. Also checks that all predicates are defined *once*.
   pub fn check_consistency(& mut self, input: & Input) -> Res<()> {
-    info!{ "checking predicate signature consistency..." }
+    log_info!{ "checking predicate signature consistency..." }
     let mut map = HashMap::with_capacity( self.pred_defs.len() ) ;
     for & PredDef { ref pred, ref args, .. } in & self.pred_defs {
       let prev = map.insert(pred.clone(), args.clone()) ;
@@ -132,14 +151,17 @@ impl Output {
     }
     for & PredDec { ref pred, ref sig } in & input.pred_decs {
       if let Some(args) = map.get(pred) {
+
         if sig.len() != args.len() {
           bail!(
             "arguments of predicate {}'s definition \
             does not match its signature", conf.emph(pred)
           )
         }
-        let mut count = 0 ;
-        for (ty_1, & (ref arg, ref ty_2)) in sig.iter().zip( args.iter() ) {
+
+        for (count, (ty_1, & (ref arg, ref ty_2))) in sig.iter().zip(
+          args.iter()
+        ).enumerate() {
           if ty_1 != ty_2 {
             bail!(
               "type of argument {} ({}) in predicate {}'s definition ({}) \
@@ -147,17 +169,16 @@ impl Output {
               count, arg, conf.emph(pred), ty_2, ty_1
             )
           }
-          count += 1
         }
+
       } else {
         warn!(
           "predicate {} is not defined in hoice's output", conf.emph(pred)
         ) ;
         let mut args = vec![] ;
-        let mut cnt = 0 ;
-        for ty in sig {
-          args.push( (format!("v_{}", cnt), ty.clone()) ) ;
-          cnt += 1
+
+        for (cnt, ty) in sig.iter().enumerate() {
+          args.push( (format!("v_{}", cnt), ty.clone()) )
         }
         self.pred_defs.push(
           PredDef { pred: pred.clone(), args, body: None }
@@ -199,8 +220,17 @@ impl Data {
     for & Clause {
       ref args, ref body // ref lets, ref lhs, ref rhs
     } in & self.input.clauses {
-      count += 1 ;
       solver.reset() ? ;
+
+      // Define all functions.
+      for & FunDef {
+        ref name, ref args, ref typ, ref body
+      } in & self.input.fun_defs {
+        solver.define_fun(
+          name, args, typ, body
+        ) ?
+      }
+
       // Define all predicates.
       for & PredDef {
         ref pred, ref args, ref body
@@ -229,20 +259,20 @@ impl Data {
 
       let res = solver.check_sat_or_unk() ? ;
 
-      if let & Some(true) = & res {
+      if let Some(true) = res {
         okay = false ;
         let exprs: Vec<_> = args.iter().map(
           |& (ref id, _)| id.clone()
         ).collect() ;
         let model = solver.get_values(& exprs) ? ;
-        println!("") ;
+        println!() ;
         println!("({} \"", conf.bad("error")) ;
         println!("  clause {} is falsifiable with {{", count) ;
         // print!(  "   ") ;
         // for & (ref id, ref ty) in args {
         //   print!(" ({} {})", id, ty)
         // }
-        // println!("") ;
+        // println!() ;
         // println!("    (=>") ;
         // println!("      (and") ;
         // for lhs in lhs {
@@ -256,14 +286,16 @@ impl Data {
         }
         println!("  }}") ;
         println!("\")") ;
-        println!("")
-      } else if let & Some(false) = & res {
-        info!("clause {} is fine", count)
+        println!()
+      } else if let Some(false) = res {
+        log_info!("clause {} is fine", count)
       } else {
         warn!(
           "clause {}'s check resulted in unknown, assuming it's fine", count
         )
       }
+
+      count += 1 ;
     }
 
     if ! okay {
@@ -304,7 +336,6 @@ pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
 /// Checks a `hoice` run, script from a file, model from a string.
 ///
 /// This is currently only used for testing purposes.
-#[cfg(test)]
 pub fn do_it_from_str<P: AsRef<::std::path::Path>>(
   input_file: P, model: & str
 ) -> Res<()> {

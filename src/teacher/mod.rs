@@ -1,4 +1,4 @@
-//! The teacher. Queries an SMT-solver to check candidates.
+//! Checks candidates and sends data to learner(s).
 //! 
 //! # TODO
 //!
@@ -8,12 +8,13 @@
 //! [teach]: fn.teach.html
 //! (Teacher's teach function)
 
-use common::* ;
-use common::data::Data ;
-use common::msg::* ;
-use common::smt::SmtTerm ;
-
-use self::smt::Parser ;
+use common::{
+  *,
+  msg::*,
+  smt::{ SmtTerm, FullParser as Parser },
+} ;
+use unsat_core::UnsatRes ;
+use data::Data ;
 
 pub mod assistant ;
 use self::assistant::Assistant ;
@@ -23,24 +24,43 @@ use self::assistant::Assistant ;
 /// The partial model stores conjunction of top terms for some of the top
 /// terms, and is expressed in terms of the predicates' original signatures.
 pub fn start_class(
-  instance: & Arc<Instance>,
+  instance: Arc<Instance>,
   partial_model: & ConjCandidates,
   profiler: & Profiler
-) -> Res< Option<Candidates> > {
-  let instance = instance.clone() ;
+) -> Res< Either<Candidates, UnsatRes> > {
   log! { @debug
     "starting the learning process" ;
     "  launching solver kid..."
   }
   let mut teacher = Teacher::new(instance, profiler, partial_model) ? ;
-  let res = teach(& mut teacher) ;
+
+  let res = match teach(& mut teacher) {
+    Ok(res) => Ok(res),
+    Err(e) => {
+      match e.kind() {
+        ErrorKind::Unsat => {
+          warn! {
+            "legacy unsat (by error) result triggered\n\
+            unsat core will not be available\n\
+            please consider contacting the developer"
+          }
+          let core = teacher.unsat_core() ;
+          Ok( Either::Right(core) )
+        },
+        _ => Err(e)
+      }
+    },
+  } ;
+
   teacher.finalize() ? ;
   res
 }
 
 
 /// Teaching to the learners.
-pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
+pub fn teach(teacher: & mut Teacher) -> Res<
+  Either<Candidates, UnsatRes>
+> {
 
   log_debug!{ "spawning ice learner..." }
   if conf.ice.pure_synth {
@@ -51,8 +71,8 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   log_debug!{ "performing initial check..." }
   let (cexs, cands) = teacher.initial_check() ? ;
   if cexs.is_empty() {
-    log_debug!{ "solved by initial cex..." }
-    return Ok( Some(cands) )
+    log_debug!{ "solved by initial candidate..." }
+    return Ok( Either::Left(cands) )
   }
   log_debug!{ "generating data from initial cex..." }
   let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
@@ -66,10 +86,9 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
   // None at the beginning (broadcast).
   let mut learner: Option<LrnIdx> = None ;
 
-  log_debug!{ "  starting teaching loop" }
-  'teach: loop {
+  loop {
 
-    info!{
+    log_verb! {
       "all learning data:\n{}", teacher.data.string_do(
         & (), |s| s.to_string()
       ) ?
@@ -95,17 +114,23 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
       }
       let one_alive = teacher.broadcast() ;
       if ! one_alive {
-        bail!("all learners are dead")
+        unknown!("all learners are dead")
       }
     }
+
+    // if teacher.data.is_unsat().is_some() {
+    //   return Ok(Either::Right(teacher.unsat_core()))
+    // }
 
     match teacher.get_candidates(false) ? {
 
       // Unsat result, done.
-      None => return Ok(None),
+      Either::Right(unsat) => {
+        return Ok(Either::Right(unsat))
+      },
 
       // Got a candidate.
-      Some( ( idx, candidates) ) => {
+      Either::Left( ( idx, candidates) ) => {
         learner = Some(idx) ;
         if_verb!{
           log! { conf.teacher.step, || @info
@@ -120,14 +145,13 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
               )
             }
           }
-          log!(@info "" )
+          log_verb! { "" }
         }
 
         if conf.teacher.step {
           pause(
-            & format!(
-              "to look for counterexamples... (--step on)",
-            ), & teacher._profiler
+            "to look for counterexamples... (--step on)",
+            & teacher._profiler
           ) ;
         }
 
@@ -136,7 +160,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         profile!{ teacher mark "cexs" }
 
         if cexs.is_empty() {
-          return Ok( Some(candidates) )
+          return Ok( Either::Left(candidates) )
         }
 
         profile!{ teacher tick "data" }
@@ -146,6 +170,7 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
         ) ;
         profile!{ teacher mark "data", "registration" }
         profile!{ teacher mark "data" }
+
         teacher.run_assistant() ? ;
         match res {
           Ok(true) => {
@@ -163,13 +188,13 @@ pub fn teach(teacher: & mut Teacher) -> Res< Option<Candidates> > {
             ()
           } else {
             bail! {
-              "translation of cexs for {} to data generated no new data",
+              "translation of cexs to data for {} generated no new data",
               conf.emph( & teacher.learners[idx].1 )
             }
           },
           Err(e) => {
             if e.is_unsat() {
-              return Ok(None)
+              return Ok( Either::Right(teacher.unsat_core()) )
             } else {
               bail!(e)
             }
@@ -270,7 +295,7 @@ impl<'a> Teacher<'a> {
     let assistant = if conf.teacher.assistant {
       Some(
         Assistant::new(instance.clone()).chain_err(
-          || format!("while spawning assistant")
+          || "while spawning assistant".to_string()
         ) ?
       )
     } else {
@@ -337,7 +362,9 @@ impl<'a> Teacher<'a> {
     while let Ok(_) = self.get_candidates(true) {}
 
     if conf.stats {
-      self._profiler.add_sub("data", self.data.destroy())
+      self._profiler.add_sub(
+        "data", self.data.destroy()
+      )
     }
     Ok(())
   }
@@ -375,20 +402,22 @@ impl<'a> Teacher<'a> {
   pub fn broadcast(& self) -> bool {
     profile!{ self tick "sending" }
     let mut one_alive = false ;
-    log_info!{ "broadcasting..." }
+    log_verb! { "broadcasting..." }
     for & (ref sender, ref name, _) in self.learners.iter() {
       if let Some(sender) = sender.as_ref() {
-        if let Err(_) = sender.send(
-          FromTeacher::Data( self.data.clone() )
-        ) {
+        if sender.send(
+          FromTeacher::Data(
+            Box::new( self.data.clone() )
+          )
+        ).is_err() {
           warn!( "learner `{}` is dead...", name )
         } else {
           one_alive = true
         }
       }
     }
-    log_info!{ "done broadcasting..." }
-    profile!{ self mark "sending" }
+    log_verb! { "done broadcasting..." }
+    profile! { self mark "sending" }
     one_alive
   }
 
@@ -397,13 +426,11 @@ impl<'a> Teacher<'a> {
     profile! { self tick "sending" }
     let (ref sender, ref name, _) = self.learners[learner] ;
     let alive = if let Some(sender) = sender.as_ref() {
-      if let Err(_) = sender.send(
-        FromTeacher::Data( self.data.clone() )
-      ) {
-        false
-      } else {
-        true
-      }
+      sender.send(
+        FromTeacher::Data(
+          Box::new( self.data.clone() )
+        )
+      ).is_ok()
     } else {
       false
     } ;
@@ -411,6 +438,7 @@ impl<'a> Teacher<'a> {
       warn!( "learner `{}` is dead...", name ) ;
     }
     profile! { self mark "sending" }
+
     Ok(alive)
   }
 
@@ -423,21 +451,17 @@ impl<'a> Teacher<'a> {
   /// If true, `drain` forces to ignore timeouts. Useful when finalizing.
   pub fn get_candidates(
     & mut self, drain: bool
-  ) -> Res< Option<(LrnIdx, Candidates)> > {
+  ) -> Res< Either<(LrnIdx, Candidates), UnsatRes> > {
     macro_rules! all_dead {
-      () => ( bail!("all learners are dead") ) ;
+      () => ( unknown!("all learners are dead") ) ;
     }
 
-    'recv: loop {
+    loop {
 
-      if ! drain {
-        if self.learners.iter().all(
-          |& (ref channel, _, _)| {
-            channel.is_none()
-          }
-        ) {
-          all_dead!()
-        }
+      if ! drain && self.learners.iter().all(
+        |& (ref channel, _, _)| channel.is_none()
+      ) {
+        all_dead!()
       }
 
       profile!{ self tick "waiting" }
@@ -487,7 +511,7 @@ impl<'a> Teacher<'a> {
         MsgKind::Cands(cands) => {
           profile!{ self "candidates" => add 1 }
           if let Id::Learner(idx) = id {
-            return Ok( Some( (idx, cands) ) )
+            return Ok( Either::Left( (idx, cands) ) )
           } else {
             bail!("received candidates from {}", id)
           }
@@ -497,7 +521,7 @@ impl<'a> Teacher<'a> {
           let (_pos, _neg) = samples.pos_neg_count() ;
           profile! { self "assistant pos       " => add _pos }
           profile! { self "assistant neg       " => add _neg }
-          let (pos, neg) = self.data.merge_samples(samples) ? ;
+          let (pos, neg) = self.data.merge_samples(* samples) ? ;
           profile! { self "assistant pos useful" => add pos }
           profile! { self "assistant neg useful" => add neg }
 
@@ -519,6 +543,21 @@ impl<'a> Teacher<'a> {
           }
         },
 
+        MsgKind::Err(ref e) if e.is_unknown() => {
+          if_not_bench! {
+            let id = match id {
+              Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
+              Id::Assistant => conf.emph( "assistant" ),
+            } ;
+            log! { @verb "received `{}` from {}", conf.bad("unknown"), id }
+          }
+
+          // Are we unsat?
+          if self.data.is_unsat().is_some() {
+            return Ok(Either::Right(self.unsat_core()))
+          }
+        },
+
         MsgKind::Err(e) => {
           let id = match id {
             Id::Learner(idx) => conf.emph( & self.learners[idx].1 ),
@@ -530,7 +569,7 @@ impl<'a> Teacher<'a> {
               "from {} learner", id
             )
           ) ;
-          print_err( err.unwrap_err() )
+          print_err( & err.unwrap_err() )
         },
 
         MsgKind::Stats(profiler) => {
@@ -546,11 +585,19 @@ impl<'a> Teacher<'a> {
           }
         },
 
-        MsgKind::Unsat => return Ok(None),
+        MsgKind::Unsat => if self.data.is_unsat().is_some() {
+          return Ok(Either::Right(self.unsat_core()))
+        },
 
       }
 
     }
+  }
+
+  /// Retrieves the unsat core, if any.
+  pub fn unsat_core(& mut self) -> UnsatRes {
+    // UnsatRes::new( self.data.sample_graph() )
+    UnsatRes::new( None )
   }
 
   /// Initial check, where all candidates are `true`.
@@ -565,7 +612,7 @@ impl<'a> Teacher<'a> {
     self.to_teacher = None ;
 
     let mut cands = PrdMap::with_capacity( self.instance.preds().len() ) ;
-    'all_preds: for pred in self.instance.pred_indices() {
+    for pred in self.instance.pred_indices() {
       if self.instance.forced_terms_of(pred).is_some() {
         cands.push( None )
 
@@ -594,10 +641,10 @@ impl<'a> Teacher<'a> {
     }
 
     if_verb! {
-      log! { @info "  initial candidates:" }
+      log_verb! { "  initial candidates:" }
       for (pred, cand) in cands.index_iter() {
         if let Some(cand) = cand.as_ref() {
-          log! { @info
+          log_verb! {
             "    {}: {}", self.instance[pred], cand
           }
         }
@@ -606,6 +653,7 @@ impl<'a> Teacher<'a> {
 
     self.get_cexs(& cands).map(|res| (res, cands))
   }
+
 
   /// Looks for falsifiable clauses given some candidates.
   pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
@@ -618,14 +666,12 @@ impl<'a> Teacher<'a> {
     // rhs is true).
     let mut clauses_to_ignore = ClsSet::new() ;
 
-    if self.count % 50 == 0 {
-      self.solver.reset() ?
-    }
+    let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
 
     self.solver.push(1) ? ;
 
-    // Define non-forced predicates that are not trivially true or false.
-    'define_non_forced: for (pred, cand) in cands.index_iter() {
+    // Retrieve true/false predicates and clauses to ignore. Define predicates.
+    for (pred, cand) in cands.index_iter() {
       if let Some(ref term) = * cand {
         let term = if let Some(other) = self.partial_model.get(& pred) {
           term::and( vec![term.clone(), other.clone()] )
@@ -646,33 +692,49 @@ impl<'a> Teacher<'a> {
             )
           },
           None => {
+            let term = if let Some(other) = self.partial_model.get(& pred) {
+              term::and( vec![term.clone(), other.clone()] )
+            } else {
+              term.clone()
+            } ;
             let pred = & self.instance[pred] ;
             let sig: Vec<_> = pred.sig.index_iter().map(
-              |(var, typ)| (var, * typ)
+              |(var, typ)| (var, typ.get())
             ).collect() ;
             self.solver.define_fun(
-              & pred.name, & sig, & Typ::Bool, & SmtTerm::new(& term)
+              & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
             ) ?
           },
         }
       }
     }
 
-    let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
-
     let instance = self.instance.clone() ;
+
+    // True if we got some positive or negative samples.
+    // let mut got_pos_neg_samples = false ;
 
     macro_rules! run {
       ($clause:expr, $bias:expr) => (
         if ! clauses_to_ignore.contains($clause) {
-          // log_debug!{ "  looking for a cex for clause {}", clause }
+          self.solver.push(1) ? ;
+
           let cexs = self.get_cex(
-            * $clause, & true_preds, & false_preds, $bias
+            * $clause, & true_preds, & false_preds, $bias,
+            // got_pos_neg_samples &&
+            conf.teacher.max_bias
           ).chain_err(
             || format!("while getting counterexample for clause {}", $clause)
           ) ? ;
 
+          self.solver.pop(1) ? ;
+
           if ! cexs.is_empty() {
+            // got_pos_neg_samples = got_pos_neg_samples || (
+            //   cexs.iter().any(
+            //     |(_, bias)| ! bias.is_none()
+            //   )
+            // ) ;
             let prev = map.insert(* $clause, cexs) ;
             debug_assert_eq!(prev, None)
           }
@@ -696,28 +758,49 @@ impl<'a> Teacher<'a> {
       run!(clause, false)
     }
 
-    if map.is_empty() {
+    // got_pos_neg_samples = ! map.is_empty() ;
+
+    if map.is_empty() || ! conf.teacher.max_bias {
       log! { @verb
-        "looking for counterexamples in negative clauses ({})...",
-        instance.neg_clauses().len()
+        "looking for counterexamples in non-strict negative clauses ({})...",
+        instance.non_strict_neg_clauses().len()
       }
-      for clause in instance.neg_clauses() {
-        if ! instance.strict_neg_clauses().contains(clause) {
-          run!(clause, true)
-        }
+      for clause in instance.non_strict_neg_clauses() {
+        run!(clause, true)
       }
     }
 
-    if map.is_empty() {
-      info! {
-        "looking for counterexamples in implication clauses..."
+    if map.is_empty() || ! conf.teacher.max_bias {
+      log_verb! {
+        "looking for counterexamples in implication clauses ({})...",
+        instance.imp_clauses().len()
       }
+
       for clause in instance.imp_clauses() {
         run!(clause, true)
       }
     }
 
-    self.solver.pop(1) ? ;
+    log! { @debug
+      "extracted {} cexs", map.iter().fold(
+        0, |acc, (_, cexs)| acc + cexs.len()
+      )
+    }
+
+    // if got_pos_neg_samples && conf.teacher.max_bias {
+    //   map.retain(
+    //     |_, cexs| {
+    //       cexs.retain( |(_, bias)| ! bias.is_none() ) ;
+    //       ! cexs.is_empty()
+    //     }
+    //   )
+    // }
+
+    if self.count % 100 == 0 {
+      self.solver.reset() ?
+    } else {
+      self.solver.pop(1) ?
+    }
 
     Ok(map)
   }
@@ -726,14 +809,10 @@ impl<'a> Teacher<'a> {
   pub fn get_cex(
     & mut self,
     clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
-    bias: bool,
-  ) -> Res< Vec<Cex> > {
-    let partial = conf.teacher.partial && (
-      self.instance.pos_clauses().contains(& clause_idx) ||
-      self.instance.strict_neg_clauses().contains(& clause_idx)
-    ) ;
+    bias: bool, bias_only: bool
+  ) -> Res< Vec<BCex> > {
+    log! { @debug "working on clause #{}", clause_idx }
 
-    self.solver.push(1) ? ;
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
       () => (& self.instance[clause_idx])
@@ -760,70 +839,361 @@ impl<'a> Teacher<'a> {
 
     macro_rules! get_cex {
 
-      (@$sat:ident $($stuff:tt)*) => ({ // Works on the check-sat result.
+      (@$sat:ident $bias:expr) => ({ // Works on the check-sat result.
+        conf.check_timeout() ? ;
         if $sat {
-          log_debug! { "  getting cex for clause #{}", clause_idx }
+          log! { @3 "sat, getting cex" }
           profile!{ self tick "cexs", "model" }
-          let model = self.solver.get_model_const() ? ;
-          let cex = RArgs::of_model(
-            clause!().vars(), model, partial
+          let model = self.solver.get_model() ? ;
+          let model = Parser.fix_model(model) ? ;
+          // for (var, _, val) in & model {
+          //   println!("v_{} -> {}", var,)
+          // }
+          let cex = Cex::of_model(
+            clause!().vars(), model, ! $bias.is_none() && conf.teacher.partial
           ) ? ;
           profile!{ self mark "cexs", "model" }
-          cexs.push(cex) ;
-          $($stuff)*
+
+          if ! $bias.is_none() {
+            profile! { self "  biased checksat" => add 1 }
+          } else {
+            profile! { self "unbiased checksat" => add 1 }
+          }
+
+          cexs.push((cex, $bias))
         }
       }) ;
 
       () => ({ // Normal check, no actlit.
+        log! { @debug "  checksat" }
         profile!{ self tick "cexs", "check-sat" }
         let sat = self.solver.check_sat() ? ;
         profile!{ self mark "cexs", "check-sat" }
-
-        get_cex!(@sat) ;
+        get_cex!(
+          @sat if clause!().is_positive() {
+            Bias::Lft
+          } else if clause!().is_strict_neg() {
+            let (pred, args) = clause!().lhs_preds().iter().next().map(
+              |(pred, argss)| (
+                * pred, argss.iter().next().unwrap().clone()
+              )
+            ).unwrap() ;
+            Bias::NuRgt(pred, args)
+          } else {
+            Bias::Non
+          }
+        ) ;
       }) ;
 
-      ($actlit:expr ; $blah:expr) => ( // Check modulo actlit, if any.
-        if let Some(actlit) = $actlit {
-          log_debug! { "  checksat for {}", $blah }
-          profile!{ self tick "cexs", "biased check-sat" }
-          let sat = self.solver.check_sat_act(
-            Some(& actlit)
-          ) ? ;
-          profile!{ self mark "cexs", "biased check-sat" }
-          get_cex!(
-            @sat
-            profile!{ self $blah => add 1 }
-          ) ;
-          self.solver.de_actlit(actlit) ?
+      ($actlit:expr ; $bias:expr) => ({
+        log! { @debug
+          "  checksat with bias {}", $bias.to_string(& self.instance)
         }
-      )
+        self.solver.comment(
+          & format!("checksat with bias {}", $bias.to_string(& self.instance))
+        ) ? ;
+        profile!{ self tick "cexs", "biased check-sat" }
+        let sat = self.solver.check_sat_act(
+          Some(& $actlit)
+        ) ? ;
+        profile!{ self mark "cexs", "biased check-sat" }
+        get_cex!(@sat $bias) ;
+        self.solver.de_actlit($actlit) ?
+      }) ;
     }
 
     get_cex!() ;
 
-    // Only try biased cexs if current instance is sat.
-    if let Some(unbiased_cex) = cexs.pop() {
+    if bias {
+      let unbiased_cex = cexs.pop() ;
 
-      if bias {
-        let (
-          bias_lhs_actlit, bias_rhs_actlit
-        ) = self.bias_applications(clause_idx) ? ;
-
-        get_cex! { bias_lhs_actlit ; "biased examples (pos)" }
-        get_cex! { bias_rhs_actlit ; "biased examples (neg)" }
+      // Don't try bias examples if instance is unsat.
+      if unbiased_cex.is_some() {
+        log! { @3 "generating bias actlits" }
+        let biased = profile! { 
+          self wrap {
+            self.nu_bias_applications(clause_idx, bias_only)
+            // self.bias_applications(clause_idx)
+          } "cexs", "bias generation"
+        } ? ;
+        log! { @3 "working on {} biased checks", biased.len() }
+        for (actlit, bias) in biased {
+          get_cex! { actlit ; bias }
+        }
       }
 
       // Add the unbiased cex back if bias checks yielded nothing.
-      if cexs.is_empty() {
-        cexs.push(unbiased_cex)
+      if ! conf.teacher.max_bias || cexs.is_empty() {
+        if let Some(unbiased_cex) = unbiased_cex {
+          cexs.push(unbiased_cex)
+        }
+      }
+    }
+
+    Ok(cexs)
+  }
+
+
+
+  pub fn nu_bias_applications(
+    & mut self, clause_idx: ClsIdx, bias_only: bool,
+  ) -> Res<Vec<(Actlit, Bias)>> {
+    use common::smt::DisjArgs ;
+    use var_to::terms::{ VarTermsMap, VarTermsSet } ;
+
+    let clause = & self.instance[clause_idx] ;
+
+    // Maps lhs applications to activation literals for positive samples.
+    let mut lhs_actlits_of = PrdHMap::with_capacity(
+      clause.lhs_preds().len()
+    ) ;
+    // Predicates in lhs applications that don't have positive samples, or for
+    // which positive samples cannot be activated.
+    let mut lhs_preds_with_no_pos = PrdHMap::<VarTermsSet>::new() ;
+
+    log! { @4 "creating lhs actlits" }
+
+    let mut cant_pos_argss = VarTermsSet::new() ;
+
+    // Create actlits for lhs applications when possible.
+    for (pred, argss) in clause.lhs_preds() {
+      let pred = * pred ;
+      log! { @5 "for {} ({})", self.instance[pred], argss.len() }
+
+      if self.data.pos[pred].is_empty() {
+        log! { @5 "  no positive data" }
+        lhs_preds_with_no_pos.insert(pred, argss.clone()) ;
+        continue
+      }
+
+      self.solver.comment(
+        & format!(
+          "activating positive samples for {} ({} applications)",
+          self.instance[pred], argss.len()
+        )
+      ) ? ;
+
+      let mut argss_map = VarTermsMap::with_capacity( argss.len() ) ;
+
+      debug_assert! { cant_pos_argss.is_empty() }
+
+      for args in argss {
+        log! { @6 "generating actlit for {}", args }
+        let actlit = self.solver.get_actlit() ? ;
+        let disjunction = DisjArgs::new(
+          args, & self.data.pos[pred]
+        ) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ? ;
+
+        if self.solver.check_sat_act( Some(& actlit) ) ? {
+          log! { @6 "  sat, keeping" }
+          let prev = argss_map.insert(args.clone(), actlit) ;
+          debug_assert! { prev.is_none() }
+        } else {
+          log! { @6 "  unsat, discarding" }
+          self.solver.de_actlit(actlit) ? ;
+          let is_new = cant_pos_argss.insert( args.clone() ) ;
+          debug_assert! { is_new }
+        }
+      }
+
+      if ! cant_pos_argss.is_empty() {
+        let prev = lhs_preds_with_no_pos.insert(
+          pred, cant_pos_argss.drain().into()
+        ) ;
+        debug_assert! { prev.is_none() }
+      }
+
+      if ! argss_map.is_empty() {
+        let prev = lhs_actlits_of.insert(pred, argss_map) ;
+        debug_assert! { prev.is_none() }
+      }
+    }
+
+    log! { @4 "working on rhs" }
+
+    // Create actlit for rhs application if any.
+    //
+    // - `Some(None)` if there's not rhs
+    // - `None` if there's one but it has no negative data
+    // - `Some(actlit)` otherwise.
+    //
+    // So `rhs_actlit.is_none()` => we can't force the rhs to be false.
+    let rhs_actlit = if let Some((pred, args)) = clause.rhs() {
+      log! { @5 "-> {}", self.instance[pred] }
+      if self.data.neg[pred].is_empty() {
+        // No negative data...
+        log! { @5 "   no negative data" }
+        None
+      } else {
+        log! { @5 "   has negative data" }
+        // Negative data, generate an actlit for that.
+        self.solver.comment(
+          & format!(
+            "activating negative samples for {}", self.instance[pred]
+          )
+        ) ? ;
+        let actlit = self.solver.get_actlit() ? ;
+        let disjunction = DisjArgs::new(
+          args, & self.data.neg[pred]
+        ) ? ;
+        self.solver.assert_act(& actlit, & disjunction) ? ;
+
+        if self.solver.check_sat_act( Some(& actlit) ) ? {
+          log! { @6 "sat, keeping" }
+          Some( Some(actlit) )
+        } else {
+          log! { @6 "unsat, discarding" }
+          self.solver.de_actlit(actlit) ? ;
+          None
+        }
+      }
+    } else {
+      log! { @5 "-> None" }
+      Some(None)
+    } ;
+
+
+    // Let's do this.
+    let mut actlits = vec![] ;
+
+
+    // If there's any positive samples at all, we can do something for the rhs
+    // (if any).
+    if ! lhs_actlits_of.is_empty() && clause.rhs().is_some() && (
+      // Skip if we're only generating biased check-sat and there are
+      // applications without any positive data.
+      ! bias_only || lhs_preds_with_no_pos.is_empty()
+    ) {
+      self.solver.comment("activating all lhs positive samples") ? ;
+      let actlit = self.solver.get_actlit() ? ;
+      for (_, map) in & lhs_actlits_of {
+        for (_, pos_actlit) in map {
+          self.solver.assert_act(& actlit, pos_actlit) ?
+        }
+      }
+
+      let bias = if lhs_preds_with_no_pos.is_empty() {
+        log! { @4 "total bias left" }
+        profile! { self "bias: total left" => add 1 }
+        // If all lhs predicates have positive sample then this actlit yields a
+        // positive example for the rhs.
+        Bias::Lft
+      } else {
+        log! { @4 "partial bias left" }
+        profile! { self "bias: partial left" => add 1 }
+        // Otherwise this will generate a constraint.
+        Bias::Non
+      } ;
+
+      if ! bias.is_none() || ! bias_only {
+        actlits.push( (actlit, bias) )
+      }
+    }
+
+
+    // If there's no rhs or it has negative samples we can do something for the
+    // lhs.
+    if let Some(maybe_actlit) = rhs_actlit {
+
+      if lhs_preds_with_no_pos.is_empty() {
+        log! { @4 "exhaustive bias right" }
+        // We can force all positive examples for all lhs applications but
+        // one in turn to try to generate negative examples.
+        for (this_pred, map) in & lhs_actlits_of {
+          for (this_args, _) in map {
+
+            self.solver.comment(
+              & format!(
+                "actlit forcing application ({} {}) to be false",
+                self.instance[* this_pred], this_args
+              )
+            ) ? ;
+            let this_actlit = self.solver.get_actlit() ? ;
+
+            // Force rhs false if any.
+            if let Some(rhs_actlit) = maybe_actlit.as_ref() {
+              self.solver.assert_act(& this_actlit, rhs_actlit) ?
+            }
+
+            // Activate everything else than this particular application
+            for (pred, map) in & lhs_actlits_of {
+              for (args, actlit) in map {
+                if pred == this_pred && args == this_args {
+                  continue
+                }
+                self.solver.assert_act(& this_actlit, actlit) ?
+              }
+            }
+
+            profile! { self "bias: exhaustive right" => add 1 }
+
+            actlits.push(
+              (this_actlit, Bias::NuRgt(* this_pred, this_args.clone()))
+            )
+          }
+        }
+
+      } else if ! bias_only || lhs_preds_with_no_pos.iter().fold(
+        // Skip if only generating biased checksat and there's more than one
+        // application without positive data.
+        0, |acc, (_, argss)| acc + argss.len()
+      ) == 1 {
+
+        // There's some lhs applications with no negative data. Activate
+        // everything we can.
+
+        let this_actlit = self.solver.get_actlit() ? ;
+
+        // Force rhs false if any.
+        if let Some(rhs_actlit) = maybe_actlit.as_ref() {
+          self.solver.assert_act(& this_actlit, rhs_actlit) ?
+        }
+
+        // Activate everything we can.
+        for (_, map) in & lhs_actlits_of {
+          for (_, actlit) in map {
+            self.solver.assert_act(& this_actlit, actlit) ?
+          }
+        }
+
+        // Now the question is what kind of bias this corresponds to.
+
+        let mut iter = lhs_preds_with_no_pos.into_iter() ;
+        let (this_pred, argss) = iter.next().expect(
+          "next on non-empty iterator cannot yield none"
+        ) ;
+
+        let mut argss_iter = argss.into_iter() ;
+        let this_args = argss_iter.next().expect(
+          "empty arguments for predicate are illegal in clauses"
+        ) ;
+
+        // If we have a single predicate application with no negative samples
+        // we can generate an actlit for this one.
+        let bias = if iter.next().is_none() && argss_iter.next().is_none() {
+          log! { @4 "singular bias right" }
+          profile! { self "bias: singular right" => add 1 }
+          Bias::NuRgt(this_pred, this_args.clone())
+        } else {
+          // Otherwise we can just generate a negative constraint that's more
+          // constrained.
+          log! { @4 "partial bias right" }
+          profile! { self "bias: partial right " => add 1 }
+          Bias::Non
+        } ;
+
+        actlits.push( (this_actlit, bias) )
+
       }
 
     }
 
-    self.solver.pop(1) ? ;
 
-    Ok(cexs)
+    Ok(actlits)
   }
+
+
 
   /// Biases the arguments of the predicates of a clause.
   ///
@@ -854,7 +1224,7 @@ impl<'a> Teacher<'a> {
   /// (bias_cexs configuration)
   pub fn bias_applications(
     & mut self, clause_idx: ClsIdx
-  ) -> Res<(Option<Actlit>, Option<Actlit>)> {
+  ) -> Res<Vec<(Actlit, Bias)>> {
     use common::smt::DisjArgs ;
 
     let clause = & self.instance[clause_idx] ;
@@ -862,7 +1232,7 @@ impl<'a> Teacher<'a> {
     // Active and not a positive constraint?
     if ! conf.teacher.bias_cexs
     || clause.lhs_preds().is_empty() {
-      return Ok( (None, None) )
+      return Ok( vec![] )
     }
 
     let rhs_actlit = if let Some((rhs_pred, rhs_args)) = clause.rhs() {
@@ -883,7 +1253,7 @@ impl<'a> Teacher<'a> {
       }
     } else if clause.lhs_pred_apps_len() == 1 {
       // Negative constraint, skipping.
-      return Ok( (None, None) )
+      return Ok( vec![] )
     } else {
       None
     } ;
@@ -896,9 +1266,7 @@ impl<'a> Teacher<'a> {
       let actlit = if let Some(actlit) = lhs_actlit {
         actlit
       } else {
-        self.solver.comment(
-          & format!("\nactlit for lhs bias")
-        ) ? ;
+        self.solver.comment("\nactlit for lhs bias") ? ;
         self.solver.get_actlit() ?
       } ;
 
@@ -914,74 +1282,16 @@ impl<'a> Teacher<'a> {
       lhs_actlit = Some(actlit)
     }
 
-    Ok( (lhs_actlit, rhs_actlit) )
-  }
-}
+    let mut res = vec![] ;
 
-
-
-/// Teacher's smt stuff.
-mod smt {
-  use std::str::FromStr ;
-  use std::io::BufRead ;
-
-  use rsmt2::parse::{ IdentParser, ValueParser, SmtParser } ;
-
-  use common::* ;
-
-  /// Unit type parsing the output of the SMT solver.
-  ///
-  /// Parses variables of the form `v<int>` and constants. It is designed to
-  /// parse models of the falsification of a single clause, where the
-  /// variables of the clause are written as `v<index>` in smt2.
-  #[derive(Clone, Copy)]
-  pub struct Parser ;
-
-  impl<'a> IdentParser<VarIdx, (), & 'a str> for Parser {
-    fn parse_ident(self, input: & 'a str) -> SmtRes<VarIdx> {
-      debug_assert_eq!( & input[0..2], "v_" ) ;
-      match usize::from_str(& input[2..]) {
-        Ok(idx) => Ok( idx.into() ),
-        Err(e) => bail!(
-          "could not retrieve var index from `{}`: {}", input, e
-        ),
-      }
+    if let Some(actlit) = rhs_actlit {
+      res.push((actlit, Bias::Non))
     }
-    fn parse_type(self, _: & 'a str) -> SmtRes<()> {
-      Ok(())
-    }
-  }
 
-  impl<'a, Br> ValueParser<Val, & 'a mut SmtParser<Br>> for Parser
-  where Br: BufRead {
-    fn parse_value(self, input: & 'a mut SmtParser<Br>) -> SmtRes<Val> {
-      if let Some(val) = input.try_int::<
-        _, _, ::num::bigint::ParseBigIntError
-      >(
-        |int, pos| {
-          let int = Int::from_str(int) ? ;
-          Ok( if ! pos { - int } else { int } )
-        }
-      ) ? {
-        Ok( Val::I(val) )
-      } else if let Some(val) = input.try_bool() ? {
-        Ok( Val::B(val) )
-      } else if let Some(val) = input.try_rat::<
-        _, _, ::num::bigint::ParseBigIntError
-      >(
-        |num, den, pos| {
-          let (num, den) = (
-            Int::from_str(num) ?, Int::from_str(den) ?
-          ) ;
-          let rat = Rat::new(num, den) ;
-          Ok( if ! pos { - rat } else { rat } )
-        }
-      ) ? {
-        let mut val = Val::R(val) ;
-        Ok(val)
-      } else {
-        input.fail_with("unexpected value")
-      }
+    if let Some(actlit) = lhs_actlit {
+      res.push((actlit, Bias::Non))
     }
+
+    Ok(res)
   }
 }

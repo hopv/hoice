@@ -4,6 +4,7 @@ use common::* ;
 use self::info::* ;
 
 pub mod info ;
+#[cfg_attr(feature = "cargo-clippy", allow(module_inception))]
 mod instance ;
 pub mod parse ;
 pub mod preproc ;

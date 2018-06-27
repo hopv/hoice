@@ -6,11 +6,14 @@ use check::* ;
 
 
 /// Parser.
+#[derive(Clone)]
 pub struct InParser<'a> {
   /// Predicate definitions.
   pub pred_defs: Vec<PredDef>,
   /// Predicate declarations.
   pub pred_decs: Vec<PredDec>,
+  /// Function definitions.
+  pub fun_defs: Vec<FunDef>,
   /// Clauses.
   pub clauses: Vec<Clause>,
   /// Characters.
@@ -22,7 +25,8 @@ impl<'a> InParser<'a> {
   /// Constructor.
   pub fn new(s: & 'a str) -> Self {
     InParser {
-      pred_defs: vec![], pred_decs: vec![], clauses: vec![],
+      pred_defs: vec![], pred_decs: vec![], fun_defs: vec![],
+      clauses: vec![],
       chars: s.chars(), buf: vec![]
     }
   }
@@ -89,7 +93,7 @@ impl<'a> InParser<'a> {
         return false
       }
     }
-    return true
+    true
   }
 
   /// Parses a character or fails.
@@ -102,7 +106,7 @@ impl<'a> InParser<'a> {
           if let Some(c) = self.next() {
             format!("{}", c)
           } else {
-            format!("<eof>")
+            "<eof>".into()
           }
         )
       )
@@ -254,24 +258,61 @@ impl<'a> InParser<'a> {
     Ok(true)
   }
 
+  /// Set-option.
+  fn set_option(& mut self) -> Res< Option<(String, String)> > {
+    if ! self.tag_opt("set-option") {
+      return Ok(None)
+    }
+    self.ws_cmt() ;
+    self.char(':') ? ;
+    let key = self.ident() ? ;
+    self.ws_cmt() ;
+    let val = if self.char_opt('|') {
+      let res = self.not_char('|') ;
+      self.char('|') ? ;
+      res
+    } else if self.char_opt('"') {
+      let res = self.not_char('"') ;
+      self.char('"') ? ;
+      res
+    } else {
+      let res = self.not_char(')') ;
+      res.trim().into()
+    } ;
+    Ok(Some((key, val)))
+  }
+
   /// Type or fails.
   fn typ(& mut self) -> Res<Typ> {
-    if let Some(t) = self.typ_opt() {
+    if let Some(t) = self.typ_opt() ? {
       Ok(t)
     } else {
       bail!("expected type")
     }
   }
   /// Type.
-  fn typ_opt(& mut self) -> Option<Typ> {
+  fn typ_opt(& mut self) -> Res<Option<Typ>> {
     if self.tag_opt("Bool") {
-      Some( "Bool".to_string() )
+      Ok( Some( "Bool".to_string() ) )
     } else if self.tag_opt("Int") {
-      Some( "Int".to_string() )
+      Ok( Some( "Int".to_string() ) )
     } else if self.tag_opt("Real") {
-      Some( "Real".to_string() )
+      Ok( Some( "Real".to_string() ) )
+    } else if self.tag_opt("(") {
+      self.ws_cmt() ;
+      if self.tag_opt("Array") {
+        self.ws_cmt() ;
+        let src = self.typ() ? ;
+        self.ws_cmt() ;
+        let tgt = self.typ() ? ;
+        self.ws_cmt() ;
+        self.tag(")") ? ;
+        Ok( Some( format!("(Array {} {})", src, tgt) ) )
+      } else {
+        bail!("expected type")
+      }
     } else {
-      None
+      Ok(None)
     }
   }
 
@@ -287,7 +328,7 @@ impl<'a> InParser<'a> {
     self.ws_cmt() ;
     let mut sig = vec![] ;
     loop {
-      if let Some(t) = self.typ_opt() {
+      if let Some(t) = self.typ_opt() ? {
         sig.push(t)
       } else {
         break
@@ -407,19 +448,15 @@ impl<'a> InParser<'a> {
     while self.char_opt('(') {
       self.ws_cmt() ;
 
-      if self.set_logic() ? {
-        ()
-      } else if self.set_info() ? {
-        ()
-      } else if self.declare_fun() ? {
-        ()
-      } else if self.assert() ? {
-        ()
-      } else if self.tag_opt("check-sat") {
-        ()
-      } else if self.tag_opt("get-model") {
-        ()
-      } else if self.tag_opt("exit") {
+      if self.set_logic() ?
+      || self.set_info() ?
+      || self.set_option()?.is_some()
+      || self.declare_fun() ?
+      || self.define_fun() ?
+      || self.assert() ?
+      || self.tag_opt("check-sat")
+      || self.tag_opt("get-model")
+      || self.tag_opt("exit") {
         ()
       } else {
         print!("> `") ;
@@ -453,13 +490,17 @@ impl<'a> InParser<'a> {
     }
 
     Ok(
-      Input { pred_decs: self.pred_decs, clauses: self.clauses }
+      Input {
+        pred_decs: self.pred_decs,
+        fun_defs: self.fun_defs,
+        clauses: self.clauses,
+      }
     )
   }
 
 
   /// Define-fun.
-  fn define_fun(& mut self) -> Res<bool> {
+  fn define_pred(& mut self) -> Res<bool> {
     if ! self.tag_opt("define-fun") {
       return Ok(false)
     }
@@ -482,6 +523,36 @@ impl<'a> InParser<'a> {
     self.ws_cmt() ;
     self.pred_defs.push(
       PredDef { pred, args, body }
+    ) ;
+
+    Ok(true)
+  }
+
+
+  /// Define-fun.
+  fn define_fun(& mut self) -> Res<bool> {
+    if ! self.tag_opt("define-fun") {
+      return Ok(false)
+    }
+    self.ws_cmt() ;
+    let name = self.ident().chain_err(
+      || "while parsing symbol"
+    ) ? ;
+    self.ws_cmt() ;
+    let args = self.args().chain_err(
+      || "while parsing arguments"
+    ) ? ;
+    self.ws_cmt() ;
+    let typ = self.typ().chain_err(
+      || "while parsing return type"
+    ) ? ;
+    self.ws_cmt() ;
+    let body = self.sexpr().chain_err(
+      || "while parsing body"
+    ) ? ;
+    self.ws_cmt() ;
+    self.fun_defs.push(
+      FunDef { name, args, typ, body }
     ) ;
 
     Ok(true)
@@ -510,7 +581,7 @@ impl<'a> InParser<'a> {
     while self.char_opt('(') {
       self.ws_cmt() ;
 
-      if self.define_fun().chain_err(
+      if self.define_pred().chain_err(
         || "while parsing a define-fun"
       ) ? {
         ()

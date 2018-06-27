@@ -2,6 +2,7 @@
 
 use common::* ;
 
+// use super::helpers::n_term_arith_synth ;
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -12,12 +13,16 @@ pub struct IntSynth {
   /// The int type.
   typ: Typ,
 }
+impl Default for IntSynth {
+  fn default() -> Self { Self::new() }
+}
+
 impl IntSynth {
   /// Creates a new integer synthesizer.
   pub fn new() -> Self {
     IntSynth {
       expressivity: 0,
-      typ: Typ::Int,
+      typ: typ::int(),
     }
   }
 }
@@ -37,7 +42,7 @@ impl TheoSynth for IntSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & Args, others: & mut TermVals,
+    & mut self, f: F, sample: & VarVals, others: & mut TermVals,
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
@@ -58,30 +63,91 @@ impl TheoSynth for IntSynth {
         } "learning", "qual", "synthesis", "int", "level 2"
       ),
       _ => Ok(false),
+
+      // 0 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 1, f)
+      //   } "learning", "qual", "synthesis", "int", "level 0"
+      // ),
+      // 1 => profile!(
+      //   |_profiler| wrap {
+      //     non_lin_int_synth(sample, others, f)
+      //   } "learning", "qual", "synthesis", "int", "level 1"
+      // ),
+      // 2 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 3, f)
+      //   } "learning", "qual", "synthesis", "int", "level 2"
+      // ),
+      // 3 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
+      //   } "learning", "qual", "synthesis", "int", "level 3"
+      // ),
+      // 4 => profile!(
+      //   |_profiler| wrap {
+      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
+      //   } "learning", "qual", "synthesis", "int", "level 4"
+      // ),
+      // _ => Ok(false),
     }
   }
 
   /// Only generates reals for now (using `to_real`).
   fn project(
-    & self, sample: & Args, typ: & Typ, map: & mut TermVals
+    & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
-    match * typ {
-      Typ::Real => for (var, val) in sample.index_iter() {
-        match * val {
-          Val::I(ref i) => {
-            let val = Op::ToReal.eval( vec![ Val::I( i.clone() ) ] ) ? ;
-            let prev = map.insert(
-              term::to_real( term::var(var, Typ::Real) ), val
-            ) ;
-            debug_assert_eq!( prev, None )
-          },
-          _ => (),
+    if typ.is_real() {
+      for (var, val) in sample.index_iter() {
+        if let val::RVal::I(_) = val.get() {
+          let val = Op::ToReal.eval( vec![ val.clone() ] ) ? ;
+          let prev = map.insert(
+            term::to_real( term::var(var, typ::int()) ), val
+          ) ;
+          debug_assert_eq!( prev, None )
         }
-      },
-      _ => (),
+      }
     }
     Ok(())
   }
+}
+
+
+/// Non-linear int synthesis.
+pub fn non_lin_int_synth<F>(
+  sample: & VarVals, others: & mut TermVals, mut f: F
+) -> Res<bool>
+where F: FnMut(Term) -> Res<bool> {
+  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
+    sample.len()
+  ) ;
+
+  // Iterate over the sample.
+  for (var_idx, val) in sample.index_iter() {
+    if let val::RVal::I(ref val) = val.get() {
+      let var = term::var(var_idx, typ::int()) ;
+      arith_synth_non_lin! {
+        previous_int, f, int | var = ( val.clone() )
+      }
+    }
+  }
+
+  // Iterate over the cross-theory terms.
+  for (term, val) in others.drain() {
+    match val.get() {
+      & val::RVal::I(ref val) => {
+        arith_synth_non_lin! {
+          previous_int, f, int | term = ( val.clone() )
+        }
+      }
+      val => bail!(
+        "int synthesis expects projected integers (1), \
+        got {} for {}", val, term
+      )
+    }
+  }
+
+  Ok(false)
 }
 
 
@@ -94,7 +160,7 @@ impl TheoSynth for IntSynth {
 /// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
 /// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
 pub fn simple_int_synth<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -103,23 +169,20 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
-        simple_arith_synth! { previous_int, f, int | var = ( val.clone() ) }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      simple_arith_synth! { previous_int, f, int | var = ( i.clone() ) }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
-        simple_arith_synth! { previous_int, f, int | term = val }
-      }
-      val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+    if let val::RVal::I(ref val) = val.get() {
+      simple_arith_synth! { previous_int, f, int | term = val.clone() }
+    } else {
+      bail!(
+        "int synthesis expects projected integers (2), \
+        got {} for {}", val, term
       )
     }
   }
@@ -128,9 +191,10 @@ where F: FnMut(Term) -> Res<bool> {
 }
 
 
+
 /// Level 1 for int synthesis.
 pub fn int_synth_1<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -139,27 +203,24 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
-        arith_synth_non_lin! {
-          previous_int, f, int | var = ( val.clone() )
-        }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      arith_synth_non_lin! {
+        previous_int, f, int | var = ( i.clone() )
+      }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
-        arith_synth_non_lin! {
-          previous_int, f, int | term = val
-        }
+    if let val::RVal::I(ref val) = val.get() {
+      arith_synth_non_lin! {
+        previous_int, f, int | term = val.clone()
       }
-      val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+    } else {
+      bail!(
+        "int synthesis expects projected integers (3), \
+        got {} for {}", val, term
       )
     }
   }
@@ -170,7 +231,7 @@ where F: FnMut(Term) -> Res<bool> {
 
 /// Level 2 for int synthesis.
 pub fn int_synth_2<F>(
-  sample: & Args, others: & mut TermVals, mut f: F
+  sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
   let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
@@ -179,27 +240,24 @@ where F: FnMut(Term) -> Res<bool> {
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
-    match * val {
-      Val::I(ref val) => {
-        let var = term::var(var_idx, Typ::Int) ;
-        arith_synth_three_terms! {
-          previous_int, f, int | var = ( val.clone() )
-        }
-      },
-      _ => (),
+    if let val::RVal::I(ref i) = val.get() {
+      let var = term::var(var_idx, val.typ().clone()) ;
+      arith_synth_three_terms! {
+        previous_int, f, int | var = ( i.clone() )
+      }
     }
   }
 
   // Iterate over the cross-theory terms.
   for (term, val) in others.drain() {
-    match val {
-      Val::I(val) => {
-        arith_synth_three_terms! {
-          previous_int, f, int | term = val
-        }
+    if let val::RVal::I(ref val) = val.get() {
+      arith_synth_three_terms! {
+        previous_int, f, int | term = val.clone()
       }
-      val => bail!(
-        "int synthesis expects projected integers, got {} for {}", val, term
+    } else {
+      bail!(
+        "int synthesis expects projected integers (4), \
+        got {} for {}", val, term
       )
     }
   }

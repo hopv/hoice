@@ -1,8 +1,8 @@
 use common::* ;
+use var_to::vals::VarValsSet ;
 
+use super::Sample ;
 
-use super::{ ArgsSet, Sample } ;
-use super::args::* ;
 
 /// Constraints using hashconsed samples.
 ///
@@ -15,7 +15,7 @@ use super::args::* ;
 ///
 /// - `lhs.is_none() => rhs.is_none()`
 /// - constraints cannot contain partial samples
-/// - `lhs` cannot map to an empty `ArgsSet` (Hence, do not access `lhs`
+/// - `lhs` cannot map to an empty `VarValsSet` (Hence, do not access `lhs`
 ///   directly for sample removal. Use [`lhs_rm`][lhs rm].)
 /// - `lhs` cannot contain a sample that subsumes `rhs`.
 ///
@@ -23,7 +23,7 @@ use super::args::* ;
 #[derive(Clone, Debug)]
 pub struct Constraint {
   /// Left-hand side.
-  lhs: Option< PrdHMap< ArgsSet > >,
+  lhs: Option< PrdHMap< VarValsSet > >,
   /// Right-hand side.
   rhs: Option< Sample >,
 }
@@ -35,7 +35,7 @@ impl Constraint {
   ///
   /// - `lhs.is_empty` and `rhs.is_empty()`
   pub fn new(
-    lhs: PrdHMap< ArgsSet >, rhs: Option<Sample>
+    lhs: PrdHMap< VarValsSet >, rhs: Option<Sample>
   ) -> Constraint {
     Constraint { lhs: Some(lhs), rhs }
   }
@@ -50,7 +50,7 @@ impl Constraint {
   /// See `Constraint`'s documentation for the list of invariant.
   #[cfg(debug_assertions)]
   pub fn check(& self) -> Res<()> {
-    if self.lhs.is_none() && ! self.rhs.is_none() {
+    if self.lhs.is_none() && self.rhs.is_some() {
       bail!("lhs is empty but rhs is not none")
     }
     if let Some(lhs) = self.lhs() {
@@ -86,16 +86,16 @@ impl Constraint {
   /// Number of samples in the lhs.
   pub fn lhs_len(& self) -> usize {
     let mut count = 0 ;
-    self.lhs.as_ref().map(
-      |lhs| for samples in lhs.values() {
+    if let Some(lhs) = self.lhs.as_ref() {
+      for samples in lhs.values() {
         count += samples.len()
       }
-    ) ;
+    }
     count
   }
 
   /// Lhs accessor.
-  pub fn lhs(& self) -> Option<& PrdHMap<ArgsSet>> {
+  pub fn lhs(& self) -> Option<& PrdHMap<VarValsSet>> {
     self.lhs.as_ref()
   }
   /// Rhs accessor.
@@ -107,9 +107,9 @@ impl Constraint {
   ///
   /// Returns the number of sample removed.
   ///
-  /// This function guarantees that `lhs` does not map to an empty `ArgsSet`,
+  /// This function guarantees that `lhs` does not map to an empty `VarValsSet`,
   /// so please use this. Do not access `lhs` directly for sample removal.
-  fn lhs_rm(& mut self, pred: PrdIdx, args: & Args) -> usize {
+  fn lhs_rm(& mut self, pred: PrdIdx, args: & VarVals) -> usize {
     self.lhs.as_mut().map(
       |lhs| {
         let (pred_rm, rmed) = if let Some(argss) = lhs.get_mut(& pred) {
@@ -136,9 +136,8 @@ impl Constraint {
   ///
   /// Applies `f` to all samples.
   pub fn tautologize<F>(& mut self, mut f: F) -> Res<()>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
-    let mut rhs = None ;
-    ::std::mem::swap(& mut rhs, & mut self.rhs) ;
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
+    let rhs = ::std::mem::replace(& mut self.rhs, None) ;
     if let Some(Sample { pred, args }) = rhs {
       f(pred, args) ?
     }
@@ -239,18 +238,14 @@ impl Constraint {
   ///
   /// Error if the sample was not there.
   pub fn force_sample<F>(
-    & mut self, pred: PrdIdx, args: & Args, pos: bool, if_tautology: F
+    & mut self, pred: PrdIdx, args: & VarVals, pos: bool, if_tautology: F
   ) -> Res<bool>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let rmed = self.lhs_rm(pred, args) ;
-    if rmed > 0 && ! pos {
-      self.tautologize(if_tautology) ? ;
-      return Ok(true)
-    }
     let was_in_lhs = rmed > 0 ;
 
     let is_in_rhs = if let Some(
-      Sample { pred: rhs_pred, args: ref rhs_args }
+      Sample { pred: rhs_pred, args: ref mut rhs_args }
     ) = self.rhs {
       rhs_pred == pred && args.subsumes(rhs_args)
     } else {
@@ -259,14 +254,16 @@ impl Constraint {
 
     let was_in_rhs = if is_in_rhs {
       self.rhs = None ;
-      if pos {
-        self.tautologize(if_tautology) ? ;
-        return Ok(true)
-      }
       true
     } else {
       false
     } ;
+
+    if (was_in_lhs && ! pos)
+    || (was_in_rhs &&   pos) {
+      self.tautologize(if_tautology) ? ;
+      return Ok(true)
+    }
 
     if ! was_in_rhs && ! was_in_lhs {
       bail!("asked to remove sample from a clause where it wasn't")
@@ -283,7 +280,7 @@ impl Constraint {
   pub fn force<F>(
     & mut self, pred: PrdIdx, pos: bool, if_tautology: F
   ) -> Res<bool>
-  where F: FnMut(PrdIdx, Args) -> Res<()> {
+  where F: FnMut(PrdIdx, VarVals) -> Res<()> {
     let mut tautology = false ;
     if self.rhs.as_ref().map(
       |& Sample { pred: p, .. }| p == pred
@@ -294,10 +291,8 @@ impl Constraint {
       }
     }
     if let Some(ref mut lhs) = self.lhs {
-      if lhs.remove(& pred).is_some() {
-        if ! pos {
-          tautology = true
-        }
+      if lhs.remove(& pred).is_some() && ! pos {
+        tautology = true
       }
     }
     if tautology {
@@ -308,25 +303,29 @@ impl Constraint {
 
   /// Checks if the constraint is trivial.
   ///
-  /// - `sample, true` if the constraint is `true => sample` (`sample` needs to
-  ///   be true)
-  /// - `sample, false` if the constraint is `sample => false` (`sample` needs
-  ///   to be false)
-  /// - `None` otherwise
+  /// - `Left(sample, true)` if the constraint is `true => sample` (`sample`
+  ///   needs to be true)
+  /// - `Left(sample, false)` if the constraint is `sample => false` (`sample`
+  ///   needs to be false)
+  /// - `Right(true)` if the constraint is trivial (`false => _` or `_ =>
+  ///   true`)
+  /// - `Right(false)` otherwise.
   ///
-  /// If the result isn't `None`, the sample returned has been removed and the
-  /// constraint is now a tautology.
-  pub fn is_trivial(& mut self) -> Res< Option<(Sample, bool)> > {
+  /// If the result isn't `Right(_)`, the sample returned has been removed and
+  /// the constraint is now a tautology.
+  pub fn try_trivial(& mut self) -> Either<(Sample, bool), bool> {
     if self.lhs().map(|lhs| lhs.is_empty()).unwrap_or(false) {
       let mut rhs = None ;
       ::std::mem::swap(& mut rhs, & mut self.rhs) ;
       let mut lhs = None ;
       ::std::mem::swap(& mut lhs, & mut self.lhs) ;
-      if rhs.is_none() {
+
+      if let Some(s) = rhs {
+        Either::Left((s, true))
+      } else {
         // true => false
-        unsat!()
+        return Either::Right(true)
       }
-      Ok( rhs.map(|s| (s, true)) )
     } else if self.rhs.is_none() {
       if let Some(lhs) = self.lhs() {
         let mut first = true ;
@@ -335,12 +334,12 @@ impl Constraint {
             if first {
               first = false
             } else {
-              return Ok(None)
+              return Either::Right(false)
             }
           }
         }
       } else {
-        return Ok(None)
+        return Either::Right(false)
       }
 
       let mut old_lhs = None ;
@@ -349,13 +348,11 @@ impl Constraint {
       // Only reachable if there's one pred app in lhs.
       let (pred, argss) = old_lhs.unwrap().into_iter().next().unwrap() ;
       let args = argss.into_iter().next().unwrap() ;
-      Ok(
-        Some((
-          Sample { pred, args }, false
-        ))
-      )
+      Either::Left((
+        Sample { pred, args }, false
+      ))
     } else {
-      Ok(None)
+      Either::Right(false)
     }
   }
 }

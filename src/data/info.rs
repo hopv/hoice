@@ -1,5 +1,5 @@
 use common::* ;
-use common::data::Constraint ;
+use data::Constraint ;
 
 /// Maintains information about the constraints.
 #[derive(Clone)]

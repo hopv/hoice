@@ -28,20 +28,20 @@ pub struct ProfileTree {
   /// Duration stored at this level.
   duration: Option<Duration>,
   /// Sub-branches.
-  branches: HashMap<& 'static str, ProfileTree>,
+  branches: BTreeMap<& 'static str, ProfileTree>,
 }
 impl ProfileTree {
   /// Tree with nothing but the top level.
   pub fn top(top: Duration) -> Self {
     ProfileTree {
       duration: Some(top),
-      branches: HashMap::new(),
+      branches: BTreeMap::new(),
     }
   }
 
   /// Empty tree, not visible outside.
   fn empty() -> Self {
-    ProfileTree { duration: None, branches: HashMap::new() }
+    ProfileTree { duration: None, branches: BTreeMap::new() }
   }
 
   /// Debug printing (multi-line).
@@ -51,6 +51,7 @@ impl ProfileTree {
     & self, _: S, _: & [ & 'static str ]
   ) {}
   #[cfg(not (feature = "bench") )]
+  #[cfg_attr(feature = "cargo-clippy", allow(print_literal))]
   fn print<S>(
     & self, pref: S, set_sum: & [ & 'static str ]
   ) where S: Into<String> {
@@ -58,7 +59,7 @@ impl ProfileTree {
     self.fold(
       None,
       |prev, scope, time, sub_time| if let Some(last) = scope.last() {
-        debug_assert! { scope.len() > 0 }
+        debug_assert! { scope.is_empty() }
         let art = match prev {
           Some(n) if n < scope.len() => "\\",
           Some(_) | None => "|",
@@ -103,7 +104,7 @@ impl ProfileTree {
     for scope in scope {
       let tmp = current ;
       current = tmp.branches.entry(scope).or_insert_with(
-        || ProfileTree::empty()
+        ProfileTree::empty
       ) ;
       last_scope = scope
     }
@@ -163,7 +164,7 @@ impl ProfileTree {
               conf.emph(& scope_str)
             }
           }
-          prev = f(prev, & this_scope, & sub_duration, sub_duration.clone())
+          prev = f(prev, & this_scope, & sub_duration, sub_duration)
         }
         stack.push(
           (
@@ -178,7 +179,7 @@ impl ProfileTree {
 
 
 /// Maps strings to counters.
-pub type Stats = HashMap<String, usize> ;
+pub type Stats = BTreeMap<String, usize> ;
 /// Provides a debug print function.
 pub trait CanPrint {
   /// True if at least one value is not `0`.
@@ -191,6 +192,7 @@ impl CanPrint for Stats {
   fn has_non_zero(& self) -> bool {
     self.values().any(|n| * n > 0)
   }
+  #[cfg_attr(feature = "cargo-clippy", allow(print_literal))]
   fn print<S>(& self, pref: S) where S: Into<String> {
     let pref = pref.into() ;
     let mut stats: Vec<_> = self.iter().collect() ;
@@ -212,7 +214,7 @@ impl CanPrint for Stats {
 ///
 /// - a (start) instant option: `Some` if the scope is currently active, and
 /// - a duration representing the total runtime of this scope.
-pub type InstantMap = HashMap<
+pub type InstantMap = BTreeMap<
   Vec<& 'static str>, (Option<Instant>, Duration)
 > ;
 
@@ -245,6 +247,9 @@ pub struct Profiler {
 #[cfg(feature = "bench")]
 #[derive(Clone)]
 pub struct Profiler ;
+impl Default for Profiler {
+  fn default() -> Self { Self::new() }
+}
 impl Profiler {
   /// Constructor.
   #[cfg( not(feature = "bench") )]
@@ -285,13 +290,37 @@ impl Profiler {
     }
   }
 
+  /// Merges the durations of two profilers.
+  #[cfg(feature = "bench")]
+  pub fn merge_set(& mut self, _: Self) {}
+  /// Merges the durations of two profilers and sets the stats.
+  #[cfg(not(feature = "bench"))]
+  pub fn merge_set(& mut self, other: Self) {
+    let map = other.map.into_inner() ;
+    let stats = other.stats.into_inner() ;
+    let subs = other.subs.into_inner() ;
+    for sub in subs {
+      self.subs.get_mut().push(sub)
+    }
+    for (scope, (_, duration)) in map {
+      self.map.get_mut().entry(scope).or_insert_with(
+        || (None, Duration::new(0, 0))
+      ).1 += duration
+    }
+    for (scope, val) in stats {
+      * self.stats.get_mut().entry(scope).or_insert_with(
+        || 0
+      ) = val
+    }
+  }
+
   /// Acts on a statistic.
   #[cfg( not(feature = "bench") )]
   pub fn stat_do<F, S>(& self, stat: S, f: F)
   where F: Fn(usize) -> usize, S: Into<String> {
     let stat = stat.into() ;
     let mut map = self.stats.borrow_mut() ;
-    let val = map.get(& stat).map(|n| * n).unwrap_or(0) ;
+    let val = map.get(& stat).cloned().unwrap_or(0) ;
     let _ = map.insert(stat, f(val)) ;
     ()
   }
@@ -313,6 +342,7 @@ impl Profiler {
   ///
   /// Panics if there was no tick since the last time registration.
   #[cfg( not(feature = "bench") )]
+  #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
   pub fn mark(& self, scope: Vec<& 'static str>) {
     if scope.is_empty() {
       panic!("Profile: can't use scope `total`")
@@ -324,7 +354,7 @@ impl Profiler {
       let mut instant = None ;
       ::std::mem::swap(& mut instant, tick) ;
       if let Some(instant) = instant {
-        * sum = (* sum) + Instant::now().duration_since(instant) ;
+        * sum += Instant::now().duration_since(instant) ;
         * tick = None
       }
     } else {
@@ -369,10 +399,24 @@ impl Profiler {
 
   /// Adds an other (not a sub) profiler to this profiler.
   #[cfg( not(feature = "bench") )]
+  pub fn drain_subs(
+    & self,
+  ) -> Vec<(String, Profiler)> {
+    let mut res = vec![] ;
+    ::std::mem::swap(
+      & mut res, & mut * self.subs.borrow_mut()
+    ) ;
+    res
+  }
+
+  /// Adds an other (not a sub) profiler to this profiler.
+  #[cfg( not(feature = "bench") )]
   pub fn add_other<S: Into<String>>(
     & self, name: S, other: Self
   ) -> () {
-    self.others.borrow_mut().push((name.into(), other))
+    self.others.borrow_mut().push(
+      (name.into(), other)
+    )
   }
   #[cfg(feature = "bench")]
   pub fn add_other<S>(

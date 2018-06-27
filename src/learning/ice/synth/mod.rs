@@ -11,7 +11,7 @@ pub mod helpers ;
 pub mod int ;
 pub mod real ;
 
-pub type TermVals = HConMap<Term, Val> ;
+pub type TermVals = TermMap<Val> ;
 
 /// A theory synthesizer.
 ///
@@ -33,7 +33,7 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & Args, & mut TermVals, & Profiler) -> Res<bool>
+  fn synth<F>(& mut self, F, & VarVals, & mut TermVals, & Profiler) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
@@ -41,7 +41,7 @@ pub trait TheoSynth {
   ///
   /// [term val]: struct.TermVal.html
   /// (TermVal struct)
-  fn project(& self, & Args, & Typ, & mut TermVals) -> Res<()> ;
+  fn project(& self, & VarVals, & Typ, & mut TermVals) -> Res<()> ;
 }
 
 use self::int::IntSynth ;
@@ -51,7 +51,7 @@ use self::real::RealSynth ;
 pub struct SynthSys {
   int: Option<IntSynth>,
   real: Option<RealSynth>,
-  cross_synth: HConMap<Term, Val>,
+  cross_synth: TermMap<Val>,
 }
 impl SynthSys {
   /// Constructor.
@@ -59,17 +59,18 @@ impl SynthSys {
     let mut int = false ;
     let mut real = false ;
     for typ in sig {
-      match * typ {
-        Typ::Int => int = true,
-        Typ::Real => real = true,
-        _ => (),
+      match ** typ {
+        typ::RTyp::Int => int = true,
+        typ::RTyp::Real => real = true,
+        typ::RTyp::Bool => (),
+        typ::RTyp::Array { .. } => (),
       }
     }
 
     SynthSys {
       int: if int { Some( IntSynth::new() ) } else { None },
-      real: if real { Some(RealSynth::new() ) } else { None },
-      cross_synth: HConMap::new(),
+      real: if real { Some( RealSynth::new() ) } else { None },
+      cross_synth: TermMap::new(),
     }
   }
 
@@ -81,8 +82,14 @@ impl SynthSys {
 
   /// Increments all synthesizers.
   pub fn increment(& mut self) {
-    self.int.as_mut().map(|i| i.increment()) ;
-    self.real.as_mut().map(|r| r.increment()) ;
+    if let Some(i) = self.int.as_mut() { i.increment() }
+    if let Some(r) = self.real.as_mut() { r.increment() }
+  }
+
+  /// Restarts all synthesizers.
+  pub fn restart(& mut self) {
+    if let Some(i) = self.int.as_mut() { i.restart() }
+    if let Some(r) = self.real.as_mut() { r.restart() }
   }
 
 
@@ -91,13 +98,13 @@ impl SynthSys {
   ///
   /// Returns `true` iff `f` returned true at some point.
   pub fn sample_synth<F>(
-    & mut self, sample: & Args, mut f: F, _profiler: & Profiler
+    & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
 
     if let Some(int_synth) = self.int.as_mut() {
       if ! int_synth.is_done() {
-        debug_assert! { self.cross_synth.is_empty() }
+        self.cross_synth.clear() ;
         if let Some(real_synth) = self.real.as_mut() {
           profile!{
             |_profiler| tick "learning", "qual", "synthesis", "int project"
@@ -121,7 +128,7 @@ impl SynthSys {
 
     if let Some(real_synth) = self.real.as_mut() {
       if ! real_synth.is_done() {
-        debug_assert! { self.cross_synth.is_empty() }
+        self.cross_synth.clear() ;
         if let Some(int_synth) = self.int.as_mut() {
           profile! (
             |_profiler| wrap {

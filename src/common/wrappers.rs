@@ -5,7 +5,10 @@ use std::fmt ;
 
 use rsmt2::print::* ;
 
-use common::{ SmtRes, VarIndexed } ;
+use common::{
+  SmtRes, VarIndexed, VarTerms,
+  var_to,
+} ;
 use term::Term ;
 
 wrap_usize!{
@@ -36,21 +39,21 @@ wrap_usize!{
 }
 impl VarIdx {
   /// Default way to write variables: `v_<idx>`.
-  pub fn default_write<W>(& self, w: & mut W) -> ::std::io::Result<()>
+  pub fn default_write<W>(self, w: & mut W) -> ::std::io::Result<()>
   where W: Write {
     write!(w, "v_{}", self)
   }
   /// Default string representation of a variable.
-  pub fn default_str(& self) -> String {
+  pub fn default_str(self) -> String {
     let mut s = vec![] ;
     self.default_write(& mut s).unwrap() ;
     ::std::str::from_utf8(& s).unwrap().into()
   }
 }
 
-impl Into< ::common::HTArgs > for VarMap<::term::Term> {
-  fn into(self) -> ::common::HTArgs {
-    ::term::args::new(self)
+impl Into< VarTerms > for VarMap<::term::Term> {
+  fn into(self) -> VarTerms {
+    var_to::terms::new(self)
   }
 }
 
@@ -59,7 +62,7 @@ impl VarMap< Term > {
   ///
   /// This is used when useless arguments are detected, to slice predicate
   /// applications.
-  pub fn remove(& self, to_keep: & VarSet) -> ::common::HTArgs {
+  pub fn remove(& self, to_keep: & VarSet) -> VarTerms {
     debug_assert! { self.len() >= to_keep.len() }
     debug_assert! {{
       let mut okay = true ;
@@ -93,7 +96,7 @@ impl VarMap< Term > {
   pub fn are_diff_vars(& self) -> bool {
     let mut iter = self.iter() ;
     while let Some(term) = iter.next() {
-      if let Some(_) = term.var_idx() {
+      if term.var_idx().is_some() {
         for other in iter.clone() {
           if term == other {
             return false

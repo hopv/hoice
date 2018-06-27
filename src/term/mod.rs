@@ -37,7 +37,7 @@
 //!
 //! ```rust
 //! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm, Typ } ;
+//! # use hoice::term::{ Op, RTerm, typ } ;
 //! let some_term = term::eq(
 //!   term::int(11), term::app(
 //!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
@@ -47,8 +47,8 @@
 //! 
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { typ, op: Op::Eql, ref args } => {
-//!     assert_eq!( typ, Typ::Bool ) ;
+//!   RTerm::App { ref typ, op: Op::Eql, ref args } => {
+//!     assert_eq!( typ, & typ::bool() ) ;
 //!     assert_eq!( args.len(), 2 ) ;
 //!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
 //!   },
@@ -59,99 +59,20 @@
 use hashconsing::* ;
 
 use common::* ;
+use var_to::terms::VarTermsSet ;
 
 #[macro_use]
 mod op ;
 pub use self::op::* ;
 mod factory ;
-mod val ;
+
 pub mod simplify ;
+pub mod typ ;
 #[cfg(test)]
 mod test ;
 
-pub mod args ;
-
 pub use self::factory::* ;
-pub use self::val::Val ;
-
-
-
-
-/// Types.
-#[
-  derive(
-    Debug, Clone, Copy,
-    PartialEq, Eq, Hash,
-    PartialOrd, Ord
-  )
-]
-pub enum Typ {
-  /// Integers.
-  Int,
-  /// Reals.
-  Real,
-  /// Booleans.
-  Bool,
-}
-impl Typ {
-  /// True if the type is boolean.
-  pub fn is_bool(& self) -> bool {
-    * self == Typ::Bool
-  }
-  /// True if the type is arithmetic.
-  pub fn is_arith(& self) -> bool {
-    match * self {
-      Typ::Int | Typ::Real => true,
-      _ => false,
-    }
-  }
-
-  /// Given two arithmetic types, returns `Real` if one of them is `Real`.
-  pub fn arith_join(self, other: Self) -> Self {
-    debug_assert! { self.is_arith() }
-    debug_assert! { other.is_arith() }
-    if self == Typ::Real || other == Typ::Real {
-      Typ::Real
-    } else {
-      Typ::Int
-    }
-  }
-
-  /// Default value of a type.
-  pub fn default_val(& self) -> Val {
-    match * self {
-      Typ::Real => Val::R( Rat::zero() ),
-      Typ::Int => Val::I( Int::zero() ),
-      Typ::Bool => Val::B( true ),
-    }
-  }
-
-  /// Default term of a type.
-  pub fn default_term(& self) -> Term {
-    match * self {
-      Typ::Real => term::real( Rat::zero() ),
-      Typ::Int => term::int( Int::zero() ),
-      Typ::Bool => term::bool( true ),
-    }
-  }
-}
-impl ::rsmt2::print::Sort2Smt for Typ {
-  fn sort_to_smt2<Writer>(
-    & self, w: &mut Writer
-  ) -> SmtRes<()> where Writer: Write {
-    write!(w, "{}", self) ? ;
-    Ok(())
-  }
-}
-impl_fmt!{
-  Typ(self, fmt) {
-    match * self {
-      Typ::Int => fmt.write_str("Int"),
-      Typ::Real => fmt.write_str("Real"),
-      Typ::Bool => fmt.write_str("Bool"),
-    }
-  }
-}
+pub use self::typ::Typ ;
 
 
 /// A real term.
@@ -165,6 +86,10 @@ pub enum RTerm {
   Real(Rat),
   /// A boolean.
   Bool(bool),
+  /// A **constant** array.
+  ///
+  /// The type is the type of **the indices** of the arrays.
+  CArray { typ: Typ, term: Box<Term> },
   /// An operator application.
   App {
     /// Type of the application.
@@ -183,6 +108,29 @@ impl RTerm {
       _ => None,
     }
   }
+
+  /// Returns the kids of an ite.
+  pub fn ite_inspect(& self) -> Option<(& Term, & Term, & Term)> {
+    match * self {
+      RTerm::App { op: Op::Ite, ref args, .. } => {
+        debug_assert_eq! { args.len(), 3 }
+        Some( (& args[0], & args[1], & args[2]) )
+      },
+      _ => None,
+    }
+  }
+
+  /// Returns the kid of a negation.
+  pub fn neg_inspect(& self) -> Option<& Term> {
+    match * self {
+      RTerm::App { op: Op::Not, ref args, .. } => {
+        debug_assert_eq! { args.len(), 1 }
+        Some(& args[0])
+      },
+      _ => None,
+    }
+  }
+
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
     match * self {
@@ -250,6 +198,7 @@ impl RTerm {
         RTerm::App { ref args, .. } => for term in args {
           stack.push(term)
         },
+        RTerm::CArray { ref term, .. } => stack.push(& * term),
         RTerm::Var(_, _) |
         RTerm::Int(_) |
         RTerm::Real(_) |
@@ -261,11 +210,14 @@ impl RTerm {
   /// Type of the term.
   pub fn typ(& self) -> Typ {
     match * self {
-      RTerm::Var(typ, _) => typ,
-      RTerm::Int(_) => Typ::Int,
-      RTerm::Real(_) => Typ::Real,
-      RTerm::Bool(_) => Typ::Bool,
-      RTerm::App { typ, .. } => typ,
+      RTerm::Var(ref typ, _) => typ.clone(),
+      RTerm::Int(_) => typ::int(),
+      RTerm::Real(_) => typ::real(),
+      RTerm::Bool(_) => typ::bool(),
+      RTerm::CArray { ref typ, ref term } => typ::array(
+        typ.clone(), term.typ()
+      ),
+      RTerm::App { ref typ, .. } => typ.clone(),
     }
   }
 
@@ -301,9 +253,9 @@ impl RTerm {
     ] ;
     while let Some( (mut to_do, sep, end) ) = stack.pop() {
       use self::RTerm::* ;
-      if let Some(term) = to_do.pop() {
+      if let Some(this_term) = to_do.pop() {
         stack.push( (to_do, sep, end) ) ;
-        match * term {
+        match * this_term {
           Var(_, v) => {
             write!(w, "{}", sep) ? ;
             write_var(w, v) ?
@@ -317,6 +269,10 @@ impl RTerm {
             rat_to_smt!(w, r) ?
           },
           Bool(b) => write!(w, "{}{}", sep, b) ?,
+          CArray { ref term, .. } => {
+            write!(w, "{}((as const {})", sep, this_term.typ()) ? ;
+            stack.push( (vec![term], " ", ")") )
+          },
           App { op, ref args, .. } => {
             write!(w, "{}({}", sep, op) ? ;
             stack.push(
@@ -465,12 +421,14 @@ impl RTerm {
 
   /// Evaluates a term with an empty model.
   pub fn as_val(& self) -> Val {
-    if let Ok(res) = self.eval(& ()) { res } else { Val::N }
+    if let Ok(res) = self.eval(& ()) { res } else {
+      val::none(self.typ().clone())
+    }
   }
 
   /// Integer a constant integer term evaluates to.
   pub fn int(& self) -> Option<Int> {
-    if self.typ() != Typ::Int { return None }
+    if self.typ() != typ::int() { return None }
     match self.int_eval( & () ) {
       Ok(Some(i)) => Some(i),
       _ => None
@@ -487,9 +445,9 @@ impl RTerm {
   /// Turns a constant term in a `Val`.
   pub fn val(& self) -> Option<Val> {
     match * self {
-      RTerm::Int(ref i) => Some( i.clone().into() ),
-      RTerm::Real(ref r) => Some( r.clone().into() ),
-      RTerm::Bool(b) => Some( b.into() ),
+      RTerm::Int(ref i) => Some( val::int(i.clone()) ),
+      RTerm::Real(ref r) => Some( val::real(r.clone()) ),
+      RTerm::Bool(b) => Some( val::bool(b) ),
       _ => None,
     }
   }
@@ -536,13 +494,16 @@ impl RTerm {
 
 
   /// Term evaluation.
+  ///
+  /// # TODO
+  ///
+  /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
     use self::RTerm::* ;
     let mut current = self ;
     let mut stack = vec![] ;
 
     'eval: loop {
-
       // Go down applications.
       let mut evaled = match * current {
         App { op, ref args, .. } => {
@@ -556,9 +517,13 @@ impl RTerm {
         } else {
           bail!("model is too short ({})", model.len())
         },
-        Int(ref i) => Val::I( i.clone() ),
-        Real(ref r) => Val::R( r.clone() ),
-        Bool(b) => Val::B(b),
+        Int(ref i) => val::int( i.clone() ),
+        Real(ref r) => val::real( r.clone() ),
+        Bool(b) => val::bool(b),
+        CArray { ref typ, ref term } => {
+          let default = term.eval(model) ? ;
+          val::array(typ.clone(), default)
+        },
       } ;
 
       // Go up.
@@ -603,11 +568,12 @@ impl RTerm {
     while let Some(term) = to_do.pop() {
       match * term {
         RTerm::Var(_, i) => max = Some(
-          ::std::cmp::max( i, max.unwrap_or(0.into()) )
+          ::std::cmp::max( i, max.unwrap_or_else(|| 0.into()) )
         ),
         RTerm::Int(_) |
         RTerm::Real(_) |
         RTerm::Bool(_) => (),
+        RTerm::CArray { ref term, .. } => to_do.push(& * term),
         RTerm::App{ ref args, .. } => for arg in args {
           to_do.push(arg)
         },
@@ -622,6 +588,26 @@ impl RTerm {
       RTerm::Var(_, i) => Some(i),
       _ => None,
     }
+  }
+
+  /// Return true if the term mentions at least one variable from `vars`.
+  pub fn mentions_one_of(& self, vars: & VarSet) -> bool {
+    let mut to_do = vec![ self ] ;
+    while let Some(term) = to_do.pop() {
+      match * term {
+        RTerm::Var(_, var) => if vars.contains(& var) {
+          return true
+        },
+        RTerm::Bool(_) |
+        RTerm::Int(_) |
+        RTerm::Real(_) |
+        RTerm::CArray { .. } => (),
+        RTerm::App { ref args, .. } => for arg in args {
+          to_do.push(arg)
+        },
+      }
+    }
+    false
   }
 
   /// If the term is a negation, returns what's below the negation.
@@ -650,6 +636,10 @@ impl RTerm {
   /// `map`.
   ///
   /// The boolean returned is true if at least on substitution occured.
+  ///
+  /// # TODO
+  ///
+  /// - remove recursive call in the array case
   pub fn subst_custom<Map: VarIndexed<Term>>(
     & self, map: & Map, total: bool
   ) -> Option<(Term, bool)> {
@@ -663,8 +653,8 @@ impl RTerm {
 
       // Go down.
       let mut term = match * current.get() {
-        RTerm::Var(typ, var) => if let Some(term) = map.var_get(var) {
-          debug_assert_eq! { typ, term.typ() }
+        RTerm::Var(ref typ, var) => if let Some(term) = map.var_get(var) {
+          debug_assert_eq! { typ, & term.typ() }
           subst_count += 1 ;
           term
         } else if total {
@@ -679,7 +669,20 @@ impl RTerm {
           ) ;
           continue 'go_down
         },
-        _ => current.clone(),
+        RTerm::CArray { ref typ, ref term } => {
+          if let Some((term, changed)) = term.subst_custom(map, total) {
+            if changed {
+              subst_count += 1 ;
+            }
+            cst_array(typ.clone(), term)
+          } else {
+            return None
+          }
+
+        },
+        RTerm::Bool(_) |
+        RTerm::Real(_) |
+        RTerm::Int(_) => current.clone(),
       } ;
 
       // Go up.
@@ -908,10 +911,9 @@ impl RTerm {
             Op::CMul => {
               if args.len() == 2 {
                 if let Some(val) = args[0].val() {
-                  use num::One ;
                   if val.minus().expect(
                     "illegal c_mul application found in `invert`"
-                  ) == Int::one().into() {
+                  ).is_one() {
                     solution = term::u_minus(solution) ;
                     term = & args[1] ;
                     continue
@@ -1004,7 +1006,7 @@ pub enum TTerm {
     /// Predicate applied.
     pred: PrdIdx,
     /// The arguments.
-    args: HTArgs,
+    args: VarTerms,
   },
   /// Just a term.
   T(Term),
@@ -1014,13 +1016,17 @@ impl TTerm {
   pub fn fls() -> Self {
     TTerm::T( term::fls() )
   }
+  /// The true top term.
+  pub fn tru() -> Self {
+    TTerm::T( term::tru() )
+  }
 
   /// Type of the top term.
   ///
   /// Should always be bool, except during parsing.
   pub fn typ(& self) -> Typ {
     match * self {
-      TTerm::P { .. } => Typ::Bool,
+      TTerm::P { .. } => typ::bool(),
       TTerm::T(ref term) => term.typ(),
     }
   }
@@ -1069,7 +1075,7 @@ impl TTerm {
   }
 
   /// The arguments of a top term if it's a predicate application.
-  pub fn args(& self) -> Option<& HTArgs> {
+  pub fn args(& self) -> Option<& VarTerms> {
     match * self {
       TTerm::P { ref args, .. } => Some(args),
       _ => None,
@@ -1078,7 +1084,7 @@ impl TTerm {
 
   /// Applies some treatment if the top term is a predicate application.
   pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
-  where F: Fn(T, PrdIdx, & mut HTArgs) -> T {
+  where F: Fn(T, PrdIdx, & mut VarTerms) -> T {
     if let TTerm::P { pred, ref mut args } = * self {
       f(init, pred, args)
     } else {
@@ -1160,7 +1166,7 @@ impl TTerm {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     use self::TTerm::* ;
     match * self {
       P { pred, ref args } => write_prd(w, pred, args),
@@ -1175,7 +1181,7 @@ impl TTerm {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
@@ -1201,19 +1207,19 @@ impl_fmt!{
 ///
 /// Actually contains a set of `Term`s and a map from predicates to their
 /// arguments.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TTermSet {
   /// Set of terms.
-  terms: HConSet<Term>,
+  terms: TermSet,
   /// Predicate applications.
-  preds: PrdHMap< HTArgss >,
+  preds: PrdHMap< VarTermsSet >,
 }
 impl TTermSet {
   /// Creates a new top term set with some capacity
   #[inline]
   pub fn with_capacity(capa: usize) -> Self {
     TTermSet {
-      terms: HConSet::with_capacity(capa),
+      terms: TermSet::with_capacity(capa),
       preds: PrdHMap::with_capacity(capa),
     }
   }
@@ -1221,14 +1227,14 @@ impl TTermSet {
   #[inline]
   pub fn with_capacities(term_capa: usize, pred_capa: usize) -> Self {
     TTermSet {
-      terms: HConSet::with_capacity(term_capa),
+      terms: TermSet::with_capacity(term_capa),
       preds: PrdHMap::with_capacity(pred_capa),
     }
   }
 
   /// Destroys the set.
   #[inline]
-  pub fn destroy(self) -> (HConSet<Term>, PrdHMap<HTArgss>) {
+  pub fn destroy(self) -> (TermSet, PrdHMap<VarTermsSet>) {
     (self.terms, self.preds)
   }
 
@@ -1245,10 +1251,9 @@ impl TTermSet {
 
   /// Creates a top term set from a set of terms.
   #[inline]
-  pub fn of_terms(terms: HConSet<Term>, pred_capa: usize) -> Self {
+  pub fn of_terms(terms: TermSet, pred_capa: usize) -> Self {
     TTermSet {
-      terms: terms,
-      preds: PrdHMap::with_capacity(pred_capa),
+      terms, preds: PrdHMap::with_capacity(pred_capa),
     }
   }
 
@@ -1270,23 +1275,23 @@ impl TTermSet {
 
   /// Terms.
   #[inline]
-  pub fn terms(& self) -> & HConSet<Term> {
+  pub fn terms(& self) -> & TermSet {
     & self.terms
   }
   /// Predicate applications.
   #[inline]
-  pub fn preds(& self) -> & PrdHMap< HTArgss > {
+  pub fn preds(& self) -> & PrdHMap< VarTermsSet > {
     & self.preds
   }
 
   /// Terms (mutable version).
   #[inline]
-  pub fn terms_mut(& mut self) -> & mut HConSet<Term> {
+  pub fn terms_mut(& mut self) -> & mut TermSet {
     & mut self.terms
   }
   /// Predicate applications (mutable version).
   #[inline]
-  pub fn preds_mut(& mut self) -> & mut PrdHMap< HTArgss > {
+  pub fn preds_mut(& mut self) -> & mut PrdHMap< VarTermsSet > {
     & mut self.preds
   }
 
@@ -1314,7 +1319,7 @@ impl TTermSet {
 
   /// Variable substitution.
   pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
-    let mut terms = HConSet::<Term>::with_capacity(self.terms.len()) ;
+    let mut terms = TermSet::with_capacity(self.terms.len()) ;
     for term in self.terms() {
       let (term, _) = term.subst(map) ;
       terms.insert(term) ;
@@ -1322,9 +1327,9 @@ impl TTermSet {
 
     let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
     for (pred, argss) in self.preds.iter() {
-      let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+      let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
       for args in argss {
-        let args = term::args::new( args.subst(map) ) ;
+        let args = var_to::terms::new( args.subst(map) ) ;
         nu_argss.insert(args) ;
       }
       preds.insert(* pred, nu_argss) ;
@@ -1335,23 +1340,19 @@ impl TTermSet {
 
   /// Inserts a predicate application.
   #[inline]
-  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: HTArgs) -> bool {
-    self.preds.entry(pred).or_insert_with(
-      || HTArgss::new()
-    ).insert(args)
+  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
+    self.preds.entry(pred).or_insert_with(VarTermsSet::new).insert(args)
   }
   /// Inserts some predicate applications.
   pub fn insert_pred_apps<Iter, TArgss>(
     & mut self, pred: PrdIdx, argss: TArgss
   )
   where
-  Iter: Iterator<Item = HTArgs> + ExactSizeIterator,
-  TArgss: IntoIterator<Item = HTArgs, IntoIter = Iter> {
+  Iter: Iterator<Item = VarTerms> + ExactSizeIterator,
+  TArgss: IntoIterator<Item = VarTerms, IntoIter = Iter> {
     let argss = argss.into_iter() ;
     if argss.len() == 0 { return () }
-    self.preds.entry(pred).or_insert_with(
-      || HTArgss::new()
-    ).extend( argss )
+    self.preds.entry(pred).or_insert_with(VarTermsSet::new).extend( argss )
   }
 
   /// Inserts a term.
@@ -1427,7 +1428,7 @@ impl TTermSet {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     // Don't print the separator the first time.
     let mut separate = false ;
     macro_rules! write_sep {
@@ -1516,7 +1517,7 @@ impl ::std::cmp::PartialOrd for TTermSet {
 
 /// Removes some arguments from some predicate applications.
 fn remove_vars_from_pred_apps(
-  apps: & mut PrdHMap< HTArgss >, to_keep: & PrdHMap<VarSet>
+  apps: & mut PrdHMap< VarTermsSet >, to_keep: & PrdHMap<VarSet>
 ) {
   for (pred, argss) in apps.iter_mut() {
     let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
@@ -1524,7 +1525,7 @@ fn remove_vars_from_pred_apps(
     } else {
       continue
     } ;
-    let mut old_argss = HTArgss::with_capacity( argss.len() ) ;
+    let mut old_argss = VarTermsSet::with_capacity( argss.len() ) ;
     ::std::mem::swap( & mut old_argss, argss ) ;
     for args in old_argss {
       argss.insert( args.remove( vars_to_keep ) ) ;
@@ -1534,7 +1535,7 @@ fn remove_vars_from_pred_apps(
 
 
 /// A formula composed of top terms.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TTerms {
   /// True.
   True,
@@ -1549,7 +1550,7 @@ pub enum TTerms {
   Disj {
     quant: Option<Quant>,
     tterms: TTermSet,
-    neg_preds: PrdHMap< HTArgss >,
+    neg_preds: PrdHMap< VarTermsSet >,
   },
   /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
   Dnf {
@@ -1601,7 +1602,7 @@ impl TTerms {
       TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
       TTerms::Conj { ref tterms, .. } => Some(
         term::and(
-          tterms.terms().iter().map(|term| term.clone()).collect()
+          tterms.terms().iter().cloned().collect()
         )
       ),
 
@@ -1611,7 +1612,7 @@ impl TTerms {
       } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
       TTerms::Disj { ref tterms, .. } => Some(
         term::or(
-          tterms.terms().iter().map(|term| term.clone()).collect()
+          tterms.terms().iter().cloned().collect()
         )
       ),
 
@@ -1622,7 +1623,7 @@ impl TTerms {
           || ! conj.preds.is_empty() { return None }
           disj_terms.push(
             term::and(
-              conj.terms().iter().map(|term| term.clone()).collect()
+              conj.terms().iter().cloned().collect()
             )
           )
         }
@@ -1690,9 +1691,9 @@ impl TTerms {
 
         let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
         for (pred, argss) in neg_preds.iter() {
-          let mut nu_argss = HTArgss::with_capacity( argss.len() ) ;
+          let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
           for args in argss {
-            let args = term::args::new( args.subst(map) ) ;
+            let args = var_to::terms::new( args.subst(map) ) ;
             nu_argss.insert(args) ;
           }
           preds.insert(* pred, nu_argss) ;
@@ -1738,7 +1739,7 @@ impl TTerms {
 
   /// Constructs a disjuction.
   pub fn disj(
-    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<HTArgss>
+    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<VarTermsSet>
   ) -> Self {
     TTerms::Disj { quant, tterms, neg_preds }.simplify()
   }
@@ -1747,7 +1748,7 @@ impl TTerms {
   ///
   /// This special format is exactly the one used by preprocessing.
   pub fn disj_of_pos_neg(
-    quant: Option<Quant>, pos: Option<(PrdIdx, HTArgs)>, neg: TTermSet
+    quant: Option<Quant>, pos: Option<(PrdIdx, VarTerms)>, neg: TTermSet
   ) -> Self {
     let TTermSet { terms, preds: neg_preds } = neg ;
     let mut tterms = TTermSet::with_capacities(terms.len(), 1) ;
@@ -1809,12 +1810,11 @@ impl TTerms {
         TTerms::conj(conj.0, conj.1).simplify()
       ),
       TTerms::Conj { quant, tterms } => {
-        // conj => self?
         if tterms.is_subset_of(& conj.1) {
+          // conj => self?
           Ok( TTerms::Conj { quant, tterms } )
-        } else
-        // self => conj?
-        if conj.1.is_subset_of(& tterms) {
+        } else if conj.1.is_subset_of(& tterms) {
+          // self => conj?
           Ok(
             TTerms::Conj{ quant: conj.0, tterms: conj.1 }.simplify()
           )
@@ -1880,16 +1880,16 @@ impl TTerms {
 
     match self {
 
-      TTerms::True | TTerms::False => return self,
+      TTerms::True | TTerms::False => self,
 
       TTerms::Conj { quant, mut tterms } => {
         tterms.preds.retain(
           |_, argss| ! argss.is_empty()
         ) ;
 
-        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
         // Used to inline conjunctions.
-        let mut swap = HConSet::new() ;
+        let mut swap = TermSet::new() ;
         ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
 
         'inline_conjs: loop {
@@ -1969,9 +1969,9 @@ impl TTerms {
           }
         }
 
-        let mut old_terms = HConSet::with_capacity( tterms.terms.len() ) ;
+        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
         // Used to inline disjunctions.
-        let mut swap = HConSet::new() ;
+        let mut swap = TermSet::new() ;
         ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
 
         'inline_disj: loop {
@@ -2096,14 +2096,14 @@ impl TTerms {
 
   /// Simplifies some top terms given some definitions for the predicates.
   pub fn simplify_pred_apps(
-    self, model: & Model, pred_terms: & PrdMap< Option<TTerms> >
+    self, model: ModelRef, pred_terms: & PrdMap< Option<TTerms> >
   ) -> Self {
     macro_rules! if_defined {
       ($pred:ident then |$def:ident| $stuff:expr) => (
         if let Some($def) = pred_terms[* $pred].as_ref() {
           $stuff
         } else {
-          for & (ref idx, ref $def) in model {
+          for (ref idx, ref $def) in model {
             if idx == $pred { $stuff }
           }
         }
@@ -2210,7 +2210,7 @@ impl TTerms {
   where
   W: Write,
   WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
 
     macro_rules! write_conj {
       ($quant:expr, $tterms:expr) => ({
@@ -2300,7 +2300,7 @@ impl TTerms {
   ) -> IoRes<()>
   where
   W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & HTArgs) -> IoRes<()> {
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
     self.write(
       w, |w, var| var.default_write(w), write_prd
     )
@@ -2347,7 +2347,7 @@ impl<'a, 'b> ::rsmt2::print::Expr2Smt<
 /// # Invariant
 ///
 /// The variable partial maps are never empty.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Quant {
   /// Exists.
   Exists( VarHMap<Typ> ),
@@ -2389,6 +2389,9 @@ impl Quant {
     debug_assert! { ! map.is_empty() }
     map.len()
   }
+
+  /// True if there are no quantified variables.
+  pub fn is_empty(& self) -> bool { self.len() == 0 }
 
   /// Filters some quantified variables.
   ///
@@ -2436,7 +2439,7 @@ impl Quant {
   ) -> IoRes<()>
   where
   W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
-    w.write( pref.as_bytes() ) ? ;
+    w.write_all( pref.as_bytes() ) ? ;
     let map = match * self {
       Quant::Exists(ref map) => {
         write!(w, "(exists (") ? ;
@@ -2457,3 +2460,31 @@ impl Quant {
 }
 
 
+/// A term type-checking error.
+pub enum TypError {
+  /// No type info, just an error message.
+  Msg(String),
+  /// Type info:
+  ///
+  /// - the type expected (if known),
+  /// - the type obtained,
+  /// - the index of the argument that caused it.
+  Typ {
+    expected: Option<Typ>,
+    obtained: Typ,
+    index: usize,
+  }
+}
+impl TypError {
+  /// Message constructor.
+  pub fn msg<S: Into<String>>(s: S) -> Self {
+    TypError::Msg( s.into() )
+  }
+
+  /// Type info constructor.
+  pub fn typ(
+    expected: Option<Typ>, obtained: Typ, index: usize
+  ) -> Self {
+    TypError::Typ { expected, obtained, index }
+  }
+}

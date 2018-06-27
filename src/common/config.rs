@@ -166,6 +166,7 @@ impl SmtConf {
     ).to_string() ;
     let mut conf = SolverConf::z3() ;
     conf.cmd( z3_cmd ) ;
+    conf.models() ;
 
     let log = bool_of_matches(matches, "smt_log") ;
 
@@ -261,16 +262,24 @@ pub struct PreprocConf {
   /// (ArgRed reduction strategy)
   pub arg_red: bool,
 
-  /// Allows unrolling.
-  ///
-  /// (De)activates [`Unroll`][unroll].
-  ///
-  /// [unroll]: ../../instance/preproc/struct.Unroll.html
-  /// (Unroll strategy)
-  pub unroll: bool,
+  /// Reverse unrolling.
+  pub runroll: bool,
 
-  /// Allows multiplet unrollings.
-  pub mult_unroll: bool,
+  /// Allows positive clever unrolling.
+  ///
+  /// (De)activates [`BiasedUnroll`][unroll] (positive version).
+  ///
+  /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
+  /// (BiasedUnroll strategy)
+  pub pos_unroll: bool,
+
+  /// Allows negative clever unrolling.
+  ///
+  /// (De)activates [`BiasedUnroll`][unroll] (negative version).
+  ///
+  /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
+  /// (BiasedUnroll strategy)
+  pub neg_unroll: bool,
 
   /// Allows clause term pruning.
   ///
@@ -496,8 +505,8 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("unroll").long("--unroll").help(
-        "(de)activates unrolling"
+      Arg::with_name("runroll").long("--runroll").help(
+        "(de)activates reverse unrolling"
       ).validator(
         bool_validator
       ).value_name(
@@ -508,13 +517,25 @@ impl PreprocConf {
 
     ).arg(
 
-      Arg::with_name("mult_unroll").long("--mult_unroll").help(
-        "(de)activates multiple unrollings"
+      Arg::with_name("pos_unroll").long("--pos_unroll").help(
+        "(de)activates positive unrolling"
       ).validator(
         bool_validator
       ).value_name(
         bool_format
-      ).default_value("off").takes_value(true).hidden(
+      ).default_value("on").takes_value(true).hidden(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("neg_unroll").long("--neg_unroll").help(
+        "(de)activates negative unrolling"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").takes_value(true).hidden(
         true
       ).number_of_values(1).display_order( order() )
 
@@ -558,15 +579,17 @@ impl PreprocConf {
     let dump = bool_of_matches(matches, "dump_preproc") ;
     let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep") ;
     let prune_terms = bool_of_matches(matches, "prune_terms") ;
-    let unroll = bool_of_matches(matches, "unroll") ;
-    let mult_unroll = bool_of_matches(matches, "mult_unroll") ;
+    let runroll = bool_of_matches(matches, "runroll") ;
+    let pos_unroll = bool_of_matches(matches, "pos_unroll") ;
+    let neg_unroll = bool_of_matches(matches, "neg_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
-      arg_red, prune_terms, unroll, mult_unroll, split_strengthen, split_sort
+      arg_red, prune_terms, runroll, pos_unroll, neg_unroll,
+      split_strengthen, split_sort
     }
   }
 }
@@ -583,6 +606,8 @@ pub struct IceConf {
   pub simple_gain_ratio: f64,
   /// Sort predicates.
   pub sort_preds: f64,
+  /// Randomize qualifiers.
+  pub rand_quals: bool,
   /// Generate complete transformations for qualifiers.
   pub complete: bool,
   /// Biases qualifier selection based on the predicates the qualifier was
@@ -606,6 +631,8 @@ pub struct IceConf {
   pub add_synth: bool,
   /// Lockstep for qualifiers.
   pub qual_step: bool,
+  /// Lockstep for synthesized qualifiers only.
+  pub qual_synth_step: bool,
 }
 impl SubConf for IceConf {
   fn need_out_dir(& self) -> bool { false }
@@ -640,6 +667,20 @@ impl IceConf {
         "int"
       ).default_value(
         "40"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
+    ).arg(
+
+      Arg::with_name("rand_quals").long("--rand_quals").help(
+        "randomize the qualifiers before gain computation"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "on"
       ).takes_value(true).number_of_values(1).display_order(
         order()
       ).hidden(true)
@@ -726,7 +767,7 @@ impl IceConf {
         int_validator
       ).value_name(
         "int"
-      ).default_value("100").takes_value(
+      ).default_value("100000").takes_value(
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
@@ -778,6 +819,18 @@ impl IceConf {
         true
       ).number_of_values(1).hidden(true).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("qual_synth_step").long("--qual_synth_step").help(
+        "lockstep qualifier selection (synthesis only)"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("off").takes_value(
+        true
+      ).number_of_values(1).hidden(true).display_order( order() )
+
     )
   }
 
@@ -807,6 +860,9 @@ impl IceConf {
         value
       }
     } ;
+
+    let rand_quals = bool_of_matches(matches, "rand_quals") ;
+
     let complete = bool_of_matches(matches, "complete") ;
     let qual_bias = bool_of_matches(matches, "qual_bias") ;
     let qual_print = bool_of_matches(matches, "qual_print") ;
@@ -851,12 +907,13 @@ impl IceConf {
     let pure_synth = bool_of_matches(matches, "pure_synth") ;
     let mine_conjs = bool_of_matches(matches, "mine_conjs") ;
     let qual_step = bool_of_matches(matches, "qual_step") ;
+    let qual_synth_step = bool_of_matches(matches, "qual_synth_step") ;
 
     IceConf {
-      simple_gain_ratio, sort_preds, complete,
+      simple_gain_ratio, sort_preds, rand_quals, complete,
       qual_bias, qual_print,
       gain_pivot, gain_pivot_inc, gain_pivot_mod, gain_pivot_synth,
-      pure_synth, mine_conjs, add_synth, qual_step
+      pure_synth, mine_conjs, add_synth, qual_step, qual_synth_step
     }
   }
 }
@@ -874,6 +931,8 @@ pub struct TeacherConf {
   pub assistant: bool,
   /// Try to find implication constraints related to existing samples first.
   pub bias_cexs: bool,
+  /// Maximize bias: remove all constraints when there are pos/neg cexs.
+  pub max_bias: bool,
   /// Allow partial samples.
   pub partial: bool,
 }
@@ -921,8 +980,23 @@ impl TeacherConf {
       ).value_name(
         bool_format
       ).default_value(
-        "on"
+        "off"
       ).takes_value(true).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("max_bias").long("--max_bias").help(
+        "(de)activate constraint pruning when there's at least one \
+        pos/neg sample"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
 
     ).arg(
 
@@ -944,10 +1018,11 @@ impl TeacherConf {
     let step = bool_of_matches(matches, "teach_step") ;
     let assistant = bool_of_matches(matches, "assistant") ;
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
+    let max_bias = bool_of_matches(matches, "max_bias") ;
     let partial = bool_of_matches(matches, "partial") ;
 
     TeacherConf {
-      step, assistant, bias_cexs, partial
+      step, assistant, bias_cexs, max_bias, partial
     }
   }
 }
@@ -1011,23 +1086,6 @@ impl Config {
     path
   }
 
-
-
-  /// True if minimal mode.
-  #[inline]
-  pub fn minimal(& self) -> bool {
-    self.verb >= 1
-  }
-  /// True if verbose mode.
-  #[inline]
-  pub fn verbose(& self) -> bool {
-    self.verb >= 2
-  }
-  /// True if debug mode.
-  #[inline]
-  pub fn debug(& self) -> bool {
-    self.verb >= 3
-  }
   /// Input file.
   #[inline]
   pub fn in_file(& self) -> Option<& String> {
@@ -1043,7 +1101,7 @@ impl Config {
   #[inline]
   pub fn check_timeout(& self) -> Res<()> {
     if let Some(max) = self.timeout.as_ref() {
-      if & Instant::now() > max {
+      if Instant::now() > * max {
         bail!( ErrorKind::Timeout )
       }
     }
@@ -1054,7 +1112,7 @@ impl Config {
   pub fn until_timeout(& self) -> Option<Duration> {
     if let Some(timeout) = self.timeout.as_ref() {
       let now = Instant::now() ;
-      if & now > timeout {
+      if now > * timeout {
         Some( Duration::new(0,0) )
       } else {
         Some( * timeout - now )
@@ -1241,7 +1299,7 @@ impl Config {
       ).value_name(
         bool_format
       ).default_value(
-        "on"
+        "off"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
@@ -1373,7 +1431,6 @@ impl Styles {
 /// Can color things.
 pub trait ColorExt {
   /// The styles in the colorizer: emph, happy, sad, and bad.
-  #[inline]
   fn styles(& self) -> & Styles ;
   /// String emphasis.
   #[inline]
@@ -1441,6 +1498,7 @@ pub fn int_of_matches(matches: & Matches, key: & str) -> usize {
 }
 
 /// Validates integer input.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn int_validator(s: String) -> Result<(), String> {
   use std::str::FromStr ;
   match usize::from_str(& s) {
@@ -1452,6 +1510,7 @@ pub fn int_validator(s: String) -> Result<(), String> {
 }
 
 /// Validates integer input between some bounds.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn bounded_int_validator(
   s: String, lo: usize, hi: usize
 ) -> Result<(), String> {
@@ -1473,22 +1532,13 @@ pub fn bounded_int_validator(
 }
 
 /// Validates boolean input.
+#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 pub fn bool_validator(s: String) -> Result<(), String> {
-  if let Some(_) = bool_of_str(& s) {
+  if bool_of_str(& s).is_some() {
     Ok(())
   } else {
     Err(
       format!("expected `on/true` or `off/false`, got `{}`", s)
     )
-  }
-}
-
-
-/// Checks whether a directory exists.
-pub fn dir_exists(path: String) -> Result<(), String> {
-  if ::std::path::Path::new(& path).is_dir() {
-    Ok(())
-  } else {
-    Err( format!("`{}` is not a directory", path) )
   }
 }

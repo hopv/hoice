@@ -1,6 +1,7 @@
-use common::* ;
-
-use common::data::args::SubsumeExt ;
+use common::{
+  *,
+  var_to::vals::VarValsSet,
+} ;
 
 /// A sample is some values for a predicate.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -8,21 +9,21 @@ pub struct Sample {
   /// Predicate the sample is for.
   pub pred: PrdIdx,
   /// Arguments.
-  pub args: Args,
+  pub args: VarVals,
 }
 impl Sample {
   /// Constructor.
-  pub fn new(pred: PrdIdx, args: Args) -> Self {
+  pub fn new(pred: PrdIdx, args: VarVals) -> Self {
     Sample { pred, args }
   }
 
   /// Tests if a sample is about some predicate and its arguments is subsumed
   /// by one of the elements of a set.
   pub fn set_subsumed(
-    & self, pred: PrdIdx, samples: & ArgsSet
+    & self, pred: PrdIdx, samples: & VarValsSet
   ) -> bool {
     if self.pred != pred {
-      return false
+      false
     } else {
       self.args.set_subsumed(samples)
     }
@@ -33,7 +34,7 @@ impl Sample {
   ///
   /// Samples from the set that are subsumed by `self` are removed if `rm`.
   pub fn set_subsumed_rm(
-    & self, pred: PrdIdx, samples: & mut ArgsSet
+    & self, pred: PrdIdx, samples: & mut VarValsSet
   ) -> (bool, usize) {
     if self.pred != pred {
       (false, 0)

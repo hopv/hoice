@@ -64,6 +64,29 @@ macro_rules! keys {
 
 
 
+/// Values used in hoice.
+pub mod values {
+  /// Default values.
+  pub mod default {
+    /// Generate unsat cores?
+    pub const unsat_cores: bool = false ;
+    /// Generate proofs?
+    pub const proofs: bool = false ;
+    /// Print success?
+    pub const print_success: bool = false ;
+  }
+}
+
+/// Error messages.
+pub mod errors {
+  /// Unsat core asked but not active.
+  pub const no_unsat_cores: & str = "\
+    unsat core production is not active:\n\
+    consider adding `(set-option :produce-unsat-core true)`\n\
+    at the start of your script
+  " ;
+}
+
 
 
 
@@ -89,6 +112,8 @@ pub mod keywords {
       }
 
       keys {
+        distinct_ ("distinct", doc = "Distinct.")
+
         eq_   ("=", doc = "Equal.")
         not_  ("not", doc = "Not.")
         and_  ("and", doc = "And.")
@@ -113,6 +138,9 @@ pub mod keywords {
         to_real_ ("to_real", doc = "Conversion from `Int` to `Real`.")
 
         as_ ("as", doc = "As.")
+
+        store_ ("store", doc = "Updater for arrays.")
+        select_ ("select", doc = "Accessor for arrays.")
       }
     }
 
@@ -133,6 +161,8 @@ pub mod keywords {
 
         check_sat ("check-sat", doc = "Check-sat keyword.")
         get_model ("get-model", doc = "Get-model keyword.")
+        get_unsat_core ("get-unsat-core", doc = "Get-unsat-core keyword.")
+        get_proof ("get-proof", doc = "Get-proof keyword.")
 
         reset ("reset", doc = "Reset keyword.")
         exit  ("exit", doc = "Exit keyword.")
