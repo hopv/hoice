@@ -12,20 +12,26 @@ It infers predicates verifying a set of horn clauses.
 
 If you haven't already, install [Rust](https://www.rust-lang.org) on your system. The recommended way to do this is to use [`rustup`](https://www.rustup.rs/).
 
-`cargo` installation:
+Hoice generally uses the latest rust features available. Make sure the rust ecosystem is up to date by running the following command before building hoice.
+
+```bash
+rustup update stable
+```
+
+Installing hoice with `cargo` installation:
 
 ```bash
 cargo install --git https://github.com/hopv/hoice
 ```
 
-To build `hoice` manually, clone this repository `cd` in the directory and run
+To build hoice manually, clone this repository `cd` in the directory and run
 
 ```bash
 cargo build --release
 ```
 The binary file will be in `target/release/hoice`.
 
-To get the fastest version, compile `hoice` with
+To get the fastest version, compile hoice with
 
 ```bash
 cargo build --release --features "bench"
@@ -50,7 +56,8 @@ Sorts supported:
 
 - [x] `Bool`
 - [x] `Int`
-- [x] `Real` (experimental)
+- [x] `Real`
+- [x] `Array` (naive)
 - [ ] `List`
 - [ ] (mutually recursive) ADTs
 
