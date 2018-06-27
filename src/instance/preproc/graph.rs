@@ -597,14 +597,13 @@ impl Graph {
     pred: PrdIdx, to_merge: & mut Vec< (PrdIdx, VarTermsSet, & Dnf) >,
     qvars: Quantfed, tterms: TTermSet
   ) -> Res< Option<Dnf> > {
-
     let res = if to_merge.is_empty() {
       if let Some(max) = max.map(
         |max: usize| if * estimation > max { 0 } else {
           max - * estimation
         }
       ) {
-        if let Some(e) = Self::estimate(instance, pred, def_len, max) {
+        if let Some(e) = Self::estimate(instance, pred, def_len + 1, max) {
           * estimation += e
         } else {
           return Ok(None)
@@ -667,7 +666,7 @@ impl Graph {
         )
       ) ? {
         curr = res.def ;
-        * estimation += res.estimation
+        * estimation += res.estimation ;
       } else {
         return Ok(None)
       }
@@ -952,11 +951,13 @@ impl Graph {
       }
 
       if let Some(pred) = Self::find_heaviest(instance, & weights) ? {
-        log! { @3 "  removing it from everything" }
+        log! { @3
+          "  removing it from everything" ;
+          "  remembering {}", instance[pred]
+        }
         // Remove the representative from everything.
         Self::forget(pred, & mut pos, & mut forward) ;
 
-        log! { @3 "  remembering {}", instance[pred] }
         let is_new = set.insert(pred) ;
         debug_assert!( is_new ) ;
 
@@ -1055,6 +1056,7 @@ impl Graph {
     if let Some((pred, weight)) = rep {
       log! { @3 "  heaviest is {} ({})", _instance[pred], weight }
       if weight < 2 {
+        log! { @3 "no cycle, forgetting everything" }
         Ok(None)
       } else {
         Ok( Some(pred) )
