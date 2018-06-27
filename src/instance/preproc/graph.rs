@@ -858,8 +858,6 @@ impl Graph {
         }
       }
 
-      // println!("  inc: {}", inc) ;
-
       if let Some(e) = estimation.checked_add(inc) {
         estimation = e ;
         if estimation <= max {
