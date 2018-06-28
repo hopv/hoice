@@ -1,8 +1,14 @@
 //! SMT-LIB 2 horn clause problem parser.
 
 use common::* ;
-use instance::* ;
+use instance::{
+  *, info::VarInfo
+} ;
 
+mod ptterms ;
+pub use self::ptterms::* ;
+
+use consts::keywords ;
 
 
 
@@ -158,7 +164,11 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 /// String cursor.
 pub type Cursor = usize ;
 /// Position in the text.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(
+  Clone, Copy, Debug,
+  PartialEq, Eq, Hash,
+  PartialOrd, Ord
+)]
 pub struct Pos(usize) ;
 impl ::std::ops::Deref for Pos {
   type Target = usize ;
@@ -708,6 +718,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+
+
+
   /// Tries to parse a sort.
   pub fn sort_opt(& mut self) -> Res<Option<Typ>> {
     // Compound type under construction.
@@ -819,9 +832,341 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   }
 
+
+
+  /// Parses a sort.
+  pub fn nu_sort(
+    & mut self, type_params: & BTreeMap<& 's str, dtyp::TPrmIdx>
+  ) -> Res<dtyp::PartialTyp> {
+    if let Some(res) = self.nu_sort_opt(type_params) ? {
+      Ok(res)
+    } else {
+      bail!(
+        self.error_here( format!("expected sort") )
+      )
+    }
+  }
+
+
+
+  /// Tries to parse a sort.
+  pub fn nu_sort_opt(
+    & mut self, type_params: & BTreeMap<& 's str, dtyp::TPrmIdx>
+  ) -> Res<Option<dtyp::PartialTyp>> {
+    use dtyp::PartialTyp ;
+
+    // Compound type under construction.
+    //
+    // The position is always that of the opening paren of the type.
+    enum CTyp<'a> {
+      // Array under construction, meaning we're parsing the index sort.
+      Array { pos: Pos },
+      // Array with a source, meaning we're parsing the target sort.
+      ArraySrc { pos: Pos, src: PartialTyp },
+      // Datatype storing the name, the position of the name, and the types.
+      DTyp { name: & 'a str, pos: Pos, typs: dtyp::TPrmMap< PartialTyp > },
+    }
+
+    let mut stack = vec![] ;
+
+    let start_pos = self.pos() ;
+
+    'go_down: loop {
+      self.ws_cmt() ;
+      let current_pos = self.pos() ;
+
+      let mut typ = if self.tag_opt("(") {
+        self.ws_cmt() ;
+        // Parsing a compound type.
+
+        if self.tag_opt("Array") {
+          if ! self.legal_id_char() {
+            // We're parsing an array type.
+            stack.push( CTyp::Array { pos: current_pos } ) ;
+            continue 'go_down
+          } else {
+            None
+          }
+        } else if let Some((pos, name)) = self.ident_opt() ? {
+          stack.push(
+            CTyp::DTyp { name, pos, typs: dtyp::TPrmMap::new() }
+          ) ;
+          continue 'go_down
+        } else {
+          None
+        }
+
+      } else if self.tag_opt("Int") {
+        if ! self.legal_id_char() {
+          Some( typ::int().into() )
+        } else {
+          None
+        }
+
+      } else if self.tag_opt("Real") {
+        if ! self.legal_id_char() {
+          Some( typ::real().into() )
+        } else {
+          None
+        }
+
+      } else if self.tag_opt("Bool") {
+        if ! self.legal_id_char() {
+          Some( typ::bool().into() )
+        } else {
+          None
+        }
+
+      } else {
+        None
+      } ;
+
+      if typ.is_none() {
+        if let Some((pos, name)) = self.ident_opt() ? {
+          // Type parameter?
+          typ = if let Some(idx) = type_params.get(name) {
+            Some( PartialTyp::Param(* idx) )
+          } else {
+            Some(
+              PartialTyp::DTyp( name.into(), pos, vec![].into() )
+            )
+          }
+
+        }
+      }
+
+      'go_up: loop {
+
+        match stack.pop() {
+
+          Some(CTyp::Array { pos }) => if let Some(src) = typ {
+            stack.push( CTyp::ArraySrc { pos, src } ) ;
+            // Need to parse the domain now.
+            continue 'go_down
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this array sort").into()
+            ).chain_err(
+              || self.error(current_pos, "expected index sort")
+            ) ?
+          },
+
+          Some(CTyp::ArraySrc { pos, src }) => if let Some(tgt) = typ {
+            typ = Some(
+              PartialTyp::Array( Box::new(src), Box::new(tgt) )
+            ) ;
+
+            // Parse closing paren.
+            self.ws_cmt() ;
+            if ! self.tag_opt(")") {
+              Err::<_, Error>(
+                self.error(pos, "while parsing this array sort").into()
+              ).chain_err(
+                || self.error(
+                  current_pos, "expected expected closing paren"
+                )
+              ) ?
+            }
+
+            continue 'go_up
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this array sort").into()
+            ).chain_err(
+              || self.error(current_pos, "expected domain sort")
+            ) ?
+          },
+
+          Some(CTyp::DTyp { name, pos, mut typs }) => if let Some(t) = typ {
+            typs.push(t) ;
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              typ = Some( PartialTyp::DTyp(name.into(), pos, typs) ) ;
+              continue 'go_up
+            } else {
+              stack.push( CTyp::DTyp { name, pos, typs } ) ;
+              continue 'go_down
+            }
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this datatype sort").into()
+            ).chain_err(
+              || self.error(current_pos, "expected sort")
+            ) ?
+          },
+
+          None => if typ.is_none() {
+            self.backtrack_to(start_pos) ;
+            return Ok(None)
+          } else {
+            return Ok(typ)
+          }
+        }
+
+      }
+    }
+
+  }
+
+
+
+
+
+
+  /// Datatype declaration.
+  fn dtyp_dec(& mut self) -> Res<bool> {
+    if ! self.tag_opt(keywords::cmd::dec_dtyp) {
+      return Ok(false)
+    }
+
+    let mut dtyps: Vec<(Pos, dtyp::RDTyp)> = vec![] ;
+
+    let mut params = dtyp::TPrmMap::new() ;
+
+    self.ws_cmt() ;
+    self.tag("(") ? ;
+    self.ws_cmt() ;
+
+    let mut params_map = BTreeMap::new() ;
+
+    // Type parameters.
+    while let Some((pos, ident)) = self.ident_opt() ? {
+      let idx = params.next_index() ;
+      if let Some(prev) = params_map.insert(ident, idx) {
+        bail!(
+          self.error(
+            pos, format!(
+              "type parameters #{} and #{} have the same name `{}`",
+              idx, prev, ident
+            )
+          )
+        )
+      }
+      params.push( ident.to_string() ) ;
+      self.ws_cmt()
+    }
+
+    self.tag(")") ? ;
+    self.ws_cmt() ;
+
+    self.tag("(") ? ;
+    self.ws_cmt() ;
+
+    // Datatype declarations.
+    while self.tag_opt("(") {
+      self.ws_cmt() ;
+      let (dtyp_pos, dtyp_ident) = self.ident() ? ;
+      self.ws_cmt() ;
+
+      let mut dtyp = dtyp::RDTyp::new( dtyp_ident, params.clone() ) ;
+
+      // Constructors.
+      'constructors: loop {
+
+        let (
+          constructor_pos, constructor_ident, selectors
+        ) = if self.tag_opt("(") {
+          self.ws_cmt() ;
+          let (constructor_pos, constructor_ident) = self.ident() ? ;
+          self.ws_cmt() ;
+
+          let mut selectors = dtyp::CArgs::new() ;
+
+          // Selectors.
+          while self.tag_opt("(") {
+            self.ws_cmt() ;
+            let (selector_pos, selector_ident) = self.ident() ? ;
+            self.ws_cmt() ;
+
+            if selectors.iter().any(
+              |(id, _)| id == selector_ident
+            ) {
+              let error: Error = self.error(
+                selector_pos,
+                format!("found the selector `{}` twice", selector_ident)
+              ).into() ;
+              bail!(
+                error.chain_err(
+                  || self.error(
+                    dtyp_pos, "in this datatype declaration"
+                  )
+                )
+              )
+            }
+
+            let ptyp = self.nu_sort(& params_map) ? ;
+            selectors.push(
+              ( selector_ident.to_string(), ptyp )
+            ) ;
+
+            self.tag(")") ? ;
+            self.ws_cmt()
+          }
+
+          self.tag(")") ? ;
+          self.ws_cmt() ;
+
+          (constructor_pos, constructor_ident, selectors)
+
+        } else if let Some(
+          (constructor_pos, constructor_ident)
+        ) = self.ident_opt() ? {
+          self.ws_cmt() ;
+          (constructor_pos, constructor_ident, dtyp::CArgs::new())
+
+        } else {
+          break 'constructors
+        } ;
+
+
+        dtyp.add_constructor(constructor_ident, selectors).chain_err(
+          || self.error(constructor_pos, "in this constructor")
+        ) ?
+
+      }
+
+      for (_, dt) in & mut dtyps {
+        dt.add_dep( dtyp.name.clone() ) ;
+        dtyp.add_dep( dt.name.clone() )
+      }
+
+      dtyps.push( (dtyp_pos, dtyp) ) ;
+
+      self.tag_opt(")") ;
+      self.ws_cmt()
+    }
+
+    self.tag(")") ? ;
+
+    let mut final_dtyps = Vec::with_capacity( dtyps.len() ) ;
+
+    for (dtyp_pos, dtyp) in dtyps {
+      final_dtyps.push((
+        dtyp_pos, dtyp::mk(dtyp).chain_err(
+          || self.error(dtyp_pos, "while parsing this datatype constructor")
+        ) ?
+      ))
+    }
+
+    for (dtyp_pos, dtyp) in final_dtyps {
+      if let Err((pos, err)) = dtyp.check() {
+        let err: Error = self.error(pos, err).into() ;
+        bail!(
+          err.chain_err(
+            || self.error(dtyp_pos, "in this datatype declaration")
+          )
+        )
+      }
+    }
+
+    Ok(true)
+  }
+
+
+
   /// Predicate declaration.
   fn pred_dec(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt("declare-fun") {
+    if ! self.tag_opt(keywords::cmd::dec_fun) {
       return Ok(false)
     }
 
@@ -1497,7 +1842,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn define_fun(
     & mut self, instance: & mut Instance
   ) -> Res<bool> {
-    if ! self.tag_opt(::consts::keywords::cmd::def_fun) {
+    if ! self.tag_opt(keywords::cmd::def_fun) {
       return Ok(false)
     }
     conf.check_timeout() ? ;
@@ -2373,7 +2718,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else if self.set_logic() ?
       || self.pred_dec(instance) ?
       || self.define_fun(instance) ?
-      || self.assert(instance) ? {
+      || self.assert(instance) ?
+      || self.dtyp_dec() ? {
         Parsed::Items
       } else if self.check_sat() {
         Parsed::CheckSat
@@ -2417,484 +2763,3 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
 
-
-
-/// Boolean combination of top terms used by the parser.
-#[derive(Clone)]
-pub enum PTTerms {
-  And( Vec<PTTerms> ),
-  Or( Vec<PTTerms> ),
-  NTTerm( TTerm ),
-  TTerm( TTerm ),
-}
-impl PTTerms {
-  /// Type of the top terms.
-  pub fn typ(& self) -> Typ {
-    match * self {
-      PTTerms::And(_) |
-      PTTerms::Or(_) |
-      PTTerms::NTTerm(_) => typ::bool(),
-      PTTerms::TTerm(ref tterm) => tterm.typ(),
-    }
-  }
-
-  /// True if the top term is true.
-  pub fn is_true(& self) -> bool {
-    if let PTTerms::TTerm(ref tterm) = * self {
-      tterm.is_true()
-    } else {
-      false
-    }
-  }
-  /// True if the top term is false.
-  pub fn is_false(& self) -> bool {
-    if let PTTerms::TTerm(ref tterm) = * self {
-      tterm.is_false()
-    } else {
-      false
-    }
-  }
-
-  /// The top term true.
-  pub fn tru() -> Self {
-    PTTerms::TTerm( TTerm::tru() )
-  }
-  /// The top term false.
-  pub fn fls() -> Self {
-    PTTerms::TTerm( TTerm::fls() )
-  }
-
-  /// Total substitution over top terms.
-  ///
-  /// # TODO
-  ///
-  /// - eliminate recursion
-  pub fn subst_total(
-    & self, subst: & VarMap<PTTerms>
-  ) -> Res<Self> {
-    let res = match self {
-      PTTerms::Or(ref kids) => {
-        let mut nu_kids = Vec::with_capacity( kids.len() ) ;
-        for kid in kids {
-          nu_kids.push( kid.subst_total(subst) ? )
-        } 
-        PTTerms::or(nu_kids)
-      },
-      PTTerms::And(ref kids) => {
-        let mut nu_kids = Vec::with_capacity( kids.len() ) ;
-        for kid in kids {
-          nu_kids.push( kid.subst_total(subst) ? )
-        } 
-        PTTerms::and(nu_kids)
-      },
-
-      PTTerms::NTTerm(ref tterm) => {
-        if let Some(term) = tterm.term() {
-          if let Some(var) = term.var_idx() {
-            return Ok( PTTerms::not(subst[var].clone()) ? )
-          }
-        }
-        PTTerms::NTTerm( tterm.subst_total(subst) ? )
-      },
-
-      PTTerms::TTerm(ref tterm) => {
-        if let Some(term) = tterm.term() {
-          if let Some(var) = term.var_idx() {
-            return Ok( subst[var].clone() )
-          }
-        }
-        PTTerms::TTerm( tterm.subst_total(subst) ? )
-      },
-    } ;
-    Ok(res)
-  }
-
-  pub fn and(mut tterms: Vec<PTTerms>) -> Self {
-    use std::iter::Extend ;
-    debug_assert!( ! tterms.is_empty() ) ;
-    let mut cnt = 0 ;
-    while cnt < tterms.len() {
-      if tterms[cnt].is_true() {
-        tterms.swap_remove(cnt) ;
-      } else if tterms[cnt].is_false() {
-        return PTTerms::fls()
-      } else if let PTTerms::And(_) = tterms[cnt] {
-        let and = tterms.swap_remove(cnt) ;
-        if let PTTerms::And(tts) = and {
-          tterms.extend(tts)
-        } else {
-          unreachable!()
-        }
-      } else {
-        cnt += 1
-      }
-    }
-
-    match tterms.len() {
-      0 => PTTerms::tru(),
-      1 => tterms.pop().unwrap(),
-      _ => PTTerms::And(tterms),
-    }
-  }
-
-  pub fn or(mut tterms: Vec<PTTerms>) -> Self {
-    use std::iter::Extend ;
-    debug_assert!( ! tterms.is_empty() ) ;
-    let mut cnt = 0 ;
-
-    while cnt < tterms.len() {
-      if tterms[cnt].is_false() {
-        tterms.swap_remove(cnt) ;
-      } else if tterms[cnt].is_true() {
-        return PTTerms::tru()
-      } else if let PTTerms::Or(_) = tterms[cnt] {
-        let or = tterms.swap_remove(cnt) ;
-        if let PTTerms::Or(tts) = or {
-          tterms.extend(tts)
-        } else {
-          unreachable!()
-        }
-      } else {
-        cnt += 1
-      }
-    }
-
-    match tterms.len() {
-      0 => PTTerms::fls(),
-      1 => tterms.pop().unwrap(),
-      _ => PTTerms::Or(tterms),
-    }
-  }
-
-  pub fn not(mut tterms: PTTerms) -> Res<Self> {
-    enum Frame {
-      And( Vec<PTTerms>, Vec<PTTerms> ),
-      Or( Vec<PTTerms>, Vec<PTTerms> ),
-    }
-    let mut stack: Vec<Frame> = vec![] ;
-
-    'go_down: loop {
-
-      tterms = match tterms {
-        PTTerms::And(mut args) => if let Some(first) = args.pop() {
-          tterms = first ;
-          args.reverse() ;
-          let done = Vec::with_capacity( args.len() + 1 ) ;
-          stack.push( Frame::Or(args, done) ) ;
-          continue 'go_down
-        } else {
-          bail!("nullary conjunction")
-        },
-
-        PTTerms::Or(mut args) => if let Some(first) = args.pop() {
-          tterms = first ;
-          args.reverse() ;
-          let done = Vec::with_capacity( args.len() + 1 ) ;
-          stack.push( Frame::And(args, done) ) ;
-          continue 'go_down
-        } else {
-          bail!("nullary disjunction")
-        },
-
-        PTTerms::NTTerm(tt) => PTTerms::TTerm(tt),
-
-        PTTerms::TTerm(tt) => if tt.is_true() {
-          PTTerms::tterm( TTerm::fls() )
-        } else if tt.is_false() {
-          PTTerms::tterm( TTerm::tru() )
-        } else {
-          PTTerms::NTTerm(tt)
-        },
-
-      } ;
-
-      'go_up: loop {
-        match stack.pop() {
-          Some( Frame::And(mut to_do, mut done) ) => {
-            done.push(tterms) ;
-            if let Some(tt) = to_do.pop() {
-              stack.push( Frame::And(to_do, done) ) ;
-              tterms = tt ;
-              continue 'go_down
-            } else {
-              tterms = Self::and(done) ;
-              continue 'go_up
-            }
-          },
-          Some( Frame::Or(mut to_do, mut done) ) => {
-            done.push(tterms) ;
-            if let Some(tt) = to_do.pop() {
-              stack.push( Frame::Or(to_do, done) ) ;
-              tterms = tt ;
-              continue 'go_down
-            } else {
-              tterms = Self::or(done) ;
-              continue 'go_up
-            }
-          },
-          None => break 'go_down Ok(tterms)
-        }
-      }
-
-    }
-  }
-
-  pub fn tterm(tterm: TTerm) -> Self {
-    PTTerms::TTerm( tterm )
-  }
-
-  /// True if `PTTerms` does not contain a non-negated predicate.
-  pub fn is_legal_lhs(& self) -> bool {
-    let mut to_do = Vec::with_capacity(37) ;
-    to_do.push(self) ;
-
-    while let Some(ptterm) = to_do.pop() {
-      match * ptterm {
-        PTTerms::And(ref args) => for arg in args {
-          to_do.push(arg)
-        },
-        PTTerms::Or(ref args) => for arg in args {
-          to_do.push(arg)
-        },
-        PTTerms::NTTerm(_) => (),
-        PTTerms::TTerm(ref term) => if term.pred().is_some() {
-          return false
-        },
-      }
-    }
-
-    true
-  }
-
-  pub fn into_clauses(self) -> Res< Vec< (Vec<TTerm>, TTerm) > > {
-    match self {
-      PTTerms::TTerm(tterm) => Ok(
-        vec![ (vec![], tterm) ]
-      ),
-      PTTerms::NTTerm(tterm) => Ok(
-        vec![ (vec![ tterm ], TTerm::fls()) ]
-      ),
-
-      PTTerms::Or(ptterms) => {
-        let mut lhs = Vec::with_capacity( ptterms.len() ) ;
-        let mut multipliers = Vec::with_capacity(3) ;
-        let mut rhs = None ;
-
-        for ptt in ptterms {
-          match ptt {
-            PTTerms::TTerm(tt) => if let TTerm::T(term) = tt {
-              lhs.push( TTerm::T( term::not(term) ) )
-            } else if rhs.is_none() {
-              rhs = Some( vec![ tt ] )
-            } else {
-              bail!("ill-formed horn clause (or, 1)")
-            },
-
-            PTTerms::NTTerm(tt) => lhs.push(tt),
-
-            PTTerms::And(ptts) => {
-              let mut tts = Vec::with_capacity( ptts.len() ) ;
-              let mut positive_preds = None ;
-              for ptt in ptts {
-                match ptt {
-                  PTTerms::NTTerm(tterm) => tts.push(tterm),
-                  PTTerms::TTerm(tterm) => match tterm {
-                    TTerm::T(term) => tts.push( TTerm::T(term::not(term)) ),
-                    tterm => {
-                      let positive_preds = positive_preds.get_or_insert_with(
-                        || Vec::with_capacity(7)
-                      ) ;
-                      positive_preds.push( tterm )
-                    },
-                  },
-                  ptt => if let Some(term) = ptt.to_term() ? {
-                    tts.push( TTerm::T( term::not(term) ) )
-                  } else {
-                    bail!("ill-formed horn clause (or, 2)")
-                  },
-                }
-              }
-              if let Some(pos_preds) = positive_preds {
-                tts.extend( pos_preds ) ;
-                rhs = Some( tts )
-              } else {
-                multipliers.push(tts)
-              }
-            },
-
-            _ => bail!("ecountered normalization issue (or, 3)"),
-          }
-        }
-
-        let nu_lhs = if multipliers.len() <= 2 {
-
-          let mut nu_lhs = Vec::with_capacity(
-            multipliers.len() * 2
-          ) ;
-          nu_lhs.push(lhs) ;
-          let mut tmp_lhs = Vec::with_capacity(nu_lhs.len()) ;
-          for mut vec in multipliers {
-            if let Some(last) = vec.pop() {
-              tmp_lhs.clear() ;
-              for tterm in vec {
-                for lhs in & nu_lhs {
-                  let mut lhs = lhs.clone() ;
-                  lhs.push( tterm.clone() ) ;
-                  tmp_lhs.push( lhs )
-                }
-              }
-              for mut lhs in nu_lhs.drain(0..) {
-                lhs.push(last.clone()) ;
-                tmp_lhs.push( lhs )
-              }
-              ::std::mem::swap(& mut nu_lhs, & mut tmp_lhs)
-            }
-          }
-
-          nu_lhs
-
-        } else {
-
-          for disj in multipliers {
-            let mut nu_disj = Vec::with_capacity( disj.len() ) ;
-            for tterm in disj {
-              if let TTerm::T(term) = tterm {
-                nu_disj.push(term)
-              } else {
-                bail!("error during clause conversion")
-              }
-            }
-            lhs.push(
-              TTerm::T( term::or(nu_disj) )
-            )
-          }
-          vec![ lhs ]
-
-        } ;
-
-        if let Some(rhs) = rhs {
-          let mut res = Vec::with_capacity( rhs.len() ) ;
-          let mut rhs = rhs.into_iter() ;
-          if let Some(last) = rhs.next() {
-            for rhs in rhs {
-              for lhs in & nu_lhs {
-                res.push( (lhs.clone(), rhs.clone()) )
-              }
-            }
-            for lhs in nu_lhs {
-              res.push((lhs, last.clone()))
-            }
-          }
-          Ok(res)
-        } else {
-          Ok(
-            nu_lhs.into_iter().map(
-              |lhs| (lhs, TTerm::fls())
-            ).collect()
-          )
-        }
-      },
-
-      PTTerms::And(ppterms) => {
-        let mut clauses = Vec::with_capacity(ppterms.len()) ;
-        for ppt in ppterms {
-          clauses.extend( ppt.into_clauses() ? )
-          //              ^^^^^^^^^^^^^^^^
-          // This is a recursive call, but there can be no other rec call
-          // inside it because
-          //
-          // - there can be no `PTTerms::And` inside a `PTTerms::And` by
-          //   construction
-          // - this is the only place `into_clauses` calls itself.
-        }
-        Ok(clauses)
-      },
-
-    }
-  }
-
-  /// Transforms a parser's combination of top terms into a term, if possible.
-  pub fn to_term(& self) -> Res<Option<Term>> {
-    let mut stack = Vec::with_capacity(17) ;
-
-    let mut ptterm = self ;
-
-    'go_down: loop {
-
-      let mut term = match * ptterm {
-        PTTerms::And(ref args) => {
-          let mut args = args.iter() ;
-          if let Some(head) = args.next() {
-            stack.push((Op::And, args, vec![])) ;
-            ptterm = head ;
-            continue 'go_down
-          } else {
-            bail!("illegal nullary conjunction")
-          }
-        },
-        PTTerms::Or(ref args) => {
-          let mut args = args.iter() ;
-          if let Some(head) = args.next() {
-            stack.push((Op::Or, args, vec![])) ;
-            ptterm = head ;
-            continue 'go_down
-          } else {
-            bail!("illegal nullary conjunction")
-          }
-        },
-        PTTerms::TTerm(ref tterm) => if let Some(term) = tterm.term() {
-          term.clone()
-        } else {
-          return Ok(None)
-        },
-        PTTerms::NTTerm(ref tterm) => if let Some(term) = tterm.term() {
-          term::not( term.clone() )
-        } else {
-          return Ok(None)
-        },
-      } ;
-
-      'go_up: loop {
-        if let Some((op, mut to_do, mut done)) = stack.pop() {
-          done.push(term) ;
-          if let Some(next) = to_do.next() {
-            stack.push( (op, to_do, done) ) ;
-            ptterm = next ;
-            continue 'go_down
-          } else {
-            term = term::app(op, done) ;
-            continue 'go_up
-          }
-        } else {
-          break 'go_down Ok( Some(term) )
-        }
-      }
-
-    }
-  }
-
-  pub fn print(& self, pref: & str) {
-    match * self {
-      PTTerms::And(ref args) => {
-        println!("{}(and", pref) ;
-        for arg in args {
-          arg.print(& format!("{}  ", pref))
-        }
-        println!("{})", pref)
-      },
-      PTTerms::Or(ref args) => {
-        println!("{}(or", pref) ;
-        for arg in args {
-          arg.print(& format!("{}  ", pref))
-        }
-        println!("{})", pref)
-      },
-      PTTerms::NTTerm(ref arg) => println!(
-        "{}(not {})", pref, arg
-      ),
-      PTTerms::TTerm(ref tt) => {
-        println!("{}{}", pref, tt)
-      },
-    }
-  }
-}

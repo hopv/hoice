@@ -31,6 +31,16 @@ pub fn bool() -> Typ {
 pub fn array(src: Typ, tgt: Typ) -> Typ {
   factory.mk(RTyp::Array { src, tgt })
 }
+/// Generates an unknown type.
+pub fn unk() -> Typ {
+  factory.mk(RTyp::Unk)
+}
+/// Generates a datatype.
+pub fn dtyp<S>(dtyp: S, prms: dtyp::TPrmMap<Typ>) -> Typ
+where S: Into<String> {
+  let dtyp = dtyp.into() ;
+  factory.mk( RTyp::DTyp { dtyp, prms } )
+}
 
 /// A hash-consed type.
 pub type Typ = HConsed<RTyp> ;
@@ -55,6 +65,8 @@ pub type Typ = HConsed<RTyp> ;
   )
 ]
 pub enum RTyp {
+  /// Unknown.
+  Unk,
   /// Integers.
   Int,
   /// Reals.
@@ -65,9 +77,16 @@ pub enum RTyp {
   Array {
     /// Type of indices.
     src: Typ,
-    /// Type of values
+    /// Type of values.
     tgt: Typ,
-  }
+  },
+  /// Datatype.
+  DTyp {
+    /// Original datatype.
+    dtyp: String,
+    /// Type parameters.
+    prms: dtyp::TPrmMap<Typ>,
+  },
 }
 impl RTyp {
   /// True if the type is bool.
@@ -107,19 +126,198 @@ impl RTyp {
     }
   }
 
+  /// True if the type is unknown.
+  pub fn is_unk(& self) -> bool {
+    RTyp::Unk == * self
+  }
+
+  /// True if the types are compatible.
+  ///
+  /// Two types are compatible if they're the same except for unknown subtypes.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use hoice::common::* ;
+  ///
+  /// let t_1 = typ::array( typ::int(), typ::unk() ) ;
+  /// let t_2 = typ::array( typ::unk(), typ::real() ) ;
+  /// debug_assert! { t_1.is_compatible(& t_2) }
+  /// ```
+  pub fn is_compatible(& self, other: & Typ) -> bool {
+    if self == other.get() { return true }
+
+    let mut stack = vec![ (self, other.get()) ] ;
+    while let Some((t_1, t_2)) = stack.pop() {
+
+      match (t_1, t_2) {
+        (RTyp::Int, RTyp::Int) => (),
+        (RTyp::Real, RTyp::Real) => (),
+        (RTyp::Bool, RTyp::Bool) => (),
+
+        (RTyp::Unk, _) | (_, RTyp::Unk) => (),
+
+        (
+          RTyp::Array { src: src_1, tgt: tgt_1 },
+          RTyp::Array { src: src_2, tgt: tgt_2 },
+        ) => {
+          stack.push( (src_1.get(), src_2.get()) ) ;
+          stack.push( (tgt_1.get(), tgt_2.get()) ) ;
+        },
+
+        (
+          RTyp::DTyp { dtyp: dtyp_1, prms: prms_1 },
+          RTyp::DTyp { dtyp: dtyp_2, prms: prms_2 },
+        ) => if dtyp_1 == dtyp_2 {
+          for (t_1, t_2) in prms_1.iter().zip( prms_2.iter() ) {
+            stack.push( (t_1, t_2) )
+          }
+        } else {
+          return false
+        },
+
+        (RTyp::Int, _) |
+        (RTyp::Real, _) |
+        (RTyp::Bool, _) |
+        (RTyp::Array { .. }, _) |
+        (RTyp::DTyp { .. }, _) => return false,
+      }
+
+    }
+
+    true
+  }
+
+  /// Merges two types.
+  ///
+  /// Basically removes unknown types when possible. Returns `None` if the
+  /// types are not compatible.
+  pub fn merge(& self, typ: & Typ) -> Option<Typ> {
+    use std::slice::Iter ;
+    use std::iter::Zip ;
+
+    enum Frame<'a, 'b> {
+      ArrayLft(& 'a Typ, & 'a Typ),
+      ArrayRgt(Typ),
+      DTyp(String, dtyp::TPrmMap<Typ>, Zip< Iter<'b, Typ>, Iter<'b, Typ> >),
+    }
+    let slf = factory.mk( self.clone() ) ;
+
+    let (mut lft, mut rgt) = ( & slf, typ ) ;
+    let mut stack = vec![] ;
+
+    'go_down: loop {
+
+      let mut typ = match ( lft.get(), rgt.get() ) {
+        (RTyp::Unk, _) => rgt.clone(),
+        (_, RTyp::Unk) => lft.clone(),
+
+        (
+          RTyp::Array { src: src_1, tgt: tgt_1 },
+          RTyp::Array { src: src_2, tgt: tgt_2 },
+        ) => {
+          lft = src_1 ;
+          rgt = src_2 ;
+          stack.push( Frame::ArrayLft(tgt_1, tgt_2) ) ;
+
+          continue 'go_down
+        }
+
+        (
+          RTyp::DTyp { dtyp: dtyp_1, prms: prms_1 },
+          RTyp::DTyp { dtyp: dtyp_2, prms: prms_2 },
+        ) => if dtyp_1 != dtyp_2 {
+          return None
+        } else {
+          debug_assert_eq! { prms_1.len(), prms_2.len() }
+
+          let mut prms = prms_1.iter().zip( prms_2.iter() ) ;
+
+          if let Some((l, r)) = prms.next() {
+            lft = l ;
+            rgt = r ;
+
+            stack.push(
+              Frame::DTyp(
+                dtyp_1.clone(), Vec::with_capacity( prms_1.len() ).into(), prms
+              )
+            ) ;
+
+            continue 'go_down
+          } else {
+            lft.clone()
+          }
+        },
+
+        (RTyp::Int, _) |
+        (RTyp::Real, _) |
+        (RTyp::Bool, _) |
+        (RTyp::Array { .. }, _) |
+        (RTyp::DTyp { .. }, _) => if lft == rgt {
+          lft.clone()
+        } else {
+          return None
+        },
+
+      } ;
+
+      'go_up: loop {
+        match stack.pop() {
+
+          None => return Some(typ),
+
+          Some( Frame::ArrayLft(l, r) ) => {
+            stack.push( Frame::ArrayRgt(typ) ) ;
+            lft = l ;
+            rgt = r ;
+            continue 'go_down
+          },
+
+          Some( Frame::ArrayRgt(src) ) => {
+            typ = array(src, typ) ;
+            continue 'go_up
+          }
+
+          Some(
+            Frame::DTyp(dt, mut params, mut zip)
+          ) => {
+            params.push(typ) ;
+            if let Some((l, r)) = zip.next() {
+              stack.push( Frame::DTyp(dt, params, zip) ) ;
+              lft = l ;
+              rgt = r ;
+              continue 'go_down
+            } else {
+              typ = dtyp(dt, params) ;
+              continue 'go_up
+            }
+          },
+
+        }
+      }
+
+    }
+  }
+
   /// Default value of a type.
+  ///
+  /// Fails if the type is unknown.
   pub fn default_val(& self) -> Val {
     match * self {
       RTyp::Real => val::real( Rat::zero() ),
       RTyp::Int => val::int( Int::zero() ),
       RTyp::Bool => val::bool( true ),
       RTyp::Array { ref src, ref tgt } => val::array(
-        src.clone(), tgt.default_val(),
+        src.clone(), tgt.default_val()
       ),
+      RTyp::DTyp { .. } => unimplemented!(),
+      RTyp::Unk => panic!("unknown type has no default value"),
     }
   }
 
   /// Default term of a type.
+  ///
+  /// Fails if the type is unknown.
   pub fn default_term(& self) -> Term {
     match * self {
       RTyp::Real => term::real( Rat::zero() ),
@@ -128,6 +326,8 @@ impl RTyp {
       RTyp::Array { ref src, ref tgt } => term::cst_array(
         src.clone(), tgt.default_term()
       ),
+      RTyp::DTyp { .. } => unimplemented!(),
+      RTyp::Unk => panic!("unknown type has no default term"),
     }
   }
 }
@@ -151,6 +351,15 @@ impl_fmt!{
           RTyp::Int => fmt.write_str("Int") ?,
           RTyp::Real => fmt.write_str("Real") ?,
           RTyp::Bool => fmt.write_str("Bool") ?,
+          RTyp::Unk => fmt.write_str("_") ?,
+
+          RTyp::DTyp { ref dtyp, ref prms } => {
+            stack.push((typs, sep, end)) ;
+            write!(fmt, "({}", dtyp) ? ;
+            let typs: Vec<_> = prms.iter().map(|typ| typ.get()).collect() ;
+            stack.push( (typs.into_iter(), " ", ")") ) ;
+            continue 'stack
+          },
 
           RTyp::Array { ref src, ref tgt } => {
             stack.push((typs, sep, end)) ;

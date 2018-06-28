@@ -85,7 +85,7 @@ pub struct Instance {
   split: Option<ClsIdx>,
 
   /// Define-funs parsed.
-  define_funs: HashMap<String, (VarInfos, ::instance::parse::PTTerms)>,
+  define_funs: HashMap<String, (VarInfos, ::parse::PTTerms)>,
 
   /// Maps **original** clause indexes to their optional name.
   old_names: ClsHMap<String>,
@@ -268,14 +268,14 @@ impl Instance {
 
   /// Adds a define fun.
   pub fn add_define_fun<S: Into<String>>(
-    & mut self, name: S, sig: VarInfos, body: ::instance::parse::PTTerms
-  ) -> Option<(VarInfos, ::instance::parse::PTTerms)> {
+    & mut self, name: S, sig: VarInfos, body: ::parse::PTTerms
+  ) -> Option<(VarInfos, ::parse::PTTerms)> {
     self.define_funs.insert(name.into(), (sig, body))
   }
   /// Retrieves a define fun.
   pub fn get_define_fun(
     & self, name: & str
-  ) -> Option<& (VarInfos, ::instance::parse::PTTerms)> {
+  ) -> Option<& (VarInfos, ::parse::PTTerms)> {
     self.define_funs.get(name)
   }
 

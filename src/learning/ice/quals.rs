@@ -631,6 +631,12 @@ impl NuQuals {
                 pred_info.idx
               ) ? ;
             },
+
+            typ::RTyp::DTyp { .. } => (),
+
+            typ::RTyp::Unk => bail!(
+              "unexpected unknown type"
+            ),
           }
         }
       }

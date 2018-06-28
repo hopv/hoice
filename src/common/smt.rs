@@ -446,7 +446,7 @@ impl FullParser {
     let mut postponed = Vec::new() ;
 
     let mut instance = Instance::new() ;
-    let mut context = ::instance::parse::ParserCxt::new() ;
+    let mut context = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
 
     let mut stuck ;
@@ -535,7 +535,7 @@ impl FullParser {
               debug_assert_eq! { term.typ(), typ }
               let prev = instance.add_define_fun(
                 name.clone(), var_infos,
-                ::instance::parse::PTTerms::tterm( TTerm::T(term.clone()) )
+                ::parse::PTTerms::tterm( TTerm::T(term.clone()) )
               ) ;
               debug_assert! { prev.is_none() }
               let prev = fun_defs.insert(name, (nu_sig, term)) ;
@@ -579,7 +579,7 @@ impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
     }
   }
   fn parse_type(self, input: & 'a str) -> SmtRes<Typ> {
-    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut cxt = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
     let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
     match parser.sort_opt() {
@@ -596,7 +596,7 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
     self, input: & 'a str,
     _id: & FPVar, _params: & Vec<(FPVar, Typ)>, _out: & Typ
   ) -> SmtRes<FPVal> {
-    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut cxt = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
     let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
 

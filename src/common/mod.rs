@@ -29,6 +29,9 @@ pub use term::{
   typ,
 } ;
 
+pub use dtyp ;
+pub use dtyp::DTyp ;
+
 pub use val ;
 pub use val::Val ;
 
@@ -625,7 +628,7 @@ impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
     )
   }
 }
-impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
+impl VarIndexed<Term> for VarMap<::parse::PTTerms> {
   #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if self.len() < * var {

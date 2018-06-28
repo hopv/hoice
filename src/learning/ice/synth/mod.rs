@@ -62,8 +62,10 @@ impl SynthSys {
       match ** typ {
         typ::RTyp::Int => int = true,
         typ::RTyp::Real => real = true,
-        typ::RTyp::Bool => (),
-        typ::RTyp::Array { .. } => (),
+        typ::RTyp::Bool |
+        typ::RTyp::Array { .. } |
+        typ::RTyp::DTyp { .. } |
+        typ::RTyp::Unk => (),
       }
     }
 

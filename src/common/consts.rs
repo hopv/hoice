@@ -151,6 +151,7 @@ pub mod keywords {
       }
 
       keys {
+        dec_dtyp ("declare-datatypes", doc = "Datatype declaration keyword.")
         dec_fun ("declare-fun", doc = "Predicate declaration keyword.")
         def_fun ("define-fun", doc = "Predicate definition keyword.")
         def_funs (
