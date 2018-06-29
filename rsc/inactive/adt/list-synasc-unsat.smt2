@@ -1,6 +1,8 @@
 (set-logic HORN)
 
-(declare-datatype IList ( (Nil) (Cons (head Int) (tail IList)) ))
+(declare-datatypes () (
+  (IList Nil (Cons (head Int) (tail IList)) )
+))
 
 (declare-fun Concat (IList IList IList) Bool)
 

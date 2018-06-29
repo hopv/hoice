@@ -1871,7 +1871,7 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    self.solver.reset() ? ;
+    smt::reset(& mut self.solver) ? ;
 
     Ok(true)
   }

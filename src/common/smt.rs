@@ -14,6 +14,26 @@ use common::{
 use data::Constraint ;
 
 
+/// Initial setup for a solver.
+///
+/// Declares all the datatypes used in the instance.
+pub fn init<P>(solver: & mut Solver<P>) -> Res<()> {
+  dtyp::write_all(solver, "") ? ;
+  Ok(())
+}
+
+
+/// Resets a smt solver.
+///
+/// Use this and not `solver.reset()`. This declares all the datatypes used in
+/// the instance.
+pub fn reset<P>(solver: & mut Solver<P>) -> Res<()> {
+  solver.reset() ? ;
+  init(solver)
+}
+
+
+
 /// SMT-prints a term using the default var writer.
 pub struct SmtTerm<'a> {
   /// The term.

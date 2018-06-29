@@ -2228,7 +2228,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           bail!(
             self.error(
               ident_pos,
-              format!("unknown predicate `{}`", conf.bad(ident))
+              format!("unknown identifier `{}`", conf.bad(ident))
             )
           )
         }

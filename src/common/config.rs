@@ -95,6 +95,7 @@ impl SmtConf {
     ) ? {
       solver.tee(log) ?
     }
+    ::common::smt::init(& mut solver) ? ;
     Ok(solver)
   }
 

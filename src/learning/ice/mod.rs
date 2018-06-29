@@ -192,7 +192,7 @@ impl<'core> IceLearner<'core> {
         Ok(data) => {
           self.count += 1 ;
           if self.count % 50 == 0 {
-            self.solver.reset() ?
+            smt::reset(& mut self.solver) ?
           }
           profile! { self "learn steps" => add 1 }
           if let Some(candidates) = profile!(
@@ -247,7 +247,7 @@ impl<'core> IceLearner<'core> {
       } "sending"
     ) ? ;
     // // Reset and clear declaration memory.
-    // self.solver.reset().chain_err(
+    // smt::reset(& mut self.solver).chain_err(
     //   || "during solver reset"
     // ) ? ;
     for set in self.dec_mem.iter_mut() {

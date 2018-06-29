@@ -1104,6 +1104,13 @@ impl Instance {
     writeln!(w, "(set-logic HORN)") ? ;
     writeln!(w) ? ;
 
+    writeln!(w, "; Datatypes:") ? ;
+
+    dtyp::write_all(w, "") ? ;
+
+    dtyp::write_constructor_map(w, "; ") ? ;
+    writeln!(w) ? ;
+
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
         write!(
@@ -1650,6 +1657,11 @@ impl<'a> PebcakFmt<'a> for Instance {
   fn pebcak_io_fmt<W: Write>(
     & self, w: & mut W, _: ()
   ) -> IoRes<()> {
+    writeln!(w, "; Datatypes:") ? ;
+
+    dtyp::write_all(w, "") ? ;
+
+    dtyp::write_constructor_map(w, "; ") ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {

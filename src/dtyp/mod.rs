@@ -77,7 +77,7 @@ impl PartialTyp {
 
   fn write<W: Write>(
     & self, w: & mut W, prms: & TPrmMap<String>
-  ) -> Res<()> {
+  ) -> ::std::io::Result<()> {
     let mut stack = vec![ ("", self, "") ] ;
 
     while let Some((sep, typ, close)) = stack.pop() {
@@ -88,7 +88,10 @@ impl PartialTyp {
           stack.push( (" ", & ** src, "") )
         },
         PartialTyp::DTyp(name, _, prms) => {
-          write!(w, "({}", name) ? ;
+          if ! prms.is_empty() {
+            write!(w, "(") ?
+          }
+          write!(w, "{}", name) ? ;
           let mut first = true ;
           for sub in prms.iter().rev() {
             let close = if first {
@@ -154,7 +157,10 @@ impl_fmt! {
         PartialTyp::Param(idx) => write!(fmt, "'{}", idx) ?,
 
         PartialTyp::DTyp(dtyp, _, typs) => {
-          write!(fmt, "({} ", dtyp) ? ;
+          if ! typs.is_empty() {
+            write!(fmt, "(") ?
+          }
+          write!(fmt, "{} ", dtyp) ? ;
           let mut first = true ;
           for typ in typs.iter().rev() {
             let post = if first {
@@ -275,8 +281,23 @@ pub fn get_all() -> impl ::std::ops::Deref< Target = BTreeMap<String, DTyp> > {
 }
 
 
+
+/// Writes the map from constructors to datatypes.
+pub fn write_constructor_map<W: Write>(
+  w: & mut W, pref: & str
+) -> ::std::io::Result<()> {
+  for (constructor, dtyp) in constructor_map.read().expect(
+    "unable to retrieve dtyp constructor map"
+  ).iter() {
+    writeln!(w, "{}{:>10} -> {:>10}", pref, constructor, dtyp.name) ?
+  } 
+  Ok(())
+}
+
+
+
 /// Writes all the datatypes.
-pub fn write_all<W: Write>(w: & mut W, pref: & str) -> Res<()> {
+pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
   let decs = get_all() ;
   let mut known = HashSet::new() ;
   let dtyp_pref = & format!("{}  ", pref) ;
@@ -380,7 +401,9 @@ impl RDTyp {
   }
 
   /// Writes a single datatype.
-  pub fn write<W: Write>(& self, w: & mut W, pref: & str) -> Res<()> {
+  pub fn write<W: Write>(
+    & self, w: & mut W, pref: & str
+  ) -> ::std::io::Result<()> {
     writeln!(w, "{}({}", pref, self.name) ? ;
     for (name, args) in & self.news {
       if args.is_empty() {

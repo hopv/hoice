@@ -797,7 +797,7 @@ impl<'a> Teacher<'a> {
     // }
 
     if self.count % 100 == 0 {
-      self.solver.reset() ?
+      smt::reset(& mut self.solver) ?
     } else {
       self.solver.pop(1) ?
     }
