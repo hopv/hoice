@@ -726,11 +726,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     // Compound type under construction.
     //
     // The position is always that of the opening paren of the type.
-    enum CTyp {
+    enum CTyp<'a> {
       // Array under construction, meaning we're parsing the index sort.
       Array { pos: Pos },
       // Array with a source, meaning we're parsing the target sort.
       ArraySrc { pos: Pos, src: Typ },
+      // A datatype application.
+      DTyp { name: & 'a str, pos: Pos, typs: dtyp::TPrmMap<Typ> }
     }
 
     let mut stack = vec![] ;
@@ -753,6 +755,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           } else {
             None
           }
+        } else if let Some((pos, name)) = self.ident_opt() ? {
+          stack.push(
+            CTyp::DTyp { name, pos, typs: dtyp::TPrmMap::new() }
+          ) ;
+          continue 'go_down
         } else {
           None
         }
@@ -778,6 +785,22 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else {
         None
       } ;
+
+      if typ.is_none() {
+        if let Some((pos, name)) = self.ident_opt() ? {
+          if let Ok(dtyp) = dtyp::get(name) {
+            typ = Some(
+              typ::dtyp( dtyp, vec![].into() )
+            )
+          } else {
+            bail!(
+              self.error(
+                pos, format!("unknown sort `{}`", conf.bad(name))
+              )
+            )
+          }
+        }
+      }
 
       'go_up: loop {
 
@@ -819,6 +842,33 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             ) ?
           },
 
+          Some(CTyp::DTyp { name, pos, mut typs }) => if let Some(prm) = typ {
+            typs.push(prm) ;
+
+            self.ws_cmt() ;
+            if self.tag_opt(")") {
+              if let Ok(dtyp) = dtyp::get(name) {
+                typ = Some( typ::dtyp(dtyp, typs) )
+              } else {
+                bail!(
+                  self.error(
+                    pos, format!(
+                      "unknown sort `{}`", conf.bad(name)
+                    )
+                  )
+                )
+              }
+              continue 'go_up
+            } else {
+              stack.push( CTyp::DTyp { name, pos, typs } ) ;
+              continue 'go_down
+            }
+          } else {
+            Err::<_, Error>(
+              self.error(pos, "while parsing this sort").into()
+            ) ?
+          },
+
           None => if typ.is_none() {
             self.backtrack_to(start_pos) ;
             return Ok(None)
@@ -841,9 +891,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     if let Some(res) = self.nu_sort_opt(type_params) ? {
       Ok(res)
     } else {
-      bail!(
-        self.error_here( format!("expected sort") )
-      )
+      bail!( self.error_here("expected sort") )
     }
   }
 
@@ -1099,6 +1147,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
               ( selector_ident.to_string(), ptyp )
             ) ;
 
+            self.ws_cmt() ;
             self.tag(")") ? ;
             self.ws_cmt()
           }
@@ -1684,10 +1733,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         term::real(real)
       } else if let Some(b) = self.bool() {
         term::bool(b)
-      } else if let Some((pos, id)) = self.ident_opt()? {
+      } else if let Some((pos, id)) = self.ident_opt() ? {
 
         if let Some(idx) = map.get(id) {
           term::var(* idx, var_map[* idx].typ.clone())
+
         } else if let Some(ptterms) = self.get_bind(id) {
           if let Some(term) = ptterms.to_term().chain_err(
             || format!("while retrieving binding for {}", conf.emph(id))
@@ -1697,9 +1747,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             // Not in a legal term.
             break 'read_kids None
           }
+
         } else if self.cxt.pred_name_map.get(id).is_some() {
           // Identifier is a predicate, we're not in a legal term.
           break 'read_kids None
+
+        } else if let Some(datatype) = dtyp::of_constructor(id) {
+          if let Some(constructor) = datatype.news.get(id) {
+            if constructor.is_empty() {
+              bail!(
+                self.error(pos, "term for datatypes isn't implemented")
+              )
+            } else {
+              bail!(
+                self.error(
+                  pos, format!(
+                    "constructor `{}` of datatype `{}` takes {} value(s), \
+                    applied here to none",
+                    conf.bad(id), conf.emph(& datatype.name), constructor.len()
+                  )
+                )
+              )
+            }
+          } else {
+            bail!("inconsistent datatype map internal state")
+          }
+
         } else {
           bail!(
             self.error(
@@ -1769,6 +1842,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
               self.ws_cmt() ;
               self.tag(")") ? ;
               term::cst_array(src.clone(), term)
+
             } else {
               bail!(
                 self.error_here("expected term")
@@ -1779,6 +1853,30 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             bail!( self.error_here("unexpected token") )
           }
 
+        } else if let Some((pos, id)) = self.ident_opt().chain_err(
+          || "while trying to parse datatype"
+        ) ? {
+          let mut trm: Option<Term> = None ;
+          if let Some(datatype) = dtyp::of_constructor(id) {
+            if let Some(_constructor) = datatype.news.get(id) {
+              bail!(
+                self.error(pos, "term for datatypes isn't implemented")
+              )
+            }
+          }
+          if let Some(trm) = trm {
+            trm
+          } else if self.cxt.term_stack.is_empty() {
+            self.backtrack_to(pos) ;
+            break 'read_kids None
+          } else {
+            bail!(
+              self.error(
+                pos, format!( "unknown identifier `{}`", conf.bad(id) )
+              )
+            )
+          }
+
         } else if self.cxt.term_stack.is_empty() {
           break 'read_kids None
 
@@ -1787,7 +1885,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
 
       } else {
-
         break 'read_kids None
 
       } ;
@@ -2028,7 +2125,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       Ok( Some(
         PTTerms::tterm( TTerm::T( term ) )
       ) )
-    } else if let Some((pos, id)) = self.ident_opt() ? {
+    } else if let Some((pos, id)) = self.ident_opt().chain_err(
+      || "while trying to parse a top term (1)"
+    ) ? {
       if let Some(idx) = self.cxt.pred_name_map.get(id) {
         let idx = * idx ;
         if instance[idx].sig.is_empty() {
@@ -2048,8 +2147,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             )
           )
         }
+
       } else if let Some(ptterms) = self.get_bind(id) {
         Ok( Some( ptterms.clone() ) )
+
       } else {
         bail!(
           self.error(
@@ -2070,7 +2171,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             "unable to work on clauses that are not ground".to_string()
           )
         )
-      } else if let Some((ident_pos, ident)) = self.ident_opt()? {
+      } else if let Some((ident_pos, ident)) = self.ident_opt().chain_err(
+        || "while trying to parse a top term (2)"
+      ) ? {
 
         if let Some(idx) = self.cxt.pred_name_map.get(ident).cloned() {
           let res = self.pred_args(idx, ident_pos, var_map, map, instance) ? ;

@@ -36,9 +36,7 @@ pub fn unk() -> Typ {
   factory.mk(RTyp::Unk)
 }
 /// Generates a datatype.
-pub fn dtyp<S>(dtyp: S, prms: dtyp::TPrmMap<Typ>) -> Typ
-where S: Into<String> {
-  let dtyp = dtyp.into() ;
+pub fn dtyp(dtyp: dtyp::DTyp, prms: dtyp::TPrmMap<Typ>) -> Typ {
   factory.mk( RTyp::DTyp { dtyp, prms } )
 }
 
@@ -83,7 +81,7 @@ pub enum RTyp {
   /// Datatype.
   DTyp {
     /// Original datatype.
-    dtyp: String,
+    dtyp: dtyp::DTyp,
     /// Type parameters.
     prms: dtyp::TPrmMap<Typ>,
   },
@@ -168,7 +166,7 @@ impl RTyp {
         (
           RTyp::DTyp { dtyp: dtyp_1, prms: prms_1 },
           RTyp::DTyp { dtyp: dtyp_2, prms: prms_2 },
-        ) => if dtyp_1 == dtyp_2 {
+        ) => if dtyp_1.name == dtyp_2.name {
           for (t_1, t_2) in prms_1.iter().zip( prms_2.iter() ) {
             stack.push( (t_1, t_2) )
           }
@@ -199,7 +197,9 @@ impl RTyp {
     enum Frame<'a, 'b> {
       ArrayLft(& 'a Typ, & 'a Typ),
       ArrayRgt(Typ),
-      DTyp(String, dtyp::TPrmMap<Typ>, Zip< Iter<'b, Typ>, Iter<'b, Typ> >),
+      DTyp(
+        dtyp::DTyp, dtyp::TPrmMap<Typ>, Zip< Iter<'b, Typ>, Iter<'b, Typ> >
+      ),
     }
     let slf = factory.mk( self.clone() ) ;
 
@@ -226,7 +226,7 @@ impl RTyp {
         (
           RTyp::DTyp { dtyp: dtyp_1, prms: prms_1 },
           RTyp::DTyp { dtyp: dtyp_2, prms: prms_2 },
-        ) => if dtyp_1 != dtyp_2 {
+        ) => if dtyp_1.name != dtyp_2.name {
           return None
         } else {
           debug_assert_eq! { prms_1.len(), prms_2.len() }
@@ -355,7 +355,7 @@ impl_fmt!{
 
           RTyp::DTyp { ref dtyp, ref prms } => {
             stack.push((typs, sep, end)) ;
-            write!(fmt, "({}", dtyp) ? ;
+            write!(fmt, "({}", dtyp.name) ? ;
             let typs: Vec<_> = prms.iter().map(|typ| typ.get()).collect() ;
             stack.push( (typs.into_iter(), " ", ")") ) ;
             continue 'stack

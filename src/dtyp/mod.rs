@@ -238,6 +238,14 @@ pub fn mk(dtyp: RDTyp) -> Res<DTyp> {
 }
 
 
+/// Retrieves the datatype corresponding to a constructor.
+pub fn of_constructor(constructor: & str) -> Option<DTyp> {
+  constructor_map.read().expect(
+    "failed to access constructor to datatype map"
+  ).get(constructor).cloned()
+}
+
+
 /// Retrieves a datatype from its name.
 ///
 /// Will fail if
@@ -342,7 +350,7 @@ pub fn type_constructor(
     params
   } ;
 
-  Ok( Some( typ::dtyp(dtyp.name.clone(), params) ) )
+  Ok( Some( typ::dtyp(dtyp, params) ) )
 }
 
 
