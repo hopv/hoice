@@ -201,6 +201,10 @@ lazy_static! {
   static ref constructor_map: Factory = RwLock::new(
     BTreeMap::new()
   ) ;
+  /// Set of selectors.
+  static ref selector_set: RwLock<BTreeSet<String>> = RwLock::new(
+    BTreeSet::new()
+  ) ;
 }
 
 
@@ -229,6 +233,15 @@ pub fn mk(dtyp: RDTyp) -> Res<DTyp> {
     }
   }
 
+  // Update selector set.
+  if let Ok(mut set) = selector_set.write() {
+    for selectors in dtyp.news.values() {
+      for (selector, _) in selectors {
+        set.insert( selector.clone() ) ;
+      }
+    }
+  }
+
 
   let prev = if let Ok(mut f) = factory.write() {
     f.insert(name, to_insert)
@@ -249,6 +262,13 @@ pub fn of_constructor(constructor: & str) -> Option<DTyp> {
   constructor_map.read().expect(
     "failed to access constructor to datatype map"
   ).get(constructor).cloned()
+}
+
+/// True if the identifier is known to be a selector.
+pub fn is_selector(selector: & str) -> bool {
+  selector_set.read().expect(
+    "failed to access selector set"
+  ).contains(selector)
 }
 
 

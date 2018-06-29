@@ -1,13 +1,15 @@
 (set-logic HORN)
 
 (declare-datatypes () (
-  (ArRec0 (default Int) )
+  (ArRec0 (new (dflt Int)) )
 ) )
 
 (define-fun storeRec0 ((new ArRec0) (old ArRec0) (ind Int) (val Int)) Bool
-   (and (= val (default old)) (= old new)))
+  (and (= val (dflt old)) (= old new))
+)
 (define-fun selectRec0 ((rec ArRec0) (ind Int)) Int
-   (default rec))
+  (dflt rec)
+)
 
 (declare-fun p0 ( Int ArRec0 ArRec0) Bool)
 (declare-fun p1 ( Int ArRec0 ArRec0 Int) Bool)

@@ -1772,7 +1772,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           } else {
             bail!("inconsistent datatype map internal state")
           }
-
+        } else if dtyp::is_selector(id) {
+          bail!(
+            self.error(
+              pos, "term datatypes (selector) isn't implemented"
+            )
+          )
         } else {
           bail!(
             self.error(
@@ -1860,9 +1865,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           if let Some(datatype) = dtyp::of_constructor(id) {
             if let Some(_constructor) = datatype.news.get(id) {
               bail!(
-                self.error(pos, "term for datatypes isn't implemented")
+                self.error(
+                  pos, "term datatypes (constructor) isn't implemented"
+                )
               )
             }
+          } else if dtyp::is_selector(id) {
+            bail!(
+              self.error(
+                pos, "term datatypes (selector) isn't implemented"
+              )
+            )
           }
           if let Some(trm) = trm {
             trm
@@ -1872,7 +1885,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           } else {
             bail!(
               self.error(
-                pos, format!( "unknown identifier `{}`", conf.bad(id) )
+                pos, format!(
+                  "unknown identifier (term) `{}`", conf.bad(id)
+                )
               )
             )
           }
@@ -2228,7 +2243,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           bail!(
             self.error(
               ident_pos,
-              format!("unknown identifier `{}`", conf.bad(ident))
+              format!(
+                "unknown identifier (tterm) `{}`", conf.bad(ident)
+              )
             )
           )
         }
