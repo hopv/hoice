@@ -32,11 +32,12 @@ fn scan_vars(t: & Term) -> VarSet {
       RTerm::Var(_, i) => {
         let _ = set.insert(* i) ; ()
       },
-      RTerm::Int(_) => (),
-      RTerm::Real(_) => (),
-      RTerm::Bool(_) => (),
+      RTerm::Cst(_) => (),
       RTerm::CArray { ref term, .. } => to_do.push(& * term),
       RTerm::App{ ref args, .. } => for arg in args {
+        to_do.push(arg)
+      },
+      RTerm::DTypNew { ref args, .. } => for arg in args {
         to_do.push(arg)
       },
     }
@@ -119,21 +120,13 @@ pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
 #[inline(always)]
 pub fn int<I: Into<Int>>(i: I) -> Term {
   let i = i.into() ;
-  factory.mk( RTerm::Int(i) )
+  factory.mk( RTerm::Cst( val::int(i) ) )
 }
 /// Creates a real constant.
 #[inline(always)]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
   let r = r.into() ;
-  if r.denom().is_zero() {
-    panic!("division by zero while constructing real term")
-  }
-  let r = if r.numer().is_negative() == r.denom().is_negative() {
-    r
-  } else {
-    - r.abs()
-  } ;
-  factory.mk( RTerm::Real(r) )
+  factory.mk( RTerm::Cst( val::real(r) ) )
 }
 /// Creates a real constant from a float.
 #[inline]
@@ -164,7 +157,7 @@ pub fn real_one() -> Term {
 /// Creates a boolean.
 #[inline(always)]
 pub fn bool(b: bool) -> Term {
-  factory.mk( RTerm::Bool(b) )
+  factory.mk( RTerm::Cst( val::bool(b) ) )
 }
 /// Creates the constant `true`.
 #[inline(always)]
@@ -265,6 +258,12 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
   ) ;
 
   normalize(op, args, typ.clone())
+}
+
+
+/// Creates a datatype constructor.
+pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
+  factory.mk( RTerm::DTypNew { typ, name, args } )
 }
 
 /// Creates an operator application.

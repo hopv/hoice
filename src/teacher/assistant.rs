@@ -378,6 +378,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
         unknown += 1 ;
         continue
       }
+
       match val.get() {
         val::RVal::B(b) => {
           write!(w, " ") ? ;
@@ -391,6 +392,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
             write!(w, ")") ?
           }
         },
+
         val::RVal::I(ref i) => {
           write!(w, " (= ") ? ;
           arg.write(
@@ -400,6 +402,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           int_to_smt!(w, i) ? ;
           write!(w, ")") ?
         },
+
         val::RVal::R(ref r) => {
           write!(w, " (= ") ? ;
           arg.write(
@@ -409,13 +412,16 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           rat_to_smt!(w, r) ? ;
           write!(w, ")") ?
         },
-        val::RVal::Array { .. } => {
+
+        val::RVal::Array { .. } |
+        val::RVal::DTypNew { .. } => {
           write!(w, " (= ") ? ;
           arg.write(
             w, |w, v| w.write_all( v.default_str().as_bytes() )
           ) ? ;
           write!(w, " {})", val) ?
         },
+
         val::RVal::N(_) => (),
       }
     }

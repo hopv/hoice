@@ -355,9 +355,13 @@ impl_fmt!{
 
           RTyp::DTyp { ref dtyp, ref prms } => {
             stack.push((typs, sep, end)) ;
-            write!(fmt, "({}", dtyp.name) ? ;
-            let typs: Vec<_> = prms.iter().map(|typ| typ.get()).collect() ;
-            stack.push( (typs.into_iter(), " ", ")") ) ;
+            if prms.is_empty() {
+              write!(fmt, "{}", dtyp.name) ? ;
+            } else {
+              write!(fmt, "({}", dtyp.name) ? ;
+              let typs: Vec<_> = prms.iter().map(|typ| typ.get()).collect() ;
+              stack.push( (typs.into_iter(), " ", ")") ) ;
+            }
             continue 'stack
           },
 

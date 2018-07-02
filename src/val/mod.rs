@@ -157,6 +157,17 @@ pub enum RVal {
   I(Int),
   /// Real value (actually a rational).
   R(Rat),
+
+  /// Datatype constructor.
+  DTypNew {
+    /// Type of the value.
+    typ: Typ,
+    /// Constructor.
+    name: String,
+    /// Arguments.
+    args: Vec<Val>,
+  },
+
   /// An array is a total function.
   ///
   /// The `vals` field encodes a sequence of if-then-else's.
@@ -181,6 +192,8 @@ pub enum RVal {
     vals: Vec<(Val, Val)>
   },
 }
+
+
 
 impl Into<Val> for RVal {
   fn into(self) -> Val {
@@ -343,6 +356,7 @@ impl RVal {
       Array { ref idx_typ, ref default, .. } => typ::array(
         idx_typ.clone(), default.typ()
       ),
+      DTypNew{ ref typ, .. } => typ.clone(),
       N(ref typ) => typ.clone()
     }
   }
@@ -511,6 +525,19 @@ impl RVal {
           res = term::store(res, idx, val) ;
         }
         Some(res)
+      },
+      RVal::DTypNew { ref name, ref typ, ref args } => {
+        let mut t_args = Vec::with_capacity( args.len() ) ;
+        for arg in args {
+          if let Some(t_arg) = arg.to_term() {
+            t_args.push(t_arg)
+          } else {
+            return None
+          }
+        }
+        Some(
+          term::dtyp_new( typ.clone(), name.clone(), t_args )
+        )
       },
     }
   }
@@ -1380,6 +1407,15 @@ impl_fmt!{
           write!(fmt, " {} {})", cond, val) ?
         }
         Ok(())
+      },
+      RVal::DTypNew { ref name, ref args, .. } => if args.is_empty() {
+        write!(fmt, "{}", name)
+      } else {
+        write!(fmt, "({}", name) ? ;
+        for arg in args {
+          write!(fmt, " {}", arg) ?
+        }
+        write!(fmt, ")")
       },
     }
   }

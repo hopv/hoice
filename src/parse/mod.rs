@@ -1521,7 +1521,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     match term::try_app(op, args) {
       Ok(term) => Ok((term, op_pos)),
       Err(
-        term::TypError::Typ { expected, obtained, index }
+        TypError::Typ { expected, obtained, index }
       ) => if let Some(exp) = expected {
         err_chain! {
           self.error(
@@ -1542,7 +1542,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           => self.error(op_pos, "in this operator application")
         }
       }
-      Err( term::TypError::Msg(blah) ) => bail!(
+      Err( TypError::Msg(blah) ) => bail!(
         self.error(op_pos, blah)
       ),
     }

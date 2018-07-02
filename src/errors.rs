@@ -15,6 +15,40 @@
 use common::* ;
 
 
+
+
+
+/// A term type-checking error.
+pub enum TypError {
+  /// No type info, just an error message.
+  Msg(String),
+  /// Type info:
+  ///
+  /// - the type expected (if known),
+  /// - the type obtained,
+  /// - the index of the argument that caused it.
+  Typ {
+    expected: Option<Typ>,
+    obtained: Typ,
+    index: usize,
+  }
+}
+impl TypError {
+  /// Message constructor.
+  pub fn msg<S: Into<String>>(s: S) -> Self {
+    TypError::Msg( s.into() )
+  }
+
+  /// Type info constructor.
+  pub fn typ(
+    expected: Option<Typ>, obtained: Typ, index: usize
+  ) -> Self {
+    TypError::Typ { expected, obtained, index }
+  }
+}
+
+
+
 /// Parse error data.
 #[derive(Debug)]
 pub struct ParseErrorData {
