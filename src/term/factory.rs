@@ -116,6 +116,16 @@ pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::bool(), v.into()) )
 }
 
+/// Creates a constant.
+#[inline]
+pub fn cst<V: Into<Val>>(val: V) -> Term {
+  let val = val.into() ;
+  if ! val.is_known() {
+    panic!("trying to construct a constant term from a non-value {}", val)
+  }
+  factory.mk( RTerm::Cst( val ) )
+}
+
 /// Creates an integer constant.
 #[inline(always)]
 pub fn int<I: Into<Int>>(i: I) -> Term {
@@ -203,7 +213,13 @@ pub fn and(terms: Vec<Term>) -> Term {
 /// The type is the type of **the indices** of the array.
 #[inline]
 pub fn cst_array(typ: Typ, default: Term) -> Term {
-  factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
+  if let Some(val) = default.val() {
+    factory.mk(
+      RTerm::Cst( val::array(typ, val) )
+    )
+  } else {
+    factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
+  }
 }
 
 /// Store operation in an array.

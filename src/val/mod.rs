@@ -122,17 +122,25 @@ pub fn array_of_fun(idx_typ: Typ, term: & Term) -> Res<Val> {
 
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
-  factory.mk(RVal::I(i.into()))
+  factory.mk(
+    RVal::I( i.into() )
+  )
 }
 /// Creates a rational value.
 pub fn real<R: Into<Rat>>(r: R) -> Val {
-  factory.mk(RVal::R(r.into()))
+  factory.mk(
+    RVal::R( r.into() )
+  )
 }
 /// Creates a non-value for a type.
 pub fn none(typ: Typ) -> Val {
-  factory.mk(RVal::N(typ))
+  factory.mk( RVal::N(typ) )
 }
 
+/// Creates a new datatype value.
+pub fn dtyp_new(typ: Typ, name: String, args: Vec<Val>) -> Val {
+  factory.mk( RVal::DTypNew { typ, name, args } )
+}
 
 
 /// Values.

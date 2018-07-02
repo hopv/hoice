@@ -66,12 +66,14 @@ mod factory ;
 mod tterms ;
 pub mod simplify ;
 pub mod typ ;
-mod zip ;
+mod zipper ;
+mod leaf_iter ;
 
 pub use self::op::* ;
 pub use self::factory::* ;
 pub use self::tterms::* ;
 pub use self::typ::Typ ;
+pub use self::leaf_iter::LeafIter ;
 
 #[cfg(test)]
 mod test ;
@@ -212,8 +214,13 @@ impl RTerm {
     }
   }
 
+  /// Iterator over over all the leafs of a term.
+  pub fn leaf_iter(& self) -> LeafIter {
+    LeafIter::of_rterm(self)
+  }
+
   /// Iterates over the subterms of a term.
-  pub fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
+  fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
     let mut stack = vec![self] ;
 
     while let Some(term) = stack.pop() {
@@ -522,6 +529,55 @@ impl RTerm {
     }
   }
 
+  /// Zips over a term.
+  ///
+  /// # Type parameters
+  ///
+  /// - `Info`: information extracted by the zipping process
+  /// - `VarF`: will run on variables
+  /// - `CstF`: will run on constants
+  /// - `AppF`: will run on the result of zipping on operator applications
+  /// - `ArrF`: will run on the result of zipping on arrays
+  /// - `NewF`: will run on the result of zipping on datatype constructors
+  pub fn zip<Info, VarF, CstF, AppF, ArrF, NewF>(
+    & self, varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF
+  ) -> Info
+  where
+  VarF: FnMut(& Typ, VarIdx) -> Info,
+  CstF: FnMut(& Val) -> Info,
+  AppF: FnMut(& Typ, Op, Vec<Info>) -> Info,
+  ArrF: FnMut(& Typ, Info) -> Info,
+  NewF: FnMut(& Typ, & String, Vec<Info>) -> Info, {
+    zipper::zip(self, varf, cstf, appf, arrf, newf)
+  }
+
+
+
+  /// Zips over a term.
+  ///
+  /// Early returns **iff** any a call to one of the input functions returns an
+  /// error.
+  ///
+  /// # Type parameters
+  ///
+  /// - `Info`: information extracted by the zipping process
+  /// - `VarF`: will run on variables
+  /// - `CstF`: will run on constants
+  /// - `AppF`: will run on the result of zipping on operator applications
+  /// - `ArrF`: will run on the result of zipping on arrays
+  /// - `NewF`: will run on the result of zipping on datatype constructors
+  pub fn zip_res<Info, VarF, CstF, AppF, ArrF, NewF>(
+    & self, varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF
+  ) -> Res<Info>
+  where
+  VarF: FnMut(& Typ, VarIdx) -> Res<Info>,
+  CstF: FnMut(& Val) -> Res<Info>,
+  AppF: FnMut(& Typ, Op, Vec<Info>) -> Res<Info>,
+  ArrF: FnMut(& Typ, Info) -> Res<Info>,
+  NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>, {
+    zipper::zip_res(self, varf, cstf, appf, arrf, newf)
+  }
+
 
   /// Term evaluation.
   ///
@@ -529,63 +585,32 @@ impl RTerm {
   ///
   /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    use self::RTerm::* ;
-    let mut current = self ;
-    let mut stack = vec![] ;
+    self.zip_res(
+      // Variable evaluation.
+      |_, v| if v < model.len() {
+        Ok( model.get(v).clone() )
+      } else {
+        bail!("model is too short ({})", model.len())
+      },
 
-    'eval: loop {
-      // Go down applications.
-      let mut evaled = match * current {
-        // Leaves, going up.
-        Var(_, v) => if v < model.len() {
-          model.get(v).clone()
-        } else {
-          bail!("model is too short ({})", model.len())
-        },
-        Cst(ref val) => val.clone(),
+      // Constant evaluation.
+      |val| Ok( val.clone() ),
 
-        // Recursive cases.
+      // Operator application evaluation.
+      |_, op, values| op.eval(values).chain_err(
+        || format!("while evaluating operator `{}`", op)
+      ),
 
-        App { op, ref args, .. } => {
-          current = & args[0] ;
-          stack.push( (op, & args[1..], vec![]) ) ;
-          continue 'eval
-        },
+      // Constant array evaluation.
+      |typ, default| Ok(
+        val::array( typ.clone(), default )
+      ),
 
-        CArray { ref typ, ref term } => {
-          let default = term.eval(model) ? ;
-          val::array(typ.clone(), default)
-        },
-
-        DTypNew { .. } => bail!(
-          "datatype constructor evaluation is not implemented"
-        ),
-      } ;
-
-      // Go up.
-      'go_up: loop {
-        if let Some( (op, to_do, mut values) ) = stack.pop() {
-          if to_do.is_empty() {
-            values.push(evaled) ;
-            evaled = op.eval(values).chain_err(
-              || format!("while evaluating operator `{}`", op)
-            ) ? ;
-            continue 'go_up
-          } else {
-            // Going down the first element of `to_do`.
-            current = & to_do[0] ;
-            values.push(evaled) ;
-            stack.push( (op, & to_do[1..], values) ) ;
-            // Go down.
-            continue 'eval
-          }
-        } else {
-          // We are at the top level, done.
-          return Ok(evaled)
-        }
-      }
-
-    }
+      // Datatype evaluation.
+      |typ, name, values| Ok(
+        val::dtyp_new( typ.clone(), name.clone(), values )
+      ),
+    )
   }
 
   /// If the term's an integer constant, returns the value.
@@ -609,26 +634,18 @@ impl RTerm {
 
   /// The highest variable index appearing in the term.
   pub fn highest_var(& self) -> Option<VarIdx> {
-    let mut to_do = vec![ self ] ;
     let mut max = None ;
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(_, i) => max = Some(
-          ::std::cmp::max( i, max.unwrap_or_else(|| 0.into()) )
-        ),
-        RTerm::Cst(_) => (),
 
-        RTerm::CArray { ref term, .. } => to_do.push(& * term),
-
-        RTerm::App{ ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-
-        RTerm::DTypNew { ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
+    for var_or_cst in self.leaf_iter() {
+      if let Either::Left((_, var_idx)) = var_or_cst {
+        max = Some(
+          ::std::cmp::max(
+            var_idx, max.unwrap_or_else(|| 0.into())
+          )
+        )
       }
     }
+
     max
   }
 
@@ -642,27 +659,13 @@ impl RTerm {
 
   /// Return true if the term mentions at least one variable from `vars`.
   pub fn mentions_one_of(& self, vars: & VarSet) -> bool {
-    let mut to_do = vec![ self ] ;
-
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(_, var) => if vars.contains(& var) {
+    for var_or_cst in self.leaf_iter() {
+      if let Either::Left((_, var_idx)) = var_or_cst {
+        if vars.contains(& var_idx) {
           return true
-        },
-        RTerm::Cst(_) => (),
-
-        RTerm::CArray { ref term, .. } => to_do.push(term),
-
-        RTerm::App { ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-
-        RTerm::DTypNew { ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
+        }
       }
     }
-
     false
   }
 
@@ -692,75 +695,54 @@ impl RTerm {
   /// `map`.
   ///
   /// The boolean returned is true if at least on substitution occured.
-  ///
-  /// # TODO
-  ///
-  /// - remove recursive call in the array case
   pub fn subst_custom<Map: VarIndexed<Term>>(
     & self, map: & Map, total: bool
   ) -> Option<(Term, bool)> {
-    let mut current = & self.to_hcons() ;
-    // Stack for traversal.
-    let mut stack = vec![] ;
-    // Number of substitutions performed.
-    let mut subst_count = 0 ;
+    let mut changed = false ;
 
-    'go_down: loop {
+    let res = zipper::zip_custom_res(
+      self,
 
-      // Go down.
-      let mut term = match * current.get() {
-        RTerm::Var(ref typ, var) => if let Some(term) = map.var_get(var) {
-          debug_assert_eq! { typ, & term.typ() }
-          subst_count += 1 ;
-          term
-        } else if total {
-          return None
-        } else {
-          current.clone()
-        },
-        RTerm::App { op, ref args, .. } => {
-          current = & args[0] ;
-          stack.push(
-            (op, & args[1..], Vec::with_capacity( args.len() ))
-          ) ;
-          continue 'go_down
-        },
-        RTerm::CArray { ref typ, ref term } => {
-          if let Some((term, changed)) = term.subst_custom(map, total) {
-            if changed {
-              subst_count += 1 ;
-            }
-            cst_array(typ.clone(), term)
-          } else {
-            return None
-          }
+      // Variable.
+      |typ, var| if let Some(term) = map.var_get(var) {
+        debug_assert_eq! { typ, & term.typ() }
+        changed = true ;
+        Ok(term)
+      } else if total {
+        Err(())
+      } else {
+        Ok(
+          term::var( var, typ.clone() )
+        )
+      },
 
-        },
-        RTerm::DTypNew { .. } => panic!(
-          "substitution in datatype constructors is not implemented"
-        ),
+      // Constant.
+      |cst| Ok(
+        term::cst( cst.clone() )
+      ),
 
-        RTerm::Cst(_) => current.clone(),
-      } ;
+      // Operator application.
+      |_, op, args| Ok(
+        term::app(op, args)
+      ),
 
-      // Go up.
-      'go_up: while let Some(
-        (op, args, mut new_args)
-      ) = stack.pop() {
-        new_args.push( term ) ;
-        
-        if args.is_empty() {
-          term = app(op, new_args) ;
-          continue 'go_up // Just for readability
-        } else {
-          current = & args[0] ;
-          stack.push( (op, & args[1..], new_args) ) ;
-          continue 'go_down
-        }
-      }
+      // Constant array.
+      |typ, default| Ok(
+        term::cst_array( typ.clone(), default )
+      ),
 
-      // Only way to get here is if the stack is empty, meaning we're done.
-      return Some( (term, subst_count > 0) )
+      // Datatype constructor.
+      |typ, name, args| Ok(
+        term::dtyp_new(
+          typ.clone(), name.clone(), args
+        )
+      ),
+    ) ;
+
+    if let Ok(term) = res {
+      Some( (term, changed) )
+    } else {
+      None
     }
   }
 
@@ -1013,6 +995,7 @@ impl RTerm {
             return None
           }
         },
+
         RTerm::Var(_, v) => return Some((v, solution)),
 
         RTerm::CArray { .. } |
