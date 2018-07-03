@@ -197,11 +197,43 @@ impl ClauseRes {
 }
 
 
+/// The operator of an s-expression.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FrameOp {
+  /// An actual operator.
+  Op(Op),
+  /// A constant array constructor.
+  CArray(Typ, Pos),
+  /// A cast.
+  Cast,
+  /// A datatype constructor.
+  DTypNew(String, DTyp),
+  /// A datatype selector.
+  DTypSlc(String),
+}
+impl FrameOp {
+  /// String representation for a frame operator.
+  pub fn as_str(& self) -> String {
+    match self {
+      FrameOp::Op(op) => format!("{}", op),
+      FrameOp::CArray(typ, _) => format!(
+        "array constructor for {}", typ
+      ),
+      FrameOp::Cast => "cast operator".into(),
+      FrameOp::DTypNew(name, typ) => format!(
+        "`{}` constructor ({})", name, typ
+      ),
+      FrameOp::DTypSlc(name) => format!("`{}` selector", name),
+    }
+  }
+}
+
+
 
 /// Term stack frame used in the parser to avoid recursion.
 struct TermFrame {
   /// Operator when going up.
-  op: Op,
+  op: FrameOp,
   /// Position of the operator.
   op_pos: Pos,
   /// Position of the arguments.
@@ -214,13 +246,18 @@ struct TermFrame {
 impl TermFrame {
   /// Constructor.
   pub fn new(
-    op: Op, op_pos: Pos, let_count: LetCount
+    op: FrameOp, op_pos: Pos, let_count: LetCount
   ) -> Self {
     TermFrame {
       op, op_pos, let_count,
       args_pos: Vec::with_capacity(11),
       args: Vec::with_capacity(11),
     }
+  }
+
+  /// True if the frame operator is a cast operation.
+  pub fn is_cast(& self) -> bool {
+    self.op == FrameOp::Cast
   }
 
   /// Pushes an argument.
@@ -243,7 +280,7 @@ impl TermFrame {
 
   /// Destroys the frame.
   pub fn destroy(self) -> (
-    Op, Pos, Vec<Pos>, Vec<Term>
+    FrameOp, Pos, Vec<Pos>, Vec<Term>
   ) {
     (self.op, self.op_pos, self.args_pos, self.args)
   }
@@ -806,7 +843,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         match stack.pop() {
 
-          Some(CTyp::Array { pos }) => if let Some(src) = typ {
+          Some(
+            CTyp::Array { pos }
+          ) => if let Some(src) = typ {
             stack.push( CTyp::ArraySrc { pos, src } ) ;
             // Need to parse the domain now.
             continue 'go_down
@@ -842,7 +881,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             ) ?
           },
 
-          Some(CTyp::DTyp { name, pos, mut typs }) => if let Some(prm) = typ {
+          Some(
+            CTyp::DTyp { name, pos, mut typs }
+          ) => if let Some(prm) = typ {
             typs.push(prm) ;
 
             self.ws_cmt() ;
@@ -1295,6 +1336,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     Ok(())
   }
 
+
+}
+
+
+
+
+
+
+
+
+
+/// Let-binding-related functions.
+impl<'cxt, 's> Parser<'cxt, 's> {
+
   /// Adds a binding to the current bindings.
   fn insert_bind(
     & mut self, var: & 's str, term: PTTerms
@@ -1430,8 +1485,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+}
+
+
+
+
+
+/// Arithmetic values.
+impl<'cxt, 's> Parser<'cxt, 's> {
+
   /// Numeral parser.
-  fn numeral(& mut self) -> Option<Int> {
+  pub fn numeral(& mut self) -> Option<Int> {
     let start_pos = self.pos() ;
 
     if let Some(char) = self.next() {
@@ -1468,7 +1532,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Decimal parser.
-  fn decimal(& mut self) -> Option<Rat> {
+  pub fn decimal(& mut self) -> Option<Rat> {
     let start_pos = self.pos() ;
     macro_rules! if_not_give_up {
       (( $($cond:tt)* ) => $thing:expr) => (
@@ -1512,40 +1576,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       return None
     }
     num
-  }
-
-  /// Type checks an operator application.
-  fn build_app(& self, frame: TermFrame) -> Res<(Term, Pos)> {
-    let (op, op_pos, args_pos, args) = frame.destroy() ;
-
-    match term::try_app(op, args) {
-      Ok(term) => Ok((term, op_pos)),
-      Err(
-        TypError::Typ { expected, obtained, index }
-      ) => if let Some(exp) = expected {
-        err_chain! {
-          self.error(
-            args_pos[index], format!(
-              "expected an expression of sort {}, found {}", exp, obtained
-            )
-          )
-          => self.error(op_pos, "in this operator application")
-        }
-      } else {
-        err_chain! {
-          self.error(
-            args_pos[index], format!(
-              "expected the expression starting here has sort {} \
-              which is illegal", obtained
-            )
-          )
-          => self.error(op_pos, "in this operator application")
-        }
-      }
-      Err( TypError::Msg(blah) ) => bail!(
-        self.error(op_pos, blah)
-      ),
-    }
   }
 
   /// Real parser.
@@ -1595,6 +1625,233 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.backtrack_to(start_pos) ;
     Ok(None)
   }
+
+}
+
+
+
+
+
+/// Operator construction and type checking.
+impl<'cxt, 's> Parser<'cxt, 's> {
+
+  /// Type checks and builds an application.
+  fn build_app(& self, frame: TermFrame) -> Res<(Term, Pos)> {
+    let (op, op_pos, args_pos, args) = frame.destroy() ;
+    debug_assert_eq! { args_pos.len(), args.len() }
+
+    match op {
+      FrameOp::Op(op) => self.build_op_app(
+        op, op_pos, & args_pos, args
+      ),
+
+      FrameOp::CArray(typ, typ_pos) => self.build_carray(
+        & typ, typ_pos, op_pos, & args_pos, args
+      ),
+
+      FrameOp::DTypNew(name, dtyp) => self.build_dtyp_new(
+        name, & dtyp, op_pos, & args_pos, args
+      ),
+
+      FrameOp::DTypSlc(name) => self.build_dtyp_slc(
+        name, op_pos, & args_pos, args
+      ),
+
+      _ => unimplemented!(),
+    }
+  }
+
+  /// Type checks and builds an operator application.
+  fn build_op_app(
+    & self, op: Op, op_pos: Pos, args_pos: & [ Pos ], args: Vec<Term>
+  ) -> Res<(Term, Pos)> {
+    debug_assert_eq! { args_pos.len(), args.len() }
+
+    match term::try_app(op, args) {
+      Ok(term) => Ok((term, op_pos)),
+      Err(
+        TypError::Typ { expected, obtained, index }
+      ) => if let Some(exp) = expected {
+        err_chain! {
+          self.error(
+            args_pos[index], format!(
+              "expected an expression of sort {}, found {}", exp, obtained
+            )
+          )
+          => self.error(op_pos, "in this operator application")
+        }
+      } else {
+        err_chain! {
+          self.error(
+            args_pos[index], format!(
+              "expected the expression starting here has sort {} \
+              which is illegal", obtained
+            )
+          )
+          => self.error(op_pos, "in this operator application")
+        }
+      }
+      Err( TypError::Msg(blah) ) => bail!(
+        self.error(op_pos, blah)
+      ),
+    }
+  }
+
+  /// Type checks and builds a constant array constructor.
+  fn build_carray(
+    & self,
+    // Type of the array.
+    typ: & Typ, typ_pos: Pos,
+    // Position of the array constructor.
+    new_pos: Pos,
+    // Arguments. There should be only one.
+    args_pos: & [ Pos ], mut args: Vec<Term>,
+  ) -> Res<(Term, Pos)> {
+    debug_assert_eq! { args_pos.len(), args.len() }
+
+    // Retrieve input and output types.
+    let (src, tgt) = if let Some((src, tgt)) = typ.array_inspect() {
+      (src, tgt)
+    } else {
+      bail!( self.error(typ_pos, "expected array sort") )
+    } ;
+
+    // Retrieve the only argument.
+    let (arg, arg_pos) = if let Some(arg) = args.pop() {
+      if args.pop().is_some() {
+        bail!(
+          self.error(
+            new_pos, format!(
+              "array constructor applied to {} (> 1) elements",
+              args.len() + 2
+            )
+          )
+        )
+      } else {
+        (arg, args_pos[0])
+      }
+    } else {
+      bail!( self.error(new_pos, "array constructor applied to nothing") )
+    } ;
+
+    // let tgt = if let Some(tgt) = tgt.merge( & arg.typ() ) {
+    //   tgt
+    // } else {
+    //   bail!(
+    //     self.error(
+    //       arg_pos, format!(
+    //         "this term has type {}, expected {}", arg.typ(), tgt
+    //       )
+    //     )
+    //   )
+    // } ;
+
+    let default = match arg.cast(tgt) {
+      Ok(None) => arg,
+      Ok( Some(term) ) => term,
+      Err(_) => bail!(
+        self.error(
+          arg_pos, format!(
+            "this term of type {} is not compatible with {}",
+            arg.typ(), tgt
+          )
+        )
+      ),
+    } ;
+
+    let term = term::cst_array( src.clone(), default ) ;
+
+    Ok( (term, new_pos) )
+  }
+
+  /// Type checks and builds a datatype constructor.
+  fn build_dtyp_new(
+    & self,
+    name: String, dtyp: & DTyp,
+    new_pos: Pos, _args_pos: & [ Pos ], args: Vec<Term>
+  ) -> Res<(Term, Pos)> {
+    // let mut buff: Vec<u8> = vec![] ;
+    // dtyp::write_all(& mut buff, "| ").unwrap() ;
+    // write!(& mut buff, "\n\n").unwrap() ;
+    // dtyp::write_constructor_map(& mut buff, "| ").unwrap() ;
+    // println!("{}", ::std::str::from_utf8(& buff).unwrap()) ;
+
+    let typ = if let Some(typ) = dtyp::type_constructor(
+      & name, & args
+    ).chain_err(
+      || self.error(
+        new_pos, format!(
+          "while typing this constructor for `{}`",
+          conf.emph(& dtyp.name)
+        )
+      )
+    ) ? {
+      typ
+    } else {
+      bail!(
+        self.error(
+          new_pos, format!(
+            "unknown `{}` constructor for datatype `{}`",
+            conf.bad(& name), conf.emph(& dtyp.name)
+          )
+        )
+      )
+    } ;
+
+    Ok(
+      ( term::dtyp_new(typ, name, args), new_pos )
+    )
+  }
+
+  /// Type checks and builds a datatype selector.
+  fn build_dtyp_slc(
+    & self,
+    name: String, slc_pos: Pos, _args_pos: & [ Pos ], mut args: Vec<Term>
+  ) -> Res<(Term, Pos)> {
+    debug_assert_eq! { _args_pos.len(), args.len() }
+
+    let arg = if let Some(arg) = args.pop() {
+
+      if args.pop().is_some() {
+        bail!(
+          self.error(
+            slc_pos, format!(
+              "illegal datatype selector application to {} (> 1) arguments",
+              args.len() + 2
+            )
+          )
+        )
+      } else {
+        arg
+      }
+
+    } else {
+      bail!(
+        self.error(
+          slc_pos, "illegal datatype selector application to nothing"
+        )
+      )
+    } ;
+
+    match dtyp::type_selector( & name, slc_pos, & arg ) {
+      Ok(typ) => Ok(
+        ( term::dtyp_slc(typ, name, arg), slc_pos )
+      ),
+
+      Err((pos, blah)) => bail!( self.error(pos, blah) ),
+    }
+  }
+
+}
+
+
+
+
+
+
+
+
+impl<'cxt, 's> Parser<'cxt, 's> {
 
   // /// Parses an operator or fails.
   // fn op(& mut self) -> Res<Op> {
@@ -1700,10 +1957,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
   /// Parses a single term.
-  ///
-  /// # TODO
-  ///
-  /// - remove the recursive call for arrays
   pub fn term_opt(
     & mut self,
     var_map: & VarInfos,
@@ -1722,17 +1975,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     // `start_pos` and clear the `term_stack`, so there's no need to do it in
     // the loop.
     let res = 'read_kids: loop {
+      self.ws_cmt() ;
 
       let bind_count = self.let_bindings(var_map, map, instance) ? ;
 
       self.ws_cmt() ;
       let mut term_pos = self.pos() ;
+
+
       let mut term = if let Some(int) = self.int() {
         term::int(int)
+
       } else if let Some(real) = self.real() ? {
         term::real(real)
+
       } else if let Some(b) = self.bool() {
         term::bool(b)
+
       } else if let Some((pos, id)) = self.ident_opt() ? {
 
         if let Some(idx) = map.get(id) {
@@ -1753,11 +2012,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           break 'read_kids None
 
         } else if let Some(datatype) = dtyp::of_constructor(id) {
+
           if let Some(constructor) = datatype.news.get(id) {
+
             if constructor.is_empty() {
-              bail!(
-                self.error(pos, "term for datatypes isn't implemented")
-              )
+              let (term, _) = self.build_dtyp_new(
+                id.into(), & datatype, pos, & [], vec![]
+              ) ? ;
+              term
+
             } else {
               bail!(
                 self.error(
@@ -1769,15 +2032,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 )
               )
             }
+
           } else {
             bail!("inconsistent datatype map internal state")
           }
-        } else if dtyp::is_selector(id) {
-          bail!(
-            self.error(
-              pos, "term datatypes (selector) isn't implemented"
-            )
-          )
+
         } else {
           bail!(
             self.error(
@@ -1792,11 +2051,21 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         let op_pos = self.pos() ;
 
         if let Some(op) = self.op_opt() ? {
-          let frame = TermFrame::new(op, op_pos, bind_count) ;
+          let frame = TermFrame::new(
+            FrameOp::Op(op), op_pos, bind_count
+          ) ;
+          self.cxt.term_stack.push(frame) ;
+          continue 'read_kids
+
+        } else if self.tag_opt("as") {
+          let frame = TermFrame::new(
+            FrameOp::Cast, op_pos, bind_count
+          ) ;
           self.cxt.term_stack.push(frame) ;
           continue 'read_kids
 
         } else if self.tag_opt("(") {
+          self.ws_cmt() ;
 
           // Try to parse a constant array.
           if self.tag_opt("as")
@@ -1804,55 +2073,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let sort_pos = self.pos() ;
             let typ = self.sort() ? ;
-            let (src, tgt) = if let Some((src, tgt)) = typ.array_inspect() {
-              (src, tgt)
-            } else {
-              bail!(
-                self.error(sort_pos, "expected array sort")
-              )
-            } ;
 
             self.ws_cmt() ;
             self.tag(")") ? ;
-            self.ws_cmt() ;
 
-            let term_pos = self.pos() ;
-
-            let stack = Vec::with_capacity(
-              self.cxt.term_stack.capacity()
+            let frame = TermFrame::new(
+              FrameOp::CArray(typ, sort_pos), op_pos, bind_count
             ) ;
-            let old_stack = ::std::mem::replace(
-              & mut self.cxt.term_stack, stack
-            ) ;
-
-            // !!!! RECURSIVE CALL !!!!
-            if let Some(term) = self.term_opt(var_map, map, instance) ? {
-              if term.typ() != * tgt {
-                bail!(
-                  self.error(
-                    term_pos, format!(
-                      "expected expression of sort {}, got one of sort {}",
-                      tgt, term.typ()
-                    )
-                  )
-                )
-              }
-
-              let empty_stack = ::std::mem::replace(
-                & mut self.cxt.term_stack,
-                old_stack
-              ) ;
-              debug_assert! { empty_stack.is_empty() }
-
-              self.ws_cmt() ;
-              self.tag(")") ? ;
-              term::cst_array(src.clone(), term)
-
-            } else {
-              bail!(
-                self.error_here("expected term")
-              )
-            }
+            self.cxt.term_stack.push(frame) ;
+            continue 'read_kids
 
           } else {
             bail!( self.error_here("unexpected token") )
@@ -1861,27 +2090,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         } else if let Some((pos, id)) = self.ident_opt().chain_err(
           || "while trying to parse datatype"
         ) ? {
-          let mut trm: Option<Term> = None ;
+
           if let Some(datatype) = dtyp::of_constructor(id) {
-            if let Some(_constructor) = datatype.news.get(id) {
-              bail!(
-                self.error(
-                  pos, "term datatypes (constructor) isn't implemented"
-                )
-              )
-            }
+            debug_assert! { datatype.news.get(id).is_some() }
+            let frame = TermFrame::new(
+              FrameOp::DTypNew(
+                id.into(), datatype
+              ), op_pos, bind_count
+            ) ;
+            self.cxt.term_stack.push(frame) ;
+            continue 'read_kids
+
           } else if dtyp::is_selector(id) {
-            bail!(
-              self.error(
-                pos, "term datatypes (selector) isn't implemented"
-              )
-            )
+            let frame = TermFrame::new (
+              FrameOp::DTypSlc(
+                id.into()
+              ), op_pos, bind_count
+            ) ;
+            self.cxt.term_stack.push(frame) ;
+            continue 'read_kids
+
           }
-          if let Some(trm) = trm {
-            trm
-          } else if self.cxt.term_stack.is_empty() {
+
+          if self.cxt.term_stack.is_empty() {
             self.backtrack_to(pos) ;
             break 'read_kids None
+
           } else {
             bail!(
               self.error(
@@ -1930,7 +2164,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.close_let_bindings(bind_count) ? ;
           continue 'go_up
 
+        } else if frame.is_cast() {
+          // Cast expect a type after the term being cast.
+          let _sort = self.sort().chain_err(
+            || "in term casting, after term"
+          ) ? ;
+
+          bail!(
+            self.error(
+              frame.op_pos, "casts are not supported"
+            )
+          )
+
         } else {
+          // Keep on parsing terms.
           self.cxt.term_stack.push(frame) ;
           continue 'read_kids
         }

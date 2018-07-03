@@ -3,6 +3,7 @@
 use hashconsing::{ HashConsign, HConser, HConsed } ;
 
 use common::* ;
+use dtyp::TPrmMap ;
 
 /// Type of the term factory.
 type Factory = RwLock< HashConsign<RTyp> > ;
@@ -36,7 +37,7 @@ pub fn unk() -> Typ {
   factory.mk(RTyp::Unk)
 }
 /// Generates a datatype.
-pub fn dtyp(dtyp: dtyp::DTyp, prms: dtyp::TPrmMap<Typ>) -> Typ {
+pub fn dtyp(dtyp: dtyp::DTyp, prms: TPrmMap<Typ>) -> Typ {
   factory.mk( RTyp::DTyp { dtyp, prms } )
 }
 
@@ -71,6 +72,7 @@ pub enum RTyp {
   Real,
   /// Booleans.
   Bool,
+
   /// Arrays.
   Array {
     /// Type of indices.
@@ -78,12 +80,13 @@ pub enum RTyp {
     /// Type of values.
     tgt: Typ,
   },
+
   /// Datatype.
   DTyp {
     /// Original datatype.
-    dtyp: dtyp::DTyp,
+    dtyp: DTyp,
     /// Type parameters.
-    prms: dtyp::TPrmMap<Typ>,
+    prms: TPrmMap<Typ>,
   },
 }
 impl RTyp {
@@ -118,15 +121,25 @@ impl RTyp {
 
   /// Inspects an array type.
   pub fn array_inspect(& self) -> Option<(& Typ, & Typ)> {
-    match * self {
-      RTyp::Array { ref src, ref tgt } => Some((src, tgt)),
-      _ => None,
+    if let RTyp::Array { src, tgt } = self {
+      Some( (src, tgt) )
+    } else {
+      None
     }
   }
 
   /// True if the type is unknown.
   pub fn is_unk(& self) -> bool {
     RTyp::Unk == * self
+  }
+
+  /// Inspects a datatype type.
+  pub fn dtyp_inspect(& self) -> Option<(& DTyp, & TPrmMap<Typ>)> {
+    if let RTyp::DTyp { dtyp, prms } = self {
+      Some( (dtyp, prms) )
+    } else {
+      None
+    }
   }
 
   /// True if the types are compatible.

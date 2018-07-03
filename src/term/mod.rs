@@ -66,7 +66,7 @@ mod factory ;
 mod tterms ;
 pub mod simplify ;
 pub mod typ ;
-mod zipper ;
+mod fold ;
 mod leaf_iter ;
 
 pub use self::op::* ;
@@ -100,7 +100,7 @@ pub enum RTerm {
     /// Type of **the indices** (not the array).
     typ: Typ,
     /// Default term of the array.
-    term: Box<Term>
+    term: Term
   },
 
   /// An operator application.
@@ -121,6 +121,16 @@ pub enum RTerm {
     name: String,
     /// Arguments of the constructor.
     args: Vec<Term>,
+  },
+
+  /// A datatype selector application.
+  DTypSlc {
+    /// Type of the application.
+    typ: Typ,
+    /// Name of the selector.
+    name: String,
+    /// Argument of the selector.
+    term: Term,
   },
 }
 
@@ -225,14 +235,18 @@ impl RTerm {
 
     while let Some(term) = stack.pop() {
       f(term) ;
-      match * term {
-        RTerm::App { ref args, .. } => for term in args {
+      match term {
+        RTerm::App { args, .. } => for term in args {
           stack.push(term)
         },
-        RTerm::CArray { ref term, .. } => stack.push(& * term),
-        RTerm::DTypNew { ref args, .. } => for term in args {
+
+        RTerm::CArray { term, .. } => stack.push( term.get() ),
+        RTerm::DTypSlc { term, .. } => stack.push( term.get() ),
+
+        RTerm::DTypNew { args, .. } => for term in args {
           stack.push(term)
         },
+
         RTerm::Var(_, _) |
         RTerm::Cst(_) => (),
       }
@@ -244,11 +258,15 @@ impl RTerm {
     match self {
       RTerm::Var(typ, _) => typ.clone(),
       RTerm::Cst(val) => val.typ(),
+
       RTerm::CArray { typ, term } => typ::array(
         typ.clone(), term.typ()
       ),
-      RTerm::DTypNew { typ, .. } => typ.clone(),
+
       RTerm::App { typ, .. } => typ.clone(),
+
+      RTerm::DTypSlc { typ, .. } => typ.clone(),
+      RTerm::DTypNew { typ, .. } => typ.clone(),
     }
   }
 
@@ -288,24 +306,27 @@ impl RTerm {
 
       if let Some(this_term) = to_do.pop() {
         stack.push( (to_do, sep, end) ) ;
+        write!(w, "{}", sep) ? ;
 
         match this_term {
-          Var(_, v) => {
-            write!(w, "{}", sep) ? ;
-            write_var(w, * v) ?
-          },
-          Cst(val) => write!(w, "{}{}", sep, val) ?,
+          Var(_, v) => write_var(w, * v) ?,
+          Cst(val) => write!(w, "{}", val) ?,
 
           CArray { term, .. } => {
-            write!(w, "{}((as const {})", sep, this_term.typ()) ? ;
+            write!(w, "((as const {})", this_term.typ()) ? ;
             stack.push( (vec![term], " ", ")") )
           },
 
           App { op, args, .. } => {
-            write!(w, "{}({}", sep, op) ? ;
+            write!(w, "({}", op) ? ;
             stack.push(
               (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
             )
+          },
+
+          DTypSlc { name, term, .. } => {
+            write!(w, "({}", name) ? ;
+            stack.push( (vec![term], " ", ")") )
           },
 
           DTypNew { name, args, .. } => if args.is_empty() {
@@ -509,6 +530,149 @@ impl RTerm {
     }
   }
 
+  /// Casts a term.
+  ///
+  /// Only legal if the term's type and the one provided are compatible.
+  ///
+  /// Returns
+  ///
+  /// - an error if the types are not compatible
+  /// - `None` if the cast didn't do anything
+  /// - the new term otherwise
+  pub fn cast(& self, to_typ: & Typ) -> Res< Option<Term> > {
+    let nu_typ = if let Some(typ) = self.typ().merge(to_typ) {
+      if to_typ == & typ { return Ok(None) }
+      typ
+    } else {
+      bail!(
+        "types {} and {} are incompatible", self.typ(), to_typ
+      )
+    } ;
+
+    enum Frame<'a> {
+      // Array frame.
+      Arr(Typ),
+      // Datatype constructor.
+      New {
+        typ: Typ,
+        name: String,
+        lft: Vec<Term>,
+        rgt: ::std::vec::IntoIter<(Typ, & 'a RTerm)>,
+      },
+    }
+
+    let mut stack = vec![] ;
+    let (mut nu_typ, mut curr) = (nu_typ, self) ;
+
+    'go_down: loop {
+
+      let mut term = match curr {
+        RTerm::Var(_, idx) => term::var(* idx, nu_typ),
+
+        RTerm::Cst(val) => if let Ok(val) = val.cast(& nu_typ) {
+          factory::cst(val)
+        } else {
+          return Ok(None)
+        },
+
+        RTerm::App { op, args, .. } => term::app( * op, args.clone() ),
+
+        RTerm::CArray { typ, term } => {
+          let (src, tgt) = typ.array_inspect().unwrap() ;
+          stack.push(
+            Frame::Arr( src.clone() )
+          ) ;
+          nu_typ = tgt.clone() ;
+          curr = term.get() ;
+          continue 'go_down
+        },
+
+        RTerm::DTypNew { typ, name, args } => {
+          let mut lft = vec![] ;
+          let mut next = None ;
+          let mut rgt = vec![] ;
+
+          scoped! {
+
+            let (_, nu_prms) = nu_typ.dtyp_inspect().unwrap() ;
+            let (_, prms) = typ.dtyp_inspect().unwrap() ;
+            debug_assert_eq! { args.len(), nu_prms.len() }
+            debug_assert_eq! { args.len(), prms.len() }
+            let mut all = nu_prms.iter().zip(
+              prms.iter()
+            ).zip( args.iter() ) ;
+
+            while let Some(((nu, typ), arg)) = all.next()  {
+              if nu == typ {
+                lft.push( arg.clone() )
+              } else {
+                next = Some(
+                  ( arg.get(), nu.clone() )
+                )
+              }
+            }
+
+            for ((nu_typ, _), arg) in all {
+              rgt.push( (nu_typ.clone(), arg.get()) )
+            }
+
+          }
+
+          if let Some((term, nu)) = next {
+            let frame = Frame::New {
+              typ: nu_typ, name: name.clone(), lft, rgt: rgt.into_iter()
+            } ;
+            stack.push(frame) ;
+            nu_typ = nu ;
+            curr = term ;
+
+            continue 'go_down
+          } else {
+            term::dtyp_new(nu_typ, name.clone(), lft)
+          }
+        },
+
+        RTerm::DTypSlc { typ, name, term } => {
+          debug_assert_eq! { typ, & nu_typ }
+          term::dtyp_slc(
+            typ.clone(), name.clone(), term.clone()
+          )
+        },
+      } ;
+
+      'go_up: loop {
+
+        match stack.pop() {
+          None => return Ok( Some(term) ),
+
+          Some( Frame::Arr(typ) ) => {
+            term = term::cst_array(typ, term) ;
+            continue 'go_up
+          },
+
+          Some(
+            Frame::New { typ, name, mut lft, mut rgt }
+          ) => {
+            lft.push(term) ;
+
+            if let Some((ty, tm)) = rgt.next() {
+              nu_typ = ty ;
+              curr = tm ;
+              stack.push( Frame::New { typ, name, lft, rgt } ) ;
+              continue 'go_down
+            } else {
+              term = term::dtyp_new(typ, name, lft) ;
+              continue 'go_up
+            }
+          },
+        }
+
+      }
+
+    }
+
+  }
+
   /// Checks whether the term is a relation.
   pub fn is_relation(& self) -> bool {
     match * self {
@@ -529,53 +693,59 @@ impl RTerm {
     }
   }
 
-  /// Zips over a term.
+  /// Folds over a term.
   ///
   /// # Type parameters
   ///
-  /// - `Info`: information extracted by the zipping process
+  /// - `Info`: information extracted by the folding process
   /// - `VarF`: will run on variables
   /// - `CstF`: will run on constants
-  /// - `AppF`: will run on the result of zipping on operator applications
-  /// - `ArrF`: will run on the result of zipping on arrays
-  /// - `NewF`: will run on the result of zipping on datatype constructors
-  pub fn zip<Info, VarF, CstF, AppF, ArrF, NewF>(
-    & self, varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF
+  /// - `AppF`: will run on the result of folding on operator applications
+  /// - `ArrF`: will run on the result of folding on arrays
+  /// - `NewF`: will run on the result of folding on datatype constructors
+  /// - `SlcF`: will run on the result of folding on datatype selectors
+  pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+    & self,
+    varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF, slcf: SlcF
   ) -> Info
   where
   VarF: FnMut(& Typ, VarIdx) -> Info,
   CstF: FnMut(& Val) -> Info,
   AppF: FnMut(& Typ, Op, Vec<Info>) -> Info,
   ArrF: FnMut(& Typ, Info) -> Info,
-  NewF: FnMut(& Typ, & String, Vec<Info>) -> Info, {
-    zipper::zip(self, varf, cstf, appf, arrf, newf)
+  NewF: FnMut(& Typ, & String, Vec<Info>) -> Info,
+  SlcF: FnMut(& Typ, & String, Info) -> Info, {
+    fold::fold(self, varf, cstf, appf, arrf, newf, slcf)
   }
 
 
 
-  /// Zips over a term.
+  /// Folds over a term.
   ///
   /// Early returns **iff** any a call to one of the input functions returns an
   /// error.
   ///
   /// # Type parameters
   ///
-  /// - `Info`: information extracted by the zipping process
+  /// - `Info`: information extracted by the folding process
   /// - `VarF`: will run on variables
   /// - `CstF`: will run on constants
-  /// - `AppF`: will run on the result of zipping on operator applications
-  /// - `ArrF`: will run on the result of zipping on arrays
-  /// - `NewF`: will run on the result of zipping on datatype constructors
-  pub fn zip_res<Info, VarF, CstF, AppF, ArrF, NewF>(
-    & self, varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF
+  /// - `AppF`: will run on the result of folding on operator applications
+  /// - `ArrF`: will run on the result of folding on arrays
+  /// - `NewF`: will run on the result of folding on datatype constructors
+  /// - `SlcF`: will run on the result of folding on datatype selectors
+  pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+    & self,
+    varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF, slcf: SlcF
   ) -> Res<Info>
   where
   VarF: FnMut(& Typ, VarIdx) -> Res<Info>,
   CstF: FnMut(& Val) -> Res<Info>,
   AppF: FnMut(& Typ, Op, Vec<Info>) -> Res<Info>,
   ArrF: FnMut(& Typ, Info) -> Res<Info>,
-  NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>, {
-    zipper::zip_res(self, varf, cstf, appf, arrf, newf)
+  NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>,
+  SlcF: FnMut(& Typ, & String, Info) -> Res<Info>, {
+    fold::fold_res(self, varf, cstf, appf, arrf, newf, slcf)
   }
 
 
@@ -585,7 +755,7 @@ impl RTerm {
   ///
   /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    self.zip_res(
+    self.fold_res(
       // Variable evaluation.
       |_, v| if v < model.len() {
         Ok( model.get(v).clone() )
@@ -606,9 +776,15 @@ impl RTerm {
         val::array( typ.clone(), default )
       ),
 
-      // Datatype evaluation.
+      // Datatype construction.
       |typ, name, values| Ok(
         val::dtyp_new( typ.clone(), name.clone(), values )
+      ),
+
+      // Datatype selection.
+      |typ, name, value| bail!(
+        "datatype ({}) selector evaluation is unimplemented ; on ({} {})",
+        typ, name, value
       ),
     )
   }
@@ -700,7 +876,7 @@ impl RTerm {
   ) -> Option<(Term, bool)> {
     let mut changed = false ;
 
-    let res = zipper::zip_custom_res(
+    let res = fold::fold_custom_res(
       self,
 
       // Variable.
@@ -735,6 +911,13 @@ impl RTerm {
       |typ, name, args| Ok(
         term::dtyp_new(
           typ.clone(), name.clone(), args
+        )
+      ),
+
+      // Datatype selector.
+      |typ, name, term| Ok(
+        term::dtyp_slc(
+          typ.clone(), name.clone(), term
         )
       ),
     ) ;
@@ -998,10 +1181,10 @@ impl RTerm {
 
         RTerm::Var(_, v) => return Some((v, solution)),
 
-        RTerm::CArray { .. } |
-        RTerm::DTypNew { .. } => return None,
-
-        RTerm::Cst(_) => return None,
+        RTerm::Cst(_)         |
+        RTerm::CArray  { .. } |
+        RTerm::DTypNew { .. } |
+        RTerm::DTypSlc { .. } => return None,
       }
     }
   }

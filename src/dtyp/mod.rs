@@ -65,7 +65,18 @@ impl PartialTyp {
           bail!("cannot unify type {} and {}", ptyp, typ)
         },
 
-        _ => unimplemented!(),
+        ( PartialTyp::DTyp(name, _, p_prms), RTyp::DTyp { dtyp, prms } )
+        if name == & dtyp.name
+        && p_prms.len() == prms.len() => {
+          for (p_typ, typ) in p_prms.iter().zip( prms.iter() ) {
+            stack.push( (p_typ, typ) )
+          }
+        },
+
+        _ => bail!(
+          "cannot unify {} with ({})",
+          ptyp, typ
+        ),
       }
     }
 
@@ -132,6 +143,94 @@ impl PartialTyp {
     }
 
     Ok(())
+  }
+
+  /// Turns a partial type into a concrete type.
+  pub fn to_type(
+    & self, prms: & TPrmMap<Typ>
+  ) -> Result<Typ, (::parse::Pos, String)> {
+    enum Frame<'a> {
+      ArrayLft(& 'a PartialTyp),
+      ArrayRgt(Typ),
+      DTyp(DTyp, TPrmMap<Typ>, ::std::slice::Iter<'a, PartialTyp>),
+    }
+
+    let mut curr = self ;
+    let mut stack = vec![] ;
+
+    'go_down: loop {
+
+      let mut typ = match curr {
+
+        PartialTyp::Array(src, tgt) => {
+          curr = & ** src ;
+          stack.push( Frame::ArrayLft(& ** tgt) ) ;
+
+          continue 'go_down
+        },
+
+        PartialTyp::DTyp(name, pos, prms) => {
+          let mut nu_prms = TPrmMap::with_capacity( prms.len() ) ;
+          let mut prms = prms.iter() ;
+
+          let dtyp = if let Ok(dtyp) = get(name) {
+            dtyp
+          } else {
+            return Err(
+              ( * pos, "unknown datatype".into() )
+            )
+          } ;
+
+          if let Some(partial) = prms.next() {
+            curr = partial ;
+            stack.push(
+              Frame::DTyp( dtyp, nu_prms, prms )
+            ) ;
+
+            continue 'go_down
+          } else {
+            typ::dtyp(dtyp, nu_prms)
+          }
+        },
+
+        PartialTyp::Typ(typ) => typ.clone(),
+
+        PartialTyp::Param(idx) => prms[* idx].clone(),
+
+      } ;
+
+      'go_up: loop {
+
+        match stack.pop() {
+          None => return Ok(typ),
+
+          Some( Frame::ArrayLft(tgt) ) => {
+            curr = tgt ;
+            stack.push( Frame::ArrayRgt(typ) ) ;
+            continue 'go_down
+          },
+
+          Some( Frame::ArrayRgt(src) ) => {
+            typ = typ::array(src, typ) ;
+            continue 'go_up
+          },
+
+          Some( Frame::DTyp(dtyp, mut prms, mut to_do) ) => {
+            prms.push(typ) ;
+            if let Some(typ_to_do) = to_do.next() {
+              stack.push( Frame::DTyp(dtyp, prms, to_do) ) ;
+              curr = typ_to_do ;
+              continue 'go_down
+            } else {
+              typ = typ::dtyp(dtyp, prms) ;
+              continue 'go_up
+            }
+          },
+        }
+
+      }
+
+    }
   }
 }
 
@@ -355,14 +454,10 @@ pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
 pub fn type_constructor(
   constructor: & str, args: & [ Term ]
 ) -> Res< Option<Typ> > {
-  let dtyp = if let Ok(f) = factory.read() {
-    if let Some(dtyp) = f.get(constructor) {
-      dtyp.clone()
-    } else {
-      return Ok(None)
-    }
+  let dtyp = if let Some(dtyp) = of_constructor(constructor) {
+    dtyp
   } else {
-    bail!("failed to access datatype factory")
+    return Ok(None)
   } ;
 
   let params = {
@@ -392,6 +487,36 @@ pub fn type_constructor(
   } ;
 
   Ok( Some( typ::dtyp(dtyp, params) ) )
+}
+
+
+
+/// Types a datatype selector application.
+pub fn type_selector(
+  selector: & str, slc_pos: ::parse::Pos, term: & Term
+) -> Result<Typ, (::parse::Pos, String)> {
+  if let Some((dtyp, prms)) = term.typ().dtyp_inspect() {
+
+    for args in dtyp.news.values() {
+      for (slc, partial_typ) in args {
+        if slc == selector {
+
+          return partial_typ.to_type(prms)
+
+        }
+      }
+    }
+
+  }
+
+  Err(
+    (
+      slc_pos, format!(
+        "cannot apply selector `{}` to term of type {}",
+        conf.bad(selector), term.typ()
+      )
+    )
+  )
 }
 
 
@@ -488,4 +613,7 @@ impl RDTyp {
 
     Ok(())
   }
+}
+impl_fmt! {
+  RDTyp(self, fmt) { write!(fmt, "{}", self.name) }
 }

@@ -68,6 +68,7 @@ impl<'a> Iterator for LeafIter<'a> {
           Var(ref typ, var) => Either::Left( (typ, var) ),
           Cst(ref val) => Either::Right(val),
 
+          DTypSlc { ref term, .. } |
           CArray { ref term, .. } => {
             current = term.get() ;
             continue 'go_down

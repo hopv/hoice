@@ -370,7 +370,7 @@ impl RVal {
   }
 
   /// Attempts to cast a value.
-  pub fn cast(& self, typ: & ::term::Typ) -> Res<Val> {
+  pub fn cast(& self, typ: & Typ) -> Res<Val> {
     use num::One ;
     use term::typ::RTyp ;
     if & self.typ() == typ {

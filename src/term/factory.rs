@@ -27,19 +27,21 @@ lazy_static! {
 fn scan_vars(t: & Term) -> VarSet {
   let mut to_do = vec![ t ] ;
   let mut set = VarSet::with_capacity(11) ;
+
   while let Some(term) = to_do.pop() {
     match term.get() {
       RTerm::Var(_, i) => {
         let _ = set.insert(* i) ; ()
       },
       RTerm::Cst(_) => (),
-      RTerm::CArray { ref term, .. } => to_do.push(& * term),
-      RTerm::App{ ref args, .. } => for arg in args {
+      RTerm::CArray { term, .. } => to_do.push(& * term),
+      RTerm::App{ args, .. } => for arg in args {
         to_do.push(arg)
       },
-      RTerm::DTypNew { ref args, .. } => for arg in args {
+      RTerm::DTypNew { args, .. } => for arg in args {
         to_do.push(arg)
       },
+      RTerm::DTypSlc { term, .. } => to_do.push(term),
     }
   }
   set.shrink_to_fit() ;
@@ -218,7 +220,7 @@ pub fn cst_array(typ: Typ, default: Term) -> Term {
       RTerm::Cst( val::array(typ, val) )
     )
   } else {
-    factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
+    factory.mk( RTerm::CArray { typ, term: default } )
   }
 }
 
@@ -279,7 +281,30 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
 
 /// Creates a datatype constructor.
 pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
+  if let Some((dtyp, _)) = typ.dtyp_inspect() {
+    if let Some(fargs) = dtyp.news.get(& name) {
+      if args.len() != fargs.len() {
+        panic!(
+          "constructor `{}` for `{}` expects {} arguments, found {}",
+          conf.emph(& name), conf.emph(& dtyp.name),
+          fargs.len(), args.len()
+        )
+      }
+    } else {
+      panic!(
+        "datatype `{}` has no constructor named `{}`",
+        conf.emph(& dtyp.name), conf.bad(& name)
+      )
+    }
+  } else {
+    panic!("ill-typed datatype constructor: {}", typ)
+  }
   factory.mk( RTerm::DTypNew { typ, name, args } )
+}
+
+/// Creates a new datatype selector.
+pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
+  factory.mk( RTerm::DTypSlc { typ, name, term } )
 }
 
 /// Creates an operator application.
