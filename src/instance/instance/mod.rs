@@ -1481,9 +1481,9 @@ impl Instance {
     & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
   ) -> Res<()> {
     let (mut cex, bias) = cex ;
-    let clause = & self[clause_idx] ;
 
     if_log! { @6
+      let clause = & self[clause_idx] ;
       let mut s = String::new() ;
       for (var, val) in cex.index_iter() {
         s.push_str(& format!("{}: {}, ", var.default_str(), val))

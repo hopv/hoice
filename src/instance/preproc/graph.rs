@@ -565,7 +565,7 @@ impl Graph {
 
 
   /// Prints a definition for some predicate.
-  #[allow(dead_code)]
+  #[cfg(not(feature = "bench"))]
   fn log_definition(_instance: & Instance, _def: DnfRef) {
     for (qvars, tterms) in _def {
       log! { @5 "and" }
@@ -677,7 +677,7 @@ impl Graph {
 
 
   /// Prints definition before merging.
-  #[allow(dead_code)]
+  #[cfg(not(feature = "bench"))]
   fn log_merge_defs(
     _this_pred: PrdIdx, _instance: & Instance,
     _argss: & VarTermsSet, _p_def: DnfRef, _curr: DnfRef
@@ -703,7 +703,7 @@ impl Graph {
   }
 
   /// Prints definition before merging.
-  #[allow(dead_code)]
+  #[cfg(not(feature = "bench"))]
   fn log_merge_defs_sub(
     _this_pred: PrdIdx, _instance: & Instance,
     _argss: & VarTermsSet, _p_def: DnfRef
@@ -880,22 +880,22 @@ impl Graph {
 
   /// Finds a predicate to start breaking cycles from in the graph.
   fn find_starting_pred(
-    & self, instance: & Instance, pos: & PrdSet, forward: & PrdHMap<PrdSet>
+    & self, _instance: & Instance, pos: & PrdSet, forward: & PrdHMap<PrdSet>
   ) -> Option<PrdIdx> {
     if_log! { @3
       log! { @3 => "  looking for a starting point with" }
       log! { @3 => "  - pos {{" }
       for prd in pos {
-        log! { @3 => "    {}", instance[* prd] }
+        log! { @3 => "    {}", _instance[* prd] }
       }
       log! { @3 => "  }}" }
       log! { @3 => "  - forward {{" }
       for (prd, set) in forward {
         let mut s = String::new() ;
         for prd in set {
-          s = format!("{} {}", s, instance[* prd])
+          s = format!("{} {}", s, _instance[* prd])
         }
-        log! { @3 => "    {} ->{}", instance[* prd], s }
+        log! { @3 => "    {} ->{}", _instance[* prd], s }
       }
       log! { @3 => " }}" }
     }
