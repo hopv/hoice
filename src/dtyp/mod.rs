@@ -380,14 +380,16 @@ pub fn mk(mut dtyp: RDTyp) -> Res<DTyp> {
   for (constructor, args) in & dtyp.news {
     let mut recursive = false ;
     for (_, ty) in args {
-      if ty.mentions_dtyp(& dtyp.name) {
+      let rec = ty.mentions_dtyp(& dtyp.name) ;
+      if rec {
         recursive = true ;
         break
       }
     }
 
-    if ! recursive {
+    if recursive {
       rec_count += 1 ;
+    } else {
       let default = default.get_or_insert_with(
         || (constructor.clone(), args.len())
       ) ;

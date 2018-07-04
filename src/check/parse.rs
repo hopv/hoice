@@ -8,6 +8,9 @@ use check::* ;
 /// Parser.
 #[derive(Clone)]
 pub struct InParser<'a> {
+  /// Unknown stuff. Datatype declarations, recursive function definitions and
+  /// such.
+  pub unknown: Vec<String>,
   /// Predicate definitions.
   pub pred_defs: Vec<PredDef>,
   /// Predicate declarations.
@@ -25,6 +28,7 @@ impl<'a> InParser<'a> {
   /// Constructor.
   pub fn new(s: & 'a str) -> Self {
     InParser {
+      unknown: vec![],
       pred_defs: vec![], pred_decs: vec![], fun_defs: vec![],
       clauses: vec![],
       chars: s.chars(), buf: vec![]
@@ -327,16 +331,10 @@ impl<'a> InParser<'a> {
     self.char('(') ? ;
     self.ws_cmt() ;
     let mut sig = vec![] ;
-    loop {
-      if let Some(t) = self.typ_opt() ? {
-        sig.push(t)
-      } else {
-        break
-      }
+    while ! self.char_opt(')') {
+      sig.push( self.sexpr() ? ) ;
       self.ws_cmt()
     }
-    self.ws_cmt() ;
-    self.char(')') ? ;
     self.ws_cmt() ;
     self.tag("Bool") ? ;
 
@@ -355,7 +353,7 @@ impl<'a> InParser<'a> {
     while self.char_opt('(') {
       let id = self.ident() ? ;
       self.ws_cmt() ;
-      let ty = self.typ() ? ;
+      let ty = self.sexpr() ? ;
       self.ws_cmt() ;
       self.char(')') ? ;
       self.ws_cmt() ;
@@ -441,6 +439,29 @@ impl<'a> InParser<'a> {
     Ok(true)
   }
 
+  /// Parses anything.
+  fn parse_unknown(& mut self) -> Res<()> {
+    let mut s = "(".to_string() ;
+
+    let mut count = 1 ;
+
+    while let Some(char) = self.next() {
+      s.push(char) ;
+      match char {
+        ')' => count -= 1,
+        '(' => count += 1,
+        _ => (),
+      }
+      if count == 0 {
+        self.backtrack( vec![')'] ) ;
+        self.unknown.push(s) ;
+        return Ok(())
+      }
+    }
+
+    bail!("expected closing paren, found <eof>")
+  }
+
   /// Parses an `smt2` file.
   pub fn parse_input(mut self) -> Res<Input> {
     self.ws_cmt() ;
@@ -459,16 +480,17 @@ impl<'a> InParser<'a> {
       || self.tag_opt("exit") {
         ()
       } else {
-        print!("> `") ;
-        while let Some(next) = self.next() {
-          if next != '\n' {
-            print!("{}", next)
-          } else {
-            break
-          }
-        }
-        println!("`") ;
-        bail!("expected item")
+        self.parse_unknown() ?
+        // print!("> `") ;
+        // while let Some(next) = self.next() {
+        //   if next != '\n' {
+        //     print!("{}", next)
+        //   } else {
+        //     break
+        //   }
+        // }
+        // println!("`") ;
+        // bail!("expected item")
       }
 
       self.ws_cmt() ;
@@ -491,6 +513,7 @@ impl<'a> InParser<'a> {
 
     Ok(
       Input {
+        unknown: self.unknown,
         pred_decs: self.pred_decs,
         fun_defs: self.fun_defs,
         clauses: self.clauses,

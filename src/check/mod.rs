@@ -80,6 +80,8 @@ pub struct Clause {
 
 /// Data from the input file.
 pub struct Input {
+  /// Unknown stuff.
+  pub unknown: Vec<String>,
   /// Predicate declarations.
   pub pred_decs: Vec<PredDec>,
   /// Function definitions.
@@ -221,6 +223,11 @@ impl Data {
       ref args, ref body // ref lets, ref lhs, ref rhs
     } in & self.input.clauses {
       solver.reset() ? ;
+
+      for unknown in & self.input.unknown {
+        use std::io::Write ;
+        writeln!(solver, "{}", unknown) ?
+      }
 
       // Define all functions.
       for & FunDef {
