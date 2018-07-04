@@ -782,10 +782,46 @@ impl RTerm {
       ),
 
       // Datatype selection.
-      |typ, name, value| bail!(
-        "datatype ({}) selector evaluation is unimplemented ; on ({} {})",
-        typ, name, value
-      ),
+      |typ, name, value| if ! value.is_known() {
+        Ok( val::none( typ.clone() ) )
+      } else if let Some(
+        (ty, constructor, values)
+      ) = value.dtyp_inspect() {
+        if let Some((dtyp, _)) = ty.dtyp_inspect() {
+
+          if let Some(selectors) = dtyp.news.get(constructor) {
+
+            let mut res = None ;
+            for ((selector, _), value) in selectors.iter().zip(
+              values.iter()
+            ) {
+              if selector == name {
+                res = Some( value.clone() )
+              }
+            }
+
+            if let Some(res) = res {
+              Ok(res)
+            } else {
+              Ok( val::none( typ.clone() ) )
+            }
+
+          } else {
+            bail!(
+              "unknown constructor `{}` for datatype {}",
+              conf.bad(constructor), dtyp.name
+            )
+          }
+
+        } else {
+          bail!("inconsistent type {} for value {}", ty, value)
+        }
+      } else {
+        bail!(
+          "illegal application of constructor `{}` of `{}` to `{}`",
+          conf.bad(& name), typ, value
+        )
+      }
     )
   }
 

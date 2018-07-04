@@ -316,15 +316,57 @@ impl RTyp {
   ///
   /// Fails if the type is unknown.
   pub fn default_val(& self) -> Val {
-    match * self {
-      RTyp::Real => val::real( Rat::zero() ),
-      RTyp::Int => val::int( Int::zero() ),
-      RTyp::Bool => val::bool( true ),
-      RTyp::Array { ref src, ref tgt } => val::array(
-        src.clone(), tgt.default_val()
-      ),
-      RTyp::DTyp { .. } => unimplemented!(),
-      RTyp::Unk => panic!("unknown type has no default value"),
+    let typ = factory.mk( self.clone() ) ;
+    let mut current = & typ ;
+    let mut stack = vec![] ;
+
+    'go_down: loop {
+
+      let mut val = match current.get() {
+        RTyp::Real => val::real( Rat::zero() ),
+        RTyp::Int => val::int( Int::zero() ),
+        RTyp::Bool => val::bool( true ),
+        RTyp::Array { ref src, ref tgt } => val::array(
+          src.clone(), tgt.default_val()
+        ),
+        RTyp::DTyp { dtyp, prms } => {
+          let mut prms = prms.iter() ;
+          if let Some(next) = prms.next() {
+            current = next ;
+            stack.push(
+              (current, dtyp.default.clone(), vec![], prms)
+            ) ;
+            continue 'go_down
+          } else {
+            val::dtyp_new(
+              current.clone(), dtyp.default.clone(), vec![]
+            )
+          }
+        },
+        RTyp::Unk => panic!("unknown type has no default value"),
+      } ;
+
+
+      'go_up: loop {
+        match stack.pop() {
+          None => return val,
+
+          Some(
+            (typ, default, mut args, mut prms)
+          ) => {
+            args.push(val) ;
+            if let Some(prm) = prms.next() {
+              stack.push( (typ, default, args, prms) ) ;
+              current = prm ;
+              continue 'go_down
+            } else {
+              val = val::dtyp_new( typ.clone(), default, args ) ;
+              continue 'go_up
+            }
+          },
+        }
+      }
+
     }
   }
 

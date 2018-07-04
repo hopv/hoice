@@ -354,6 +354,15 @@ impl RVal {
     }
   }
 
+  /// Inspects a datatype value.
+  pub fn dtyp_inspect(& self) -> Option<(& Typ, & str, & [Val])> {
+    if let RVal::DTypNew { typ, name, args } = self {
+      Some((typ, name, args))
+    } else {
+      None
+    }
+  }
+
   /// Returns the type of the value.
   pub fn typ(& self) -> Typ {
     use self::RVal::* ;

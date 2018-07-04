@@ -38,6 +38,56 @@ impl From<Typ> for PartialTyp {
   }
 }
 impl PartialTyp {
+  /// True if the type mentions the datatype provided.
+  pub fn mentions_dtyp(
+    & self, dtyp_name: & str
+  ) -> bool {
+    let mut to_do = vec![ self ] ;
+    let mut typ_to_do = vec![] ;
+
+    loop {
+      if to_do.is_empty() && typ_to_do.is_empty() {
+        return false
+      }
+
+      while let Some(current) = to_do.pop() {
+        match current {
+          PartialTyp::Array(src, tgt) => {
+            to_do.push( & ** src ) ;
+            to_do.push( & ** tgt )
+          },
+
+          PartialTyp::DTyp(name, _, _) if name == dtyp_name => return true,
+
+          PartialTyp::DTyp(_, _, prms) => for typ in prms {
+            to_do.push(typ)
+          },
+
+          PartialTyp::Typ(typ) => typ_to_do.push(typ),
+
+          PartialTyp::Param(_) => (),
+        }
+      }
+
+      while let Some(current) = typ_to_do.pop() {
+        use typ::RTyp ;
+
+        match current.get() {
+          RTyp::Unk | RTyp::Int | RTyp::Real | RTyp::Bool => (),
+          RTyp::Array { src, tgt } => {
+            typ_to_do.push(src) ;
+            typ_to_do.push(tgt)
+          },
+          RTyp::DTyp { dtyp, .. } if dtyp.name == dtyp_name => return true,
+          RTyp::DTyp { prms, .. } => for typ in prms {
+            typ_to_do.push(typ)
+          },
+        }
+      }
+
+    }
+  }
+
   /// Resolves a partial type against a type.
   pub fn unify (
     & self, typ: & Typ, map: & mut TPrmMap<Typ>
@@ -314,10 +364,51 @@ lazy_static! {
 /// - the datatype already exists
 /// - one of the constructors of the datatype already exists
 /// - can't access the datatype map
-pub fn mk(dtyp: RDTyp) -> Res<DTyp> {
+/// - the datatype has no constructor
+/// - the datatype has no constructor that don't mention itself
+pub fn mk(mut dtyp: RDTyp) -> Res<DTyp> {
   let name = dtyp.name.clone() ;
-  let to_insert = Arc::new(dtyp) ;
-  let dtyp = to_insert.clone() ;
+
+  if dtyp.news.is_empty() {
+    bail!("illegal datatype: no constructor")
+  }
+
+  // Number of constructor that mention `dtyp`.
+  let mut rec_count = 0 ;
+  let mut default = None ;
+
+  for (constructor, args) in & dtyp.news {
+    let mut recursive = false ;
+    for (_, ty) in args {
+      if ty.mentions_dtyp(& dtyp.name) {
+        recursive = true ;
+        break
+      }
+    }
+
+    if ! recursive {
+      rec_count += 1 ;
+      let default = default.get_or_insert_with(
+        || (constructor.clone(), args.len())
+      ) ;
+      if default.1 > args.len() {
+        default.0 = constructor.clone() ;
+        default.1 = args.len()
+      }
+    }
+  }
+
+  if rec_count == dtyp.news.len() {
+    bail!("all constructors for datatype `{}` are recursive", dtyp.name)
+  }
+
+  if let Some((default, _)) = default {
+    dtyp.default = default
+  } else {
+    bail!("could not find a default constructor for datatype `{}`", dtyp.name)
+  }
+
+  let dtyp = Arc::new(dtyp) ;
 
   // Update constructor map.
   if let Ok(mut map) = constructor_map.write() {
@@ -330,6 +421,8 @@ pub fn mk(dtyp: RDTyp) -> Res<DTyp> {
         )
       }
     }
+  } else {
+    bail!("failed to retrieve datatype constructor map")
   }
 
   // Update selector set.
@@ -343,7 +436,7 @@ pub fn mk(dtyp: RDTyp) -> Res<DTyp> {
 
 
   let prev = if let Ok(mut f) = factory.write() {
-    f.insert(name, to_insert)
+    f.insert( name, dtyp.clone() )
   } else {
     bail!("failed to access datatype factory")
   } ;
@@ -535,6 +628,8 @@ pub struct RDTyp {
   pub prms: TPrmMap<String>,
   /// Constructors.
   pub news: BTreeMap<String, CArgs>,
+  /// Default type constructor.
+  pub default: String,
 }
 impl RDTyp {
   /// Constructor.
@@ -542,6 +637,7 @@ impl RDTyp {
     let name = name.into() ;
     RDTyp {
       name, deps: vec![], prms, news: BTreeMap::new(),
+      default: "".into()
     }
   }
 
