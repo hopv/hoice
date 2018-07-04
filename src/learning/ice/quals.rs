@@ -102,6 +102,42 @@ fn qual_info_of(
 
     } else {
 
+      // Modulo constraint?
+      if term.typ().is_int() {
+        let mut maybe_cmul = Some(term) ;
+        let mut maybe_add = None ;
+
+        // Term's an addition?
+        if let Some(args) = term.add_inspect() {
+          if args.len() != 2 {
+            maybe_cmul = None
+          } else if args[0].val().is_some() {
+            maybe_add = Some(& args[0]) ;
+            maybe_cmul = Some(& args[1])
+          } else if args[1].val().is_some() {
+            maybe_add = Some(& args[1]) ;
+            maybe_cmul = Some(& args[0])
+          } else {
+            maybe_cmul = None
+          }
+        }
+
+        // Multiplication by a constant?
+        if let Some(term) = maybe_cmul {
+          if let Some((val, _)) = term.cmul_inspect() {
+            let qual = term::eq(
+              term::modulo(
+                term::var( pred_var, typ::int() ), val.to_term().unwrap()
+              ),
+              maybe_add.cloned().unwrap_or_else(
+                || term::int(0)
+              )
+            ) ;
+            quals.insert(qual, pred) ? ;
+          }
+        }
+      }
+
       // Parameter's not a variable, store potential equality.
       let _prev = eq_quals.insert( pred_var, term.clone() ) ;
       debug_assert!( _prev.is_none() ) ;
