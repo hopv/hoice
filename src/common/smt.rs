@@ -666,6 +666,15 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
 
       Ok( FPVal::Val( val::bool(val) ) )
 
+    } else if let Ok( Some(term) ) = parser.term_opt(
+      & vec![].into(), & HashMap::new(), & Instance::new()
+    ) {
+      if let Some(val) = term.val() {
+        Ok( FPVal::Val(val) )
+      } else {
+        bail!("cannot turn term into a value: {}", term)
+      }
+
     } else if parser.tag_opt("(") && {
       parser.ws_cmt() ; parser.tag_opt("_")
     } && {
@@ -677,7 +686,12 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
       parser.ws_cmt() ;
 
       if let Ok((_, ident)) = parser.ident() {
-        Ok( FPVal::FunToArray( ident.into() ) )
+        parser.ws_cmt() ;
+        if parser.tag_opt(")") {
+          Ok( FPVal::FunToArray( ident.into() ) )
+        } else {
+          bail!("ill-formed value, missing closing paren")
+        }
       } else {
         bail!("expected symbol in function to array conversion `{}`", input)
       }

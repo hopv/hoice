@@ -278,6 +278,11 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
   normalize(op, args, typ.clone())
 }
 
+/// Creates a constant term.
+pub fn val(val: Val) -> Term {
+  factory.mk( RTerm::Cst(val) )
+}
+
 
 /// Creates a datatype constructor.
 pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
@@ -299,7 +304,30 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
   } else {
     panic!("ill-typed datatype constructor: {}", typ)
   }
-  factory.mk( RTerm::DTypNew { typ, name, args } )
+
+  let mut vals = if args.is_empty() {
+    Some(vec![])
+  } else {
+    None
+  } ;
+
+  for arg in & args {
+    if let Some(val) = arg.val() {
+      vals.get_or_insert_with(
+        || Vec::with_capacity( args.len() )
+      ).push(val)
+    } else {
+      vals = None ;
+      break
+    }
+  }
+
+  if let Some(vals) = vals {
+    debug_assert_eq! { vals.len(), args.len() }
+    val( val::dtyp_new(typ, name, vals) )
+  } else {
+    factory.mk( RTerm::DTypNew { typ, name, args } )
+  }
 }
 
 /// Creates a new datatype selector.
