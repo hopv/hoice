@@ -1260,7 +1260,7 @@ impl Instance {
 
       } else {
         write!(
-          w, "{}({} (", pref, keywords::cmd::def_funs
+          w, "{}({} (", pref, keywords::cmd::def_funs_rec
         ) ? ;
         for & (pred, _) in defs {
           write!(w, "\n{}  {} ", pref, self[pred].name) ? ;

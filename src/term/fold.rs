@@ -213,6 +213,8 @@ SlcF: FnMut(& Typ, & String, Info) -> Result<Info, E>, {
         continue 'go_down
       },
 
+      RTerm::Fun { ref typ, ref name, ref args } => unimplemented!(),
+
     } ;
 
 

@@ -82,6 +82,8 @@ impl SmtConf {
 
   /// Spawns a solver.
   ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
   /// If logging is active, will log to `<name>.smt2`.
   pub fn spawn<Parser, I>(
     & self, name: & 'static str, parser: Parser, instance: I

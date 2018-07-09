@@ -42,6 +42,9 @@ fn scan_vars(t: & Term) -> VarSet {
         to_do.push(arg)
       },
       RTerm::DTypSlc { term, .. } => to_do.push(term),
+      RTerm::Fun { args, .. } => for arg in args {
+        to_do.push(arg)
+      },
     }
   }
   set.shrink_to_fit() ;
@@ -89,31 +92,31 @@ where F: FnMut(VarIdx) {
 }
 
 /// Creates a term.
-#[inline(always)]
+#[inline]
 pub fn term(t: RTerm) -> Term {
   factory.mk(t)
 }
 
 /// Creates a variable.
-#[inline(always)]
+#[inline]
 pub fn var<V: Into<VarIdx>>(v: V, typ: Typ) -> Term {
   factory.mk( RTerm::Var(typ, v.into()) )
 }
 
 /// Creates an integer variable.
-#[inline(always)]
+#[inline]
 pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::int(), v.into()) )
 }
 
 /// Creates a real variable.
-#[inline(always)]
+#[inline]
 pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::real(), v.into()) )
 }
 
 /// Creates a boolean variable.
-#[inline(always)]
+#[inline]
 pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::bool(), v.into()) )
 }
@@ -129,13 +132,13 @@ pub fn cst<V: Into<Val>>(val: V) -> Term {
 }
 
 /// Creates an integer constant.
-#[inline(always)]
+#[inline]
 pub fn int<I: Into<Int>>(i: I) -> Term {
   let i = i.into() ;
   factory.mk( RTerm::Cst( val::int(i) ) )
 }
 /// Creates a real constant.
-#[inline(always)]
+#[inline]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
   let r = r.into() ;
   factory.mk( RTerm::Cst( val::real(r) ) )
@@ -146,66 +149,66 @@ pub fn real_of_float(f: f64) -> Term {
   real( rat_of_float(f) )
 }
 /// Creates the constant `0`.
-#[inline(always)]
+#[inline]
 pub fn int_zero() -> Term {
   int( Int::zero() )
 }
 /// Creates the constant `1`.
-#[inline(always)]
+#[inline]
 pub fn int_one() -> Term {
   int( Int::one() )
 }
 /// Creates the constant `0`.
-#[inline(always)]
+#[inline]
 pub fn real_zero() -> Term {
   real( Rat::zero() )
 }
 /// Creates the constant `1`.
-#[inline(always)]
+#[inline]
 pub fn real_one() -> Term {
   real( Rat::one() )
 }
 
 /// Creates a boolean.
-#[inline(always)]
+#[inline]
 pub fn bool(b: bool) -> Term {
   factory.mk( RTerm::Cst( val::bool(b) ) )
 }
 /// Creates the constant `true`.
-#[inline(always)]
+#[inline]
 pub fn tru() -> Term {
   bool(true)
 }
 /// Creates the constant `false`.
-#[inline(always)]
+#[inline]
 pub fn fls() -> Term {
   bool(false)
 }
 
 /// If-then-else.
-#[inline(always)]
+#[inline]
 pub fn ite(c: Term, t: Term, e: Term) -> Term {
   app(Op::Ite, vec![c, t, e])
 }
 
 /// Implication.
-#[inline(always)]
+#[inline]
 pub fn implies(lhs: Term, rhs: Term) -> Term {
   app(Op::Impl, vec![lhs, rhs])
 }
 
 /// Negates a term.
-#[inline(always)]
+#[inline]
 pub fn not(term: Term) -> Term {
   app(Op::Not, vec![term])
 }
 /// Disjunction.
-#[inline(always)]
+#[inline]
 pub fn or(terms: Vec<Term>) -> Term {
   app(Op::Or, terms)
 }
 /// Conjunction.
-#[inline(always)]
+#[inline]
 pub fn and(terms: Vec<Term>) -> Term {
   app(Op::And, terms)
 }
@@ -235,12 +238,18 @@ pub fn select(array: Term, idx: Term) -> Term {
   app( Op::Select, vec![ array, idx ] )
 }
 
+/// Function application.
+#[inline]
+pub fn fun(typ: Typ, name: String, args: Vec<Term>) -> Term {
+  factory.mk( RTerm::Fun { typ, name, args } )
+}
+
 /// Creates an operator application.
 ///
 /// Assumes the application is well-typed, modulo int to real casting.
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
-#[inline(always)]
+#[inline]
 pub fn app(op: Op, args: Vec<Term>) -> Term {
   let typ = expect!(
     op.type_check(& args) => |e|
@@ -341,73 +350,73 @@ pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
 /// automatically).
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
-#[inline(always)]
+#[inline]
 pub fn try_app(op: Op, args: Vec<Term>) -> Result<Term, term::TypError> {
   let typ = op.type_check(& args) ? ;
   Ok( normalize(op, args, typ) )
 }
 
 /// Creates a less than or equal to.
-#[inline(always)]
+#[inline]
 pub fn le(lhs: Term, rhs: Term) -> Term {
   app(Op::Le, vec![lhs, rhs])
 }
 /// Creates a less than.
-#[inline(always)]
+#[inline]
 pub fn lt(lhs: Term, rhs: Term) -> Term {
   app(Op::Lt, vec![lhs, rhs])
 }
 /// Creates a greater than.
-#[inline(always)]
+#[inline]
 pub fn gt(lhs: Term, rhs: Term) -> Term {
   app(Op::Gt, vec![lhs, rhs])
 }
 /// Creates a greater than or equal to.
-#[inline(always)]
+#[inline]
 pub fn ge(lhs: Term, rhs: Term) -> Term {
   app(Op::Ge, vec![lhs, rhs])
 }
 
 /// Creates an equality.
-#[inline(always)]
+#[inline]
 pub fn eq(lhs: Term, rhs: Term) -> Term {
   app(Op::Eql, vec![lhs, rhs])
 }
 
 /// Creates a sum.
-#[inline(always)]
+#[inline]
 pub fn add(kids: Vec<Term>) -> Term {
   app(Op::Add, kids)
 }
 /// Creates a sum, binary version.
-#[inline(always)]
+#[inline]
 pub fn add2(kid_1: Term, kid_2: Term) -> Term {
   app(Op::Add, vec![kid_1, kid_2])
 }
 
 /// Creates a subtraction.
-#[inline(always)]
+#[inline]
 pub fn sub(kids: Vec<Term>) -> Term {
   app(Op::Sub, kids)
 }
 /// Creates a subtraction, binary version.
-#[inline(always)]
+#[inline]
 pub fn sub2(kid_1: Term, kid_2: Term) -> Term {
   app(Op::Sub, vec![kid_1, kid_2])
 }
 
 /// Creates a unary minus.
-#[inline(always)]
+#[inline]
 pub fn u_minus(kid: Term) -> Term {
   app(Op::Sub, vec![kid])
 }
 /// Creates a multiplication.
-#[inline(always)]
+#[inline]
 pub fn mul(kids: Vec<Term>) -> Term {
   app(Op::Mul, kids)
 }
 /// Creates a multiplication by a constant.
-#[inline(always)]
+#[inline]
 pub fn cmul<V>(cst: V, term: Term) -> Term
 where V: Into<val::RVal> {
   app(
@@ -421,28 +430,28 @@ where V: Into<val::RVal> {
 }
 
 /// Creates an integer division.
-#[inline(always)]
+#[inline]
 pub fn idiv(kids: Vec<Term>) -> Term {
   app(Op::IDiv, kids)
 }
 /// Creates a division.
-#[inline(always)]
+#[inline]
 pub fn div(kids: Vec<Term>) -> Term {
   app(Op::Div, kids)
 }
 /// Creates a modulo application.
-#[inline(always)]
+#[inline]
 pub fn modulo(a: Term, b: Term) -> Term {
   app(Op::Mod, vec![a, b])
 }
 
 /// Creates a conversion from `Int` to `Real`.
-#[inline(always)]
+#[inline]
 pub fn to_real(int: Term) -> Term {
   app(Op::ToReal, vec![int])
 }
 /// Creates a conversion from `Real` to `Int`.
-#[inline(always)]
+#[inline]
 pub fn to_int(real: Term) -> Term {
   app(Op::ToInt, vec![real])
 }

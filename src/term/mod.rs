@@ -132,6 +132,16 @@ pub enum RTerm {
     /// Argument of the selector.
     term: Term,
   },
+
+  /// A function application.
+  Fun {
+    /// Type of this term.
+    typ: Typ,
+    /// Function being applied.
+    name: String,
+    /// Arguments of the function application.
+    args: Vec<Term>,
+  }
 }
 
 
@@ -139,89 +149,81 @@ pub enum RTerm {
 impl RTerm {
   /// The operator and the kids of a term.
   pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
-    match * self {
-      RTerm::App { op, ref args, .. } => Some((op, args)),
-      _ => None,
-    }
+    if let RTerm::App { op, ref args, .. } = * self {
+      Some((op, args))
+    } else { None }
   }
 
   /// Returns the kids of an ite.
   pub fn ite_inspect(& self) -> Option<(& Term, & Term, & Term)> {
-    match * self {
-      RTerm::App { op: Op::Ite, ref args, .. } => {
-        debug_assert_eq! { args.len(), 3 }
-        Some( (& args[0], & args[1], & args[2]) )
-      },
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Ite, ref args, .. } = * self {
+      debug_assert_eq! { args.len(), 3 }
+      Some( (& args[0], & args[1], & args[2]) )
+    } else { None }
+  }
+
+  /// Inspects a function application.
+  pub fn fun_inspect(& self) -> Option<(& String, & Vec<Term>)> {
+    if let RTerm::Fun { ref name, ref args, .. } = * self {
+      Some((name, args))
+    } else { None }
   }
 
   /// Returns the kid of a negation.
   pub fn neg_inspect(& self) -> Option<& Term> {
-    match * self {
-      RTerm::App { op: Op::Not, ref args, .. } => {
-        debug_assert_eq! { args.len(), 1 }
-        Some(& args[0])
-      },
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Not, ref args, .. } = * self {
+      debug_assert_eq! { args.len(), 1 }
+      Some(& args[0])
+    } else { None }
   }
 
   /// Returns the kids of conjunctions.
   pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::And, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::And, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
   /// Returns the kids of disjunctions.
   pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Or, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Or, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
   /// Returns the kids of equalities.
   pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Eql, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Eql, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
+
   /// Returns the kids of additions.
   pub fn add_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Add, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Add, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
   /// Returns the kids of subtractions.
   pub fn sub_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Sub, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Sub, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
   /// Returns the kids of multiplications.
   pub fn mul_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Mul, ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let RTerm::App { op: Op::Mul, ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
   /// Returns the kids of a constant multiplication.
   pub fn cmul_inspect(& self) -> Option<(Val, & Term)> {
-    match * self {
-      RTerm::App { op: Op::CMul, ref args, .. } => {
-        if args.len() == 2 {
-          if let Some(val) = args[0].val() {
-            return Some((val, & args[1]))
-          }
+    if let RTerm::App { op: Op::CMul, ref args, .. } = * self {
+      if args.len() == 2 {
+        if let Some(val) = args[0].val() {
+          return Some((val, & args[1]))
         }
-        panic!("illegal c_mul application: {}", self)
-      },
-      _ => None,
-    }
+      }
+      panic!("illegal c_mul application: {}", self)
+    } else { None }
   }
 
   /// Iterator over over all the leafs of a term.
@@ -236,6 +238,8 @@ impl RTerm {
     while let Some(term) = stack.pop() {
       f(term) ;
       match term {
+        RTerm::DTypNew { args, .. } |
+        RTerm::Fun { args, .. } |
         RTerm::App { args, .. } => for term in args {
           stack.push(term)
         },
@@ -243,9 +247,6 @@ impl RTerm {
         RTerm::CArray { term, .. } => stack.push( term.get() ),
         RTerm::DTypSlc { term, .. } => stack.push( term.get() ),
 
-        RTerm::DTypNew { args, .. } => for term in args {
-          stack.push(term)
-        },
 
         RTerm::Var(_, _) |
         RTerm::Cst(_) => (),
@@ -256,16 +257,17 @@ impl RTerm {
   /// Type of the term.
   pub fn typ(& self) -> Typ {
     match self {
-      RTerm::Var(typ, _) => typ.clone(),
-      RTerm::Cst(val) => val.typ(),
 
       RTerm::CArray { typ, term } => typ::array(
         typ.clone(), term.typ()
       ),
 
-      RTerm::App { typ, .. } => typ.clone(),
+      RTerm::Cst(val) => val.typ(),
 
-      RTerm::DTypSlc { typ, .. } => typ.clone(),
+      RTerm::Var(typ, _) |
+      RTerm::App { typ, .. } |
+      RTerm::Fun { typ, .. } |
+      RTerm::DTypSlc { typ, .. } |
       RTerm::DTypNew { typ, .. } => typ.clone(),
     }
   }
@@ -309,7 +311,9 @@ impl RTerm {
         write!(w, "{}", sep) ? ;
 
         match this_term {
+
           Var(_, v) => write_var(w, * v) ?,
+
           Cst(val) => write!(w, "{}", val) ?,
 
           CArray { term, .. } => {
@@ -337,9 +341,21 @@ impl RTerm {
               (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
             )
           },
+
+          Fun { name, args, .. } => if args.is_empty() {
+            write!(w, "{}", name) ?
+          } else {
+            write!(w, "({}", name) ? ;
+            stack.push(
+              (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
+            )
+          },
+
         }
 
-      } else { w.write_all( end.as_bytes() ) ? }
+      } else {
+        w.write_all( end.as_bytes() ) ?
+      }
     }
 
     Ok(())
@@ -567,6 +583,7 @@ impl RTerm {
     'go_down: loop {
 
       let mut term = match curr {
+
         RTerm::Var(_, idx) => term::var(* idx, nu_typ),
 
         RTerm::Cst(val) => if let Ok(val) = val.cast(& nu_typ) {
@@ -634,10 +651,14 @@ impl RTerm {
 
         RTerm::DTypSlc { typ, name, term } => {
           debug_assert_eq! { typ, & nu_typ }
-          term::dtyp_slc(
-            typ.clone(), name.clone(), term.clone()
-          )
+          term::dtyp_slc( typ.clone(), name.clone(), term.clone() )
         },
+
+        RTerm::Fun { typ, name, args } => {
+          debug_assert_eq! { typ, & nu_typ }
+          term::fun( typ.clone(), name.clone(), args.clone() )
+        },
+
       } ;
 
       'go_up: loop {
@@ -1141,6 +1162,7 @@ impl RTerm {
     loop {
       // println!("inverting {}", term) ;
       match * term {
+
         RTerm::App { op, ref args, .. } => {
           let (po, symmetric) = match op {
             Op::Add => (Op::Sub, true),
@@ -1217,10 +1239,12 @@ impl RTerm {
 
         RTerm::Var(_, v) => return Some((v, solution)),
 
-        RTerm::Cst(_)         |
+        RTerm::Cst     ( _  ) |
+        RTerm::Fun     { .. } |
         RTerm::CArray  { .. } |
         RTerm::DTypNew { .. } |
         RTerm::DTypSlc { .. } => return None,
+
       }
     }
   }

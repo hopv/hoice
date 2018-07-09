@@ -212,7 +212,11 @@ pub fn print_err(errs: & Error) {
   println!(
     "({} \"", conf.bad("error")
   ) ;
+  let mut list = vec![] ;
   for err in errs.iter() {
+    list.push( err )
+  }
+  for err in list.into_iter().rev() {
     for line in format!("{}", err).lines() {
       println!("  {}", line)
     }

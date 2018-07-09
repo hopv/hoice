@@ -153,9 +153,14 @@ pub mod keywords {
       keys {
         dec_dtyp ("declare-datatypes", doc = "Datatype declaration keyword.")
         dec_fun ("declare-fun", doc = "Predicate declaration keyword.")
-        def_fun ("define-fun", doc = "Predicate definition keyword.")
-        def_funs (
-          "define-funs-rec", doc = "Multiple predicate declaration keyword."
+        def_fun ("define-fun", doc = "Function definition keyword.")
+        def_fun_rec (
+          "define-fun-rec",
+          doc = "Recursive function definition keyword."
+        )
+        def_funs_rec (
+          "define-funs-rec",
+          doc = "Multiple recursive functions definition keyword."
         )
 
         assert ("assert", doc = "Assertion keyword.")

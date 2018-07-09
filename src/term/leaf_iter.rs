@@ -75,6 +75,7 @@ impl<'a> Iterator for LeafIter<'a> {
           },
 
           App { ref args, .. } |
+          Fun { ref args, .. } |
           DTypNew { ref args, .. } => {
             self.stack.push( args.iter() ) ;
             continue 'find_next

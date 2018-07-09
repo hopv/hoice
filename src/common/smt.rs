@@ -16,9 +16,11 @@ use data::Constraint ;
 
 /// Initial setup for a solver.
 ///
-/// Declares all the datatypes used in the instance.
+/// - declares all the datatypes
+/// - defines all the functions
 pub fn init<P>(solver: & mut Solver<P>) -> Res<()> {
   dtyp::write_all(solver, "") ? ;
+  fun::write_all(solver) ? ;
   Ok(())
 }
 
@@ -526,9 +528,9 @@ impl FullParser {
 
             if let Ok(Some(term)) = match val {
               FPVal::FunDef(ref fun) => {
-                let mut var_hmap: HashMap<
+                let mut var_hmap: BTreeMap<
                   & str, VarIdx
-                > = HashMap::with_capacity( sig.len() ) ;
+                > = BTreeMap::new() ;
 
                 for (idx, info) in var_infos.index_iter() {
                   let prev = var_hmap.insert(
@@ -667,7 +669,7 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
       Ok( FPVal::Val( val::bool(val) ) )
 
     } else if let Ok( Some(term) ) = parser.term_opt(
-      & vec![].into(), & HashMap::new(), & Instance::new()
+      & vec![].into(), & BTreeMap::new(), & Instance::new()
     ) {
       if let Some(val) = term.val() {
         Ok( FPVal::Val(val) )

@@ -1,131 +1,242 @@
-/*! Hash consed functions.
-
-Note that [`Fun`][fun] is extended by [`FunExt`][fun ext] to allow
-
-- retrieving the name of the function,
-- defining the function in a solver.
-
-[fun]: type.Fun.html (Fun type)
-[fun ext]: trait.FunExt.html (FunExt trait)
-*/
-
-use hashconsing::{ HashConsign, HConser, HConsed } ;
+//! Hash consed functions.
 
 use common::* ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RFun> > ;
+/// A function.
+pub type Fun = Arc<RFun> ;
 
+/// Type of the function factory.
+type Factory = RwLock< BTreeMap<String, Fun> > ;
 lazy_static! {
-  /// Term factory.
+  /// Function factory.
   static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
+    BTreeMap::new()
   ) ;
 }
 
-/// A hash consed function.
-pub type Fun = HConsed<RFun> ;
-
-
-/// Defines all functions.
-pub fn define_all<P>(solver: & mut Solver<P>) -> Res<()> {
-  if let Ok(f) = factory.read() {
-    f.fold_res(
-      (), |_, fun| fun.define(solver).map(|_| ())
-    )
+/// Creates a function definition.
+pub fn mk(fun: RFun) -> Res<Fun> {
+  let fun = Arc::new( fun ) ;
+  let prev = if let Ok(mut f) = factory.write() {
+    f.insert( fun.name.clone(), fun.clone() )
   } else {
-    bail!("failed to lock factory")
+    bail!("failed to access function factory (write)")
+  } ;
+
+  if let Some(prev) = prev {
+    bail!("attempting to redefine function `{}`", prev.name)
+  }
+
+  Ok(fun)
+}
+
+
+
+/// Defines all the functions.
+pub fn write_all<W: Write>(w: & mut W) -> Res<()> {
+  let f = if let Ok(f) = factory.read() {
+    f
+  } else {
+    bail!("failed to access function factory (read)")
+  } ;
+
+  if f.is_empty() { return Ok(()) }
+
+  let mut set = BTreeSet::new() ;
+
+  let mut all = vec![] ;
+
+  for fun in f.values() {
+    let do_it = set.insert(& fun.name) ;
+    if ! do_it { continue }
+
+    debug_assert! { all.is_empty() }
+
+    all.reserve( fun.deps.len() + 1 ) ;
+    all.push(fun) ;
+    for dep in & fun.deps {
+      if let Some(dep) = f.get(dep) {
+        all.push(dep)
+      } else {
+        bail!(
+          "function `{}` depends on unknown function `{}`",
+          conf.emph(& fun.name), conf.bad(& dep)
+        )
+      }
+    }
+
+    writeln!(w, "(define-funs-rec (") ? ;
+
+    // Write all signatures.
+    for fun in & all {
+      write!(w, "  (") ? ;
+      write!(w, "{} (", fun.name) ? ;
+      for info in & fun.sig {
+        write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+      }
+      writeln!(w, " ) {})", fun.typ) ?
+    }
+
+    writeln!(w, ") (") ? ;
+
+    // Write all definitions.
+    for fun in all.drain( 0 .. ) {
+      write!(w, "  ") ? ;
+      fun.def.write(
+        w, |w, var| var.default_write(w)
+      ) ? ;
+      writeln!(w) ?
+    }
+
+    writeln!(w, ") )") ?
+  }
+
+  writeln!(w) ? ;
+
+  Ok(())
+}
+
+
+
+
+/// Retrieves the definition of a function.
+pub fn get(name: & str) -> Option<Fun> {
+  if let Ok(f) = factory.read() {
+    f.get(name).cloned()
+  } else {
+    panic!("failed to access function factory (read)")
   }
 }
 
 
-/// Extends [`Fun`][fun] with function declaration.
-///
-/// [fun]: type.Fun.html (Fun type)
-pub trait FunExt {
-  /// Defines itself as a function.
-  ///
-  /// Returns the name of the function.
-  fn define<P>(& self, & mut Solver<P>) -> Res<String> ;
-  /// Name of the function.
-  fn name(& self) -> String ;
-}
-impl FunExt for Fun {
-  fn define<P>(& self, solver: & mut Solver<P>) -> Res<String> {
-    use smt::SmtTerm ;
-    let name = self.name() ;
-    let sig: Vec<_> = self.sig.index_iter().map(
-      |(var, typ)| (var, typ.get())
-    ).collect() ;
-    solver.define_fun(
-      & name, & sig, self.out.get(), & SmtTerm::new(& self.def)
-    ) ? ;
-    Ok(name)
+/// Types and creates a function application.
+pub fn type_apply(
+  name: String, var_info: & VarInfos, out: & Typ, args: Vec<Term>
+) -> Result<Term, ::errors::TypError> {
+  if args.len() != var_info.len() {
+    return Err(
+      TypError::Msg(
+        format!(
+          "function `{}` is applied to {} arguments, expected {}",
+          conf.emph(name), args.len(), var_info.len()
+        )
+      )
+    )
   }
-  fn name(& self) -> String {
-    format!("hoice_reserved_fun_{}", self.uid())
+
+  for (arg, info) in args.iter().zip( var_info.iter() ) {
+    if ! arg.typ().is_compatible( & info.typ ) {
+      return Err(
+        TypError::Typ {
+          expected: Some( info.typ.clone() ),
+          obtained: arg.typ().clone(),
+          index: * info.idx,
+        }
+      )
+    }
   }
+
+  Ok(
+    term::fun( out.clone(), name, args )
+  )
+}
+
+
+/// Creates a function application.
+pub fn apply(
+  name: String, args: Vec<Term>
+) -> Result<Term, ::errors::TypError> {
+  use ::errors::TypError ;
+
+  let def = if let Some(def) = get(& name) { def } else {
+    return Err(
+      TypError::Msg( format!("unknown function `{}`", conf.bad(name)) )
+    )
+  } ;
+
+  type_apply(name, & def.sig, & def.typ, args)
 }
 
 
 
-/// Creates a hash consed function.
-pub fn mk<F: Into<RFun>>(val: F) -> Fun {
-  factory.mk(val.into())
-}
 
-/// Functions.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+
+
+/// Real structure for functions.
+#[derive(Debug, Clone)]
 pub struct RFun {
-  /// Input signature.
-  sig: Sig,
-  /// Output type.
-  out: Typ,
+  /// Name.
+  pub name: String,
+  /// Other functions this function depends on.
+  pub deps: BTreeSet<String>,
+  /// Signature.
+  ///
+  /// The string stored is the original name of the argument.
+  pub sig: VarInfos,
+  /// Type.
+  pub typ: Typ,
   /// Definition.
-  def: Term,
+  pub def: Term,
 }
+
+impl PartialEq for RFun {
+  fn eq(& self, other: & Self) -> bool {
+    self.name == other.name
+  }
+}
+impl Eq for RFun {}
+
+impl PartialOrd for RFun {
+  fn partial_cmp(& self, other: & Self) -> Option< ::std::cmp::Ordering > {
+    self.name.partial_cmp(& other.name)
+  }
+}
+impl Ord for RFun {
+  fn cmp(& self, other: & Self) -> ::std::cmp::Ordering {
+    self.name.cmp(& other.name)
+  }
+}
+
+impl ::std::hash::Hash for RFun {
+  fn hash<H: ::std::hash::Hasher>(& self, state: & mut H) {
+    self.name.hash(state)
+  }
+}
+
 impl RFun {
   /// Constructor.
-  pub fn new(sig: Sig, out: Typ, def: Term) -> Self {
-    debug_assert_eq! { out, def.typ() }
-    RFun { sig, out, def }
+  ///
+  /// The dependencies are initially empty, and the definition is set to
+  /// `true`.
+  pub fn new<S: Into<String>>(
+    name: S, sig: VarInfos, typ: Typ
+  ) -> Self {
+    let name = name.into() ;
+    RFun { name, deps: BTreeSet::new(), sig, typ, def: term::tru() }
   }
 
-  /// Signature accessor.
-  pub fn sig(& self) -> (& Sig, & Typ) {
-    (& self.sig, & self.out)
+  /// Insert a dependency.
+  ///
+  /// Only inserts if `dep` is not `self.name`.
+  pub fn insert_dep<S: Into<String>>(& mut self, dep: S) -> bool {
+    let dep = dep.into() ;
+    if self.name == dep {
+      false
+    } else {
+      self.deps.insert(dep)
+    }
   }
 
-  /// Definition accessor.
-  pub fn def(& self) -> & Term {
-    & self.def
-  }
-
-  /// Function evaluation.
-  pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    debug_assert_eq! { self.sig.len(), model.len() }
-    debug_assert! {{
-      for (var, typ) in self.sig.index_iter() {
-        debug_assert_eq! { * typ, model.get(var).typ() }
-      }
-      true
-    }}
-    self.def.eval(model)
-  }
-}
-
-
-
-impl Into<RFun> for (Sig, Term) {
-  fn into(self) -> RFun {
-    let (sig, term) = self ;
-    RFun::new(sig, term.typ(), term)
-  }
-}
-
-impl Into<RFun> for (Sig, Typ, Term) {
-  fn into(self) -> RFun {
-    let (sig, out, term) = self ;
-    RFun::new(sig, out, term)
+  /// Sets the definition of a function.
+  ///
+  /// # Panics
+  ///
+  /// - if `self.def` is not `term::tru()`
+  pub fn set_def(& mut self, def: Term) {
+    match * self.def {
+      RTerm::Cst(ref cst) if cst.is_true() => (),
+      _ => panic!("trying to set the definition of a function twice"),
+    }
+    self.def = def
   }
 }

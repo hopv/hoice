@@ -49,45 +49,42 @@ impl TTerm {
   }
   /// Boolean corresponding to the top term if it's a bool constant.
   pub fn bool(& self) -> Option<bool> {
-    match * self {
-      TTerm::T(ref t) => t.bool(),
-      _ => None,
-    }
+    if let TTerm::T(t) = self {
+      t.bool()
+    } else { None }
   }
   /// Boolean corresponding to the top term if it's an integer constant.
   pub fn int(& self) -> Option<Int> {
-    match * self {
-      TTerm::T(ref t) => t.int(),
-      _ => None,
-    }
+    if let TTerm::T(t) = self {
+      t.int()
+    } else { None }
   }
   /// The operator and the kids of a top term, if it's an operator application.
   pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
-    match * self {
-      TTerm::T(ref t) => t.app_inspect(),
-      _ => None,
-    }
+    if let TTerm::T(t) = self {
+      t.app_inspect()
+    } else { None }
   }
   /// If the top term is simply a term, returns that term.
   #[inline]
   pub fn term(& self) -> Option<& Term> {
-    if let TTerm::T(ref t) = * self { Some(t) } else { None }
+    if let TTerm::T(ref t) = * self {
+      Some(t)
+    } else { None }
   }
 
   /// The predicate a top term is an application of, if any.
   pub fn pred(& self) -> Option<PrdIdx> {
-    match * self {
-      TTerm::P { pred, .. } => Some(pred),
-      _ => None,
-    }
+    if let TTerm::P { pred, .. } = * self {
+      Some(pred)
+    } else { None }
   }
 
   /// The arguments of a top term if it's a predicate application.
   pub fn args(& self) -> Option<& VarTerms> {
-    match * self {
-      TTerm::P { ref args, .. } => Some(args),
-      _ => None,
-    }
+    if let TTerm::P { ref args, .. } = * self {
+      Some(args)
+    } else { None }
   }
 
   /// Applies some treatment if the top term is a predicate application.

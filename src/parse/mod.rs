@@ -210,6 +210,8 @@ enum FrameOp {
   DTypNew(String, DTyp),
   /// A datatype selector.
   DTypSlc(String),
+  /// A function application.
+  Fun(String),
 }
 impl FrameOp {
   /// String representation for a frame operator.
@@ -224,6 +226,7 @@ impl FrameOp {
         "`{}` constructor ({})", name, typ
       ),
       FrameOp::DTypSlc(name) => format!("`{}` selector", name),
+      FrameOp::Fun(name) => format!("`{}` function", name),
     }
   }
 }
@@ -295,7 +298,7 @@ pub struct ParserCxt {
   /// Memory for backtracking.
   mem: Vec<Cursor>,
   /// Map from predicate names to predicate indices.
-  pred_name_map: HashMap<String, PrdIdx>,
+  pred_name_map: BTreeMap<String, PrdIdx>,
 }
 impl ParserCxt {
   /// Constructor.
@@ -303,7 +306,7 @@ impl ParserCxt {
     ParserCxt {
       term_stack: Vec::with_capacity(17),
       mem: Vec::with_capacity(17),
-      pred_name_map: HashMap::with_capacity(42),
+      pred_name_map: BTreeMap::new(),
     }
   }
   /// Generates a parser from itself.
@@ -318,6 +321,7 @@ impl ParserCxt {
       cursor: 0,
       line_off,
       bindings: Vec::with_capacity(7),
+      functions: BTreeMap::new(),
       _profiler,
     }
   }
@@ -355,7 +359,11 @@ pub struct Parser<'cxt, 's> {
   /// Line offset (for errors).
   line_off: usize,
   /// Stack of bindings.
-  bindings: Vec< HashMap<& 's str, PTTerms> >,
+  bindings: Vec< BTreeMap<& 's str, PTTerms> >,
+  /// Functions we are currently parsing.
+  ///
+  /// Only used when parsing a `define-funs-rec`.
+  functions: BTreeMap<& 's str, (VarInfos, Typ)>,
   /// Profiler.
   _profiler: & 'cxt Profiler,
 }
@@ -492,6 +500,33 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Some(_) => self.move_back(1),
         None => (),
       }
+    }
+  }
+
+  /// Parses a word (a tag followed by an illegal ident character).
+  pub fn word(& mut self, word: & str) -> Res<()> {
+    if self.word_opt(word) {
+      Ok(())
+    } else {
+      bail!(
+        self.error_here(
+          format!("expected `{}`", conf.emph(word))
+        )
+      )
+    }
+  }
+  /// Parses a word (a tag followed by an illegal ident character).
+  pub fn word_opt(& mut self, word: & str) -> bool {
+    let pos = self.pos() ;
+    if self.tag_opt(word) {
+      if self.legal_id_char() {
+        self.backtrack_to(pos) ;
+        false
+      } else {
+        true
+      }
+    } else {
+      false
     }
   }
 
@@ -657,7 +692,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a set-info.
   fn set_info(& mut self) -> Res<bool> {
-    if ! self.tag_opt("set-info") {
+    if ! self.word_opt("set-info") {
       return Ok(false)
     }
     self.ws_cmt() ;
@@ -681,7 +716,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Set-option.
   fn set_option(& mut self) -> Res< Option<(& 's str, & 's str)> > {
     let start_pos = self.pos() ;
-    if ! self.tag_opt("set-option") {
+    if ! self.word_opt("set-option") {
       return Ok(None)
     }
     self.ws_cmt() ;
@@ -717,7 +752,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an echo.
   fn echo(& mut self) -> Res< Option<& 's str> > {
-    if ! self.tag_opt("echo") {
+    if ! self.word_opt("echo") {
       return Ok(None)
     }
     self.ws_cmt() ;
@@ -735,12 +770,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a set-logic.
   fn set_logic(& mut self) -> Res<bool> {
-    if ! self.tag_opt("set-logic") {
+    if ! self.word_opt("set-logic") {
       return Ok(false)
     }
 
     self.ws_cmt() ;
-    if ! self.tag_opt("HORN") {
+    if ! self.word_opt("HORN") {
       bail!( self.error_here("unknown logic: ") )
     }
     Ok(true)
@@ -1102,9 +1137,199 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
 
+
+
+  /// Parses some recursive function declarations.
+  fn define_funs_rec(& mut self, instance: & Instance) -> Res<bool> {
+    if ! self.word_opt(keywords::cmd::def_funs_rec) {
+      return Ok(false)
+    }
+
+    use fun::RFun ;
+
+    self.functions.clear() ;
+
+    let mut funs: Vec<(RFun, Pos, _)> = vec![] ;
+
+    self.ws_cmt() ;
+    self.tag("(").chain_err(
+      || "opening the list of function declarations"
+    ) ? ;
+    self.ws_cmt() ;
+
+
+    // Parse all declarations.
+    while ! self.tag_opt(")") {
+
+      self.tag("(").chain_err(
+        || "opening a function declaration"
+      ) ? ;
+      self.ws_cmt() ;
+
+      let (pos, name) = self.ident().chain_err(
+        || "at the start of the function declaration"
+      ) ? ;
+      self.ws_cmt() ;
+
+      self.ws_cmt() ;
+      self.tag("(").chain_err(
+        || format!(
+          "opening function `{}`'s arguments", conf.emph(name)
+        )
+      ) ? ;
+      self.ws_cmt() ;
+
+      let mut args = VarInfos::new() ;
+      let mut arg_map = BTreeMap::new() ;
+
+      // Parse the signature of this function.
+      while ! self.tag_opt(")") {
+        self.tag("(") ? ;
+        self.ws_cmt() ;
+
+        let (pos, arg_name) = self.ident().chain_err(
+          || format!(
+            "in function `{}`'s signature (argument name)",
+            conf.emph(name)
+          )
+        ) ? ;
+        self.ws_cmt() ;
+
+        let sort = self.sort().chain_err(
+          || format!(
+            "for argument `{}` of function `{}`",
+            conf.emph(arg_name), conf.emph(name)
+          )
+        ) ? ;
+
+        let idx = args.next_index() ;
+        args.push(
+          VarInfo::new( arg_name.into(), sort, idx )
+        ) ;
+
+        if arg_map.insert(arg_name, idx).is_some() {
+          bail!(
+            self.error(
+              pos, format!(
+                "found two arguments named `{}` \
+                in function `{}`'s declaration",
+                conf.bad(arg_name), conf.emph(name)
+              )
+            )
+          )
+        }
+
+        self.ws_cmt() ;
+        self.tag(")").chain_err(
+          || format!(
+            "closing argument `{}` of function `{}`",
+            conf.emph(arg_name), conf.emph(name)
+          )
+        ) ? ;
+        self.ws_cmt()
+      }
+
+      self.ws_cmt() ;
+      let typ = self.sort().chain_err(
+        || format!(
+          "sort of function `{}`", conf.emph(name)
+        )
+      ) ? ;
+
+      let mut fun = RFun::new(name, args, typ) ;
+
+      // Check this is the first time we see this function and populate
+      // dependencies.
+      for (other, other_pos, _) in & mut funs {
+        if other.name == fun.name {
+          let e: Error = self.error(
+            pos, format!( "found two functions named `{}`", conf.bad(name) )
+          ).into() ;
+          bail!(
+            e.chain_err( || self.error(* other_pos, "first appearance") )
+          )
+        }
+
+        other.insert_dep( fun.name.clone() ) ;
+        fun.insert_dep( other.name.clone() ) ;
+      }
+
+      let prev = self.functions.insert(
+        name, (fun.sig.clone(), fun.typ.clone())
+      ) ;
+      debug_assert! { prev.is_none() }
+
+      funs.push( (fun, pos, arg_map) ) ;
+
+      self.ws_cmt() ;
+      self.tag(")").chain_err(
+        || format!("closing function `{}`'s declaration", conf.emph(name))
+      ) ? ;
+      self.ws_cmt()
+    }
+
+    self.ws_cmt() ;
+    self.tag("(").chain_err(
+      || "opening the list of function definitions"
+    ) ? ;
+    self.ws_cmt() ;
+
+    let mut final_funs = Vec::with_capacity( funs.len() ) ;
+
+    // Parse all definitions.
+    for (mut fun, pos, var_map) in funs {
+
+      if let Some(term) = self.term_opt(
+        & fun.sig, & var_map, instance
+      ).chain_err(
+        || format!(
+          "while parsing definition (term) for function `{}`",
+          conf.emph(& fun.name)
+        )
+      ).chain_err(
+        || self.error(pos, "declared here")
+      ) ? {
+
+        // Success.
+        fun.set_def(term) ;
+        self.ws_cmt()
+
+      } else {
+        let e: Error = self.error_here(
+          format!(
+            "expected definition (term) for function `{}`",
+            conf.emph(& fun.name)
+          )
+        ).into() ;
+        bail!(
+          e.chain_err(
+            || self.error(pos, "declared here")
+          )
+        )
+      }
+
+      let fun = fun::mk(fun).chain_err(
+        || self.error(pos, "while registering this function")
+      ) ;
+
+      final_funs.push(fun)
+    }
+
+    self.ws_cmt() ;
+    self.tag(")").chain_err(
+      || "closing the list of function definitions"
+    ) ? ;
+
+    Ok(true)
+  }
+
+
+
+
+
   /// Datatype declaration.
   fn dtyp_dec(& mut self) -> Res<bool> {
-    if ! self.tag_opt(keywords::cmd::dec_dtyp) {
+    if ! self.word_opt(keywords::cmd::dec_dtyp) {
       return Ok(false)
     }
 
@@ -1256,7 +1481,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Predicate declaration.
   fn pred_dec(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt(keywords::cmd::dec_fun) {
+    if ! self.word_opt(keywords::cmd::dec_fun) {
       return Ok(false)
     }
 
@@ -1276,7 +1501,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
     self.tag(")") ? ;
     self.ws_cmt() ;
-    if ! self.tag_opt("Bool") {
+    if ! self.word_opt("Bool") {
       bail!(
         self.error_here("expected Bool sort")
       )
@@ -1304,7 +1529,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   /// Parses some arguments `( (<id> <ty>) ... )`.
   fn args(
     & mut self,
-    var_map: & mut VarInfos, hash_map: & mut HashMap<& 's str, VarIdx>
+    var_map: & mut VarInfos, hash_map: & mut BTreeMap<& 's str, VarIdx>
   ) -> Res<()> {
     self.tag("(") ? ;
 
@@ -1332,7 +1557,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
     self.tag(")") ? ;
     var_map.shrink_to_fit() ;
-    hash_map.shrink_to_fit() ;
     Ok(())
   }
 
@@ -1363,7 +1587,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
   /// Pushes a binding scopes.
   fn push_bind(& mut self) {
-    self.bindings.push( HashMap::with_capacity(17) )
+    self.bindings.push( BTreeMap::new() )
   }
   /// Pops a binding scope.
   fn pop_bind(& mut self) -> Res<()> {
@@ -1409,7 +1633,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn let_bindings(
     & mut self,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res<LetCount> {
     let mut n = 0 ;
@@ -1657,6 +1881,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         name, op_pos, & args_pos, args
       ),
 
+      FrameOp::Fun(name) => self.build_fun_app(
+        name, op_pos, & args_pos, args
+      ),
+
       _ => unimplemented!(),
     }
   }
@@ -1690,7 +1918,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
           => self.error(op_pos, "in this operator application")
         }
-      }
+      },
       Err( TypError::Msg(blah) ) => bail!(
         self.error(op_pos, blah)
       ),
@@ -1842,6 +2070,63 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
   }
 
+  /// Type checks and builds a datatype selector.
+  fn build_fun_app(
+    & self,
+    name: String, name_pos: Pos, args_pos: & [ Pos ], args: Vec<Term>
+  ) -> Res<(Term, Pos)> {
+    use errors::TypError ;
+
+    let res = if let Some((var_infos, typ)) = self.functions.get(
+      & name as & str
+    ) {
+      // Function application for one of the functions we are currently parsing
+      // the definition of? (i.e. the function is not registered yet)
+      fun::type_apply(name, var_infos, typ, args)
+    } else {
+      // Function should already exist.
+      fun::apply(name, args)
+    } ;
+
+    // Parsing a application of a function that's already defined.
+
+    match res {
+      Ok(term) => Ok((term, name_pos)),
+
+      Err(
+        TypError::Typ { expected, obtained, index }
+      ) => if let Some(exp) = expected {
+        err_chain! {
+          self.error(
+            args_pos[index], format!(
+              "expected an expression of sort {}, found {}", exp, obtained
+            )
+          )
+          => self.error(name_pos, "in this function application")
+        }
+      } else {
+        err_chain! {
+          self.error(
+            args_pos[index], format!(
+              "expected the expression starting here has sort {} \
+              which is illegal", obtained
+            )
+          )
+          => self.error(name_pos, "in this function application")
+        }
+      },
+
+      Err( TypError::Msg(blah) ) => {
+        let e: Error = blah.into() ;
+        bail!(
+          e.chain_err(
+            || self.error(name_pos, "in this function application")
+          )
+        )
+      },
+    }
+  }
+
 }
 
 
@@ -1960,7 +2245,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   pub fn term_opt(
     & mut self,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<Term> > {
     debug_assert! { self.cxt.term_stack.is_empty() }
@@ -2102,7 +2387,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             continue 'read_kids
 
           } else if dtyp::is_selector(id) {
-            let frame = TermFrame::new (
+            let frame = TermFrame::new(
               FrameOp::DTypSlc(
                 id.into()
               ), op_pos, bind_count
@@ -2110,6 +2395,14 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.cxt.term_stack.push(frame) ;
             continue 'read_kids
 
+          } else if self.functions.get(id).is_some()
+          || fun::get(id).is_some() {
+            let frame = TermFrame::new(
+              FrameOp::Fun( id.into() ),
+              op_pos, bind_count
+            ) ;
+            self.cxt.term_stack.push(frame) ;
+            continue 'read_kids
           }
 
           if self.cxt.term_stack.is_empty() {
@@ -2201,7 +2494,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn define_fun(
     & mut self, instance: & mut Instance
   ) -> Res<bool> {
-    if ! self.tag_opt(keywords::cmd::def_fun) {
+    if ! self.word_opt(keywords::cmd::def_fun) {
       return Ok(false)
     }
     conf.check_timeout() ? ;
@@ -2211,7 +2504,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     self.ws_cmt() ;
 
     let mut var_info = VarInfos::new() ;
-    let mut map = HashMap::new() ;
+    let mut map = BTreeMap::new() ;
     self.args(& mut var_info, & mut map) ? ;
     self.ws_cmt() ;
 
@@ -2257,7 +2550,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn ptterm_args(
     & mut self,
     var_map: & VarInfos,
-    map : & HashMap<& 's str, VarIdx>,
+    map : & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< VarMap<(Pos, PTTerms)> > {
     let mut res = VarMap::with_capacity(11) ;
@@ -2290,7 +2583,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     pred: PrdIdx,
     pred_pos: Pos,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<PTTerms> > {
     let mut args = VarMap::with_capacity(11) ;
@@ -2359,7 +2652,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn top_term(
     & mut self,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res<PTTerms> {
     if let Some(res) = self.top_term_opt(var_map, map, instance) ? {
@@ -2372,7 +2665,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn top_term_opt(
     & mut self,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res< Option< PTTerms > > {
     conf.check_timeout() ? ;
@@ -2520,7 +2813,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn parse_ptterms(
     & mut self,
     var_map: & VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance,
   ) -> Res<PTTerms> {
     enum Frame {
@@ -2732,12 +3025,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn forall(
     & mut self, instance: & mut Instance
   ) -> Res< Option<ClauseRes> > {
-    if ! self.tag_opt(keywords::forall) {
+    if ! self.word_opt(keywords::forall) {
       return Ok(None)
     }
 
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
-      VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
+      VarMap::with_capacity(11), BTreeMap::new(), true, 0
     ) ;
 
     while parse_args {
@@ -2792,22 +3085,22 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn nexists(
     & mut self, instance: & mut Instance
   ) -> Res< Option<ClauseRes> > {
-    if ! self.tag_opt(keywords::op::not_) {
+    if ! self.word_opt(keywords::op::not_) {
       return Ok(None)
     }
     self.ws_cmt() ;
     let outter_bind_count = self.let_bindings(
-      & VarMap::new(), & HashMap::new(), instance
+      & VarMap::new(), & BTreeMap::new(), instance
     ) ? ;
 
     self.ws_cmt() ;
     self.tag("(") ? ;
 
     self.ws_cmt() ;
-    self.tag(keywords::exists) ? ;
+    self.word(keywords::exists) ? ;
 
     let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
-      VarMap::with_capacity(11), HashMap::with_capacity(11), true, 0
+      VarMap::with_capacity(11), BTreeMap::new(), true, 0
     ) ;
 
     while parse_args {
@@ -2850,7 +3143,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn parse_clause(
     & mut self,
     var_map: VarInfos,
-    map: & HashMap<& 's str, VarIdx>,
+    map: & BTreeMap<& 's str, VarIdx>,
     instance: & mut Instance,
     negated: bool,
   ) -> Res< ClauseRes > {
@@ -2945,7 +3238,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses an assert.
   fn assert(& mut self, instance: & mut Instance) -> Res<bool> {
-    if ! self.tag_opt(keywords::cmd::assert) {
+    if ! self.word_opt(keywords::cmd::assert) {
       return Ok(false)
     }
 
@@ -2968,7 +3261,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     } ;
 
     let bind_count = self.let_bindings(
-      & VarMap::new(), & HashMap::new(), instance
+      & VarMap::new(), & BTreeMap::new(), instance
     ) ? ;
 
     let idx = if self.tag_opt("(") {
@@ -3003,7 +3296,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     if tagged {
       self.ws_cmt() ;
-      self.tag(":named").chain_err(
+      self.word(":named").chain_err(
         || "unexpected tag"
       ) ? ;
       self.ws_cmt() ;
@@ -3024,32 +3317,32 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Parses a check-sat.
   fn check_sat(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::check_sat)
+    self.word_opt(keywords::cmd::check_sat)
   }
 
   /// Parses a get-model.
   fn get_model(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::get_model)
+    self.word_opt(keywords::cmd::get_model)
   }
 
   /// Parses a get-unsat-core.
   fn get_unsat_core(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::get_unsat_core)
+    self.word_opt(keywords::cmd::get_unsat_core)
   }
 
   /// Parses a get-proof.
   fn get_proof(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::get_proof)
+    self.word_opt(keywords::cmd::get_proof)
   }
 
   /// Parses an exit command.
   fn exit(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::exit)
+    self.word_opt(keywords::cmd::exit)
   }
 
   /// Parses an reset command.
   fn reset(& mut self) -> bool {
-    self.tag_opt(keywords::cmd::reset)
+    self.word_opt(keywords::cmd::reset)
   }
 
   /// Parses items, returns true if it found a check-sat.
@@ -3085,6 +3378,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       } else if self.set_logic() ?
       || self.pred_dec(instance) ?
       || self.define_fun(instance) ?
+      || self.define_funs_rec(instance) ?
       || self.assert(instance) ?
       || self.dtyp_dec() ? {
         Parsed::Items

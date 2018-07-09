@@ -7,7 +7,7 @@ use common::* ;
 use super::Typ ;
 
 /// Variable info.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VarInfo {
   /// Variable's name.
   pub name: String,

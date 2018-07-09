@@ -2,14 +2,14 @@
 
 use common::* ;
 
-wrap_usize!{
+wrap_usize! {
   #[doc = "Type parameter indices."]
   TPrmIdx
   #[doc = "Total map from type parameters to something."]
   map: TPrmMap with iter: TPrmMapIter
 }
 
-wrap_usize!{
+wrap_usize! {
   #[doc = "Constructor argument indices."]
   CArgIdx
   #[doc = "Total map from constructor arguments to something."]
@@ -513,6 +513,9 @@ pub fn write_constructor_map<W: Write>(
 /// Writes all the datatypes.
 pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
   let decs = get_all() ;
+
+  if decs.is_empty() { return Ok(()) }
+
   let mut known = HashSet::new() ;
   let dtyp_pref = & format!("{}  ", pref) ;
 
@@ -538,6 +541,8 @@ pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
 
     writeln!(w, "{}) )", pref) ?
   }
+
+  writeln!(w) ? ;
 
   Ok(())
 }
