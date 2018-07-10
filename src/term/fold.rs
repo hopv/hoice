@@ -5,7 +5,7 @@ use common::* ;
 use std::slice::Iter ;
 
 /// Fold info for terms.
-enum FoldInfo<'a, Info> {
+pub enum FoldInfo<'a, Info> {
   /// Constant array.
   Arr {
     /// Type.
@@ -43,6 +43,18 @@ enum FoldInfo<'a, Info> {
     /// Name.
     name: & 'a String,
   },
+
+  /// A function application.
+  Fun {
+    /// Type.
+    typ: & 'a Typ,
+    /// Name.
+    name: & 'a String,
+    /// Arguments already processed.
+    lft_args: Vec<Info>,
+    /// Arguments left to process.
+    rgt_args: Iter<'a, Term>,
+  }
 }
 
 
@@ -60,11 +72,12 @@ enum FoldInfo<'a, Info> {
 /// - `ArrF`: will run on the result of folding on arrays
 /// - `NewF`: will run on the result of folding on datatype constructors
 /// - `SlcF`: will run on the result of folding on datatype selectors
-pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
   term: & RTerm,
   varf: VarF, cstf: CstF,
   appf: AppF, arrf: ArrF,
   newf: NewF, slcf: SlcF,
+  funf: FunF,
 ) -> Res<Info>
 where
 VarF: FnMut(& Typ, VarIdx) -> Res<Info>,
@@ -72,8 +85,9 @@ CstF: FnMut(& Val) -> Res<Info>,
 AppF: FnMut(& Typ, Op, Vec<Info>) -> Res<Info>,
 ArrF: FnMut(& Typ, Info) -> Res<Info>,
 NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>,
-SlcF: FnMut(& Typ, & String, Info) -> Res<Info>, {
-  fold_custom_res(term, varf, cstf, appf, arrf, newf, slcf)
+SlcF: FnMut(& Typ, & String, Info) -> Res<Info>,
+FunF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>, {
+  fold_custom_res(term, varf, cstf, appf, arrf, newf, slcf, funf)
 }
 
 
@@ -88,11 +102,12 @@ SlcF: FnMut(& Typ, & String, Info) -> Res<Info>, {
 /// - `ArrF`: will run on the result of folding on arrays
 /// - `NewF`: will run on the result of folding on datatype constructors
 /// - `SlcF`: will run on the result of folding on datatype selectors
-pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
   term: & RTerm,
   mut varf: VarF, mut cstf: CstF,
   mut appf: AppF, mut arrf: ArrF,
   mut newf: NewF, mut slcf: SlcF,
+  mut funf: FunF,
 ) -> Info
 where
 VarF: FnMut(& Typ, VarIdx) -> Info,
@@ -100,8 +115,9 @@ CstF: FnMut(& Val) -> Info,
 AppF: FnMut(& Typ, Op, Vec<Info>) -> Info,
 ArrF: FnMut(& Typ, Info) -> Info,
 NewF: FnMut(& Typ, & String, Vec<Info>) -> Info,
-SlcF: FnMut(& Typ, & String, Info) -> Info, {
-  fold_custom_res::< Info, (), _, _, _, _, _, _ >(
+SlcF: FnMut(& Typ, & String, Info) -> Info,
+FunF: FnMut(& Typ, & String, Vec<Info>) -> Info, {
+  fold_custom_res::< Info, (), _, _, _, _, _, _, _ >(
     term,
     |t,v| Ok( varf(t, v) ),
     |v| Ok( cstf(v) ),
@@ -109,6 +125,7 @@ SlcF: FnMut(& Typ, & String, Info) -> Info, {
     |t, i| Ok( arrf(t, i) ),
     |t, s, i| Ok( newf(t, s, i) ),
     |t, s, i| Ok( slcf(t, s, i) ),
+    |t, s, i| Ok( funf(t, s, i) ),
   ).unwrap()
   //^^^^^^~~~~ this unwrap is proved safe trivially.
 }
@@ -129,11 +146,14 @@ SlcF: FnMut(& Typ, & String, Info) -> Info, {
 /// - `ArrF`: will run on the result of folding on arrays
 /// - `NewF`: will run on the result of folding on datatype constructors
 /// - `SlcF`: will run on the result of folding on datatype selectors
-pub fn fold_custom_res<Info, E, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+pub fn fold_custom_res<
+  Info, E, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF
+>(
   term: & RTerm,
   mut varf: VarF, mut cstf: CstF,
   mut appf: AppF, mut arrf: ArrF,
   mut newf: NewF, mut slcf: SlcF,
+  mut funf: FunF
 ) -> Result<Info, E>
 where
 VarF: FnMut(& Typ, VarIdx) -> Result<Info, E>,
@@ -141,7 +161,8 @@ CstF: FnMut(& Val) -> Result<Info, E>,
 AppF: FnMut(& Typ, Op, Vec<Info>) -> Result<Info, E>,
 ArrF: FnMut(& Typ, Info) -> Result<Info, E>,
 NewF: FnMut(& Typ, & String, Vec<Info>) -> Result<Info, E>,
-SlcF: FnMut(& Typ, & String, Info) -> Result<Info, E>, {
+SlcF: FnMut(& Typ, & String, Info) -> Result<Info, E>,
+FunF: FnMut(& Typ, & String, Vec<Info>) -> Result<Info, E>, {
   use term::RTerm ;
 
   // Stack of stuff to zip on.
@@ -213,7 +234,21 @@ SlcF: FnMut(& Typ, & String, Info) -> Result<Info, E>, {
         continue 'go_down
       },
 
-      RTerm::Fun { ref typ, ref name, ref args } => unimplemented!(),
+      RTerm::Fun { ref typ, ref name, ref args } => {
+        let mut rgt_args = args.iter() ;
+        let lft_args = Vec::with_capacity( args.len() ) ;
+
+        if let Some(term) = rgt_args.next() {
+          curr = term ;
+          stack.push(
+            FoldInfo::Fun { typ, name, lft_args, rgt_args }
+          ) ;
+
+          continue 'go_down
+        } else {
+          funf(typ, name, lft_args) ?
+        }
+      },
 
     } ;
 
@@ -296,6 +331,31 @@ SlcF: FnMut(& Typ, & String, Info) -> Result<Info, E>, {
           // Update info and go up.
           info = slcf(typ, name, info) ? ;
           continue 'go_up
+        },
+
+        // Function application, info is for the middle term.
+        Some(
+          FoldInfo::Fun { typ, name, mut lft_args, mut rgt_args }
+        ) => {
+          lft_args.push(info) ;
+
+          // Are we done?
+          if let Some(term) = rgt_args.next() {
+            // Going down `term`.
+            curr = term ;
+            // Push back current frame.
+            stack.push(
+              FoldInfo::New { typ, name, lft_args, rgt_args }
+            ) ;
+            // Go down.
+            continue 'go_down
+
+          } else {
+            // No more term to go down into, update info and go up.
+            info = funf(typ, name, lft_args) ? ;
+            continue 'go_up
+          }
+
         },
 
       }

@@ -72,6 +72,10 @@ impl Evaluator for RVarVals {
   }
   #[inline]
   fn len(& self) -> usize { VarMap::len(& self.map) }
+  fn print(& self) {
+    println!("varvals@") ;
+    self.map.print() ;
+  }
 }
 
 impl RVarVals {

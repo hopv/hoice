@@ -404,6 +404,9 @@ fn ite_1() {
     )
   ) ;
   let model = model!( val::real( rat_of_float(1.0) ) ) ;
+  println!("ite_1") ;
+  println!("model:") ;
+  model.print() ;
   assert_eval!( real model => ite, 2.0 ) ;
 }
 

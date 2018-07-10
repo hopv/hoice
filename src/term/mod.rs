@@ -67,6 +67,8 @@ mod tterms ;
 pub mod simplify ;
 pub mod typ ;
 mod fold ;
+mod zip ;
+mod eval ;
 mod leaf_iter ;
 
 pub use self::op::* ;
@@ -725,9 +727,13 @@ impl RTerm {
   /// - `ArrF`: will run on the result of folding on arrays
   /// - `NewF`: will run on the result of folding on datatype constructors
   /// - `SlcF`: will run on the result of folding on datatype selectors
-  pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+  /// - `SlcF`: will run on the result of folding on function applications
+  pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
     & self,
-    varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF, slcf: SlcF
+    varf: VarF, cstf: CstF,
+    appf: AppF, arrf: ArrF,
+    newf: NewF, slcf: SlcF,
+    funf: FunF,
   ) -> Info
   where
   VarF: FnMut(& Typ, VarIdx) -> Info,
@@ -735,8 +741,9 @@ impl RTerm {
   AppF: FnMut(& Typ, Op, Vec<Info>) -> Info,
   ArrF: FnMut(& Typ, Info) -> Info,
   NewF: FnMut(& Typ, & String, Vec<Info>) -> Info,
-  SlcF: FnMut(& Typ, & String, Info) -> Info, {
-    fold::fold(self, varf, cstf, appf, arrf, newf, slcf)
+  SlcF: FnMut(& Typ, & String, Info) -> Info,
+  FunF: FnMut(& Typ, & String, Vec<Info>) -> Info, {
+    fold::fold(self, varf, cstf, appf, arrf, newf, slcf, funf)
   }
 
 
@@ -755,9 +762,12 @@ impl RTerm {
   /// - `ArrF`: will run on the result of folding on arrays
   /// - `NewF`: will run on the result of folding on datatype constructors
   /// - `SlcF`: will run on the result of folding on datatype selectors
-  pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF>(
+  pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
     & self,
-    varf: VarF, cstf: CstF, appf: AppF, arrf: ArrF, newf: NewF, slcf: SlcF
+    varf: VarF, cstf: CstF,
+    appf: AppF, arrf: ArrF,
+    newf: NewF, slcf: SlcF,
+    funf: FunF,
   ) -> Res<Info>
   where
   VarF: FnMut(& Typ, VarIdx) -> Res<Info>,
@@ -765,8 +775,9 @@ impl RTerm {
   AppF: FnMut(& Typ, Op, Vec<Info>) -> Res<Info>,
   ArrF: FnMut(& Typ, Info) -> Res<Info>,
   NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>,
-  SlcF: FnMut(& Typ, & String, Info) -> Res<Info>, {
-    fold::fold_res(self, varf, cstf, appf, arrf, newf, slcf)
+  SlcF: FnMut(& Typ, & String, Info) -> Res<Info>,
+  FunF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>, {
+    fold::fold_res(self, varf, cstf, appf, arrf, newf, slcf, funf)
   }
 
 
@@ -776,74 +787,78 @@ impl RTerm {
   ///
   /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    self.fold_res(
-      // Variable evaluation.
-      |_, v| if v < model.len() {
-        Ok( model.get(v).clone() )
-      } else {
-        bail!("model is too short ({})", model.len())
-      },
+    eval::eval( & factory::term( self.clone() ), model )
+    // self.fold_res(
+    //   // Variable evaluation.
+    //   |_, v| if v < model.len() {
+    //     Ok( model.get(v).clone() )
+    //   } else {
+    //     bail!("model is too short ({})", model.len())
+    //   },
 
-      // Constant evaluation.
-      |val| Ok( val.clone() ),
+    //   // Constant evaluation.
+    //   |val| Ok( val.clone() ),
 
-      // Operator application evaluation.
-      |_, op, values| op.eval(values).chain_err(
-        || format!("while evaluating operator `{}`", op)
-      ),
+    //   // Operator application evaluation.
+    //   |_, op, values| op.eval(values).chain_err(
+    //     || format!("while evaluating operator `{}`", op)
+    //   ),
 
-      // Constant array evaluation.
-      |typ, default| Ok(
-        val::array( typ.clone(), default )
-      ),
+    //   // Constant array evaluation.
+    //   |typ, default| Ok(
+    //     val::array( typ.clone(), default )
+    //   ),
 
-      // Datatype construction.
-      |typ, name, values| Ok(
-        val::dtyp_new( typ.clone(), name.clone(), values )
-      ),
+    //   // Datatype construction.
+    //   |typ, name, values| Ok(
+    //     val::dtyp_new( typ.clone(), name.clone(), values )
+    //   ),
 
-      // Datatype selection.
-      |typ, name, value| if ! value.is_known() {
-        Ok( val::none( typ.clone() ) )
-      } else if let Some(
-        (ty, constructor, values)
-      ) = value.dtyp_inspect() {
-        if let Some((dtyp, _)) = ty.dtyp_inspect() {
+    //   // Datatype selection.
+    //   |typ, name, value| if ! value.is_known() {
+    //     Ok( val::none( typ.clone() ) )
+    //   } else if let Some(
+    //     (ty, constructor, values)
+    //   ) = value.dtyp_inspect() {
+    //     if let Some((dtyp, _)) = ty.dtyp_inspect() {
 
-          if let Some(selectors) = dtyp.news.get(constructor) {
+    //       if let Some(selectors) = dtyp.news.get(constructor) {
 
-            let mut res = None ;
-            for ((selector, _), value) in selectors.iter().zip(
-              values.iter()
-            ) {
-              if selector == name {
-                res = Some( value.clone() )
-              }
-            }
+    //         let mut res = None ;
+    //         for ((selector, _), value) in selectors.iter().zip(
+    //           values.iter()
+    //         ) {
+    //           if selector == name {
+    //             res = Some( value.clone() )
+    //           }
+    //         }
 
-            if let Some(res) = res {
-              Ok(res)
-            } else {
-              Ok( val::none( typ.clone() ) )
-            }
+    //         if let Some(res) = res {
+    //           Ok(res)
+    //         } else {
+    //           Ok( val::none( typ.clone() ) )
+    //         }
 
-          } else {
-            bail!(
-              "unknown constructor `{}` for datatype {}",
-              conf.bad(constructor), dtyp.name
-            )
-          }
+    //       } else {
+    //         bail!(
+    //           "unknown constructor `{}` for datatype {}",
+    //           conf.bad(constructor), dtyp.name
+    //         )
+    //       }
 
-        } else {
-          bail!("inconsistent type {} for value {}", ty, value)
-        }
-      } else {
-        bail!(
-          "illegal application of constructor `{}` of `{}` to `{}`",
-          conf.bad(& name), typ, value
-        )
-      }
-    )
+    //     } else {
+    //       bail!("inconsistent type {} for value {}", ty, value)
+    //     }
+    //   } else {
+    //     bail!(
+    //       "illegal application of constructor `{}` of `{}` to `{}`",
+    //       conf.bad(& name), typ, value
+    //     )
+    //   },
+
+    //   // Function application.
+    //   |typ, name, args| unimplemented!(),
+    // )
   }
 
   /// If the term's an integer constant, returns the value.
@@ -977,6 +992,13 @@ impl RTerm {
           typ.clone(), name.clone(), term
         )
       ),
+
+      // Function application.
+      |typ, name, args| Ok(
+        term::fun(
+          typ.clone(), name.clone(), args
+        )
+      )
     ) ;
 
     if let Ok(term) = res {
