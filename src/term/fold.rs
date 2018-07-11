@@ -153,7 +153,7 @@ pub fn fold_custom_res<
   mut varf: VarF, mut cstf: CstF,
   mut appf: AppF, mut arrf: ArrF,
   mut newf: NewF, mut slcf: SlcF,
-  mut funf: FunF
+  mut funf: FunF,
 ) -> Result<Info, E>
 where
 VarF: FnMut(& Typ, VarIdx) -> Result<Info, E>,

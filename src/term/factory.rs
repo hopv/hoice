@@ -383,6 +383,12 @@ pub fn eq(lhs: Term, rhs: Term) -> Term {
   app(Op::Eql, vec![lhs, rhs])
 }
 
+/// Creates a distinct application.
+#[inline]
+pub fn distinct(terms: Vec<Term>) -> Term {
+  app(Op::Distinct, terms)
+}
+
 /// Creates a sum.
 #[inline]
 pub fn add(kids: Vec<Term>) -> Term {

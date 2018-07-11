@@ -410,6 +410,89 @@ fn ite_1() {
   assert_eval!( real model => ite, 2.0 ) ;
 }
 
+
+
+// The lazy evaluation tests rely on the order in which the terms are created.
+// This is not the case outside of these tests obviously. But here the goal is
+// to have the last term being illegal, usually a variable that's not defined
+// in the model. That way, if lazy evaluation does not do the right thing the
+// test crashes.
+//
+// Unfortunately, test run in parallel and this can end up screwing up the
+// order of the terms. To avoid this, the illegal variable should use a
+// different index each time, ideally a high one to avoid clashes with other
+// tests.
+
+
+
+
+#[test]
+fn lazy_1() {
+  let v_0 = term::real_var(0) ;
+  let t_1 = term::ge( v_0, term::real( rat_of_float(7.0) ) ) ;
+  let v_1 = term::real_var(1000) ;
+  let t_2 = term::ge( v_1, term::real( rat_of_float(0.0) ) ) ;
+
+  let conj = term::and( vec![ t_1, t_2 ] ) ;
+
+  let model = model!( val::real( rat_of_float(1.0) ) ) ;
+
+  // This evaluation should not work: `v_1` is not defined in the model, but
+  // because evaluation is lazy and `t_1` is false with this model, it goes
+  // through and the conjunction evaluates to false.
+
+  assert_eval!( bool not model => conj )
+}
+
+
+#[test]
+fn lazy_2() {
+  let v_0 = term::real_var(0) ;
+  let t_1 = term::ge( v_0, term::real( rat_of_float(0.0) ) ) ;
+  let v_1 = term::real_var(1001) ;
+  let t_2 = term::ge( v_1, term::real( rat_of_float(0.0) ) ) ;
+
+  let disj = term::or( vec![ t_1, t_2 ] ) ;
+
+  let model = model!( val::real( rat_of_float(1.0) ) ) ;
+
+  // This evaluation should not work: `v_1` is not defined in the model, but
+  // because evaluation is lazy and `t_1` is false with this model, it goes
+  // through and the conjunction evaluates to false.
+
+  assert_eval!( bool model => disj )
+}
+
+
+#[test]
+fn lazy_3() {
+  let v_0 = term::real_var(0) ;
+  let t_1 = term::ge(
+    v_0.clone(), term::real( rat_of_float(7.0) )
+  ) ;
+  let v_1 = term::real_var(1002) ;
+  let ite = term::ite(t_1, v_1, v_0) ;
+
+  let model = model!( val::real( rat_of_float(1.0) ) ) ;
+
+  assert_eval!( real model => ite, 1.0 )
+}
+
+
+#[test]
+fn lazy_4() {
+  let v_0 = term::real_var(0) ;
+  let t_1 = term::u_minus( v_0.clone() ) ;
+  let v_1 = term::real_var(1003) ;
+  let distinct = term::distinct( vec![t_1, v_0, v_1] ) ;
+
+  let model = model!( val::real( rat_of_float(0.0) ) ) ;
+
+  assert_eval!( bool not model => distinct )
+}
+
+
+
 // #[test]
 // fn models() {
 //   let v_1 = term::bool_var(0) ;

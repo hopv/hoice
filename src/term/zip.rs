@@ -51,7 +51,7 @@ pub enum ZipDo<'a, Acc, Yield> {
 
 
 /// The operators manipulated by the zipper.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ZipOp<'a> {
   /// An operator.
   Op(Op),
@@ -287,3 +287,5 @@ Partial: for<'a> FnMut(
     }
   }
 }
+
+
