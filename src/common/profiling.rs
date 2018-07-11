@@ -59,7 +59,7 @@ impl ProfileTree {
     self.fold(
       None,
       |prev, scope, time, sub_time| if let Some(last) = scope.last() {
-        debug_assert! { scope.is_empty() }
+        debug_assert! { ! scope.is_empty() }
         let art = match prev {
           Some(n) if n < scope.len() => "\\",
           Some(_) | None => "|",

@@ -576,6 +576,7 @@ impl NuQuals {
         for (var, typ) in sig {
 
           match ** typ {
+
             typ::RTyp::Int => {
               quals.insert(
                 term::ge( term::var(var, typ.clone()),
@@ -608,6 +609,7 @@ impl NuQuals {
               //   pred_info.idx
               // ) ? ;
             },
+
             typ::RTyp::Real => {
               quals.insert(
                 term::ge(
@@ -652,6 +654,7 @@ impl NuQuals {
               //   pred_info.idx
               // ) ? ;
             },
+
             typ::RTyp::Bool => {
               let var = term::bool_var(var) ;
               quals.insert( var.clone(), pred_info.idx ) ? ;
@@ -668,7 +671,31 @@ impl NuQuals {
               ) ? ;
             },
 
-            typ::RTyp::DTyp { .. } => (),
+            typ::RTyp::DTyp { ref dtyp, .. } => {
+              for (name, args) in & dtyp.news {
+                if args.is_empty() {
+                  quals.insert(
+                    term::eq(
+                      term::var( var, typ.clone() ),
+                      term::dtyp_new( typ.clone(), name.clone(), vec![] )
+                    ),
+                    pred_info.idx
+                  ) ? ;
+                }
+              }
+              let functions = fun::Functions::new( typ.clone() ) ;
+              for fun in functions.from_typ {
+                if fun.typ.is_bool() {
+                  quals.insert(
+                    term::fun(
+                      fun.typ.clone(), fun.name.clone(),
+                      vec![ term::var(var, typ.clone()) ],
+                    ),
+                    pred_info.idx
+                  ) ? ;
+                }
+              }
+            },
 
             typ::RTyp::Unk => bail!(
               "unexpected unknown type"

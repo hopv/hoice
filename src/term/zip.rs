@@ -10,6 +10,11 @@ use common::* ;
 
 
 
+
+
+
+
+
 /// The direction of the next step.
 ///
 /// This is essentially a command from the exterior (the caller) to the zipper
@@ -31,11 +36,6 @@ pub enum ZipDo<'a, Acc, Yield> {
   Dwn {
     /// The term we're going down in.
     nu_term: & 'a Term,
-    /// An optional substitution.
-    ///
-    /// The only case where this is useful currently is when evaluating a
-    /// function application.
-    nu_subst: Option< VarMap<Yield> >,
   },
 
   /// Go up. Means "here is the result, skip everything else at this level".
@@ -44,10 +44,36 @@ pub enum ZipDo<'a, Acc, Yield> {
   /// to `0` then we can go up directly with `0`.
   Upp {
     /// The result to propagate upwards.
-    yielded: Yield
+    yielded: Yield,
   },
 }
 
+
+
+/// The direction of the next step, total version.
+///
+/// This is what the user produces when zipping up an application and all of
+/// its arguments.
+pub enum ZipDoTotal<'a, Yield> {
+  /// Going down.
+  ///
+  /// The only use case here is function application.
+  Dwn {
+    /// Term we're going down in.
+    nu_term: & 'a Term,
+    /// An optional substitution.
+    ///
+    /// The only case where this is useful currently is when evaluating a
+    /// function application.
+    nu_subst: Option< VarMap<Yield> >,
+  },
+
+  /// Go up. Result.
+  Upp {
+    /// The result to propagate upwards.
+    yielded: Yield,
+  },
+}
 
 
 /// The operators manipulated by the zipper.
@@ -67,7 +93,7 @@ pub enum ZipOp<'a> {
 
 
 // Nullary things the zipper can manipulate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ZipNullary<'a> {
   /// A constant.
   Cst(& 'a Val),
@@ -123,7 +149,7 @@ NulF: for<'a> FnMut(
 
 AppF: for<'a> FnMut(
   ZipOp<'a>, & 'a Typ, Acc
-) -> Result< Yield, E >,
+) -> Result< ZipDoTotal<'a, Yield>, E >,
 
 Partial: for<'a> FnMut(
   ZipFrame<'a, Acc>
@@ -141,15 +167,21 @@ Partial: for<'a> FnMut(
 
   'inspect_term: loop {
 
-    let mut result = match * term.get() {
+    let result = match * term.get() {
 
       RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
-        subst[var_idx].clone()
+        ZipDoTotal::Upp {
+          yielded: subst[var_idx].clone(),
+        }
       } else {
-        nul_do( ZipNullary::Var(typ, var_idx) ) ?
+        ZipDoTotal::Upp {
+          yielded: nul_do( ZipNullary::Var(typ, var_idx) ) ?,
+        }
       },
 
-      RTerm::Cst(ref cst) => nul_do( ZipNullary::Cst(cst) ) ?,
+      RTerm::Cst(ref cst) => ZipDoTotal::Upp {
+        yielded: nul_do( ZipNullary::Cst(cst) ) ?,
+      },
 
       RTerm::CArray { ref typ, term: ref nu_term } => {
         let frame = ZipFrame {
@@ -216,7 +248,7 @@ Partial: for<'a> FnMut(
       },
 
       RTerm::Fun { ref typ, ref name, ref args } => {
-        let mut rgt_args = empty.iter() ;
+        let mut rgt_args = args.iter() ;
         let op = ZipOp::Fun(name) ;
         let lft_args = Acc::new_empty( args.len() ) ;
 
@@ -236,6 +268,19 @@ Partial: for<'a> FnMut(
 
     } ;
 
+    let mut result = match result {
+      ZipDoTotal::Dwn { nu_term, nu_subst } => {
+        if nu_subst.is_some() {
+          subst = nu_subst
+        }
+        term = nu_term ;
+
+        continue 'inspect_term
+      },
+
+      ZipDoTotal::Upp { yielded } => yielded
+    } ;
+
     'inspect_do_res: loop {
 
       match stack.pop() {
@@ -253,9 +298,21 @@ Partial: for<'a> FnMut(
           lft_args.push( result ) ;
 
           if rgt_args.len() == 0 {
-            result = app_do(thing, typ, lft_args) ? ;
+            match app_do(thing, typ, lft_args) ? {
+              ZipDoTotal::Upp { yielded } => {
+                result = yielded ;
+                continue 'inspect_do_res
+              },
 
-            continue 'inspect_do_res
+              ZipDoTotal::Dwn { nu_term, nu_subst} => {
+                if nu_subst.is_some() {
+                  subst = nu_subst
+                }
+                term = nu_term ;
+                continue 'inspect_term
+              }
+            }
+
           } else {
 
             match partial(
@@ -268,10 +325,7 @@ Partial: for<'a> FnMut(
                 continue 'inspect_term
               },
 
-              ZipDo::Dwn { nu_term, nu_subst } => {
-                if let Some(nu_subst) = nu_subst {
-                  subst = Some(nu_subst)
-                }
+              ZipDo::Dwn { nu_term } => {
                 term = nu_term ;
                 continue 'inspect_term
               },

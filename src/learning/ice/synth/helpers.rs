@@ -82,7 +82,7 @@ macro_rules! simple_arith_synth {
       apply! { $f to term }
     }
 
-    $previous.push( ($term, $val.clone()) )
+    $previous.insert(($term, $val.clone())) ;
   }) ;
 }
 
@@ -109,7 +109,7 @@ macro_rules! arith_synth_non_lin {
         let term = term::eq( lhs, rhs ) ;
         apply! { $f to term }
       }
-      $previous.push(($term, $val))
+      $previous.insert(($term, $val)) ;
     }
   }) ;
 
@@ -268,8 +268,10 @@ macro_rules! arith_synth_three_terms {
         }
       }
     }
-    $previous.push( ($term, $val.clone()) )
+    $previous.insert(($term, $val.clone())) ;
   }) ;
+
+
   (@internal $f:tt($lhs:expr, $rhs:expr)) => ({
     let term = term::app(
       Op::Ge, vec![ $lhs.clone(), $rhs.clone() ]

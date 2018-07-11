@@ -118,9 +118,7 @@ pub fn non_lin_int_synth<F>(
   sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
-    sample.len()
-  ) ;
+  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
@@ -163,9 +161,7 @@ pub fn simple_int_synth<F>(
   sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
-    sample.len()
-  ) ;
+  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
@@ -197,9 +193,7 @@ pub fn int_synth_1<F>(
   sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
-    sample.len()
-  ) ;
+  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
@@ -234,9 +228,7 @@ pub fn int_synth_2<F>(
   sample: & VarVals, others: & mut TermVals, mut f: F
 ) -> Res<bool>
 where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: Vec<(Term, Int)> = Vec::with_capacity(
-    sample.len()
-  ) ;
+  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
 
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {

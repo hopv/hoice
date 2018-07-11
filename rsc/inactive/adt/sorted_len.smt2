@@ -17,6 +17,29 @@
   )
 )
 
+(define-funs-rec
+  (
+    (all_equal ( (l Lst) ) Bool)
+    (all_equal_aux ( (v Int) (l Lst) ) Bool)
+  )
+  (
+    (ite
+      (= l nil)
+      true
+      (all_equal_aux (head l) (tail l))
+    )
+    (ite
+      (= l nil)
+      true
+      (ite
+        (not (= (head l) v) )
+        false
+        (all_equal_aux v (tail l))
+      )
+    )
+  )
+)
+
 ; let rev =
 ;   let rec loop acc = function
 ;   | [] -> acc
@@ -98,9 +121,7 @@
 ;   if lst = (rev lst)
 ;   and (sorted lst)
 ;   and (sorted (rev lst))
-;   then match lst
-;   | nil | _ :: nil => ()
-;   | _ => assert false
+;   then (assert (all_elements_the_same lst))
 (assert
   (forall ( (lst1 Lst) (lst2 Lst) )
   (=>
@@ -108,8 +129,7 @@
       (rev_pst nil lst1 lst2)
       (srt_pst lst1 true)
       (srt_pst lst2 true)
-      (not (= lst1 nil))
-      (not (= (tail lst1) nil))
+      (not (all_equal lst1))
     )
     false
   )

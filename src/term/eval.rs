@@ -9,12 +9,29 @@ use term::zip::* ;
 pub type Frame<'a> = ZipFrame< 'a, Vec<Val> > ;
 /// Zipper command for term evaluation.
 pub type Cmd<'a> = ZipDo< 'a, Vec<Val>, Val > ;
+/// Zipper command (total case) for term evaluation.
+pub type CmdT<'a> = ZipDoTotal< 'a, Val > ;
 
 /// Term evaluation.
 pub fn eval<E: Evaluator>(term: & Term, model: & E) -> Res<Val> {
-  zip(
-    term, |zip_null| leaf(model, zip_null), total, partial
-  )
+  let mut fun_ref_count = 0 ;
+  let res = zip(
+    term, |zip_null| leaf(model, zip_null),
+    |op, typ, values| total(op, typ, values, & mut fun_ref_count),
+    partial
+  ) ;
+  fun::decrease_ref_count(fun_ref_count) ;
+  res
+}
+
+
+macro_rules! go {
+  (up $e:expr) => (
+    return Ok( ZipDo::Upp { yielded: $e } )
+  ) ;
+  (down $e:expr) => (
+    return Ok( ZipDo::Dwn { nu_term: $e } )
+  ) ;
 }
 
 
@@ -33,21 +50,22 @@ fn leaf<'a, E: Evaluator>(
 
 
 fn total<'a>(
-  op: ZipOp<'a>, typ: & 'a Typ, mut values: Vec<Val>
-) -> Res<Val> {
-  match op {
+  op: ZipOp<'a>, typ: & 'a Typ, mut values: Vec<Val>,
+  fun_ref_count: & mut usize
+) -> Res< CmdT<'a> > {
+  let yielded = match op {
     ZipOp::Op(op) => op.eval(values).chain_err(
       || format!("while evaluating operator `{}`", op)
-    ),
+    ) ?,
 
-    ZipOp::New(name) => Ok(
-      val::dtyp_new( typ.clone(), name.clone(), values )
+    ZipOp::New(name) => val::dtyp_new(
+      typ.clone(), name.clone(), values
     ),
 
     ZipOp::Slc(name) => if values.len() == 1 {
       let value = values.pop().unwrap() ;
       if ! value.is_known() {
-        Ok( val::none( typ.clone() ) )
+        val::none( typ.clone() )
       } else if let Some(
         (ty, constructor, values)
       ) = value.dtyp_inspect() {
@@ -65,9 +83,9 @@ fn total<'a>(
             }
 
             if let Some(res) = res {
-              Ok(res)
+              res
             } else {
-              Ok( val::none( typ.clone() ) )
+              val::none( typ.clone() )
             }
 
           } else {
@@ -94,7 +112,7 @@ fn total<'a>(
 
     ZipOp::CArray => if values.len() == 1 {
       let default = values.pop().unwrap() ;
-      Ok( val::array( typ.clone(), default ) )
+      val::array( typ.clone(), default )
     } else {
       bail!(
         "expected one value for constant array construction, found {}",
@@ -102,8 +120,31 @@ fn total<'a>(
       )
     },
 
-    ZipOp::Fun(_) => unimplemented!(),
-  }
+    ZipOp::Fun(name) => {
+      let fun = if let Some(fun) = fun::get_as_ref(name) {
+        fun
+      } else {
+        bail!("cannot evaluate unknown function `{}`", conf.bad(name))
+      } ;
+      * fun_ref_count += 1 ;
+
+      if values.len() != fun.sig.len() {
+        bail!(
+          "illegal application of function `{}` to {} arguments (expected {})",
+          conf.bad(name), values.len(), fun.sig.len()
+        )
+      }
+
+      return Ok(
+        ZipDoTotal::Dwn {
+          nu_term: & fun.def,
+          nu_subst: Some( values.into() ),
+        }
+      )
+    },
+  } ;
+
+  Ok( ZipDoTotal::Upp { yielded } )
 }
 
 
@@ -141,15 +182,6 @@ fn partial_op<'a>(
 ) -> Res< ZipDo< 'a, Vec<Val>, Val > > {
   // Since this is called each time a value is added to `lft_args`, we only
   // need to check the last value in `lft_args`.
-
-  macro_rules! go {
-    (up $e:expr) => (
-      return Ok( ZipDo::Upp { yielded: $e } )
-    ) ;
-    (down $e:expr) => (
-      return Ok( ZipDo::Dwn { nu_term: $e, nu_subst: None } )
-    ) ;
-  }
 
   match op {
 
@@ -197,7 +229,6 @@ fn partial_op<'a>(
     },
 
     Op::Or => if let Some(last) = lft_args.pop() {
-      println!("{}", last) ;
       match last.to_bool() ? {
         // True, no need to evaluate the other arguments.
         Some(true) => go!( up val::bool(true) ),
@@ -235,7 +266,6 @@ fn partial_op<'a>(
             go!( up val::bool(false) )
           }
         }
-        println!()
       }
     },
 

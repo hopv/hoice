@@ -1656,9 +1656,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             let (_, id) = self.ident() ? ;
             self.ws_cmt() ;
+
+            // Save term stack.
+            let old_stack = ::std::mem::replace(
+              & mut self.cxt.term_stack, vec![]
+            ) ;
+
             let tterms = self.parse_ptterms(
               var_map, map, instance
             ) ? ;
+
+            // Load term stack.
+            debug_assert! { self.cxt.term_stack.is_empty() }
+            self.cxt.term_stack = old_stack ;
+
             self.insert_bind(id, tterms) ? ;
             self.ws_cmt() ;
             self.tag(")") ? ;
@@ -2248,7 +2259,19 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<Term> > {
-    debug_assert! { self.cxt.term_stack.is_empty() }
+    if ! self.cxt.term_stack.is_empty() {
+      let e: Error = self.error_here("non-empty term stack").into() ;
+      let mut blah: String = "while parsing this:\n".into() ;
+      for line in self.string.lines() {
+        blah.push_str("| ") ;
+        blah.push_str(line) ;
+        blah.push('\n')
+      }
+      print_err(
+        & e.chain_err(|| blah)
+      ) ;
+      panic!("non-empty term stack during parsing")
+    }
     conf.check_timeout() ? ;
     let start_pos = self.pos() ;
 
