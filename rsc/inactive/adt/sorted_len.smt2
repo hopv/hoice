@@ -50,10 +50,6 @@
 ;   in
 ;   loop []
 
-; Pre-condition.
-(declare-fun
-  rev_pre ((Lst Int) (Lst Int)) Bool
-)
 ; Post-condition.
 (declare-fun
   rev_pst ( (Lst Int) (Lst Int) (Lst Int) ) Bool
@@ -62,10 +58,7 @@
 ; Terminal case.
 (assert
   (forall ( (acc (Lst Int)) )
-    (=>
-      (rev_pre acc nil)
-      (rev_pst acc nil acc)
-    )
+    (rev_pst acc nil acc)
 ) )
 
 ; Recursive case.
@@ -73,19 +66,6 @@
   (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
   (=>
     (and
-      (rev_pre acc lst)
-      (not (= lst nil))
-    )
-    (rev_pre (cons (head lst) acc) (tail lst))
-  )
-) )
-
-; Recursive case.
-(assert
-  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
-  (=>
-    (and
-      (rev_pre acc lst)
       (not (= lst nil))
       (rev_pst
         (cons (head lst) acc)
@@ -123,7 +103,7 @@
     (and
       (not (= lst nil))
       (not (= (tail lst) nil))
-      (not (<= (head lst) (head (tail lst))))
+      (not (< (head lst) (head (tail lst))))
     )
     (srt_pst lst false)
   )
@@ -136,7 +116,7 @@
     (and
       (not (= lst nil))
       (not (= (tail lst) nil))
-      (<= (head lst) (head (tail lst)))
+      (< (head lst) (head (tail lst)))
       (srt_pst (tail lst) res)
     )
     (srt_pst lst res)
@@ -150,22 +130,14 @@
 ;   and (sorted (rev lst))
 ;   then (assert (all_elements_the_same lst))
 (assert
-  (forall ( (lst (Lst Int)) )
-    (=>
-      true
-      (rev_pre nil lst)
-    )
-  )
-)
-(assert
-  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) )
+  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) (i Int) )
   (=>
     (and
-      (rev_pre nil lst1)
       (rev_pst nil lst1 lst2)
       (srt_pst lst1 true)
       (srt_pst lst2 true)
-      (not (all_equal lst1))
+      (not (and (= lst1         nil ) (= lst2         nil )))
+      (not (and (= lst1 (cons i nil)) (= lst2 (cons i nil))))
     )
     false
   )

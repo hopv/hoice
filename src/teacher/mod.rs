@@ -668,45 +668,55 @@ impl<'a> Teacher<'a> {
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
 
-    self.solver.push(1) ? ;
+    macro_rules! define_preds {
+      () => ({
+        true_preds.clear() ;
+        false_preds.clear() ;
 
-    // Retrieve true/false predicates and clauses to ignore. Define predicates.
-    for (pred, cand) in cands.index_iter() {
-      if let Some(ref term) = * cand {
-        let term = if let Some(other) = self.partial_model.get(& pred) {
-          term::and( vec![term.clone(), other.clone()] )
-        } else {
-          term.clone()
-        } ;
-        match term.bool() {
-          Some(true) => {
-            let _ = true_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).1
-            )
-          },
-          Some(false) => {
-            let _ = false_preds.insert(pred) ;
-            clauses_to_ignore.extend(
-              self.instance.clauses_of(pred).0
-            )
-          },
-          None => {
+        // Retrieve true/false predicates and clauses to ignore. Define predicates.
+        for (pred, cand) in cands.index_iter() {
+          if let Some(ref term) = * cand {
             let term = if let Some(other) = self.partial_model.get(& pred) {
               term::and( vec![term.clone(), other.clone()] )
             } else {
               term.clone()
             } ;
-            let pred = & self.instance[pred] ;
-            let sig: Vec<_> = pred.sig.index_iter().map(
-              |(var, typ)| (var, typ.get())
-            ).collect() ;
-            self.solver.define_fun(
-              & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
-            ) ?
-          },
+            match term.bool() {
+              Some(true) => {
+                let _ = true_preds.insert(pred) ;
+                clauses_to_ignore.extend(
+                  self.instance.clauses_of(pred).1
+                )
+              },
+              Some(false) => {
+                let _ = false_preds.insert(pred) ;
+                clauses_to_ignore.extend(
+                  self.instance.clauses_of(pred).0
+                )
+              },
+              None => {
+                let term = if let Some(other) = self.partial_model.get(& pred) {
+                  term::and( vec![term.clone(), other.clone()] )
+                } else {
+                  term.clone()
+                } ;
+                let pred = & self.instance[pred] ;
+                let sig: Vec<_> = pred.sig.index_iter().map(
+                  |(var, typ)| (var, typ.get())
+                ).collect() ;
+                self.solver.define_fun(
+                  & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
+                ) ?
+              },
+            }
+          }
         }
-      }
+      }) ;
+    }
+
+    if ! conf.teacher.restart_on_cex {
+      self.solver.push(1) ? ;
+      define_preds!()
     }
 
     let instance = self.instance.clone() ;
@@ -717,7 +727,11 @@ impl<'a> Teacher<'a> {
     macro_rules! run {
       ($clause:expr, $bias:expr) => (
         if ! clauses_to_ignore.contains($clause) {
-          self.solver.push(1) ? ;
+          if conf.teacher.restart_on_cex {
+            define_preds!()
+          } else {
+            self.solver.push(1) ?
+          }
 
           let cexs = self.get_cex(
             * $clause, & true_preds, & false_preds, $bias,
@@ -727,7 +741,11 @@ impl<'a> Teacher<'a> {
             || format!("while getting counterexample for clause {}", $clause)
           ) ? ;
 
-          self.solver.pop(1) ? ;
+          if conf.teacher.restart_on_cex {
+            smt::reset(& mut self.solver) ?
+          } else {
+            self.solver.pop(1) ?
+          }
 
           if ! cexs.is_empty() {
             // got_pos_neg_samples = got_pos_neg_samples || (
@@ -796,8 +814,9 @@ impl<'a> Teacher<'a> {
     //   )
     // }
 
-    if self.count % 100 == 0 {
-      smt::reset(& mut self.solver) ?
+    if self.count % 100 == 0
+    || conf.teacher.restart_on_cex {
+      smt::reset(& mut self.solver) ? ;
     } else {
       self.solver.pop(1) ?
     }

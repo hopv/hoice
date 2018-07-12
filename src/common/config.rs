@@ -938,6 +938,8 @@ pub struct TeacherConf {
   pub max_bias: bool,
   /// Allow partial samples.
   pub partial: bool,
+  /// Restart the teacher's solver everytime it's used.
+  pub restart_on_cex: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
@@ -1013,6 +1015,20 @@ impl TeacherConf {
         "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("restart_on_cex").long("--restart_on_cex").help(
+        "restart the teacher's solver for each cex query"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
     )
   }
 
@@ -1023,9 +1039,10 @@ impl TeacherConf {
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
     let max_bias = bool_of_matches(matches, "max_bias") ;
     let partial = bool_of_matches(matches, "partial") ;
+    let restart_on_cex = bool_of_matches(matches, "restart_on_cex") ;
 
     TeacherConf {
-      step, assistant, bias_cexs, max_bias, partial
+      step, assistant, bias_cexs, max_bias, partial, restart_on_cex
     }
   }
 }
