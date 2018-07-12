@@ -89,7 +89,7 @@ impl PartialTyp {
   }
 
   /// Resolves a partial type against a type.
-  pub fn unify (
+  pub fn unify(
     & self, typ: & Typ, map: & mut TPrmMap<Typ>
   ) -> Res<()> {
     let mut stack = vec![ (self, typ) ] ;

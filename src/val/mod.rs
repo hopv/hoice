@@ -138,7 +138,35 @@ pub fn none(typ: Typ) -> Val {
 }
 
 /// Creates a new datatype value.
-pub fn dtyp_new(typ: Typ, name: String, args: Vec<Val>) -> Val {
+pub fn dtyp_new(typ: Typ, name: String, mut args: Vec<Val>) -> Val {
+  {
+    let (dtyp, typ_args) = typ.dtyp_inspect().unwrap_or_else(
+      || panic!("illegal application of constructor {} of type {}", name, typ)
+    ) ;
+    let cargs = dtyp.news.get(& name).unwrap_or_else(
+      || panic!(
+        "unknown constructor {} for datatype {}", conf.bad(& name), dtyp.name
+      )
+    ) ;
+    if args.len() != cargs.len() {
+      panic!(
+        "illegal application of constructor {} for datatype {} to {} \
+        arguments, expected {}",
+        conf.bad(& name), dtyp.name, args.len(), cargs.len()
+      )
+    }
+
+    for (count, (_ , ptyp)) in cargs.iter().enumerate() {
+      let typ = ptyp.to_type(typ_args).unwrap_or_else(
+        |_| panic!("illegal datatype {}", typ)
+      ) ;
+      if let Some(nu) = args[count].typ().merge(& typ) {
+        if let Some(nu) = args[count].force_dtyp(nu) {
+          args[count] = nu
+        }
+      }
+    }
+  }
   factory.mk( RVal::DTypNew { typ, name, args } )
 }
 
@@ -413,6 +441,16 @@ impl RVal {
       // This is a bit lax as it allows to cast a non-value of any type to a
       // non-value of any other type...
       (& RVal::N(_), _) => Ok(none(typ.clone())),
+
+      (
+        & RVal::DTypNew { typ: ref vtyp, ref name, ref args }, _
+      ) => if let Some(typ) = vtyp.merge(typ) {
+        Ok( dtyp_new(typ, name.clone(), args.clone()) )
+      } else {
+        bail!(
+          "Cannot cast value {} to type {}", self, typ
+        )        
+      },
 
       (val, typ) => bail!(
         "Cannot cast value {} to type {}", val, typ

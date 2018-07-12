@@ -168,9 +168,6 @@ Partial: for<'a> FnMut(
   // Empty vector of terms, useful when handling unary operators.
   let empty: Vec<Term> = Vec::with_capacity(0) ;
 
-  println!() ;
-  println!("start") ;
-
   // Current term we're going down in.
   let mut term = term ;
 
@@ -179,20 +176,18 @@ Partial: for<'a> FnMut(
   // The current substitution, if any.
   let mut subst: Option< VarMap<Yield> > = None ;
 
-  macro_rules! stack_print {
-    () => ({
-      println!("stack {{") ;
-      for (ZipFrame { thing, rgt_args, .. }, _) in & stack {
-        println!("  {} > {}", thing, rgt_args.len())
-      }
-      println!("}}")
-    }) ;
-  }
+  // macro_rules! stack_print {
+  //   () => ({
+  //     println!("stack {{") ;
+  //     for (ZipFrame { thing, rgt_args, .. }, _) in & stack {
+  //       println!("  {} > {}", thing, rgt_args.len())
+  //     }
+  //     println!("}}")
+  //   }) ;
+  // }
 
   'inspect_term: loop {
-    println!("{}", term) ;
-
-    stack_print!() ;
+    // stack_print!() ;
 
     let result = match * term.get() {
 
@@ -289,7 +284,6 @@ Partial: for<'a> FnMut(
           continue 'inspect_term
 
         } else {
-          println!("calling total function on {}", name) ;
           app_do(op, typ, lft_args) ?
         }
       },
@@ -310,9 +304,7 @@ Partial: for<'a> FnMut(
     } ;
 
     'inspect_do_res: loop {
-      println!("  {}", result) ;
-
-      stack_print!() ;
+      // stack_print!() ;
 
       match stack.pop() {
 
@@ -325,13 +317,11 @@ Partial: for<'a> FnMut(
         ) => {
           subst = old_subst ;
 
-          println!("    {:?}", thing) ;
 
           // Update left args.
           lft_args.push( result ) ;
 
           if rgt_args.len() == 0 {
-            println!("    -> 0") ;
 
             match app_do(thing, typ, lft_args) ? {
               ZipDoTotal::Upp { yielded } => {
@@ -340,7 +330,6 @@ Partial: for<'a> FnMut(
               },
 
               ZipDoTotal::Dwn { nu_term, nu_subst} => {
-                println!("    down (stack {})", stack.len()) ;
                 if nu_subst.is_some() {
                   subst = nu_subst
                 }
@@ -350,7 +339,6 @@ Partial: for<'a> FnMut(
             }
 
           } else {
-            println!("    -> {}", rgt_args.len()) ;
 
             match partial(
               ZipFrame { thing, typ, lft_args, rgt_args }

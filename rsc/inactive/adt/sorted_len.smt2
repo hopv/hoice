@@ -73,6 +73,19 @@
   (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
   (=>
     (and
+      (rev_pre acc lst)
+      (not (= lst nil))
+    )
+    (rev_pre (cons (head lst) acc) (tail lst))
+  )
+) )
+
+; Recursive case.
+(assert
+  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
+  (=>
+    (and
+      (rev_pre acc lst)
       (not (= lst nil))
       (rev_pst
         (cons (head lst) acc)
@@ -110,7 +123,7 @@
     (and
       (not (= lst nil))
       (not (= (tail lst) nil))
-      (not (< (head lst) (head (tail lst))))
+      (not (<= (head lst) (head (tail lst))))
     )
     (srt_pst lst false)
   )
@@ -123,7 +136,7 @@
     (and
       (not (= lst nil))
       (not (= (tail lst) nil))
-      (< (head lst) (head (tail lst)))
+      (<= (head lst) (head (tail lst)))
       (srt_pst (tail lst) res)
     )
     (srt_pst lst res)
