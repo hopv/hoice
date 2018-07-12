@@ -317,12 +317,12 @@ impl RTyp {
   /// Fails if the type is unknown.
   pub fn default_val(& self) -> Val {
     let typ = factory.mk( self.clone() ) ;
-    let mut current = & typ ;
+    let mut current = typ ;
     let mut stack = vec![] ;
 
     'go_down: loop {
 
-      let mut val = match current.get() {
+      let mut val = match current.clone().get() {
         RTyp::Real => val::real( Rat::zero() ),
         RTyp::Int => val::int( Int::zero() ),
         RTyp::Bool => val::bool( true ),
@@ -330,12 +330,24 @@ impl RTyp {
           src.clone(), tgt.default_val()
         ),
         RTyp::DTyp { dtyp, prms } => {
-          let mut prms = prms.iter() ;
-          if let Some(next) = prms.next() {
-            current = next ;
-            stack.push(
-              (current, dtyp.default.clone(), vec![], prms)
+          let mut args = vec![] ;
+
+          for (_, arg_typ) in dtyp.news.get(& dtyp.default).expect(
+            "inconsistent datatype factory/map state"
+          ) {
+            let arg_typ = arg_typ.to_type(prms).unwrap_or_else(
+              |_| panic!("illegal type {}", current)
             ) ;
+            args.push(arg_typ)
+          }
+
+          let mut args = args.into_iter() ;
+
+          if let Some(next) = args.next() {
+            stack.push(
+              ( current.clone(), dtyp.default.clone(), vec![], args )
+            ) ;
+            current = next ;
             continue 'go_down
           } else {
             val::dtyp_new(

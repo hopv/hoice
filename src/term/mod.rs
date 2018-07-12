@@ -548,6 +548,20 @@ impl RTerm {
     }
   }
 
+  /// Forces the type of a datatype constructor.
+  pub fn force_dtyp(& self, nu_typ: Typ) -> Option<Term> {
+    match self {
+      RTerm::DTypNew { typ, name, args } => {
+        debug_assert! { nu_typ.is_compatible(typ) }
+        Some(
+          dtyp_new( nu_typ, name.clone(), args.clone() )
+        )
+      },
+      RTerm::Cst(val) => val.force_dtyp(nu_typ).map(cst),
+      _ => None,
+    }
+  }
+
   /// Casts a term.
   ///
   /// Only legal if the term's type and the one provided are compatible.
@@ -948,11 +962,14 @@ impl RTerm {
   ) -> Option<(Term, bool)> {
     let mut changed = false ;
 
+    // println!("{}", self) ;
+
     let res = fold::fold_custom_res(
       self,
 
       // Variable.
       |typ, var| if let Some(term) = map.var_get(var) {
+        // println!("  {}, {} ({})", typ, term, term.typ()) ;
         debug_assert_eq! { typ, & term.typ() }
         changed = true ;
         Ok(term)

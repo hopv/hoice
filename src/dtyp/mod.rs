@@ -525,18 +525,35 @@ pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
       continue
     }
 
-    write!(w, "{}({} (", pref, keywords::cmd::dec_dtyp) ? ;
-    for name in & dtyp.prms {
-      write!(w, " {}", name) ?
-    }
-    writeln!(w, " ) (") ? ;
+    let mut all = vec![ dtyp.clone() ] ;
 
-    dtyp.write(w, dtyp_pref) ? ;
     for dtyp in & dtyp.deps {
       let is_new = known.insert(dtyp) ;
-      assert!(is_new) ;
-      let dtyp = get(dtyp).expect("inconsistent datatype state") ;
-      dtyp.write(w, dtyp_pref) ?
+      assert! { is_new }
+
+      if let Ok(dtyp) = get(dtyp) {
+        all.push(dtyp)
+      } else {
+        panic!("inconsistent datatype factory/maps state")
+      }
+    }
+
+    writeln!(w, "{}({} (", pref, keywords::cmd::dec_dtyps) ? ;
+    write!(w, "{} ", pref) ? ;
+
+    for dtyp in all.clone() {
+      write!(w, " ({} {})", dtyp.name, dtyp.prms.len()) ?
+    }
+
+    writeln!(w, "\n{}) (", pref) ? ;
+
+    for dtyp in all {
+      dtyp.write_dec(w, dtyp_pref) ?
+    }
+
+    for dtyp in & dtyp.deps {
+      let is_new = known.insert(dtyp) ;
+      assert!(is_new)
     }
 
     writeln!(w, "{}) )", pref) ?
@@ -640,12 +657,50 @@ pub struct RDTyp {
 }
 impl RDTyp {
   /// Constructor.
-  pub fn new<S: Into<String>>(name: S, prms: TPrmMap<String>) -> Self {
+  pub fn new<S: Into<String>>(name: S) -> Self {
     let name = name.into() ;
     RDTyp {
-      name, deps: vec![], prms, news: BTreeMap::new(),
+      name, deps: vec![], prms: TPrmMap::new(), news: BTreeMap::new(),
       default: "".into()
     }
+  }
+
+  /// Pushes a type parameter.
+  pub fn push_typ_param<S: Into<String>>(& mut self, name: S) -> TPrmIdx {
+    let idx = self.prms.next_index() ;
+    self.prms.push( name.into() ) ;
+    idx
+  }
+
+  /// Writes the declaration for a datatype.
+  pub fn write_dec<W: Write>(
+    & self, w: & mut W, pref: & str
+  ) -> ::std::io::Result<()> {
+    let close_par = if self.prms.is_empty() {
+      writeln!(w, "{}( ; {}", pref, self.name) ? ;
+      false
+    } else {
+      write!(w, "{}(par (", pref) ? ;
+      for prm in & self.prms {
+        write!(w, " {}", prm) ?
+      }
+      writeln!(w, " ) (") ? ;
+      true
+    } ;
+
+    for (name, args) in & self.news {
+      write!(w, "{}  ({}", pref, name) ? ;
+      for (name, typ) in args {
+        write!(w, " ({} ", name) ? ;
+        typ.write(w, & self.prms) ? ;
+        write!(w, ")") ?
+      }
+      writeln!(w, ")") ?
+    }
+
+    writeln!(
+      w, "{}){}", pref, if close_par { " )" } else { "" }
+    )
   }
 
   /// Writes a single datatype.

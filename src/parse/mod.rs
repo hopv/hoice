@@ -1325,143 +1325,277 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
 
 
+  /// Parses a datatype constructor.
+  fn dtyp_new(
+    & mut self,
+    params_map: & BTreeMap<& 's str, dtyp::TPrmIdx>,
+  ) -> Res< Option<(Pos, & 's str, dtyp::CArgs)> > {
+
+    if self.tag_opt("(") {
+      // Normal case.
+
+      let (constructor_pos, constructor_ident) = self.ident() ? ;
+      self.ws_cmt() ;
+
+      let mut selectors = dtyp::CArgs::new() ;
+
+      // Parse selectors.
+      while self.tag_opt("(") {
+        self.ws_cmt() ;
+        let (selector_pos, selector_ident) = self.ident() ? ;
+        self.ws_cmt() ;
+
+        if selectors.iter().any(
+          |(id, _)| id == selector_ident
+        ) {
+          bail!(
+            self.error(
+              selector_pos, format!(
+                "found a selector named `{}` twice", selector_ident
+              )
+            )
+          )
+        }
+
+        let ptyp = self.nu_sort(& params_map) ? ;
+        selectors.push(
+          ( selector_ident.to_string(), ptyp )
+        ) ;
+
+        self.tag(")").chain_err(
+          || format!(
+            "closing selector `{}`", conf.emph(selector_ident)
+          )
+        ) ? ;
+        self.ws_cmt()
+      }
+
+      self.tag(")").chain_err(
+        || "closing datatype constructor"
+      ) ? ;
+
+      Ok(
+        Some( (constructor_pos, constructor_ident, selectors) )
+      )
+
+    } else if let Some(
+      (constructor_pos, constructor_ident)
+    ) = self.ident_opt() ? {
+      // Constant, paren-free constructor. This is actually not legal in
+      // SMT-LIB 2, but some people use it anyways.
+      return Ok(
+        Some(
+          ( constructor_pos, constructor_ident, dtyp::CArgs::new() )
+        )
+      )
+
+    } else {
+      return Ok( None )
+    }
+
+  }
 
 
-  /// Datatype declaration.
-  fn dtyp_dec(& mut self) -> Res<bool> {
+
+
+  /// Parses a single datatype declaration.
+  fn dtyp_dec(
+    & mut self, dtyp: & mut dtyp::RDTyp, arity: Option<Int>
+  ) -> Res<()> {
+    self.tag("(").chain_err(
+      || "opening datatype declaration"
+    ) ? ;
+    self.ws_cmt() ;
+
+    let mut params_map = BTreeMap::new() ;
+    let param_pos = self.pos() ;
+
+    // Try to parse parameters.
+    let closing_paren = if self.word_opt("par") {
+      self.ws_cmt() ;
+      self.tag("(").chain_err(
+        || "opening sort parameter list"
+      ) ? ;
+
+      while let Some((pos, ident)) = self.ident_opt() ? {
+        let idx = dtyp.push_typ_param(ident) ;
+        if let Some(prev) = params_map.insert(ident, idx) {
+          bail!(
+            self.error(
+              pos, format!(
+                "type parameters #{} and #{} have the same name `{}`",
+                idx, prev, ident
+              )
+            )
+          )
+        }
+        self.ws_cmt()
+      }
+
+      if let Some(arity) = arity {
+        if Int::from( params_map.len() ) != arity {
+          bail!(
+            self.error(
+              param_pos, format!(
+                "expected {} parameters, found {}", arity, params_map.len()
+              )
+            )
+          )
+        }
+      }
+
+      self.tag(")").chain_err(
+        || "closing sort parameter list"
+      ) ? ;
+
+      self.ws_cmt() ;
+      self.tag("(").chain_err(
+        || "opening the list of constructor"
+      ) ? ;
+      self.ws_cmt() ;
+
+      true
+    } else {
+      false
+    } ;
+
+
+    while let Some(
+      (constructor_pos, constructor_ident, selectors)
+    ) = self.dtyp_new(& params_map) ? {
+      self.ws_cmt() ;
+
+      dtyp.add_constructor(constructor_ident, selectors).chain_err(
+        || self.error(
+          constructor_pos, "in this constructor"
+        )
+      ) ?
+    }
+
+
+    if closing_paren {
+      self.ws_cmt() ;
+      self.tag(")").chain_err(
+        || "closing the list of constructor"
+      ) ? ;
+    }
+
+    self.ws_cmt() ;
+    self.tag(")").chain_err(
+      || "closing datatype declaration"
+    )
+  }
+
+
+
+  /// Single datatype declaration.
+  fn dtyp_dec_item(& mut self) -> Res<bool> {
     if ! self.word_opt(keywords::cmd::dec_dtyp) {
       return Ok(false)
     }
 
-    let mut dtyps: Vec<(Pos, dtyp::RDTyp)> = vec![] ;
+    let (dtyp_pos, dtyp_ident) = self.ident().chain_err(
+      || "while parsing datatype declaration"
+    ) ? ;
 
-    let mut params = dtyp::TPrmMap::new() ;
+    let mut dtyp = dtyp::RDTyp::new(dtyp_ident) ;
 
+    self.dtyp_dec(& mut dtyp, None).chain_err(
+      || self.error(
+        dtyp_pos, format!(
+          "while parsing the declaration for datatype `{}`",
+          conf.emph(& dtyp.name)
+        )
+      )
+    ) ? ;
+
+    Ok(true)
+  }
+
+
+  /// Multiple datatype declaration.
+  fn dtyp_decs_item(& mut self) -> Res<bool> {
+    if ! self.word_opt(keywords::cmd::dec_dtyps) {
+      return Ok(false)
+    }
     self.ws_cmt() ;
-    self.tag("(") ? ;
+
+    // List of datatypes.
+    self.tag("(").chain_err(
+      || "opening the list of symbol/arity pairs"
+    ) ? ;
     self.ws_cmt() ;
 
-    let mut params_map = BTreeMap::new() ;
+    let mut dtyps = vec![] ;
 
-    // Type parameters.
-    while let Some((pos, ident)) = self.ident_opt() ? {
-      let idx = params.next_index() ;
-      if let Some(prev) = params_map.insert(ident, idx) {
+    while self.tag_opt("(") {
+      let (dtyp_pos, dtyp_ident) = self.ident().chain_err(
+        || "declaring a new datatype"
+      ) ? ;
+      self.ws_cmt() ;
+
+      let arity = if let Some(arity) = self.numeral() {
+        arity
+      } else {
         bail!(
-          self.error(
-            pos, format!(
-              "type parameters #{} and #{} have the same name `{}`",
-              idx, prev, ident
+          self.error_here(
+            format!(
+              "expected arity for datatype `{}`", conf.emph(dtyp_ident)
             )
           )
         )
-      }
-      params.push( ident.to_string() ) ;
+      } ;
+
+      dtyps.push( (dtyp_pos, dtyp::RDTyp::new(dtyp_ident), arity) ) ;
+
+      self.tag(")").chain_err(
+        || format!(
+          "closing symbol/arity pair for `{}`", conf.emph(dtyp_ident)
+        )
+      ) ? ;
       self.ws_cmt()
     }
 
-    self.tag(")") ? ;
+    self.tag(")").chain_err(
+      || "closing the list of symbol/arity pairs"
+    ) ? ;
     self.ws_cmt() ;
 
-    self.tag("(") ? ;
+
+
+
+
+    self.tag("(").chain_err(
+      || "opening the list of datatype declaration"
+    ) ? ;
     self.ws_cmt() ;
-
-    // Datatype declarations.
-    while self.tag_opt("(") {
-      self.ws_cmt() ;
-      let (dtyp_pos, dtyp_ident) = self.ident() ? ;
-      self.ws_cmt() ;
-
-      let mut dtyp = dtyp::RDTyp::new( dtyp_ident, params.clone() ) ;
-
-      // Constructors.
-      'constructors: loop {
-
-        let (
-          constructor_pos, constructor_ident, selectors
-        ) = if self.tag_opt("(") {
-          self.ws_cmt() ;
-          let (constructor_pos, constructor_ident) = self.ident() ? ;
-          self.ws_cmt() ;
-
-          let mut selectors = dtyp::CArgs::new() ;
-
-          // Selectors.
-          while self.tag_opt("(") {
-            self.ws_cmt() ;
-            let (selector_pos, selector_ident) = self.ident() ? ;
-            self.ws_cmt() ;
-
-            if selectors.iter().any(
-              |(id, _)| id == selector_ident
-            ) {
-              let error: Error = self.error(
-                selector_pos,
-                format!("found the selector `{}` twice", selector_ident)
-              ).into() ;
-              bail!(
-                error.chain_err(
-                  || self.error(
-                    dtyp_pos, "in this datatype declaration"
-                  )
-                )
-              )
-            }
-
-            let ptyp = self.nu_sort(& params_map) ? ;
-            selectors.push(
-              ( selector_ident.to_string(), ptyp )
-            ) ;
-
-            self.ws_cmt() ;
-            self.tag(")") ? ;
-            self.ws_cmt()
-          }
-
-          self.tag(")") ? ;
-          self.ws_cmt() ;
-
-          (constructor_pos, constructor_ident, selectors)
-
-        } else if let Some(
-          (constructor_pos, constructor_ident)
-        ) = self.ident_opt() ? {
-          self.ws_cmt() ;
-          (constructor_pos, constructor_ident, dtyp::CArgs::new())
-
-        } else {
-          break 'constructors
-        } ;
-
-
-        dtyp.add_constructor(constructor_ident, selectors).chain_err(
-          || self.error(constructor_pos, "in this constructor")
-        ) ?
-
-      }
-
-      for (_, dt) in & mut dtyps {
-        dt.add_dep( dtyp.name.clone() ) ;
-        dtyp.add_dep( dt.name.clone() )
-      }
-
-      dtyps.push( (dtyp_pos, dtyp) ) ;
-
-      self.tag_opt(")") ;
-      self.ws_cmt()
-    }
-
-    self.tag(")") ? ;
 
     let mut final_dtyps = Vec::with_capacity( dtyps.len() ) ;
 
-    for (dtyp_pos, dtyp) in dtyps {
-      final_dtyps.push((
-        dtyp_pos, dtyp::mk(dtyp).chain_err(
-          || self.error(dtyp_pos, "while parsing this datatype constructor")
-        ) ?
-      ))
+    for (dtyp_pos, mut dtyp, dtyp_arity) in dtyps {
+      self.dtyp_dec(
+        & mut dtyp, Some(dtyp_arity)
+      ).chain_err(
+        || format!(
+          "while parsing the declaration for datatype `{}`",
+          conf.emph(& dtyp.name)
+        )
+      ).chain_err(
+        || self.error(dtyp_pos, "declared here")
+      ) ? ;
+      self.ws_cmt() ;
+
+      let dtyp = dtyp::mk(dtyp).chain_err(
+        || self.error(
+          dtyp_pos, "while parsing the declaration for this datatype"
+        )
+      ) ? ;
+      final_dtyps.push( (dtyp_pos, dtyp) )
     }
+
+    self.tag(")").chain_err(
+      || "closing the list of datatype declaration"
+    ) ? ;
 
     for (dtyp_pos, dtyp) in final_dtyps {
       if let Err((pos, err)) = dtyp.check() {
@@ -2644,19 +2778,25 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       for ((index, exp), pos) in sig.index_iter().zip( kid_pos.into_iter() ) {
         let found = args[index].typ() ;
         if exp != & found {
-          err_chain! {
-            self.error(
-              pos, format!(
-                "expected an expression of sort {}, found {} ({})",
-                exp, & args[index], found
+          if let Some(nu) = exp.merge(& found) {
+            if let Some(term) = args[index].force_dtyp(nu) {
+              args[index] = term
+            }
+          } else {
+            err_chain! {
+              self.error(
+                pos, format!(
+                  "expected an expression of sort {}, found {} ({})",
+                  exp, & args[index], found
+                )
               )
-            )
-            => self.error(
-              pred_pos, format!(
-                "in this application of {}, parameter #{}",
-                conf.emph(& instance[pred].name), index
+              => self.error(
+                pred_pos, format!(
+                  "in this application of {}, parameter #{}",
+                  conf.emph(& instance[pred].name), index
+                )
               )
-            )
+            }
           }
         }
       }
@@ -3403,7 +3543,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       || self.define_fun(instance) ?
       || self.define_funs_rec(instance) ?
       || self.assert(instance) ?
-      || self.dtyp_dec() ? {
+      || self.dtyp_dec_item() ?
+      || self.dtyp_decs_item() ? {
         Parsed::Items
       } else if self.check_sat() {
         Parsed::CheckSat

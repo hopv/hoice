@@ -250,9 +250,9 @@ pub fn fun(typ: Typ, name: String, args: Vec<Term>) -> Term {
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
-pub fn app(op: Op, args: Vec<Term>) -> Term {
+pub fn app(op: Op, mut args: Vec<Term>) -> Term {
   let typ = expect!(
-    op.type_check(& args) => |e|
+    op.type_check(& mut args) => |e|
       let res: Res<()> = Err(
         "Fatal internal type checking error, \
         please notify the developer(s)".into()
@@ -351,8 +351,8 @@ pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
-pub fn try_app(op: Op, args: Vec<Term>) -> Result<Term, term::TypError> {
-  let typ = op.type_check(& args) ? ;
+pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
+  let typ = op.type_check(& mut args) ? ;
   Ok( normalize(op, args, typ) )
 }
 

@@ -54,9 +54,15 @@ fn total<'a>(
   fun_ref_count: & mut usize
 ) -> Res< CmdT<'a> > {
   let yielded = match op {
-    ZipOp::Op(op) => op.eval(values).chain_err(
-      || format!("while evaluating operator `{}`", op)
-    ) ?,
+    ZipOp::Op(op) => {
+      println!("{}", op) ;
+      for value in & values {
+        println!("  {} -- {}", value, value.typ())
+      }
+      op.eval(values).chain_err(
+        || format!("while evaluating operator `{}`", op)
+      ) ?
+    },
 
     ZipOp::New(name) => val::dtyp_new(
       typ.clone(), name.clone(), values
@@ -121,6 +127,7 @@ fn total<'a>(
     },
 
     ZipOp::Fun(name) => {
+      pause(& format!("fun {}", name), & Profiler::new()) ;
       let fun = if let Some(fun) = fun::get_as_ref(name) {
         fun
       } else {

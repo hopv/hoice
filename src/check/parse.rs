@@ -286,40 +286,6 @@ impl<'a> InParser<'a> {
     Ok(Some((key, val)))
   }
 
-  /// Type or fails.
-  fn typ(& mut self) -> Res<Typ> {
-    if let Some(t) = self.typ_opt() ? {
-      Ok(t)
-    } else {
-      bail!("expected type")
-    }
-  }
-  /// Type.
-  fn typ_opt(& mut self) -> Res<Option<Typ>> {
-    if self.tag_opt("Bool") {
-      Ok( Some( "Bool".to_string() ) )
-    } else if self.tag_opt("Int") {
-      Ok( Some( "Int".to_string() ) )
-    } else if self.tag_opt("Real") {
-      Ok( Some( "Real".to_string() ) )
-    } else if self.tag_opt("(") {
-      self.ws_cmt() ;
-      if self.tag_opt("Array") {
-        self.ws_cmt() ;
-        let src = self.typ() ? ;
-        self.ws_cmt() ;
-        let tgt = self.typ() ? ;
-        self.ws_cmt() ;
-        self.tag(")") ? ;
-        Ok( Some( format!("(Array {} {})", src, tgt) ) )
-      } else {
-        bail!("expected type")
-      }
-    } else {
-      Ok(None)
-    }
-  }
-
   /// Declare-fun.
   fn declare_fun(& mut self) -> Res<bool> {
     if ! self.tag_opt("declare-fun") {
@@ -473,7 +439,7 @@ impl<'a> InParser<'a> {
       || self.set_info() ?
       || self.set_option()?.is_some()
       || self.declare_fun() ?
-      || self.define_fun() ?
+      // || self.define_fun() ?
       || self.assert() ?
       || self.tag_opt("check-sat")
       || self.tag_opt("get-model")
@@ -551,35 +517,6 @@ impl<'a> InParser<'a> {
     Ok(true)
   }
 
-
-  /// Define-fun.
-  fn define_fun(& mut self) -> Res<bool> {
-    if ! self.tag_opt("define-fun") {
-      return Ok(false)
-    }
-    self.ws_cmt() ;
-    let name = self.ident().chain_err(
-      || "while parsing symbol"
-    ) ? ;
-    self.ws_cmt() ;
-    let args = self.args().chain_err(
-      || "while parsing arguments"
-    ) ? ;
-    self.ws_cmt() ;
-    let typ = self.typ().chain_err(
-      || "while parsing return type"
-    ) ? ;
-    self.ws_cmt() ;
-    let body = self.sexpr().chain_err(
-      || "while parsing body"
-    ) ? ;
-    self.ws_cmt() ;
-    self.fun_defs.push(
-      FunDef { name, args, typ, body }
-    ) ;
-
-    Ok(true)
-  }
 
   /// Parses an `smt2` file.
   pub fn parse_output(mut self) -> Res<Output> {

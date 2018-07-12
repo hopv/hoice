@@ -878,6 +878,11 @@ impl<'core> IceLearner<'core> {
       profile!{ self tick "learning", "qual", "simple gain" }
       let res = self.qualifiers.maximize(
         pred, |qual| {
+          if conf.ice.qual_step {
+            let _ = core.msg(
+              format!("evaluating {} (simple gain)", qual)
+            ) ;
+          }
           let res = data.simple_gain(qual, false) ? ;
           if conf.ice.qual_step {
             let _ = core.msg(
@@ -906,6 +911,11 @@ impl<'core> IceLearner<'core> {
       profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
       let res = qualifiers.maximize(
         pred, |qual| {
+          if conf.ice.qual_step {
+            let _ = core.msg(
+              format!("evaluating {} (gain)", qual)
+            ) ;
+          }
           let res = data.gain(
             pred, all_data, qual, & self_core._profiler, false
           ) ? ;
@@ -1029,6 +1039,11 @@ impl<'core> IceLearner<'core> {
           // Term already known, skip.
           Ok(false)
         } else {
+          if conf.ice.qual_step || conf.ice.qual_synth_step {
+            let _ = self_core.msg(
+              format!("synth evaluating {}", term)
+            ) ;
+          }
           let gain = if simple {
             data.simple_gain(& term, false) ?
           } else {

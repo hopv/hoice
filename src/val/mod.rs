@@ -378,6 +378,18 @@ impl RVal {
     }
   }
 
+  /// Forces the type of a datatype constructor.
+  pub fn force_dtyp(& self, nu_typ: Typ) -> Option<Val> {
+    if let RVal::DTypNew { typ, name, args } = self {
+      debug_assert! { nu_typ.is_compatible(typ) }
+      Some(
+        dtyp_new( nu_typ, name.clone(), args.clone() )
+      )
+    } else {
+      None
+    }
+  }
+
   /// Attempts to cast a value.
   pub fn cast(& self, typ: & Typ) -> Res<Val> {
     use num::One ;

@@ -1,12 +1,15 @@
 (set-logic HORN)
 
-(declare-datatypes () (
-  (Lst nil (cons (head Int) (tail Lst)))
+(declare-datatypes ( (Lst 1) ) (
+  (par (T) (
+    (nil)
+    (cons (head T) (tail (Lst T)))
+  ) )
 ) )
 
 (define-funs-rec
   (
-    (len ( (l Lst) ) Int)
+    (len ( (l (Lst Int)) ) Int)
   )
   (
     (ite
@@ -19,8 +22,8 @@
 
 (define-funs-rec
   (
-    (all_equal ( (l Lst) ) Bool)
-    (all_equal_aux ( (v Int) (l Lst) ) Bool)
+    (all_equal ( (l (Lst Int)) ) Bool)
+    (all_equal_aux ( (v Int) (l (Lst Int)) ) Bool)
   )
   (
     (ite
@@ -47,18 +50,27 @@
 ;   in
 ;   loop []
 
+; Pre-condition.
+(declare-fun
+  rev_pre ((Lst Int) (Lst Int)) Bool
+)
 ; Post-condition.
 (declare-fun
-  rev_pst ( Lst Lst Lst ) Bool
+  rev_pst ( (Lst Int) (Lst Int) (Lst Int) ) Bool
 )
+
 ; Terminal case.
 (assert
-  (forall ( (acc Lst) )
-    (rev_pst acc nil acc)
+  (forall ( (acc (Lst Int)) )
+    (=>
+      (rev_pre acc nil)
+      (rev_pst acc nil acc)
+    )
 ) )
+
 ; Recursive case.
 (assert
-  (forall ( (acc Lst) (lst Lst) (res Lst) )
+  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
   (=>
     (and
       (not (= lst nil))
@@ -80,8 +92,9 @@
 
 ; Post-condition.
 (declare-fun
-  srt_pst ( Lst Bool ) Bool
+  srt_pst ( (Lst Int) Bool ) Bool
 )
+
 ; Terminal cases.
 (assert
   (forall ( (unused Bool) )
@@ -92,7 +105,7 @@
   (srt_pst (cons hd nil) true)
 ) )
 (assert
-  (forall ( (lst Lst) )
+  (forall ( (lst (Lst Int)) )
   (=>
     (and
       (not (= lst nil))
@@ -102,9 +115,10 @@
     (srt_pst lst false)
   )
 ) )
+
 ; Recursive case.
 (assert
-  (forall ( (lst Lst) (res Bool) )
+  (forall ( (lst (Lst Int)) (res Bool) )
   (=>
     (and
       (not (= lst nil))
@@ -123,9 +137,18 @@
 ;   and (sorted (rev lst))
 ;   then (assert (all_elements_the_same lst))
 (assert
-  (forall ( (lst1 Lst) (lst2 Lst) )
+  (forall ( (lst (Lst Int)) )
+    (=>
+      true
+      (rev_pre nil lst)
+    )
+  )
+)
+(assert
+  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) )
   (=>
     (and
+      (rev_pre nil lst1)
       (rev_pst nil lst1 lst2)
       (srt_pst lst1 true)
       (srt_pst lst2 true)
