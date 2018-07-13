@@ -43,51 +43,20 @@
   )
 )
 
-; let rev =
-;   let rec loop acc = function
-;   | [] -> acc
-;   | h :: t -> loop (h :: acc) t
-;   in
-;   loop []
-
-; Post-condition.
-(declare-fun
-  rev_pst ( (Lst Int) (Lst Int) (Lst Int) ) Bool
+(define-funs-rec
+  (
+    (rev ( (l (Lst Int)) ) (Lst Int))
+    (rev_aux ( (acc (Lst Int)) (l (Lst Int)) ) (Lst Int))
+  )
+  (
+    (rev_aux nil l)
+    (ite
+      (= l nil)
+      acc
+      (rev_aux (cons (head l) acc) (tail l))
+    )
+  )
 )
-
-; Terminal case.
-(assert
-  (forall ( (acc (Lst Int)) )
-    (rev_pst acc nil acc)
-) )
-
-; Recursive case.
-(assert
-  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
-  (=>
-    (and
-      (not (= lst nil))
-      (rev_pst
-        (cons (head lst) acc)
-        (tail lst)
-        res
-      )
-    )
-    (rev_pst acc lst res)
-  )
-) )
-
-; Partial spec.
-(assert
-  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
-  (=>
-    (and
-      (rev_pst acc lst res)
-      (not (= (+ (len acc) (len lst)) (len res)))
-    )
-    false
-  )
-) )
 
 
 ; let rec sorted = function
@@ -148,10 +117,10 @@
   (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) (i Int) )
   (=>
     (and
-      (rev_pst nil lst1 lst2)
+      (= (rev lst1) lst2)
       (srt_pst lst1 true)
       (srt_pst lst2 true)
-      (not (<= (len lst1) 2))
+      (not (<= (len lst1) 1))
     )
     false
   )

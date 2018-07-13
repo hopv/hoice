@@ -14,13 +14,36 @@ pub type CmdT<'a> = ZipDoTotal< 'a, Val > ;
 
 /// Term evaluation.
 pub fn eval<E: Evaluator>(term: & Term, model: & E) -> Res<Val> {
+  if let Some(val) = term.val() {
+    return Ok(val)
+  } else if let Some(idx) = term.var_idx() {
+    if idx < model.len() {
+      return Ok( model.get(idx).clone() )
+    } else {
+      bail!("model is too short ({} / {})", * idx, model.len())
+    }
+  }
+
+
   let mut fun_ref_count = 0 ;
+
   let res = zip(
     term, |zip_null| leaf(model, zip_null),
     |op, typ, values| total(op, typ, values, & mut fun_ref_count),
     partial
   ) ;
   fun::decrease_ref_count(fun_ref_count) ;
+  // if let Ok(res) = res.as_ref() {
+  //   if model.len() > 0
+  //   && ! res.is_known() {
+  //     println!("eval {}", term) ;
+  //     for v in 0 .. model.len() {
+  //       println!("  v_{}: {}", v, model.get( v.into() ))
+  //     }
+  //     println!("= {}", res) ;
+  //     pause(" blah", & Profiler::new()) ;
+  //   }
+  // }
   res
 }
 
