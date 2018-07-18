@@ -10,7 +10,6 @@
 #![doc(test(attr(deny(warnings))))]
 #![allow(non_upper_case_globals)]
 
-#[macro_use]
 extern crate lazy_static ;
 #[macro_use]
 extern crate mylib ;
@@ -19,6 +18,7 @@ extern crate error_chain ;
 #[macro_use]
 extern crate clap ;
 extern crate ansi_term as ansi ;
+#[macro_use]
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;

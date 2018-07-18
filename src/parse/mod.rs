@@ -35,7 +35,7 @@ pub enum Parsed {
 
 
 
-lazy_static!{
+lazy_static! {
   /// Set of legal special characters in identifiers.
   static ref id_special_chars: HashSet<& 'static str> = {
     let mut set = HashSet::with_capacity(17) ;

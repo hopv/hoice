@@ -1,18 +1,13 @@
 //! Term creation functions.
 
-use hashconsing::{ HashConsign, HConser } ;
+use hashconsing::HashConsign ;
 
 use common::* ;
 use term::{ RTerm, Term, Op } ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RTerm> > ;
-
-lazy_static! {
+new_consign! {
   /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+  let factory = consign(conf.instance.term_capa) for RTerm ;
 }
 
 lazy_static! {

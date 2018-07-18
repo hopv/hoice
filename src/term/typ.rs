@@ -1,18 +1,13 @@
 //! Everything type-related.
 
-use hashconsing::{ HashConsign, HConser, HConsed } ;
+use hashconsing::{ HashConsign, HConsed } ;
 
 use common::* ;
 use dtyp::TPrmMap ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RTyp> > ;
-
-lazy_static! {
-  /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+new_consign! {
+  /// Type factory.
+  let factory = consign(conf.instance.term_capa) for RTyp ;
 }
 
 

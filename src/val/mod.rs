@@ -6,18 +6,13 @@
 //! - `Val::I` from `Int`, `usize`, `isize`, `u32`, `i32`, `u64`, `i64`
 //! - `Val::N` from `()`
 
-use hashconsing::{ HashConsign, HConser, HConsed } ;
+use hashconsing::HConsed ;
 
 use common::* ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RVal> > ;
-
-lazy_static! {
-  /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+new_consign! {
+  /// Value factory.
+  let factory = consign(conf.instance.term_capa) for RVal ;
 }
 
 /// A hash-consed type.

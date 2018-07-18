@@ -3,20 +3,13 @@
 
 use std::cmp::Ordering ;
 
-use hashconsing::{ HashConsign, HConsed, HConser } ;
+use hashconsing::{ HashConsign, HConsed } ;
 
 use common::* ;
 
-
-
-/// Factory for hash consed arguments.
-pub type Factory = RwLock<HashConsign<RVarVals>> ;
-
-lazy_static! {
+new_consign! {
   /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+  let factory = consign(conf.instance.term_capa) for RVarVals ;
 }
 
 /// Creates hashconsed arguments.
