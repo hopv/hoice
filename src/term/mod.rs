@@ -66,7 +66,6 @@ mod factory ;
 mod tterms ;
 pub mod simplify ;
 pub mod typ ;
-mod fold ;
 mod zip ;
 mod eval ;
 mod leaf_iter ;
@@ -730,70 +729,6 @@ impl RTerm {
     }
   }
 
-  /// Folds over a term.
-  ///
-  /// # Type parameters
-  ///
-  /// - `Info`: information extracted by the folding process
-  /// - `VarF`: will run on variables
-  /// - `CstF`: will run on constants
-  /// - `AppF`: will run on the result of folding on operator applications
-  /// - `ArrF`: will run on the result of folding on arrays
-  /// - `NewF`: will run on the result of folding on datatype constructors
-  /// - `SlcF`: will run on the result of folding on datatype selectors
-  /// - `SlcF`: will run on the result of folding on function applications
-  pub fn fold<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
-    & self,
-    varf: VarF, cstf: CstF,
-    appf: AppF, arrf: ArrF,
-    newf: NewF, slcf: SlcF,
-    funf: FunF,
-  ) -> Info
-  where
-  VarF: FnMut(& Typ, VarIdx) -> Info,
-  CstF: FnMut(& Val) -> Info,
-  AppF: FnMut(& Typ, Op, Vec<Info>) -> Info,
-  ArrF: FnMut(& Typ, Info) -> Info,
-  NewF: FnMut(& Typ, & String, Vec<Info>) -> Info,
-  SlcF: FnMut(& Typ, & String, Info) -> Info,
-  FunF: FnMut(& Typ, & String, Vec<Info>) -> Info, {
-    fold::fold(self, varf, cstf, appf, arrf, newf, slcf, funf)
-  }
-
-
-
-  /// Folds over a term.
-  ///
-  /// Early returns **iff** any a call to one of the input functions returns an
-  /// error.
-  ///
-  /// # Type parameters
-  ///
-  /// - `Info`: information extracted by the folding process
-  /// - `VarF`: will run on variables
-  /// - `CstF`: will run on constants
-  /// - `AppF`: will run on the result of folding on operator applications
-  /// - `ArrF`: will run on the result of folding on arrays
-  /// - `NewF`: will run on the result of folding on datatype constructors
-  /// - `SlcF`: will run on the result of folding on datatype selectors
-  pub fn fold_res<Info, VarF, CstF, AppF, ArrF, NewF, SlcF, FunF>(
-    & self,
-    varf: VarF, cstf: CstF,
-    appf: AppF, arrf: ArrF,
-    newf: NewF, slcf: SlcF,
-    funf: FunF,
-  ) -> Res<Info>
-  where
-  VarF: FnMut(& Typ, VarIdx) -> Res<Info>,
-  CstF: FnMut(& Val) -> Res<Info>,
-  AppF: FnMut(& Typ, Op, Vec<Info>) -> Res<Info>,
-  ArrF: FnMut(& Typ, Info) -> Res<Info>,
-  NewF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>,
-  SlcF: FnMut(& Typ, & String, Info) -> Res<Info>,
-  FunF: FnMut(& Typ, & String, Vec<Info>) -> Res<Info>, {
-    fold::fold_res(self, varf, cstf, appf, arrf, newf, slcf, funf)
-  }
-
 
   /// Term evaluation.
   ///
@@ -802,77 +737,6 @@ impl RTerm {
   /// - remove recursive call for constant arrays
   pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
     eval::eval( & factory::term( self.clone() ), model )
-    // self.fold_res(
-    //   // Variable evaluation.
-    //   |_, v| if v < model.len() {
-    //     Ok( model.get(v).clone() )
-    //   } else {
-    //     bail!("model is too short ({})", model.len())
-    //   },
-
-    //   // Constant evaluation.
-    //   |val| Ok( val.clone() ),
-
-    //   // Operator application evaluation.
-    //   |_, op, values| op.eval(values).chain_err(
-    //     || format!("while evaluating operator `{}`", op)
-    //   ),
-
-    //   // Constant array evaluation.
-    //   |typ, default| Ok(
-    //     val::array( typ.clone(), default )
-    //   ),
-
-    //   // Datatype construction.
-    //   |typ, name, values| Ok(
-    //     val::dtyp_new( typ.clone(), name.clone(), values )
-    //   ),
-
-    //   // Datatype selection.
-    //   |typ, name, value| if ! value.is_known() {
-    //     Ok( val::none( typ.clone() ) )
-    //   } else if let Some(
-    //     (ty, constructor, values)
-    //   ) = value.dtyp_inspect() {
-    //     if let Some((dtyp, _)) = ty.dtyp_inspect() {
-
-    //       if let Some(selectors) = dtyp.news.get(constructor) {
-
-    //         let mut res = None ;
-    //         for ((selector, _), value) in selectors.iter().zip(
-    //           values.iter()
-    //         ) {
-    //           if selector == name {
-    //             res = Some( value.clone() )
-    //           }
-    //         }
-
-    //         if let Some(res) = res {
-    //           Ok(res)
-    //         } else {
-    //           Ok( val::none( typ.clone() ) )
-    //         }
-
-    //       } else {
-    //         bail!(
-    //           "unknown constructor `{}` for datatype {}",
-    //           conf.bad(constructor), dtyp.name
-    //         )
-    //       }
-
-    //     } else {
-    //       bail!("inconsistent type {} for value {}", ty, value)
-    //     }
-    //   } else {
-    //     bail!(
-    //       "illegal application of constructor `{}` of `{}` to `{}`",
-    //       conf.bad(& name), typ, value
-    //     )
-    //   },
-
-    //   // Function application.
-    //   |typ, name, args| unimplemented!(),
-    // )
   }
 
   /// If the term's an integer constant, returns the value.
@@ -960,62 +824,69 @@ impl RTerm {
   pub fn subst_custom<Map: VarIndexed<Term>>(
     & self, map: & Map, total: bool
   ) -> Option<(Term, bool)> {
+    use self::zip::* ;
     let mut changed = false ;
 
-    // println!("{}", self) ;
+    let res = zip(
+      & self.to_hcons(),
 
-    let res = fold::fold_custom_res(
-      self,
-
-      // Variable.
-      |typ, var| if let Some(term) = map.var_get(var) {
-        // println!("  {}, {} ({})", typ, term, term.typ()) ;
-        debug_assert_eq! { typ, & term.typ() }
-        changed = true ;
-        Ok(term)
-      } else if total {
-        Err(())
-      } else {
-        Ok(
-          term::var( var, typ.clone() )
-        )
+      |zip_null| match zip_null {
+        ZipNullary::Cst(val) => Ok(
+          cst( val.clone() )
+        ),
+        ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {
+          debug_assert_eq! { typ, & term.typ() }
+          changed = true ;
+          Ok(term)
+        } else if total {
+          Err(())
+        } else {
+          Ok(
+            term::var( var, typ.clone() )
+          )
+        }
       },
 
-      // Constant.
-      |cst| Ok(
-        term::cst( cst.clone() )
-      ),
+      |zip_op, typ, mut acc| {
+        let yielded = match zip_op {
+          ZipOp::Op(op) => term::app(op, acc),
+          ZipOp::New(name) => term::dtyp_new(
+            typ.clone(), name.clone(), acc
+          ),
+          ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
+            if ! acc.is_empty() {
+              panic!(
+                "illegal datatype selector application to {} arguments",
+                acc.len() + 1
+              )
+            }
+            term::dtyp_slc(typ.clone(), name.clone(), kid)
+          } else {
+            panic!("illegal datatype selector application to 0 arguments")
+          },
+          ZipOp::CArray => if let Some(kid) = acc.pop() {
+            if ! acc.is_empty() {
+              panic!(
+                "illegal constant array application to {} arguments",
+                acc.len() + 1
+              )
+            }
+            term::cst_array(typ.clone(), kid)
+          } else {
+            panic!("illegal constant array application to 0 arguments")
+          },
+          ZipOp::Fun(name) => term::fun(typ.clone(), name.clone(), acc),
+        } ;
 
-      // Operator application.
-      |_, op, args| Ok(
-        term::app(op, args)
-      ),
+        Ok( ZipDoTotal::Upp { yielded } )
+      },
 
-      // Constant array.
-      |typ, default| Ok(
-        term::cst_array( typ.clone(), default )
-      ),
-
-      // Datatype constructor.
-      |typ, name, args| Ok(
-        term::dtyp_new(
-          typ.clone(), name.clone(), args
-        )
-      ),
-
-      // Datatype selector.
-      |typ, name, term| Ok(
-        term::dtyp_slc(
-          typ.clone(), name.clone(), term
-        )
-      ),
-
-      // Function application.
-      |typ, name, args| Ok(
-        term::fun(
-          typ.clone(), name.clone(), args
-        )
-      )
+      |mut frame| {
+        let nu_term = frame.rgt_args.next().expect(
+          "illegal call to `partial_op`: empty `rgt_args`"
+        ) ;
+        Ok( ZipDo::Trm { nu_term, frame } )
+      },
     ) ;
 
     if let Ok(term) = res {

@@ -859,7 +859,7 @@ impl RVal {
     use num::Signed ;
     if num.is_negative() ^ den.is_negative()
     && den.clone() * & res != num {
-      res = res - 1
+      res -= 1
     }
     Ok( val::int(res) )
   }

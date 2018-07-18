@@ -1921,11 +1921,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
     let mut den: Int = 1.into() ;
     let ten = || consts::ten.clone() ;
-    while self.tag_opt("0") { den = den * ten() }
+    while self.tag_opt("0") { den *= ten() }
     let dec_start_pos = self.pos() ;
     if let Some(dec) = self.numeral() {
       for _ in * dec_start_pos .. * self.pos() {
-        den = den * ten()
+        den *= ten()
       }
       Some( Rat::new( num * den.clone() + dec, den ) )
     } else if den != 1.into() {

@@ -8,6 +8,8 @@
 //! [teach]: fn.teach.html
 //! (Teacher's teach function)
 
+use std::time::Duration ;
+
 use common::{
   *,
   msg::*,
@@ -19,6 +21,7 @@ use data::Data ;
 pub mod assistant ;
 use self::assistant::Assistant ;
 
+
 /// Starts the teaching process.
 ///
 /// The partial model stores conjunction of top terms for some of the top
@@ -27,7 +30,7 @@ pub fn start_class(
   instance: Arc<Instance>,
   partial_model: & ConjCandidates,
   profiler: & Profiler
-) -> Res< Either<Candidates, UnsatRes> > {
+) -> Res< TeachRes > {
   log! { @debug
     "starting the learning process" ;
     "  launching solver kid..."
@@ -45,7 +48,7 @@ pub fn start_class(
             please consider contacting the developer"
           }
           let core = teacher.unsat_core() ;
-          Ok( Either::Right(core) )
+          Ok( TeachRes::Unsat(core) )
         },
         _ => Err(e)
       }
@@ -57,29 +60,19 @@ pub fn start_class(
 }
 
 
-/// Teaching to the learners.
-pub fn teach(teacher: & mut Teacher) -> Res<
-  Either<Candidates, UnsatRes>
-> {
 
-  log_debug!{ "spawning ice learner..." }
+/// Teaching to the learners.
+pub fn teach(teacher: & mut Teacher) -> Res<TeachRes> {
+
+  log_debug!{ "spawning ice learner(s)..." }
   if conf.ice.pure_synth {
     teacher.add_learner( ::learning::ice::Launcher, false ) ? ;
   }
   teacher.add_learner( ::learning::ice::Launcher, true ) ? ;
 
-  log_debug!{ "performing initial check..." }
-  let (cexs, cands) = teacher.initial_check() ? ;
-  if cexs.is_empty() {
-    log_debug!{ "solved by initial candidate..." }
-    return Ok( Either::Left(cands) )
+  if let Some(res) = teacher.init() ? {
+    return Ok(res)
   }
-  log_debug!{ "generating data from initial cex..." }
-  let nu_stuff = teacher.instance.cexs_to_data(& mut teacher.data, cexs ) ? ;
-  if ! nu_stuff {
-    bail! { "translation of initial cexs to data generated no new data" }
-  }
-  teacher.run_assistant() ? ;
 
   // Index of the learner the teacher is currently working for.
   //
@@ -126,7 +119,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
 
       // Unsat result, done.
       Either::Right(unsat) => {
-        return Ok(Either::Right(unsat))
+        return Ok( TeachRes::Unsat(unsat) )
       },
 
       // Got a candidate.
@@ -160,7 +153,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
         profile!{ teacher mark "cexs" }
 
         if cexs.is_empty() {
-          return Ok( Either::Left(candidates) )
+          return Ok( TeachRes::Model(candidates) )
         }
 
         profile!{ teacher tick "data" }
@@ -172,6 +165,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
         profile!{ teacher mark "data" }
 
         teacher.run_assistant() ? ;
+
         match res {
           Ok(true) => {
             // New data.
@@ -194,7 +188,7 @@ pub fn teach(teacher: & mut Teacher) -> Res<
           },
           Err(e) => {
             if e.is_unsat() {
-              return Ok( Either::Right(teacher.unsat_core()) )
+              return Ok( TeachRes::Unsat(teacher.unsat_core()) )
             } else {
               bail!(e)
             }
@@ -243,6 +237,14 @@ pub struct Teacher<'a> {
   pub assistant: Option<Assistant>,
   /// Profiler.
   pub _profiler: & 'a Profiler,
+
+  /// Predicates that are true in the current candidate.
+  tru_preds: PrdSet,
+  /// Predicates that are true in the current candidate.
+  fls_preds: PrdSet,
+  /// Clauses that are trivially verified in the current candidate.
+  clauses_to_ignore: ClsSet,
+
   /// Partial candidate, only really contains stuff when in split mode.
   ///
   /// Used to further constrain the learner's candidates using previous
@@ -254,6 +256,7 @@ pub struct Teacher<'a> {
 }
 
 impl<'a> Teacher<'a> {
+
   /// Constructor.
   pub fn new(
     instance: Arc<Instance>, profiler: & 'a Profiler,
@@ -307,9 +310,36 @@ impl<'a> Teacher<'a> {
         solver, instance, data, from_learners,
         to_teacher: Some(to_teacher), learners, assistant,
         _profiler: profiler, partial_model, count: 0,
+        tru_preds: PrdSet::new(), fls_preds: PrdSet::new(),
+        clauses_to_ignore: ClsSet::new(),
       }
     )
   }
+
+
+
+  /// Runs the initial check and registers the data.
+  pub fn init(& mut self) -> Res< Option<TeachRes> > {
+    log_debug!{ "performing initial check..." }
+    let (cexs, cands) = self.initial_check() ? ;
+    if cexs.is_empty() {
+      log_debug!{ "solved by initial candidate..." }
+      return Ok(
+        Some( TeachRes::Model(cands) )
+      )
+    }
+
+    log_debug!{ "generating data from initial cex..." }
+    let nu_stuff = self.instance.cexs_to_data(& mut self.data, cexs ) ? ;
+    if ! nu_stuff {
+      bail! { "translation of initial cexs to data generated no new data" }
+    }
+    self.run_assistant() ? ;
+
+    Ok(None)
+  }
+
+
 
   /// Runs the assistant (if any) on the current data.
   pub fn run_assistant(& mut self) -> Res<()> {
@@ -325,6 +355,9 @@ impl<'a> Teacher<'a> {
     }
     Ok(())
   }
+
+
+
 
   /// Finalizes the run.
   pub fn finalize(mut self) -> Res<()> {
@@ -369,6 +402,9 @@ impl<'a> Teacher<'a> {
     Ok(())
   }
 
+
+
+
   /// Adds a new learner.
   pub fn add_learner<L>(& mut self, learner: L, mine: bool) -> Res<()>
   where L: Learner + 'static {
@@ -394,6 +430,9 @@ impl<'a> Teacher<'a> {
       bail!("trying to add learner after teacher's finalization")
     }
   }
+
+
+
 
   /// Broadcasts data to the learners. Returns `true` if there's no more
   /// learner left.
@@ -421,6 +460,10 @@ impl<'a> Teacher<'a> {
     one_alive
   }
 
+
+
+
+
   /// Sends data to a specific learner.
   pub fn send(& self, learner: LrnIdx) -> Res<bool> {
     profile! { self tick "sending" }
@@ -442,6 +485,81 @@ impl<'a> Teacher<'a> {
     Ok(alive)
   }
 
+
+  /// Receives a message with a timeout.
+  fn receive_msg_tmo(
+    & mut self, drain: bool, timeout: Duration
+  ) -> Res<Msg> {
+    macro_rules! all_dead {
+      () => ( unknown!("all learners are dead") ) ;
+    }
+    let msg = if ! drain {
+      match profile! {
+        self wrap {
+          self.from_learners.recv_timeout(timeout)
+        } "waiting"
+      } {
+        Ok(msg) => msg,
+        Err(_) => {
+          profile!{ self mark "waiting" }
+          conf.check_timeout() ? ;
+          all_dead!()
+        },
+      }
+    } else {
+      match profile! {
+        self wrap {
+          self.from_learners.recv()
+        } "waiting"
+      } {
+        Ok(msg) => msg,
+        Err(_) => {
+          profile!{ self mark "waiting" }
+          all_dead!()
+        },
+      }
+    } ;
+    Ok(msg)
+  }
+
+
+
+  /// Receive a message.
+  fn receive_msg(
+    & mut self, drain: bool
+  ) -> Res<(Id, MsgKind)> {
+    macro_rules! all_dead {
+      () => ( unknown!("all learners are dead") ) ;
+    }
+
+    if ! drain && self.learners.iter().all(
+      |& (ref channel, _, _)| channel.is_none()
+    ) {
+      all_dead!()
+    }
+
+    profile!{ self tick "waiting" }
+    let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
+      self.receive_msg_tmo(drain, timeout) ?
+    } else {
+      match profile! {
+        self wrap {
+          self.from_learners.recv()
+        } "waiting"
+      } {
+        Ok(msg) => msg,
+        Err(_) => {
+          profile!{ self mark "waiting" }
+          all_dead!()
+        },
+      }
+    } ;
+
+    Ok((id, msg))
+  }
+
+
+
   /// Waits for some candidates.
   ///
   /// Returns `None` when there are no more kids. Otherwise, the second
@@ -452,59 +570,9 @@ impl<'a> Teacher<'a> {
   pub fn get_candidates(
     & mut self, drain: bool
   ) -> Res< Either<(LrnIdx, Candidates), UnsatRes> > {
-    macro_rules! all_dead {
-      () => ( unknown!("all learners are dead") ) ;
-    }
 
     loop {
-
-      if ! drain && self.learners.iter().all(
-        |& (ref channel, _, _)| channel.is_none()
-      ) {
-        all_dead!()
-      }
-
-      profile!{ self tick "waiting" }
-      let Msg { id, msg } = if let Some(timeout) = conf.until_timeout() {
-        if ! drain {
-          match profile! {
-            self wrap {
-              self.from_learners.recv_timeout(timeout)
-            } "waiting"
-          } {
-            Ok(msg) => msg,
-            Err(_) => {
-              profile!{ self mark "waiting" }
-              conf.check_timeout() ? ;
-              all_dead!()
-            },
-          }
-        } else {
-          match profile! {
-            self wrap {
-              self.from_learners.recv()
-            } "waiting"
-          } {
-            Ok(msg) => msg,
-            Err(_) => {
-              profile!{ self mark "waiting" }
-              all_dead!()
-            },
-          }
-        }
-      } else {
-        match profile! {
-          self wrap {
-            self.from_learners.recv()
-          } "waiting"
-        } {
-          Ok(msg) => msg,
-          Err(_) => {
-            profile!{ self mark "waiting" }
-            all_dead!()
-          },
-        }
-      } ;
+      let (id, msg) = self.receive_msg(drain) ? ;
 
       match msg {
 
@@ -655,68 +723,90 @@ impl<'a> Teacher<'a> {
   }
 
 
-  /// Looks for falsifiable clauses given some candidates.
-  pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
-    use std::iter::Extend ;
-    self.count += 1 ;
-
-    // These will be passed to clause printing to inline trivial predicates.
-    let (mut true_preds, mut false_preds) = ( PrdSet::new(), PrdSet::new() ) ;
-    // Clauses to ignore, because they are trivially true. (lhs is false or
-    // rhs is true).
-    let mut clauses_to_ignore = ClsSet::new() ;
-
-    let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
-
-    macro_rules! define_preds {
-      () => ({
-        true_preds.clear() ;
-        false_preds.clear() ;
-
-        // Retrieve true/false predicates and clauses to ignore. Define predicates.
-        for (pred, cand) in cands.index_iter() {
-          if let Some(ref term) = * cand {
+  /// Defines the predicates given some candidates.
+  ///
+  /// Only defines predicates that are neither trivially true or false.
+  pub fn define_preds(& mut self, cands: & Candidates) -> Res<()> {
+    for (pred, cand) in cands.index_iter() {
+      if let Some(ref term) = * cand {
+        let term = if let Some(other) = self.partial_model.get(& pred) {
+          term::and( vec![term.clone(), other.clone()] )
+        } else {
+          term.clone()
+        } ;
+        match term.bool() {
+          None => {
             let term = if let Some(other) = self.partial_model.get(& pred) {
               term::and( vec![term.clone(), other.clone()] )
             } else {
               term.clone()
             } ;
-            match term.bool() {
-              Some(true) => {
-                let _ = true_preds.insert(pred) ;
-                clauses_to_ignore.extend(
-                  self.instance.clauses_of(pred).1
-                )
-              },
-              Some(false) => {
-                let _ = false_preds.insert(pred) ;
-                clauses_to_ignore.extend(
-                  self.instance.clauses_of(pred).0
-                )
-              },
-              None => {
-                let term = if let Some(other) = self.partial_model.get(& pred) {
-                  term::and( vec![term.clone(), other.clone()] )
-                } else {
-                  term.clone()
-                } ;
-                let pred = & self.instance[pred] ;
-                let sig: Vec<_> = pred.sig.index_iter().map(
-                  |(var, typ)| (var, typ.get())
-                ).collect() ;
-                self.solver.define_fun(
-                  & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
-                ) ?
-              },
-            }
-          }
+            let pred = & self.instance[pred] ;
+            let sig: Vec<_> = pred.sig.index_iter().map(
+              |(var, typ)| (var, typ.get())
+            ).collect() ;
+            self.solver.define_fun(
+              & pred.name, & sig, typ::bool().get(), & SmtTerm::new(& term)
+            ) ?
+          },
+          Some(_) => (),
         }
-      }) ;
+      }
     }
+    Ok(())
+  }
+
+
+  /// Registers predicates that are trivially true/false in a candidate.
+  ///
+  /// Returns the clauses that are trivially true given the candidate.
+  ///
+  /// Clears and then populates `self.clauses_to_ignore`, `self.tru_preds` and
+  /// `self.fls_preds`.
+  pub fn register_trivial(& mut self, cands: & Candidates) {
+    self.tru_preds.clear() ;
+    self.fls_preds.clear() ;
+    self.clauses_to_ignore.clear() ;
+
+    for (pred, cand) in cands.index_iter() {
+      if let Some(ref term) = * cand {
+        let term = if let Some(other) = self.partial_model.get(& pred) {
+          term::and( vec![term.clone(), other.clone()] )
+        } else {
+          term.clone()
+        } ;
+
+        match term.bool() {
+          Some(true) => {
+            let _ = self.tru_preds.insert(pred) ;
+            self.clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).1
+            )
+          },
+          Some(false) => {
+            let _ = self.fls_preds.insert(pred) ;
+            self.clauses_to_ignore.extend(
+              self.instance.clauses_of(pred).0
+            )
+          },
+          None => (),
+        }
+      }
+    }
+  }
+
+
+  /// Looks for falsifiable clauses given some candidates.
+  pub fn get_cexs(& mut self, cands: & Candidates) -> Res< Cexs > {
+    self.count += 1 ;
+
+    self.register_trivial(cands) ;
+
+    let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
 
     if ! conf.teacher.restart_on_cex {
       self.solver.push(1) ? ;
-      define_preds!()
+      self.define_preds(cands) ?
     }
 
     let instance = self.instance.clone() ;
@@ -724,48 +814,14 @@ impl<'a> Teacher<'a> {
     // True if we got some positive or negative samples.
     // let mut got_pos_neg_samples = false ;
 
-    macro_rules! run {
-      ($clause:expr, $bias:expr) => (
-        if ! clauses_to_ignore.contains($clause) {
-          if conf.teacher.restart_on_cex {
-            define_preds!()
-          } else {
-            self.solver.push(1) ?
-          }
-
-          let cexs = self.get_cex(
-            * $clause, & true_preds, & false_preds, $bias,
-            // got_pos_neg_samples &&
-            conf.teacher.max_bias
-          ).chain_err(
-            || format!("while getting counterexample for clause {}", $clause)
-          ) ? ;
-
-          if conf.teacher.restart_on_cex {
-            smt::reset(& mut self.solver) ?
-          } else {
-            self.solver.pop(1) ?
-          }
-
-          if ! cexs.is_empty() {
-            // got_pos_neg_samples = got_pos_neg_samples || (
-            //   cexs.iter().any(
-            //     |(_, bias)| ! bias.is_none()
-            //   )
-            // ) ;
-            let prev = map.insert(* $clause, cexs) ;
-            debug_assert_eq!(prev, None)
-          }
-        }
-      ) ;
-    }
-
     log! { @verb
       "looking for counterexamples in positive clauses ({})...",
       instance.pos_clauses().len()
     }
     for clause in instance.pos_clauses() {
-      run!(clause, false)
+      self.get_cexs_of_clause(
+        cands, * clause, & mut map, false
+      ) ?
     }
 
     log! { @verb
@@ -773,29 +829,37 @@ impl<'a> Teacher<'a> {
       instance.strict_neg_clauses().len()
     }
     for clause in instance.strict_neg_clauses() {
-      run!(clause, false)
+      self.get_cexs_of_clause(
+        cands, * clause, & mut map, false
+      ) ?
     }
 
     // got_pos_neg_samples = ! map.is_empty() ;
 
-    if map.is_empty() || ! conf.teacher.max_bias {
+    if map.is_empty()
+    || ! conf.teacher.max_bias {
       log! { @verb
         "looking for counterexamples in non-strict negative clauses ({})...",
         instance.non_strict_neg_clauses().len()
       }
       for clause in instance.non_strict_neg_clauses() {
-        run!(clause, true)
+        self.get_cexs_of_clause(
+          cands, * clause, & mut map, true
+        ) ?
       }
     }
 
-    if map.is_empty() || ! conf.teacher.max_bias {
+    if map.is_empty()
+    || ! conf.teacher.max_bias {
       log_verb! {
         "looking for counterexamples in implication clauses ({})...",
         instance.imp_clauses().len()
       }
 
       for clause in instance.imp_clauses() {
-        run!(clause, true)
+        self.get_cexs_of_clause(
+          cands, * clause, & mut map, true
+        ) ?
       }
     }
 
@@ -824,17 +888,137 @@ impl<'a> Teacher<'a> {
     Ok(map)
   }
 
+
+
+  /// Retrieves counterexamples for a clause.
+  pub fn get_cexs_of_clause(
+    & mut self, cands: & Candidates,
+    clause: ClsIdx, map: & mut ClsHMap<Vec<BCex>>, bias: bool,
+  ) -> Res<()> {
+    if ! self.clauses_to_ignore.contains(& clause) {
+      if conf.teacher.restart_on_cex {
+        self.define_preds(cands) ?
+      } else {
+        self.solver.push(1) ?
+      }
+
+      let cexs = self.get_cex(
+        clause, bias,
+        // got_pos_neg_samples &&
+        conf.teacher.max_bias
+      ).chain_err(
+        || format!("while getting counterexample for clause #{}", clause)
+      ) ? ;
+
+      if conf.teacher.restart_on_cex {
+        smt::reset(& mut self.solver) ?
+      } else {
+        self.solver.pop(1) ?
+      }
+
+      if ! cexs.is_empty() {
+        // got_pos_neg_samples = got_pos_neg_samples || (
+        //   cexs.iter().any(
+        //     |(_, bias)| ! bias.is_none()
+        //   )
+        // ) ;
+        let prev = map.insert(clause, cexs) ;
+        debug_assert_eq!(prev, None)
+      }
+    }
+
+    Ok(())
+  }
+
+
+
+  /// Retrieves a counterexample given some bias.
+  fn get_bias_cex(& mut self, clause: ClsIdx, bias: & Bias) -> Res<Cex> {
+    profile! { self tick "cexs", "model" }
+    let model = self.solver.get_model() ? ;
+    let model = Parser.fix_model(model) ? ;
+    let cex = Cex::of_model(
+      self.instance[clause].vars(), model,
+      bias.is_none() && conf.teacher.partial
+    ) ? ;
+    profile! { self mark "cexs", "model" }
+    Ok(cex)
+  }
+
+
+  /// Check-sats given an optional bias.
+  fn check_sat_cex(
+    & mut self, clause: ClsIdx, bias: Option<(Actlit, Bias)>
+  ) -> Res< Option<(Cex, Bias)> > {
+    if let Some((actlit, bias)) = bias {
+
+        log! { @debug
+          "  checksat with bias {}", bias.to_string(& self.instance)
+        }
+        self.solver.comment(
+          & format!("checksat with bias {}", bias.to_string(& self.instance))
+        ) ? ;
+        profile!{ self tick "cexs", "biased check-sat" }
+        let sat = self.solver.check_sat_act(
+          Some(& actlit)
+        ) ? ;
+
+        if sat {
+          profile!{ self mark "cexs", "biased check-sat" }
+          let cex = self.get_bias_cex(clause, & bias) ? ;
+          self.solver.de_actlit(actlit) ? ;
+          Ok(
+            Some((cex, bias))
+          )
+        } else {
+          Ok(None)
+        }
+
+    } else {
+
+      log! { @debug "  checksat" }
+      profile!{ self tick "cexs", "check-sat" }
+      let sat = self.solver.check_sat() ? ;
+      profile!{ self mark "cexs", "check-sat" }
+
+      if sat {
+        let bias = if self.instance[clause].is_positive() {
+          Bias::Lft
+        } else if self.instance[clause].is_strict_neg() {
+          let (
+            pred, args
+          ) = self.instance[clause].lhs_preds().iter().next().map(
+            |(pred, argss)| (
+              * pred, argss.iter().next().unwrap().clone()
+            )
+          ).unwrap() ;
+          Bias::NuRgt(pred, args)
+        } else {
+          Bias::Non
+        } ;
+        let cex = self.get_bias_cex(clause, & bias) ? ;
+        Ok(
+          Some((cex, bias))
+        )
+
+      } else {
+        Ok(None)
+      }
+
+    }
+  }
+
+
+
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self,
-    clause_idx: ClsIdx, true_preds: & PrdSet, false_preds: & PrdSet,
-    bias: bool, bias_only: bool
+    & mut self, clause_idx: ClsIdx, bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
     log! { @debug "working on clause #{}", clause_idx }
 
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
-      () => (& self.instance[clause_idx])
+      () => ( & self.instance[clause_idx] ) ;
     }
 
     if conf.solver.log {
@@ -850,7 +1034,9 @@ impl<'a> Teacher<'a> {
     profile!{ self tick "cexs", "prep" }
     clause!().declare(& mut self.solver) ? ;
     self.solver.assert_with(
-      clause!(), & (false, true_preds, false_preds, self.instance.preds())
+      clause!(), & (
+        false, & self.tru_preds, & self.fls_preds, self.instance.preds()
+      )
     ) ? ;
     profile!{ self mark "cexs", "prep" }
 
@@ -858,67 +1044,22 @@ impl<'a> Teacher<'a> {
 
     macro_rules! get_cex {
 
-      (@$sat:ident $bias:expr) => ({ // Works on the check-sat result.
-        conf.check_timeout() ? ;
-        if $sat {
-          log! { @3 "sat, getting cex" }
-          profile!{ self tick "cexs", "model" }
-          let model = self.solver.get_model() ? ;
-          let model = Parser.fix_model(model) ? ;
-          // for (var, _, val) in & model {
-          //   println!("v_{} -> {}", var,)
-          // }
-          let cex = Cex::of_model(
-            clause!().vars(), model, ! $bias.is_none() && conf.teacher.partial
-          ) ? ;
-          profile!{ self mark "cexs", "model" }
-
-          if ! $bias.is_none() {
-            profile! { self "  biased checksat" => add 1 }
-          } else {
-            profile! { self "unbiased checksat" => add 1 }
-          }
-
-          cexs.push((cex, $bias))
+      () => ( // Normal check, no actlit.
+        if let Some(cex) = self.check_sat_cex(
+          clause_idx, None
+        ) ? {
+          cexs.push(cex)
         }
-      }) ;
+      ) ;
 
-      () => ({ // Normal check, no actlit.
-        log! { @debug "  checksat" }
-        profile!{ self tick "cexs", "check-sat" }
-        let sat = self.solver.check_sat() ? ;
-        profile!{ self mark "cexs", "check-sat" }
-        get_cex!(
-          @sat if clause!().is_positive() {
-            Bias::Lft
-          } else if clause!().is_strict_neg() {
-            let (pred, args) = clause!().lhs_preds().iter().next().map(
-              |(pred, argss)| (
-                * pred, argss.iter().next().unwrap().clone()
-              )
-            ).unwrap() ;
-            Bias::NuRgt(pred, args)
-          } else {
-            Bias::Non
-          }
-        ) ;
-      }) ;
-
-      ($actlit:expr ; $bias:expr) => ({
-        log! { @debug
-          "  checksat with bias {}", $bias.to_string(& self.instance)
+      ($actlit:expr ; $bias:expr) => (
+        if let Some(cex) = self.check_sat_cex(
+          clause_idx, Some(($actlit, $bias))
+        ) ? {
+          cexs.push(cex)
         }
-        self.solver.comment(
-          & format!("checksat with bias {}", $bias.to_string(& self.instance))
-        ) ? ;
-        profile!{ self tick "cexs", "biased check-sat" }
-        let sat = self.solver.check_sat_act(
-          Some(& $actlit)
-        ) ? ;
-        profile!{ self mark "cexs", "biased check-sat" }
-        get_cex!(@sat $bias) ;
-        self.solver.de_actlit($actlit) ?
-      }) ;
+      ) ;
+
     }
 
     get_cex!() ;

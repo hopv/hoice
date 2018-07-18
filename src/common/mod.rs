@@ -268,6 +268,16 @@ pub type VarInfos = VarMap<::instance::info::VarInfo> ;
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
 
+
+/// Teaching result.
+pub enum TeachRes {
+  /// A model.
+  Model(Candidates),
+  /// An unsat result.
+  Unsat( ::unsat_core::UnsatRes ),
+}
+
+
 /// Quantified variables for a top term.
 pub type Quantfed = VarHMap<Typ> ;
 
@@ -409,7 +419,7 @@ impl Evaluator for VarMap<Val> {
     for (var, val) in self.index_iter() {
       print!("{} -> {}, ", var, val)
     }
-    println!("")
+    println!()
   }
 }
 impl Evaluator for () {
@@ -437,7 +447,7 @@ where E: Evaluator {
     for (v1, (v2, _)) in self.0.index_iter() {
       print!("{} -> {}", v1, v2)
     }
-    println!("") ;
+    println!() ;
     self.1.print()
   }
 }

@@ -112,7 +112,7 @@ pub fn work(
     ) ? ;
 
     match res {
-      Either::Left(candidates) => {
+      TeachRes::Model(candidates) => {
         log_info! { "sat\n\n" }
         let mut this_model = instance.model_of(candidates) ? ;
         // profile! { |_profiler| tick "waiting" }
@@ -126,7 +126,9 @@ pub fn work(
         // real_instance.write_model(& model, & mut stdout()) ?
       },
 
-      Either::Right(reason) => return Ok( Some( Either::Right(reason) ) ),
+      TeachRes::Unsat(reason) => return Ok(
+        Some( Either::Right(reason) )
+      ),
     }
 
   }
@@ -143,7 +145,7 @@ pub fn work(
 pub fn run_teacher(
   instance: Arc<Instance>,
   model: & ConjCandidates,
-) -> Res< Either<Candidates, UnsatRes> > {
+) -> Res< TeachRes > {
   let teacher_profiler = Profiler::new() ;
   let solve_res = ::teacher::start_class(
     instance, model, & teacher_profiler

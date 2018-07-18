@@ -2143,7 +2143,7 @@ impl ClauseSimplifier {
         bool_prop!() ;
 
         if ! changed {
-          break
+          break 'outter
         } else {
           changed = false ;
         }

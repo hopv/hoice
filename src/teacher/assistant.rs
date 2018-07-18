@@ -6,6 +6,19 @@ use common::* ;
 use data::{ Data, Sample } ;
 
 
+
+/// Result of trying to force a sample positive/negative.
+pub enum ForceRes {
+  /// Failure.
+  None,
+  /// Sample was classified as positive.
+  Pos { sample: Sample, clause: ClsIdx },
+  /// Sample was classified as negative.
+  Neg { sample: Sample, clause: ClsIdx },
+}
+
+
+
 /// Propagates examples, tries to break implication constraints.
 pub struct Assistant {
   /// Core, to communicate with the teacher.
@@ -154,15 +167,15 @@ impl Assistant {
         & Sample { pred, ref args }
       ) = data.constraints[cstr].rhs() {
         match self.try_force(data, pred, args) ? {
-          None => (),
-          Some( Either::Left(pos_sample) ) => {
-            pos.push(pos_sample) ;
+          ForceRes::None => (),
+          ForceRes::Pos { sample, clause } => {
+            pos.push( (sample, clause) ) ;
             // Constraint is trivial, move on.
             trivial = true
           },
-          Some( Either::Right(neg_sample) ) => {
+          ForceRes::Neg { sample, clause } => {
             rhs_false = true ;
-            neg.push(neg_sample)
+            neg.push( (sample, clause) )
           },
         }
       }
@@ -174,13 +187,15 @@ impl Assistant {
           let mut lhs_trivial = true ;
           for sample in samples {
             match self.try_force(data, * pred, sample) ? {
-              None => {
+              ForceRes::None => {
                 lhs_unknown += 1 ;
                 lhs_trivial = false
               },
-              Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
-              Some( Either::Right(neg_sample) ) => {
-                neg.push(neg_sample) ;
+              ForceRes::Pos { sample, clause } => pos.push(
+                (sample, clause)
+              ),
+              ForceRes::Neg { sample, clause } => {
+                neg.push( (sample, clause) ) ;
                 trivial = true ;
                 // Constraint is trivial, move on.
                 // break 'lhs
@@ -210,15 +225,15 @@ impl Assistant {
 
   /// Checks if a sample can be forced to anything.
   ///
-  /// If it can't, return None. If it can, returns `Either`
+  /// If it can't, return None. If it can, returns
   ///
-  /// - `Left` of a sample which, when forced positive, will force the input
-  ///   sample to be classified positive.
-  /// - `Right` of a sample which, when forced negative, will force the input
-  ///   sample to be classified negative.
+  /// - `ForceRes::Pos` of a sample which, when forced positive, will force the
+  ///   input sample to be classified positive.
+  /// - `ForceRes::Neg` of a sample which, when forced negative, will force the
+  ///   input sample to be classified negative.
   pub fn try_force(
     & mut self, _data: & Data, pred: PrdIdx, vals: & VarVals
-  ) -> Res< Option< Either<(Sample, ClsIdx), (Sample, ClsIdx)> > > {
+  ) -> Res<ForceRes> {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
     ) ? ;
@@ -250,11 +265,10 @@ impl Assistant {
           if sat {
             // msg! { debug self => "  forcing positive" }
             return Ok(
-              Some(
-                Either::Left(
-                  (Sample { pred, args: vals.clone() }, clause_idx)
-                )
-              )
+              ForceRes::Pos {
+                sample: Sample { pred, args: vals.clone() },
+                clause: clause_idx,
+              }
             )
           }
         } else {
@@ -298,11 +312,10 @@ impl Assistant {
           if sat {
             // msg! { debug self => "  forcing negative" }
             return Ok(
-              Some(
-                Either::Right(
-                  (Sample { pred, args: vals.clone() }, clause_idx)
-                )
-              )
+              ForceRes::Neg {
+                sample: Sample { pred, args: vals.clone() },
+                clause: clause_idx,
+              }
             )
           }
         } else {
@@ -312,9 +325,7 @@ impl Assistant {
 
     }
 
-    // msg! { debug self => "  giving up" }
-
-    Ok(None)
+    Ok(ForceRes::None)
   }
 
 }

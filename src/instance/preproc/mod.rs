@@ -371,33 +371,6 @@ impl<'a> Reductor<'a> {
     // Starts at `1`, `0` is reserved for the fixed point.
     let mut count = 1 ;
 
-    // Checks if the instance is already solved.
-    macro_rules! check_solved {
-      () => (
-        if self.instance.is_solved() {
-          if ! self.instance.is_unsat() {
-            profile! {
-              |_profiler| tick "preproc", "final simplify"
-            }
-            // Check remaining clauses, maybe some of them are unsat.
-            match self.instance.simplify_all() {
-              Ok(_) => (),
-              Err(e) => {
-                if e.is_unsat() {
-                  self.instance.set_unsat()
-                }
-                bail!(e)
-              },
-            }
-            profile! {
-              |_profiler| mark "preproc", "final simplify"
-            }
-          }
-          return Ok(())
-        }
-      ) ;
-    }
-
     // Runs and profiles a pre-processor.
     //
     // Returns `true` if the pre-processor did something.
@@ -412,57 +385,12 @@ impl<'a> Reductor<'a> {
       ($preproc:ident) => ( run!($preproc bool) ) ;
       ($preproc:ident $($tail:tt)*) => (
         if let Some(preproc) = self.$preproc.as_mut() {
-          profile! {
-            |_profiler| tick "preproc", preproc.name()
-          }
-          log! { @verb
-            "running {}", conf.emph( preproc.name() )
-          }
-          let mut red_info = preproc.apply( & mut self.instance ) ? ;
-          profile! {
-            |_profiler| mark "preproc", preproc.name()
-          }
-
-          if red_info.non_zero() {
-
-            count += 1 ;
-            preproc_dump!(
-              self.instance =>
-              format!("preproc_{:0>4}_{}", count, preproc.name()),
-              format!("Instance after running `{}`.", preproc.name())
-            ) ? ;
-
-            profile!{
-              |_profiler| format!(
-                "{:>10}   pred red", preproc.name()
-              ) => add red_info.preds
-            }
-            profile!{
-              |_profiler| format!(
-                "{:>10} clause red", preproc.name()
-              ) => add red_info.clauses_rmed
-            }
-            profile!{
-              |_profiler| format!(
-                "{:>10} clause add", preproc.name()
-              ) => add red_info.clauses_added
-            }
-            profile!{
-              |_profiler| format!(
-                "{:>10}    arg red", preproc.name()
-              ) => add red_info.args_rmed
-            }
-            log! { @verb
-              "{}: {}", conf.emph( preproc.name() ), red_info
-            }
-            conf.check_timeout() ? ;
-            check_solved!() ;
+          if let Some(red_info) = utils::run_preproc(
+            & mut self.instance, _profiler, preproc, & mut count
+          ) ? {
             run! { @ $($tail)* Some(red_info) }
           } else {
-            log! { @verb
-              "{}: did nothing", conf.emph( preproc.name() )
-            }
-            run! { @ $($tail)* Some(red_info) }
+            return Ok(())
           }
         } else {
           run! { @ $($tail)* None }
@@ -470,54 +398,7 @@ impl<'a> Reductor<'a> {
       ) ;
     }
 
-    preproc_dump!(
-      self.instance =>
-        format!("preproc_{:0>4}_original_instance", count),
-        "Instance before pre-processing."
-    ) ? ;
-    profile!{
-      |_profiler|
-        "clause count original" => add self.instance.clauses().len()
-    }
-    profile!{
-      |_profiler|
-        "nl clause count original" => add {
-          let mut count = 0 ;
-          'clause_iter: for clause in self.instance.clauses() {
-            for (_, argss) in clause.lhs_preds() {
-              if argss.len() > 1 {
-                count += 1 ;
-                continue 'clause_iter
-              }
-            }
-          }
-          count
-        }
-    }
-    profile!{
-      |_profiler|
-        "pred count original" => add {
-          let mut count = 0 ;
-          for pred in self.instance.pred_indices() {
-            if ! self.instance.is_known(pred) {
-              count += 1
-            }
-          }
-          count
-        }
-    }
-    profile!{
-      |_profiler|
-        "arg count original" => add {
-          let mut args = 0 ;
-          for info in self.instance.preds() {
-            if ! self.instance.is_known(info.idx) {
-              args += info.sig.len()
-            }
-          }
-          args
-        }
-    }
+    utils::register_stats(& self.instance, _profiler, count) ? ;
 
     if simplify_first {
       run! { simplify } ;
@@ -591,57 +472,7 @@ impl<'a> Reductor<'a> {
       }
     }
 
-    preproc_dump!(
-      self.instance =>
-        "preproc_0000_fixed_point",
-        "Instance after reaching preproc fixed-point."
-    ) ? ;
-
-    profile!{
-      |_profiler|
-        "clause count    final" => add self.instance.clauses().len()
-    }
-    profile!{
-      |_profiler|
-        "nl clause count    final" => add {
-          let mut count = 0 ;
-          'clause_iter: for clause in self.instance.clauses() {
-            for (_, argss) in clause.lhs_preds() {
-              if argss.len() > 1 {
-                count += 1 ;
-                continue 'clause_iter
-              }
-            }
-          }
-          count
-        }
-    }
-
-    profile!{
-      |_profiler|
-        "pred count    final" => add {
-          let mut count = 0 ;
-          for pred in self.instance.pred_indices() {
-            if ! self.instance.is_known(pred) {
-              count += 1
-            }
-          }
-          count
-        }
-    }
-
-    profile!{
-      |_profiler|
-        "arg count    final" => add {
-          let mut args = 0 ;
-          for info in self.instance.preds() {
-            if ! self.instance.is_known(info.idx) {
-              args += info.sig.len()
-            }
-          }
-          args
-        }
-    }
+    utils::register_final_stats(& self.instance, _profiler) ? ;
 
     Ok(())
   }
@@ -2821,4 +2652,11 @@ impl RedStrat for RUnroll {
     Ok(info)
   }
 }
+
+
+
+
+
+
+
 
