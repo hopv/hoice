@@ -6,7 +6,7 @@ It infers predicates verifying a set of horn clauses.
 |:-------------:|:-------:|:---:|
 | [![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice) | [![Build status](https://ci.appveyor.com/api/projects/status/db247pe2jp9uo9cs?svg=true)](https://ci.appveyor.com/project/hopv/rsmt2) | [![codecov](https://codecov.io/gh/hopv/hoice/branch/master/graph/badge.svg)](https://codecov.io/gh/hopv/hoice) |
 
-`hoice` only supports the `Int` and `Bool` sorts. You can get a sense of the fragment `r_type` supports by looking at [our benchmarks][benchs].
+`hoice` supports the `Bool`, `Int` and `Real` sorts.
 
 # Install
 
@@ -18,13 +18,13 @@ Hoice generally uses the latest rust features available. Make sure the rust ecos
 rustup update stable
 ```
 
-Installing hoice with `cargo` installation:
+Installing hoice with `cargo`:
 
 ```bash
 cargo install --git https://github.com/hopv/hoice
 ```
 
-To build hoice manually, clone this repository `cd` in the directory and run
+To build hoice manually, clone this repository, `cd` in the directory and run
 
 ```bash
 cargo build --release
@@ -37,7 +37,7 @@ To get the fastest version, compile hoice with
 cargo build --release --features "bench"
 ```
 
-Note that this disables some features such as verbosity.
+Note that this disables some features such as verbose output, profiling...
 
 
 ## z3
@@ -52,8 +52,7 @@ Note that this disables some features such as verbosity.
 
 # Features
 
-Sorts supported:
-
+- [x] `define-fun`s
 - [x] `Bool`
 - [x] `Int`
 - [x] `Real`
@@ -63,7 +62,6 @@ Sorts supported:
 
 Future features:
 
-- [ ] `define-fun`s
 - [ ] user-specified qualifiers through `define-fun`s
 
 
