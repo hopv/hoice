@@ -22,29 +22,6 @@ pub fn work(
 ) -> Res< Option< Either<ConjCandidates, UnsatRes> > > {
   let mut model = ConjCandidates::new() ;
 
-  macro_rules! model {
-    (add $model:expr) => ({
-      for (pred, tterms) in $model {
-        if ! real_instance.is_known(pred) {
-          let conj = model.entry(pred).or_insert_with(
-            || vec![]
-          ) ;
-          match tterms.bool() {
-            Some(true) => continue,
-            Some(false) => conj.clear(),
-            None => (),
-          }
-
-          if ! conj.iter().any(
-            |tts| tts == & tterms || tts.bool() == Some(false)
-          ) {
-            conj.push(tterms)
-          }
-        }
-      }
-    }) ;
-  }
-
   let mut splitter = Splitter::new(
     real_instance.clone()
   ) ;
@@ -84,51 +61,25 @@ pub fn work(
         MaybeModel::Model(this_model)
       ) => {
         log_info! { "sat by preproc\n\n" }
-        model! { add this_model }
+        add_submodel(
+          & real_instance, & mut model, this_model
+        ) ;
 
         continue 'split_loop
       },
     } ;
 
-    if ! conf.infer {
-      if conf.split_step {
-        pause("to continue", _profiler) ;
-      } else {
-        log_info! { "Skipping learning..." }
-      }
+    match run_on(_profiler, instance, & model) ? {
 
-      continue 'split_loop
+      Some( Either::Left(this_model) ) => add_submodel(
+        & real_instance, & mut model, this_model
+      ),
 
-    } else if conf.split_step {
-      pause("to start solving", _profiler) ;
-    } else {
-      log_info! { "Starting learning..." }
-    }
-
-    let res = profile!(
-      |_profiler| wrap {
-        run_teacher(instance.clone(), & model)
-      } "solving"
-    ) ? ;
-
-    match res {
-      TeachRes::Model(candidates) => {
-        log_info! { "sat\n\n" }
-        let mut this_model = instance.model_of(candidates) ? ;
-        // profile! { |_profiler| tick "waiting" }
-        // while Arc::strong_count(& instance) != 1 {}
-        // profile! { |_profiler| mark "waiting" }
-        if let Some(instance) = Arc::get_mut(& mut instance) {
-          instance.simplify_pred_defs(& mut this_model) ?
-        }
-        model!(add this_model) ;
-        // let mut model = real_instance.extend_model(model.clone()) ? ;
-        // real_instance.write_model(& model, & mut stdout()) ?
-      },
-
-      TeachRes::Unsat(reason) => return Ok(
+      Some( Either::Right(reason) ) => return Ok(
         Some( Either::Right(reason) )
       ),
+
+      None => (),
     }
 
   }
@@ -139,6 +90,82 @@ pub fn work(
     Ok(None)
   }
 }
+
+
+
+/// Runs on a pre-processed instance.
+pub fn run_on(
+  _profiler: & Profiler, mut instance: Arc<Instance>,
+  model: & ConjCandidates
+) -> Res< Option< Either<Model, UnsatRes> > > {
+  if ! conf.infer {
+    if conf.split_step {
+      pause("to continue", _profiler) ;
+    } else {
+      log_info! { "Skipping learning..." }
+    }
+
+    return Ok(None)
+
+  } else if conf.split_step {
+    pause("to start solving", _profiler) ;
+  } else {
+    log_info! { "Starting learning..." }
+  }
+
+  let res = profile!(
+    |_profiler| wrap {
+      run_teacher(instance.clone(), & model)
+    } "solving"
+  ) ? ;
+
+  match res {
+
+    TeachRes::Model(candidates) => {
+      log_info! { "sat\n\n" }
+      let mut this_model = instance.model_of(candidates) ? ;
+      if let Some(instance) = Arc::get_mut(& mut instance) {
+        instance.simplify_pred_defs(& mut this_model) ?
+      }
+
+      Ok(
+        Some( Either::Left(this_model) )
+      )
+    },
+
+    TeachRes::Unsat(reason) => Ok(
+      Some( Either::Right(reason) )
+    ),
+
+  }
+}
+
+
+
+/// Adds a model for a subinstance to a partial model.
+pub fn add_submodel(
+  instance: & Arc<Instance>, model: & mut ConjCandidates, submodel: Model
+) {
+  for (pred, tterms) in submodel {
+    if ! instance.is_known(pred) {
+      let conj = model.entry(pred).or_insert_with(
+        || vec![]
+      ) ;
+      match tterms.bool() {
+        Some(true) => continue,
+        Some(false) => conj.clear(),
+        None => (),
+      }
+
+      if ! conj.iter().any(
+        |tts| tts == & tterms || tts.bool() == Some(false)
+      ) {
+        conj.push(tterms)
+      }
+    }
+  }
+}
+
 
 
 /// Runs the teacher on an instance.
@@ -175,6 +202,7 @@ pub struct Splitter {
   /// Profiler.
   _profiler: Option<Profiler>,
 }
+
 impl Splitter {
 
   /// Constructor.
@@ -276,6 +304,13 @@ impl Splitter {
       prev_clauses: ClsSet::new(), _profiler: None,
     }
   }
+
+
+
+
+
+
+
 
   /// Retrieves the profiler.
   pub fn profiler(& mut self) -> Option<Profiler> {

@@ -1,9 +1,4 @@
 //! Checks candidates and sends data to learner(s).
-//! 
-//! # TODO
-//!
-//! - clean [`teach`][teach] function, it's a mess and the way it's currently
-//!   written doesn't make sense
 //!
 //! [teach]: fn.teach.html
 //! (Teacher's teach function)
@@ -128,81 +123,9 @@ pub fn teach(teacher: & mut Teacher) -> Res<TeachRes> {
       // Got a candidate.
       Either::Left( ( idx, candidates) ) => {
         learner = Some(idx) ;
-        if_verb!{
-          log! { conf.teacher.step, || @info
-            "\nCurrent candidates from {} learner:",
-            conf.emph( & teacher.learners[idx].1 )
-          }
-          for _pred in teacher.instance.preds() {
-            if let Some(term) = candidates[_pred.idx].as_ref() {
-              log!( @info
-                "{}:", conf.emph(& _pred.name) ;
-                "  {}", term
-              )
-            }
-          }
-          log_verb! { "" }
+        if let Some(res) = teacher.handle_candidates(candidates, idx) ? {
+          return Ok(res)
         }
-
-        if conf.teacher.step {
-          pause(
-            "to look for counterexamples... (--step on)",
-            & teacher._profiler
-          ) ;
-        }
-
-        profile!{ teacher tick "cexs" }
-        let cexs = teacher.get_cexs(& candidates) ? ;
-        profile!{ teacher mark "cexs" }
-
-        if cexs.is_empty() {
-          return Ok( TeachRes::Model(candidates) )
-        }
-
-        profile!{ teacher tick "data" }
-        profile!{ teacher tick "data", "registration" }
-        let res = teacher.instance.cexs_to_data(
-          & mut teacher.data, cexs
-        ) ;
-        profile!{ teacher mark "data", "registration" }
-        profile!{ teacher mark "data" }
-
-        teacher.run_assistant() ? ;
-
-        match res {
-          Ok(true) => {
-            // New data.
-            for (
-              index, & mut (_, _, ref mut changed)
-            ) in teacher.learners.index_iter_mut() {
-              * changed = index != idx
-            }
-          },
-          Ok(false) => if teacher.learners[idx].2 {
-            // Something has changed since the last candidate of this learner.
-            // The fact that the current candidate generated no new data is not
-            // a problem.
-            ()
-          } else {
-            bail! {
-              "translation of cexs to data for {} generated no new data",
-              conf.emph( & teacher.learners[idx].1 )
-            }
-          },
-          Err(e) => {
-            if e.is_unsat() {
-              return Ok( TeachRes::Unsat(teacher.unsat_core()) )
-            } else {
-              bail!(e)
-            }
-          },
-        }
-
-        profile!{ teacher tick "data" }
-        profile!{ teacher tick "data", "propagation" }
-        teacher.data.propagate() ? ;
-        profile!{ teacher mark "data", "propagation" }
-        profile!{ teacher mark "data" }
       },
     }
   }
@@ -565,6 +488,103 @@ impl<'a> Teacher<'a> {
 
     Ok((id, msg))
   }
+
+
+
+  /// Handles some candidates.
+  ///
+  /// - checks for counterexamples
+  /// - turns the cexs into learning data
+  /// - runs the assistant
+  /// - propagates the learning data
+  pub fn handle_candidates(
+    & mut self, candidates: Candidates, idx: LrnIdx
+  ) -> Res< Option<TeachRes> > {
+    if_log!{ @1
+      log! { conf.teacher.step, || @1
+        "\nCurrent candidates from {} learner:",
+        conf.emph( & self.learners[idx].1 )
+      }
+      for _pred in self.instance.preds() {
+        if let Some(term) = candidates[_pred.idx].as_ref() {
+          log!( @1
+            "{}:", conf.emph(& _pred.name) ;
+            "  {}", term
+          )
+        }
+      }
+      log! { @1 "" }
+    }
+
+    if conf.teacher.step {
+      pause(
+        "to look for counterexamples... (--step on)",
+        & self._profiler
+      ) ;
+    }
+
+    profile!{ self tick "cexs" }
+    let cexs = self.get_cexs(& candidates) ? ;
+    profile!{ self mark "cexs" }
+
+    if cexs.is_empty() {
+      return Ok(
+        Some( TeachRes::Model(candidates) )
+      )
+    }
+
+    profile!{ self tick "data" }
+    profile!{ self tick "data", "registration" }
+    let res = self.instance.cexs_to_data(
+      & mut self.data, cexs
+    ) ;
+    profile!{ self mark "data", "registration" }
+    profile!{ self mark "data" }
+
+    self.run_assistant() ? ;
+
+    match res {
+      Ok(true) => {
+        // New data.
+        for (
+          index, & mut (_, _, ref mut changed)
+        ) in self.learners.index_iter_mut() {
+          * changed = index != idx
+        }
+      },
+      Ok(false) => if self.learners[idx].2 {
+        // Something has changed since the last candidate of this learner.
+        // The fact that the current candidate generated no new data is not
+        // a problem.
+        ()
+      } else {
+        bail! {
+          "translation of cexs to data for {} generated no new data",
+          conf.emph( & self.learners[idx].1 )
+        }
+      },
+      Err(e) => {
+        if e.is_unsat() {
+          return Ok(
+            Some(
+              TeachRes::Unsat( self.unsat_core() )
+            )
+          )
+        } else {
+          bail!(e)
+        }
+      },
+    }
+
+    profile!{ self tick "data" }
+    profile!{ self tick "data", "propagation" }
+    self.data.propagate() ? ;
+    profile!{ self mark "data", "propagation" }
+    profile!{ self mark "data" }
+
+    Ok(None)
+  }
+
 
 
 

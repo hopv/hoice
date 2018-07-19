@@ -35,7 +35,9 @@ pub trait TheoSynth {
   /// Increments the synthesizer.
   fn increment(& mut self) ;
   /// Synthesizes qualifiers.
-  fn synth<F>(& mut self, F, & VarVals, & mut TermVals, & Profiler) -> Res<bool>
+  fn synth<F>(
+    & mut self, F, & VarVals, & mut TermVals, & Profiler
+  ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> ;
   /// Generates some [`TermVal`][term val]s for some other type.
   ///
@@ -152,6 +154,19 @@ impl SynthSys {
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
 
+    self.int_synth(sample, & mut f, _profiler) ? ;
+    self.real_synth(sample, & mut f, _profiler) ? ;
+    self.adt_synth(sample, & mut f, _profiler) ? ;
+
+    Ok(false)
+  }
+
+  /// Runs integer synthesis.
+  pub fn int_synth<F>(
+    & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
+  ) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
+
     if let Some(int_synth) = self.int.as_mut() {
       if ! int_synth.is_done() {
         self.cross_synth.clear() ;
@@ -190,6 +205,16 @@ impl SynthSys {
       }
     }
 
+    Ok(false)
+  }
+
+
+  /// Runs real synthesis.
+  pub fn real_synth<F>(
+    & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
+  ) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
+
     if let Some(real_synth) = self.real.as_mut() {
       if ! real_synth.is_done() {
         self.cross_synth.clear() ;
@@ -224,6 +249,16 @@ impl SynthSys {
         if done ? { return Ok(true) }
       }
     }
+
+    Ok(false)
+  }
+
+
+  /// Runs real synthesis.
+  pub fn adt_synth<F>(
+    & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
+  ) -> Res<bool>
+  where F: FnMut(Term) -> Res<bool> {
 
     for adt_synth in & mut self.adt {
       if ! adt_synth.is_done() {
@@ -262,4 +297,5 @@ impl SynthSys {
 
     Ok(false)
   }
+
 }
