@@ -154,11 +154,15 @@ impl SynthSys {
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
 
-    self.int_synth(sample, & mut f, _profiler) ? ;
-    self.real_synth(sample, & mut f, _profiler) ? ;
-    self.adt_synth(sample, & mut f, _profiler) ? ;
+    let done = self.int_synth(
+      sample, & mut f, _profiler
+    ) ? || self.real_synth(
+      sample, & mut f, _profiler
+    ) ? || self.adt_synth(
+      sample, & mut f, _profiler
+    ) ? ;
 
-    Ok(false)
+    Ok(done)
   }
 
   /// Runs integer synthesis.

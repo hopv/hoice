@@ -967,7 +967,7 @@ impl<'a> Teacher<'a> {
     let model = Parser.fix_model(model) ? ;
     let cex = Cex::of_model(
       self.instance[clause].vars(), model,
-      bias.is_none() && conf.teacher.partial
+      ! bias.is_none() && conf.teacher.partial
     ) ? ;
     profile! { self mark "cexs", "model" }
     Ok(cex)
@@ -980,27 +980,29 @@ impl<'a> Teacher<'a> {
   ) -> Res< Option<(Cex, Bias)> > {
     if let Some((actlit, bias)) = bias {
 
-        log! { @debug
-          "  checksat with bias {}", bias.to_string(& self.instance)
-        }
-        self.solver.comment(
-          & format!("checksat with bias {}", bias.to_string(& self.instance))
-        ) ? ;
-        profile!{ self tick "cexs", "biased check-sat" }
-        let sat = self.solver.check_sat_act(
-          Some(& actlit)
-        ) ? ;
+      log! { @debug
+        "  checksat with bias {}", bias.to_string(& self.instance)
+      }
+      self.solver.comment(
+        & format!("checksat with bias {}", bias.to_string(& self.instance))
+      ) ? ;
+      profile!{ self tick "cexs", "biased check-sat" }
+      let sat = self.solver.check_sat_act(
+        Some(& actlit)
+      ) ? ;
 
-        if sat {
-          profile!{ self mark "cexs", "biased check-sat" }
-          let cex = self.get_bias_cex(clause, & bias) ? ;
-          self.solver.de_actlit(actlit) ? ;
-          Ok(
-            Some((cex, bias))
-          )
-        } else {
-          Ok(None)
-        }
+      if sat {
+        log! { @debug "  sat, getting cex" }
+        profile!{ self mark "cexs", "biased check-sat" }
+        let cex = self.get_bias_cex(clause, & bias) ? ;
+        log! { @debug "  {}", cex }
+        self.solver.de_actlit(actlit) ? ;
+        Ok(
+          Some((cex, bias))
+        )
+      } else {
+        Ok(None)
+      }
 
     } else {
 
@@ -1010,6 +1012,7 @@ impl<'a> Teacher<'a> {
       profile!{ self mark "cexs", "check-sat" }
 
       if sat {
+        log! { @debug "  sat, getting cex" }
         let bias = if self.instance[clause].is_positive() {
           Bias::Lft
         } else if self.instance[clause].is_strict_neg() {
@@ -1025,6 +1028,7 @@ impl<'a> Teacher<'a> {
           Bias::Non
         } ;
         let cex = self.get_bias_cex(clause, & bias) ? ;
+        log! { @debug "  {}", cex }
         Ok(
           Some((cex, bias))
         )

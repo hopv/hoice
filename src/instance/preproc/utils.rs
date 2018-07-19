@@ -652,7 +652,7 @@ pub fn register_stats(
 /// Registers some info for a preprocessor.
 pub fn register_info(
   instance: & Instance, _profiler: & Profiler,
-  preproc: & 'static str, red_info: & RedInfo,
+  preproc: & 'static str, _red_info: & RedInfo,
   count: usize,
 ) -> Res<()> {
   preproc_dump!(
@@ -664,25 +664,25 @@ pub fn register_info(
   profile!{
     |_profiler| format!(
       "{:>10}   pred red", preproc
-    ) => add red_info.preds
+    ) => add _red_info.preds
   }
   profile!{
     |_profiler| format!(
       "{:>10} clause red", preproc
-    ) => add red_info.clauses_rmed
+    ) => add _red_info.clauses_rmed
   }
   profile!{
     |_profiler| format!(
       "{:>10} clause add", preproc
-    ) => add red_info.clauses_added
+    ) => add _red_info.clauses_added
   }
   profile!{
     |_profiler| format!(
       "{:>10}    arg red", preproc
-    ) => add red_info.args_rmed
+    ) => add _red_info.args_rmed
   }
   log! { @verb
-    "{}: {}", conf.emph( preproc ), red_info
+    "{}: {}", conf.emph( preproc ), _red_info
   }
   Ok(())
 }

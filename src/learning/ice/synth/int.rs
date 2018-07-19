@@ -34,7 +34,7 @@ impl TheoSynth for IntSynth {
   }
 
   fn restart(& mut self) {
-    * self = Self::new()
+    self.expressivity = 0
   }
 
   fn increment(& mut self) {

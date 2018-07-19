@@ -426,6 +426,7 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
 
 
 /// Type of values returned by the full parser.
+#[derive(Debug)]
 pub enum FPVal {
   /// A normal value.
   Val(Val),
@@ -435,6 +436,7 @@ pub enum FPVal {
   FunDef(String),
 }
 /// Type of variables returned by the full parser.
+#[derive(Debug)]
 pub enum FPVar {
   /// A normal variable.
   Var(VarIdx),

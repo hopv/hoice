@@ -1,10 +1,42 @@
 //! Argument reduction.
 
 use common::* ;
-use instance::Clause ;
+use instance::{
+  Clause, preproc::RedStrat, instance::PreInstance
+} ;
+
+
+/// Argument reduction.
+///
+/// Applies the technique from
+/// [Redundant argument filtering of logic programs][paper].
+///
+/// [paper]: https://link.springer.com/chapter/10.1007%2F3-540-62718-9_6
+/// (Redundant argument filtering of logic programs)
+pub struct ArgRed {
+  inner: ArgReductor,
+}
+
+impl RedStrat for ArgRed {
+  fn name(& self) -> & 'static str { "arg_reduce" }
+
+  fn new(_: & Instance) -> Self {
+    ArgRed {
+      inner: ArgReductor::new(),
+    }
+  }
+
+  fn apply<'a>(
+    & mut self, instance: & mut PreInstance<'a>
+  ) -> Res<RedInfo> {
+    let keep = self.inner.run(instance) ;
+    instance.rm_args(keep)
+  }
+}
+
 
 /// Argument reduction context.
-pub struct ArgRed {
+pub struct ArgReductor {
   /// Predicate arguments to keep.
   keep: PrdMap<VarSet>,
   /// Map from clauses to the variables appearing in their lhs.
@@ -12,13 +44,13 @@ pub struct ArgRed {
   /// Map from clauses to the varibales appearing in their rhs.
   rhs_vars: ClsMap< Option<(PrdIdx, VarMap<VarSet>)> >
 }
-impl Default for ArgRed {
+impl Default for ArgReductor {
   fn default() -> Self { Self::new() }
 }
-impl ArgRed {
+impl ArgReductor {
   /// Constructor.
   pub fn new() -> Self {
-    ArgRed {
+    ArgReductor {
       keep: PrdMap::new(),
       lhs_vars: ClsMap::new(),
       rhs_vars: ClsMap::new(),
@@ -115,7 +147,7 @@ impl ArgRed {
     & self, cvar: VarIdx, idx: ClsIdx
   ) -> bool {
     if * self.lhs_vars[idx].get(& cvar).expect(
-      "inconsistent ArgRed state"
+      "inconsistent ArgReductor state"
     ) > 1 {
       return true
 
