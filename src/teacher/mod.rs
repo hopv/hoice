@@ -19,7 +19,10 @@ use unsat_core::UnsatRes ;
 use data::Data ;
 
 pub mod assistant ;
+mod cex_bias ;
 use self::assistant::Assistant ;
+
+pub use self::cex_bias::CexBias ;
 
 
 /// Starts the teaching process.
@@ -245,6 +248,10 @@ pub struct Teacher<'a> {
   /// Clauses that are trivially verified in the current candidate.
   clauses_to_ignore: ClsSet,
 
+
+  /// Helper for cex bias.
+  bias: CexBias,
+
   /// Partial candidate, only really contains stuff when in split mode.
   ///
   /// Used to further constrain the learner's candidates using previous
@@ -312,6 +319,7 @@ impl<'a> Teacher<'a> {
         _profiler: profiler, partial_model, count: 0,
         tru_preds: PrdSet::new(), fls_preds: PrdSet::new(),
         clauses_to_ignore: ClsSet::new(),
+        bias: CexBias::new(),
       }
     )
   }
@@ -1072,8 +1080,11 @@ impl<'a> Teacher<'a> {
         log! { @3 "generating bias actlits" }
         let biased = profile! { 
           self wrap {
-            self.nu_bias_applications(clause_idx, bias_only)
-            // self.bias_applications(clause_idx)
+            self.bias.apply(
+              & self._profiler, & mut self.solver,
+              clause_idx, & self.instance, & self.data,
+              bias_only
+            )
           } "cexs", "bias generation"
         } ? ;
         log! { @3 "working on {} biased checks", biased.len() }
@@ -1093,365 +1104,4 @@ impl<'a> Teacher<'a> {
     Ok(cexs)
   }
 
-
-
-  pub fn nu_bias_applications(
-    & mut self, clause_idx: ClsIdx, bias_only: bool,
-  ) -> Res<Vec<(Actlit, Bias)>> {
-    use common::smt::DisjArgs ;
-    use var_to::terms::{ VarTermsMap, VarTermsSet } ;
-
-    let clause = & self.instance[clause_idx] ;
-
-    // Maps lhs applications to activation literals for positive samples.
-    let mut lhs_actlits_of = PrdHMap::with_capacity(
-      clause.lhs_preds().len()
-    ) ;
-    // Predicates in lhs applications that don't have positive samples, or for
-    // which positive samples cannot be activated.
-    let mut lhs_preds_with_no_pos = PrdHMap::<VarTermsSet>::new() ;
-
-    log! { @4 "creating lhs actlits" }
-
-    let mut cant_pos_argss = VarTermsSet::new() ;
-
-    // Create actlits for lhs applications when possible.
-    for (pred, argss) in clause.lhs_preds() {
-      let pred = * pred ;
-      log! { @5 "for {} ({})", self.instance[pred], argss.len() }
-
-      if self.data.pos[pred].is_empty() {
-        log! { @5 "  no positive data" }
-        lhs_preds_with_no_pos.insert(pred, argss.clone()) ;
-        continue
-      }
-
-      self.solver.comment(
-        & format!(
-          "activating positive samples for {} ({} applications)",
-          self.instance[pred], argss.len()
-        )
-      ) ? ;
-
-      let mut argss_map = VarTermsMap::with_capacity( argss.len() ) ;
-
-      debug_assert! { cant_pos_argss.is_empty() }
-
-      for args in argss {
-        log! { @6 "generating actlit for {}", args }
-        let actlit = self.solver.get_actlit() ? ;
-        let disjunction = DisjArgs::new(
-          args, & self.data.pos[pred]
-        ) ? ;
-        self.solver.assert_act(& actlit, & disjunction) ? ;
-
-        if self.solver.check_sat_act( Some(& actlit) ) ? {
-          log! { @6 "  sat, keeping" }
-          let prev = argss_map.insert(args.clone(), actlit) ;
-          debug_assert! { prev.is_none() }
-        } else {
-          log! { @6 "  unsat, discarding" }
-          self.solver.de_actlit(actlit) ? ;
-          let is_new = cant_pos_argss.insert( args.clone() ) ;
-          debug_assert! { is_new }
-        }
-      }
-
-      if ! cant_pos_argss.is_empty() {
-        let prev = lhs_preds_with_no_pos.insert(
-          pred, cant_pos_argss.drain().into()
-        ) ;
-        debug_assert! { prev.is_none() }
-      }
-
-      if ! argss_map.is_empty() {
-        let prev = lhs_actlits_of.insert(pred, argss_map) ;
-        debug_assert! { prev.is_none() }
-      }
-    }
-
-    log! { @4 "working on rhs" }
-
-    // Create actlit for rhs application if any.
-    //
-    // - `Some(None)` if there's not rhs
-    // - `None` if there's one but it has no negative data
-    // - `Some(actlit)` otherwise.
-    //
-    // So `rhs_actlit.is_none()` => we can't force the rhs to be false.
-    let rhs_actlit = if let Some((pred, args)) = clause.rhs() {
-      log! { @5 "-> {}", self.instance[pred] }
-      if self.data.neg[pred].is_empty() {
-        // No negative data...
-        log! { @5 "   no negative data" }
-        None
-      } else {
-        log! { @5 "   has negative data" }
-        // Negative data, generate an actlit for that.
-        self.solver.comment(
-          & format!(
-            "activating negative samples for {}", self.instance[pred]
-          )
-        ) ? ;
-        let actlit = self.solver.get_actlit() ? ;
-        let disjunction = DisjArgs::new(
-          args, & self.data.neg[pred]
-        ) ? ;
-        self.solver.assert_act(& actlit, & disjunction) ? ;
-
-        if self.solver.check_sat_act( Some(& actlit) ) ? {
-          log! { @6 "sat, keeping" }
-          Some( Some(actlit) )
-        } else {
-          log! { @6 "unsat, discarding" }
-          self.solver.de_actlit(actlit) ? ;
-          None
-        }
-      }
-    } else {
-      log! { @5 "-> None" }
-      Some(None)
-    } ;
-
-
-    // Let's do this.
-    let mut actlits = vec![] ;
-
-
-    // If there's any positive samples at all, we can do something for the rhs
-    // (if any).
-    if ! lhs_actlits_of.is_empty() && clause.rhs().is_some() && (
-      // Skip if we're only generating biased check-sat and there are
-      // applications without any positive data.
-      ! bias_only || lhs_preds_with_no_pos.is_empty()
-    ) {
-      self.solver.comment("activating all lhs positive samples") ? ;
-      let actlit = self.solver.get_actlit() ? ;
-      for (_, map) in & lhs_actlits_of {
-        for (_, pos_actlit) in map {
-          self.solver.assert_act(& actlit, pos_actlit) ?
-        }
-      }
-
-      let bias = if lhs_preds_with_no_pos.is_empty() {
-        log! { @4 "total bias left" }
-        profile! { self "bias: total left" => add 1 }
-        // If all lhs predicates have positive sample then this actlit yields a
-        // positive example for the rhs.
-        Bias::Lft
-      } else {
-        log! { @4 "partial bias left" }
-        profile! { self "bias: partial left" => add 1 }
-        // Otherwise this will generate a constraint.
-        Bias::Non
-      } ;
-
-      if ! bias.is_none() || ! bias_only {
-        actlits.push( (actlit, bias) )
-      }
-    }
-
-
-    // If there's no rhs or it has negative samples we can do something for the
-    // lhs.
-    if let Some(maybe_actlit) = rhs_actlit {
-
-      if lhs_preds_with_no_pos.is_empty() {
-        log! { @4 "exhaustive bias right" }
-        // We can force all positive examples for all lhs applications but
-        // one in turn to try to generate negative examples.
-        for (this_pred, map) in & lhs_actlits_of {
-          for (this_args, _) in map {
-
-            self.solver.comment(
-              & format!(
-                "actlit forcing application ({} {}) to be false",
-                self.instance[* this_pred], this_args
-              )
-            ) ? ;
-            let this_actlit = self.solver.get_actlit() ? ;
-
-            // Force rhs false if any.
-            if let Some(rhs_actlit) = maybe_actlit.as_ref() {
-              self.solver.assert_act(& this_actlit, rhs_actlit) ?
-            }
-
-            // Activate everything else than this particular application
-            for (pred, map) in & lhs_actlits_of {
-              for (args, actlit) in map {
-                if pred == this_pred && args == this_args {
-                  continue
-                }
-                self.solver.assert_act(& this_actlit, actlit) ?
-              }
-            }
-
-            profile! { self "bias: exhaustive right" => add 1 }
-
-            actlits.push(
-              (this_actlit, Bias::NuRgt(* this_pred, this_args.clone()))
-            )
-          }
-        }
-
-      } else if ! bias_only || lhs_preds_with_no_pos.iter().fold(
-        // Skip if only generating biased checksat and there's more than one
-        // application without positive data.
-        0, |acc, (_, argss)| acc + argss.len()
-      ) == 1 {
-
-        // There's some lhs applications with no negative data. Activate
-        // everything we can.
-
-        let this_actlit = self.solver.get_actlit() ? ;
-
-        // Force rhs false if any.
-        if let Some(rhs_actlit) = maybe_actlit.as_ref() {
-          self.solver.assert_act(& this_actlit, rhs_actlit) ?
-        }
-
-        // Activate everything we can.
-        for (_, map) in & lhs_actlits_of {
-          for (_, actlit) in map {
-            self.solver.assert_act(& this_actlit, actlit) ?
-          }
-        }
-
-        // Now the question is what kind of bias this corresponds to.
-
-        let mut iter = lhs_preds_with_no_pos.into_iter() ;
-        let (this_pred, argss) = iter.next().expect(
-          "next on non-empty iterator cannot yield none"
-        ) ;
-
-        let mut argss_iter = argss.into_iter() ;
-        let this_args = argss_iter.next().expect(
-          "empty arguments for predicate are illegal in clauses"
-        ) ;
-
-        // If we have a single predicate application with no negative samples
-        // we can generate an actlit for this one.
-        let bias = if iter.next().is_none() && argss_iter.next().is_none() {
-          log! { @4 "singular bias right" }
-          profile! { self "bias: singular right" => add 1 }
-          Bias::NuRgt(this_pred, this_args.clone())
-        } else {
-          // Otherwise we can just generate a negative constraint that's more
-          // constrained.
-          log! { @4 "partial bias right" }
-          profile! { self "bias: partial right " => add 1 }
-          Bias::Non
-        } ;
-
-        actlits.push( (this_actlit, bias) )
-
-      }
-
-    }
-
-
-    Ok(actlits)
-  }
-
-
-
-  /// Biases the arguments of the predicates of a clause.
-  ///
-  /// **Assumes all active variables are already defined.**
-  ///
-  /// Guaranteed to return `(None, None)` if this feature is deactivated by
-  /// [`bias_cexs`][conf], or if the clause is positive / negative (either LHS
-  /// or RHS have no predicate applications).
-  ///
-  /// The first element of the pair it returns is an activation literal that
-  /// forces predicate applications in the LHS to be positive. That is, it
-  /// forces their arguments to correspond to one of the known positive
-  /// examples.
-  ///
-  /// - When no predicate appearing in the LHS have positive examples, returns
-  ///   no actlit.
-  /// - When only some of them do, returns an actlit: some LHS applications
-  ///   will not be constrained.
-  ///
-  /// The second element of the pair it returns is an activation literal that
-  /// forces the predicate application in the RHS to be negative. That is, it
-  /// forces its arguments to correspond to one of the known negative examples.
-  ///
-  /// - When the predicate appearing in the RHS has no negative examples,
-  ///   returns no actlit.
-  ///
-  /// [conf]: ../common/config/struct.TeacherConf.html#structfield.bias_cexs
-  /// (bias_cexs configuration)
-  pub fn bias_applications(
-    & mut self, clause_idx: ClsIdx
-  ) -> Res<Vec<(Actlit, Bias)>> {
-    use common::smt::DisjArgs ;
-
-    let clause = & self.instance[clause_idx] ;
-
-    // Active and not a positive constraint?
-    if ! conf.teacher.bias_cexs
-    || clause.lhs_preds().is_empty() {
-      return Ok( vec![] )
-    }
-
-    let rhs_actlit = if let Some((rhs_pred, rhs_args)) = clause.rhs() {
-      if ! self.data.neg[rhs_pred].is_empty() {
-        self.solver.comment(
-          & format!("actlit for rhs bias ({})", self.instance[rhs_pred])
-        ) ? ;
-        let actlit = self.solver.get_actlit() ? ;
-
-        let disjunction = DisjArgs::new(
-          rhs_args, & self.data.neg[rhs_pred]
-        ) ? ;
-        self.solver.assert_act(& actlit, & disjunction) ? ;
-
-        Some(actlit)
-      } else {
-        None
-      }
-    } else if clause.lhs_pred_apps_len() == 1 {
-      // Negative constraint, skipping.
-      return Ok( vec![] )
-    } else {
-      None
-    } ;
-
-    // Work on lhs pred apps that have some positive data.
-    let mut lhs_actlit = None ;
-    for (pred, argss) in clause.lhs_preds() {
-      let pred = * pred ;
-      if self.data.pos[pred].is_empty() { continue }
-      let actlit = if let Some(actlit) = lhs_actlit {
-        actlit
-      } else {
-        self.solver.comment("\nactlit for lhs bias") ? ;
-        self.solver.get_actlit() ?
-      } ;
-
-      self.solver.comment(
-        & format!("\nbias for {}", self.instance[pred])
-      ) ? ;
-
-      for args in argss {
-        let disjunction = DisjArgs::new(args, & self.data.pos[pred]) ? ;
-        self.solver.assert_act(& actlit, & disjunction) ?
-      }
-
-      lhs_actlit = Some(actlit)
-    }
-
-    let mut res = vec![] ;
-
-    if let Some(actlit) = rhs_actlit {
-      res.push((actlit, Bias::Non))
-    }
-
-    if let Some(actlit) = lhs_actlit {
-      res.push((actlit, Bias::Non))
-    }
-
-    Ok(res)
-  }
 }

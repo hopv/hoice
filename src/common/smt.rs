@@ -616,7 +616,7 @@ impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
 impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
   fn parse_value(
     self, input: & 'a str,
-    _id: & FPVar, _params: & Vec<(FPVar, Typ)>, _out: & Typ
+    _id: & FPVar, _params: & [ (FPVar, Typ) ], _out: & Typ
   ) -> SmtRes<FPVal> {
     let mut cxt = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
