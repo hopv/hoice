@@ -141,6 +141,8 @@ pub mod keywords {
 
         store_ ("store", doc = "Updater for arrays.")
         select_ ("select", doc = "Accessor for arrays.")
+
+        match_ ("match", doc = "Match operator.")
       }
     }
 

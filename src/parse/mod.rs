@@ -594,7 +594,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.error(
             ident_start_pos,
             format!(
-              "illegal usage of keyword `{}`",
+              "illegal use of keyword `{}`",
               conf.bad(id)
             )
           )
@@ -1277,8 +1277,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ) ? ;
     self.ws_cmt() ;
 
-    let mut final_funs = Vec::with_capacity( funs.len() ) ;
-
     // Parse all definitions.
     for (mut fun, pos, var_map) in funs {
 
@@ -1311,11 +1309,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         )
       }
 
-      let fun = fun::mk(fun).chain_err(
+      fun::mk(fun).chain_err(
         || self.error(pos, "while registering this function")
-      ) ;
-
-      final_funs.push(fun)
+      ) ? ;
     }
 
     self.ws_cmt() ;
@@ -2301,64 +2297,59 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
   /// Tries to parse an operator.
   fn op_opt(& mut self) -> Res< Option<Op> > {
-    macro_rules! none_if_ident_char_else {
-      ($e:expr) => (
-        if self.legal_id_char() {
-          None
-        } else { Some($e) }
-      )
-    }
     let start_pos = self.pos() ;
     let res = match self.next() {
-      Some("a") => if self.tag_opt("nd") {
-        none_if_ident_char_else!(Op::And)
+      Some("a") => if self.word_opt("nd") {
+        Some(Op::And)
       } else {
         None
       },
-      Some("o") => if self.tag_opt("r") {
-        none_if_ident_char_else!(Op::Or)
+      Some("o") => if self.word_opt("r") {
+        Some(Op::Or)
       } else {
         None
       },
-      Some("n") => if self.tag_opt("ot") {
-        none_if_ident_char_else!(Op::Not)
+      Some("n") => if self.word_opt("ot") {
+        Some(Op::Not)
       } else {
         None
       },
-      Some("i") => if self.tag_opt("te") {
-        none_if_ident_char_else!(Op::Ite)
+      Some("i") => if self.word_opt("te") {
+        Some(Op::Ite)
       } else {
         None
       },
-      Some("m") => if self.tag_opt("od") {
-        none_if_ident_char_else!(Op::Mod)
+      Some("m") => if self.word_opt("od") {
+        Some(Op::Mod)
+      } else if self.word_opt("atch") {
+        bail!("unsupported `{}` operator", conf.bad("match"))
       } else {
         None
       },
-      Some("r") => if self.tag_opt("em") {
-        none_if_ident_char_else!(Op::Rem)
+      Some("r") => if self.word_opt("em") {
+        Some(Op::Rem)
       } else {
         None
       },
-      Some("d") => if self.tag_opt("iv") {
-        none_if_ident_char_else!(Op::IDiv)
-      } else if self.tag_opt("istinct") {
-        none_if_ident_char_else!(Op::Distinct)
+      Some("d") => if self.word_opt("iv") {
+        Some(Op::IDiv)
+      } else if self.word_opt("istinct") {
+        Some(Op::Distinct)
       } else {
         None
       },
-      Some("t") => if self.tag_opt("o_int") {
-        none_if_ident_char_else!(Op::ToInt)
-      } else if self.tag_opt("o_real") {
-        none_if_ident_char_else!(Op::ToReal)
+      Some("t") => if self.word_opt("o_int") {
+        Some(Op::ToInt)
+      } else if self.word_opt("o_real") {
+        Some(Op::ToReal)
       } else {
         None
       },
 
-      Some("s") => if self.tag_opt("tore") {
-        none_if_ident_char_else!(Op::Store)
-      } else if self.tag_opt("elect") {
-        none_if_ident_char_else!(Op::Select)
+      Some("s") => if self.word_opt("tore") {
+        Some(Op::Store)
+      } else if self.word_opt("elect") {
+        Some(Op::Select)
       } else {
         None
       },

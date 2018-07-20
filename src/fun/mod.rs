@@ -317,6 +317,19 @@ impl RFun {
     }
     self.def = def
   }
+
+  /// Checks the function is legal.
+  pub fn check(& self) -> Res<()> {
+    for dep in & self.deps {
+      if get(dep).is_none() {
+        bail!(
+          "function `{}` depends on unknown function `{}`",
+          conf.emph(& self.name), conf.bad(dep)
+        )
+      }
+    }
+    Ok(())
+  }
 }
 
 
