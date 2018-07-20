@@ -170,6 +170,9 @@ pub type Cursor = usize ;
   PartialOrd, Ord
 )]
 pub struct Pos(usize) ;
+impl Default for Pos {
+  fn default() -> Self { Pos(0) }
+}
 impl ::std::ops::Deref for Pos {
   type Target = usize ;
   fn deref(& self) -> & usize { & self.0 }
@@ -1585,7 +1588,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ) ? ;
       self.ws_cmt() ;
 
-      let dtyp = dtyp::mk(dtyp).chain_err(
+      let is_okay = dtyp::check_reserved(& dtyp.name) ;
+
+      let dtyp = is_okay.and_then(
+        |_| dtyp::mk(dtyp)
+      ).chain_err(
         || self.error(
           dtyp_pos, "while parsing the declaration for this datatype"
         )

@@ -37,19 +37,21 @@ pub fn start_class(
 
   let res = match teach(& mut teacher) {
     Ok(res) => Ok(res),
-    Err(e) => {
-      match e.kind() {
-        ErrorKind::Unsat => {
-          warn! {
-            "legacy unsat (by error) result triggered\n\
-            unsat core will not be available\n\
-            please consider contacting the developer"
-          }
-          let core = teacher.unsat_core() ;
-          Ok( TeachRes::Unsat(core) )
-        },
-        _ => Err(e)
-      }
+
+    Err(e) => match e.kind() {
+      ErrorKind::Unsat => {
+        warn! {
+          "legacy unsat (by error) result triggered\n\
+          unsat core will not be available\n\
+          please consider contacting the developer"
+        }
+        let core = teacher.unsat_core() ;
+        Ok( TeachRes::Unsat(core) )
+      },
+      _ => {
+        conf.check_timeout() ? ;
+        Err(e)
+      },
     },
   } ;
 
@@ -502,7 +504,7 @@ impl<'a> Teacher<'a> {
   ) -> Res< Option<TeachRes> > {
     if_log!{ @1
       log! { conf.teacher.step, || @1
-        "\nCurrent candidates from {} learner:",
+        "\nCurrent candidate(s) from {} learner:",
         conf.emph( & self.learners[idx].1 )
       }
       for _pred in self.instance.preds() {
@@ -523,9 +525,9 @@ impl<'a> Teacher<'a> {
       ) ;
     }
 
-    profile!{ self tick "cexs" }
-    let cexs = self.get_cexs(& candidates) ? ;
-    profile!{ self mark "cexs" }
+    let cexs = profile! {
+      self wrap { self.get_cexs(& candidates) } "cexs"
+    } ? ;
 
     if cexs.is_empty() {
       return Ok(
@@ -962,15 +964,17 @@ impl<'a> Teacher<'a> {
 
   /// Retrieves a counterexample given some bias.
   fn get_bias_cex(& mut self, clause: ClsIdx, bias: & Bias) -> Res<Cex> {
-    profile! { self tick "cexs", "model" }
+    profile! {
+      self wrap { self.get_bias_cex_inner(clause, bias) } "cexs", "model"
+    }
+  }
+  fn get_bias_cex_inner(& mut self, clause: ClsIdx, bias: & Bias) -> Res<Cex> {
     let model = self.solver.get_model() ? ;
     let model = Parser.fix_model(model) ? ;
-    let cex = Cex::of_model(
+    Cex::of_model(
       self.instance[clause].vars(), model,
       ! bias.is_none() && conf.teacher.partial
-    ) ? ;
-    profile! { self mark "cexs", "model" }
-    Ok(cex)
+    )
   }
 
 
@@ -1007,9 +1011,9 @@ impl<'a> Teacher<'a> {
     } else {
 
       log! { @debug "  checksat" }
-      profile!{ self tick "cexs", "check-sat" }
-      let sat = self.solver.check_sat() ? ;
-      profile!{ self mark "cexs", "check-sat" }
+      let sat = profile! {
+        self wrap { self.solver.check_sat() } "cexs", "check-sat"
+      } ? ;
 
       if sat {
         log! { @debug "  sat, getting cex" }

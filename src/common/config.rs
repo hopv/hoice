@@ -89,7 +89,14 @@ impl SmtConf {
     & self, name: & 'static str, parser: Parser, instance: I
   ) -> Res< ::rsmt2::Solver<Parser> >
   where I: AsRef<Instance> {
-    let mut solver = ::rsmt2::Solver::new(self.conf(), parser) ? ;
+    let mut smt_conf = self.conf.clone() ;
+    if let Some(timeout) = ::common::conf.until_timeout() {
+      smt_conf.option(
+        format!( "-T:{}", timeout.as_secs() + 1 )
+      ) ;
+    }
+
+    let mut solver = ::rsmt2::Solver::new(smt_conf, parser) ? ;
     if let Some(log) = self.log_file(name, instance.as_ref()).chain_err(
       || format!(
         "While opening log file for {}", ::common::conf.emph(name)
@@ -97,6 +104,7 @@ impl SmtConf {
     ) ? {
       solver.tee(log) ?
     }
+
     ::common::smt::init(& mut solver) ? ;
     Ok(solver)
   }

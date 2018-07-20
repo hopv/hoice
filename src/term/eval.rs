@@ -114,9 +114,12 @@ fn total<'a>(
             }
 
           } else {
-            bail!(
+            let e: Error = format!(
               "unknown constructor `{}` for datatype {}",
               conf.bad(constructor), dtyp.name
+            ).into() ;
+            bail!(
+              e.chain_err( || dtyp::constructors_as_error(& dtyp.name) )
             )
           }
 

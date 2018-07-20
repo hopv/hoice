@@ -21,10 +21,6 @@ wrap_usize! {
 pub enum PartialTyp {
   /// Array.
   Array(Box<PartialTyp>, Box<PartialTyp>),
-
-  // /// List,
-  // List(PartialTyp),
-
   /// Datatype.
   DTyp(String, ::parse::Pos, TPrmMap<PartialTyp>),
   /// Concrete type.
@@ -32,11 +28,13 @@ pub enum PartialTyp {
   /// Type parameter.
   Param(TPrmIdx),
 }
+
 impl From<Typ> for PartialTyp {
   fn from(typ: Typ) -> Self {
     PartialTyp::Typ(typ)
   }
 }
+
 impl PartialTyp {
   /// True if the type mentions the datatype provided.
   pub fn mentions_dtyp(
@@ -346,14 +344,32 @@ lazy_static! {
   static ref factory: Factory = RwLock::new(
     BTreeMap::new()
   ) ;
+
+  /// Set of reserved datatypes.
+  static ref reserved_dtyps: BTreeSet<& 'static str> = {
+    let mut set = BTreeSet::new() ;
+    set.insert("List") ;
+    set
+  } ;
+
   /// Map from constructors to datatypes.
   static ref constructor_map: Factory = RwLock::new(
     BTreeMap::new()
   ) ;
+
   /// Set of selectors.
   static ref selector_set: RwLock<BTreeSet<String>> = RwLock::new(
     BTreeSet::new()
   ) ;
+}
+
+
+/// Checks whether a datatype is reserved.
+pub fn check_reserved(name: & str) -> Res<()> {
+  if reserved_dtyps.contains(name) {
+    bail!("attempting to redefine built-in datatype {}", conf.bad(name))
+  }
+  Ok(())
 }
 
 
@@ -436,7 +452,6 @@ pub fn mk(mut dtyp: RDTyp) -> Res<DTyp> {
     }
   }
 
-
   let prev = if let Ok(mut f) = factory.write() {
     f.insert( name, dtyp.clone() )
   } else {
@@ -466,6 +481,34 @@ pub fn is_selector(selector: & str) -> bool {
 }
 
 
+/// Lists (some of) the constructors of a datatype as an error.
+pub fn constructors_as_error(dtyp: & str) -> Error {
+  let dtyp = match get(dtyp) {
+    Ok(res) => res,
+    Err(e) => return e,
+  } ;
+  let mut s = String::new() ;
+  for (count, (constructor, args)) in dtyp.news.iter().enumerate() {
+    if count >= 3 {
+      s.push_str(
+        & format!("and {} others...", dtyp.news.len() - 3)
+      )
+    } else {
+      if count > 0 { s.push_str("\n") }
+      s.push_str(constructor) ;
+      if ! args.is_empty() {
+        for (selector, typ) in args {
+          s.push_str(
+            & format!(" ({} {})", selector, typ)
+          )
+        }
+      }
+    }
+  }
+  s.into()
+}
+
+
 /// Retrieves a datatype from its name.
 ///
 /// Will fail if
@@ -481,6 +524,8 @@ pub fn get(dtyp: & str) -> Res<DTyp> {
 
   if let Some(res) = maybe_res {
     Ok(res)
+  } else if dtyp == "List" {
+    mk( RDTyp::list() )
   } else {
     bail!("unknown datatype `{}`", dtyp)
   }
@@ -520,6 +565,9 @@ pub fn write_all<W: Write>(w: & mut W, pref: & str) -> ::std::io::Result<()> {
   let dtyp_pref = & format!("{}  ", pref) ;
 
   for (name, dtyp) in decs.iter() {
+    if reserved_dtyps.contains( name.as_str() ) {
+      continue
+    }
     let is_new = known.insert(name) ;
     if ! is_new {
       continue
@@ -662,6 +710,42 @@ impl RDTyp {
     RDTyp {
       name, deps: vec![], prms: TPrmMap::new(), news: BTreeMap::new(),
       default: "".into()
+    }
+  }
+
+  /// Generates the definition for the `List` datatype.
+  fn list() -> Self {
+    use parse::Pos ;
+
+    let mut news = BTreeMap::new() ;
+
+    let mut prms = TPrmMap::new() ;
+    let param = prms.next_index() ;
+    prms.push( "T".into() ) ;
+
+    let prev = news.insert(
+      "nil".to_string(), vec![]
+    ) ;
+    debug_assert! { prev.is_none() }
+
+    let head = ( "head".to_string(), PartialTyp::Param(param) ) ;
+    let tail = (
+      "tail".to_string(), PartialTyp::DTyp(
+        "List".into(), Pos::default(), vec![ PartialTyp::Param(param) ].into()
+      )
+    ) ;
+
+    let prev = news.insert(
+      "insert".to_string(), vec![ head, tail ]
+    ) ;
+    debug_assert! { prev.is_none() }
+
+    let default = "nil".to_string() ;
+
+    RDTyp {
+      name: "List".into(),
+      deps: vec![],
+      prms, news, default
     }
   }
 
