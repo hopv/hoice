@@ -236,8 +236,8 @@ impl RedStrat for RUnroll {
     }
   }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
 
     let mut prd_map: PrdHMap<

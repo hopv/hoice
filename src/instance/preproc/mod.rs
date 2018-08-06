@@ -488,8 +488,8 @@ pub trait RedStrat {
 
   /// Applies the reduction strategy. Returns the number of predicates reduced
   /// and the number of clauses forgotten.
-  fn apply<'a>(
-    & mut self, & mut PreInstance<'a>
+  fn apply(
+    & mut self, & mut PreInstance
   ) -> Res<RedInfo> ;
 }
 
@@ -502,8 +502,8 @@ impl RedStrat for Simplify {
 
   fn new(_: & Instance) -> Self { Simplify }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     instance.simplify_all()
   }

@@ -12,13 +12,29 @@ use common::{
   var_to::vals::{ VarValsMap, VarValsSet }
 } ;
 use data::Constraint ;
+use instance::Clause ;
 
 
 /// Initial setup for a solver.
 ///
 /// - declares all the datatypes
 /// - defines all the functions
-pub fn init<P>(solver: & mut Solver<P>) -> Res<()> {
+/// - asserts all the side-clauses if `preproc` is false
+pub fn init<P, I>(
+  solver: & mut Solver<P>, instance: I
+) -> Res<()>
+where I: AsRef<Instance> {
+  dtyp::write_all(solver, "") ? ;
+  fun::write_all(solver) ? ;
+  instance.as_ref().assert_side_clauses(solver)
+}
+
+/// Initial setup for a preprocessing solver.
+///
+/// - declares all the datatypes
+/// - defines all the functions
+/// - asserts all the side-clauses if `preproc` is false
+pub fn preproc_init<P>( solver: & mut Solver<P> ) -> Res<()> {
   dtyp::write_all(solver, "") ? ;
   fun::write_all(solver) ? ;
   Ok(())
@@ -27,11 +43,23 @@ pub fn init<P>(solver: & mut Solver<P>) -> Res<()> {
 
 /// Resets a smt solver.
 ///
-/// Use this and not `solver.reset()`. This declares all the datatypes used in
-/// the instance.
-pub fn reset<P>(solver: & mut Solver<P>) -> Res<()> {
+/// Use this and not `solver.reset()`. This declares all the
+/// datatypes/functions used in the instance.
+pub fn reset<P, I>(
+  solver: & mut Solver<P>, instance: I
+) -> Res<()>
+where I: AsRef<Instance> {
   solver.reset() ? ;
-  init(solver)
+  init(solver, instance)
+}
+
+/// Resets a smt preprocessing solver.
+///
+/// Use this and not `solver.reset()`. This declares all the
+/// datatypes/functions used in the instance.
+pub fn preproc_reset<P>( solver: & mut Solver<P> ) -> Res<()> {
+  solver.reset() ? ;
+  preproc_init(solver)
 }
 
 
@@ -53,6 +81,32 @@ impl<'a> Expr2Smt<()> for SmtTerm<'a> {
   ) -> SmtRes<()> {
     self.term.write(
       w, |w, var| var.default_write(w)
+    ) ? ;
+    Ok(())
+  }
+}
+
+
+
+/// Smt-prints a clause that has no predicate application.
+pub struct SmtSideClause<'a> {
+  /// The clause.
+  pub clause: & 'a Clause,
+}
+impl<'a> SmtSideClause<'a> {
+  /// Constructor.
+  pub fn new(clause: & 'a Clause) -> Self {
+    SmtSideClause { clause }
+  }
+}
+impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    self.clause.write(
+      w, |_, _, _| panic!(
+        "illegal side clause: found predicate application(s)"
+      )
     ) ? ;
     Ok(())
   }
@@ -478,7 +532,7 @@ impl FullParser {
     while ! model.is_empty() {
       let model_len = model.len() ;
 
-      while let Some((var, sig, typ, val)) = model.pop() {
+      while let Some((var, sig, mut typ, val)) = model.pop() {
         match var {
 
           FPVar::Var(var) => match val {
@@ -528,7 +582,7 @@ impl FullParser {
               }
             }
 
-            if let Ok(Some(term)) = match val {
+            if let Ok( Some(mut term) ) = match val {
               FPVal::FunDef(ref fun) => {
                 let mut var_hmap: BTreeMap<
                   & str, VarIdx
@@ -544,7 +598,7 @@ impl FullParser {
                 let mut parser = context.parser(fun, 0, & dummy_profiler) ;
 
                 parser.term_opt(
-                    & var_infos, & var_hmap, & instance
+                  & var_infos, & var_hmap, & instance
                 )
               },
 
@@ -556,6 +610,16 @@ impl FullParser {
                 name, fun
               ),
             } {
+              if let Some(new_typ) = term.typ().merge(& typ) {
+                if typ != new_typ {
+                  typ = new_typ.clone()
+                }
+                if term.typ() != new_typ {
+                  if let Some(nu_term) = term.force_dtyp(new_typ) {
+                    term = nu_term
+                  }
+                }
+              }
               debug_assert_eq! { term.typ(), typ }
               let prev = instance.add_define_fun(
                 name.clone(), var_infos,

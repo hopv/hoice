@@ -44,6 +44,17 @@ pub struct Instance {
   /// Populated by the `finalize` function.
   sorted_pred_terms: Vec<PrdIdx>,
 
+  /// Side-clauses.
+  ///
+  /// A side clause
+  /// - does not mention any predicate
+  /// - mentions a user-defined function
+  ///
+  /// It will be asserted when the instance is asked to initialize a solver. A
+  /// side-clause is viewed as additional information provided by the user, a
+  /// kind of lemma for the actual clauses.
+  side_clauses: Vec<Clause>,
+
   /// Clauses.
   clauses: ClsMap<Clause>,
   /// Maps predicates to the clauses where they appear in the lhs and rhs
@@ -118,6 +129,7 @@ impl Instance {
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
 
+      side_clauses: Vec::with_capacity(7),
       clauses: ClsMap::with_capacity(clause_capa),
       // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
@@ -155,6 +167,7 @@ impl Instance {
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
 
+      side_clauses: self.side_clauses.clone(),
       clauses: self.clauses.clone(),
       pred_to_clauses: self.pred_to_clauses.clone(),
       is_unsat: false,
@@ -827,6 +840,38 @@ impl Instance {
     Ok(())
   }
 
+  /// Asserts all the side-clauses in a solver.
+  pub fn assert_side_clauses<P>(
+    & self, solver: & mut Solver<P>
+  ) -> Res<()> {
+    for side_clause in & self.side_clauses {
+      side_clause.write(
+        solver, |_, _, _| panic!(
+          "illegal side-clause: found predicate application(s)"
+        )
+      ) ? ;
+      writeln!(solver) ? ;
+    }
+    Ok(())
+  }
+
+  /// Registers a clause as a side-clause.
+  ///
+  /// A side clause is a clause that does not mention any predicate, but
+  /// mentions a user-defined function.
+  pub fn add_side_clause(& mut self, clause: Clause) -> Res<()> {
+    if clause.rhs().is_some() {
+      bail!("cannot convert to side-clause: predicate application in rhs")
+    }
+    if ! clause.lhs_preds().is_empty() {
+      bail!("cannot convert to side-clause: predicate application(s) in lhs")
+    }
+
+    self.side_clauses.push(clause) ;
+
+    Ok(())
+  }
+
   /// Pushes a clause.
   ///
   /// Returns its index, if it was added.
@@ -836,6 +881,13 @@ impl Instance {
         return Ok(None)
       }
     }
+
+    if clause.lhs_preds().is_empty()
+    && clause.rhs().is_none() {
+      self.add_side_clause(clause) ? ;
+      return Ok(None)
+    }
+
     let idx = self.clauses.next_index() ;
     let is_new = self.push_clause_unchecked(clause) ;
     // self.check("after `push_clause`") ? ;
@@ -1104,11 +1156,29 @@ impl Instance {
     writeln!(w, "(set-logic HORN)") ? ;
     writeln!(w) ? ;
 
-    writeln!(w, "; Datatypes:") ? ;
+    writeln!(w, "; Datatypes") ? ;
 
     dtyp::write_all(w, "") ? ;
 
     dtyp::write_constructor_map(w, "; ") ? ;
+    writeln!(w) ? ;
+
+    writeln!(w, "; Functions") ? ;
+    fun::write_all(w) ? ;
+
+    writeln!(w) ? ;
+
+    writeln!(w, "; Side-clauses") ? ;
+    for side_clause in & self.side_clauses {
+      side_clause.write(
+        w, |_, _, _| panic!(
+          "illegal side-clause: found predicate application(s)"
+        )
+      ) ? ;
+      writeln!(w) ? ;
+    }
+
+    writeln!(w) ? ;
     writeln!(w) ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {

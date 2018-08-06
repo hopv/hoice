@@ -31,7 +31,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let solver = conf.solver.spawn("preproc", (), &* instance) ? ;
+    let solver = conf.solver.preproc_spawn("preproc", (), &* instance) ? ;
 
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
@@ -1851,6 +1851,30 @@ impl<'a> PreInstance<'a> {
       }
     }
 
+    self.solver.comment("checking side clauses") ? ;
+
+    for clause in & self.instance.side_clauses {
+      self.solver.push(1) ? ;
+      for info in clause.vars() {
+        if info.active {
+          self.solver.declare_const(
+            & info.idx.default_str(), info.typ.get()
+          ) ?
+        }
+      }
+      self.solver.assert_with(
+        clause, & (false, & set, & set, & self.instance.preds)
+      ) ? ;
+
+      let sat = self.solver.check_sat() ? ;
+      self.solver.pop(1) ? ;
+      if sat {
+        return Ok(false)
+      }
+    }
+
+    self.solver.comment("checking clauses") ? ;
+
     for clause in & self.instance.clauses {
       self.solver.push(1) ? ;
       for info in clause.vars() {
@@ -1871,7 +1895,7 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    smt::reset(& mut self.solver) ? ;
+    smt::preproc_reset(& mut self.solver) ? ;
 
     Ok(true)
   }

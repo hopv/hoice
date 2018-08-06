@@ -192,7 +192,7 @@ impl<'core> IceLearner<'core> {
         Ok(data) => {
           self.count += 1 ;
           if self.count % 50 == 0 {
-            smt::reset(& mut self.solver) ?
+            smt::reset(& mut self.solver, & self.instance) ?
           }
           profile! { self "learn steps" => add 1 }
           if let Some(candidates) = profile!(

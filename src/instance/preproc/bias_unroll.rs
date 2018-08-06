@@ -176,8 +176,8 @@ impl BiasedUnroll {
   /// Sets up the unroller by scanning the instance.
   ///
   /// Returns `true` if there's nothing to do.
-  fn setup<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn setup(
+    & mut self, instance: & mut PreInstance
   ) -> Res<bool> {
     self.max_new_clauses = ::std::cmp::min(
       10, instance.clauses().len() / 20
@@ -482,8 +482,8 @@ impl BiasedUnroll {
 
 
   /// Tries to generate some positive clauses for a predicate.
-  fn generate_pos_clauses_for<'a>(
-    & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
+  fn generate_pos_clauses_for(
+    & mut self, pred: PrdIdx, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
 
@@ -778,8 +778,8 @@ impl BiasedUnroll {
 
 
   /// Tries to generate a negative clause for a predicate.
-  fn generate_neg_clauses_for<'a>(
-    & mut self, pred: PrdIdx, instance: & mut PreInstance<'a>
+  fn generate_neg_clauses_for(
+    & mut self, pred: PrdIdx, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     // self.print(instance) ;
 
@@ -1028,8 +1028,8 @@ impl RedStrat for BiasedUnroll {
     }
   }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     let mut info = RedInfo::new() ;
 

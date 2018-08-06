@@ -815,6 +815,43 @@ impl RTerm {
 
 
 
+
+  /// Returns true if the term mentions a function or an ADT.
+  pub fn has_fun_app_or_adt(& self) -> bool {
+    use self::zip::* ;
+
+    // Will be `Ok(())` if there's no function application, and `Err(())`
+    // otherwise.
+    let res = zip(
+      & self.to_hcons(),
+
+      |_| Ok(()),
+
+      |zip_op, _, _: ()| match zip_op {
+        ZipOp::Fun(_) |
+        ZipOp::New(_) |
+        ZipOp::Slc(_) => Err(()),
+        _ => Ok( ZipDoTotal::Upp { yielded: () } ),
+      },
+
+      |frame| match frame {
+        ZipFrame { thing: ZipOp::Fun(_), .. } |
+        ZipFrame { thing: ZipOp::New(_), .. } |
+        ZipFrame { thing: ZipOp::Slc(_), .. } => Err(()),
+        mut frame => {
+          let nu_term = frame.rgt_args.next().expect(
+            "illegal call to `partial_op`: empty `rgt_args`"
+          ) ;
+          Ok( ZipDo::Trm { nu_term, frame } )
+        },
+      }
+    ) ;
+
+    res.is_err()
+  }
+
+
+
   /// Variable substitution.
   ///
   /// The `total` flag causes substitution to fail if a variable that's not in

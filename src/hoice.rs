@@ -176,7 +176,7 @@ pub fn read_and_work<R: ::std::io::Read>(
         } {
           Ok(()) => (),
           Err(e) => if e.is_timeout() {
-            println!("unknown") ;
+            println!("timeout") ;
             print_stats("top", profiler) ;
             ::std::process::exit(0)
           } else if e.is_unknown() {
@@ -246,7 +246,7 @@ pub fn read_and_work<R: ::std::io::Read>(
               None
             },
             Err(ref e) if e.is_timeout() => {
-              println!("unknown") ;
+              println!("timeout") ;
               print_stats("top", profiler) ;
               ::std::process::exit(0)
             },

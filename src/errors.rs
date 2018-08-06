@@ -176,20 +176,21 @@ impl Error {
 
   /// Returns the clause explaining an unsat result if any.
   pub fn unsat_cause(& self) -> Option<ClsIdx> {
-    match * self.kind() {
-      ErrorKind::UnsatFrom(clause) => Some(clause),
+    match self.kind() {
+      ErrorKind::UnsatFrom(clause) => Some(* clause),
       _ => None,
     }
   }
 
 
-  /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
+  /// True if the kind of the error is a timeout.
   ///
   /// [timeout]: enum.ErrorKind.html#variant.Timeout
   /// (ErrorKind's Timeout variant)
   pub fn is_timeout(& self) -> bool {
-    match * self.kind() {
+    match self.kind() {
       ErrorKind::Timeout => true,
+      ErrorKind::SmtError(smt_err) => smt_err.is_timeout(),
       _ => false,
     }
   }

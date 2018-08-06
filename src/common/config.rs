@@ -85,8 +85,8 @@ impl SmtConf {
   /// Performs the solver initialization step given by `common::smt::init`.
   ///
   /// If logging is active, will log to `<name>.smt2`.
-  pub fn spawn<Parser, I>(
-    & self, name: & 'static str, parser: Parser, instance: I
+  fn internal_spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I, preproc: bool
   ) -> Res< ::rsmt2::Solver<Parser> >
   where I: AsRef<Instance> {
     let mut smt_conf = self.conf.clone() ;
@@ -105,8 +105,36 @@ impl SmtConf {
       solver.tee(log) ?
     }
 
-    ::common::smt::init(& mut solver) ? ;
+    if preproc {
+      ::smt::preproc_init(& mut solver) ?
+    } else {
+      ::smt::init(& mut solver, instance) ?
+    }
     Ok(solver)
+  }
+
+  /// Spawns a solver.
+  ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
+    self.internal_spawn(name, parser, instance, false)
+  }
+
+  /// Spawns a preprocessing solver.
+  ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn preproc_spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
+    self.internal_spawn(name, parser, instance, true)
   }
 
   /// Smt log dir, if any.

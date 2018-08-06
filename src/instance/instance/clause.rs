@@ -867,12 +867,14 @@ impl Clause {
     write!(w, "))")
   }
 }
+
 impl ::std::ops::Index<VarIdx> for Clause {
   type Output = VarInfo ;
   fn index(& self, index: VarIdx) -> & VarInfo {
     & self.vars[index]
   }
 }
+
 impl<'a, 'b> ::rsmt2::print::Expr2Smt<
   & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
 > for Clause {

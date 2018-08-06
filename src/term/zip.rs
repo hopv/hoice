@@ -144,6 +144,10 @@ impl<T> Accumulator<T> for Vec<T> {
   fn new_empty(hint: usize) -> Self { Vec::with_capacity(hint) }
   fn push(& mut self, elem: T) { self.push(elem) }
 }
+impl Accumulator<()> for () {
+  fn new_empty(_: usize) -> Self {}
+  fn push(& mut self, _: ()) {}
+}
 
 
 
@@ -152,7 +156,7 @@ pub fn zip<E, Acc, Yield, NulF, AppF, Partial>(
   term: & Term, mut nul_do: NulF, mut app_do: AppF, mut partial: Partial
 ) -> Result<Yield, E>
 where
-Acc: Accumulator<Yield>, Yield: Clone + ::std::fmt::Display,
+Acc: Accumulator<Yield>, Yield: Clone,
 
 NulF: for<'a> FnMut(
   ZipNullary<'a>

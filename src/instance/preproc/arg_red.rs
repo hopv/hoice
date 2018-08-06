@@ -26,8 +26,8 @@ impl RedStrat for ArgRed {
     }
   }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     let keep = self.inner.run(instance) ;
     instance.rm_args(keep)

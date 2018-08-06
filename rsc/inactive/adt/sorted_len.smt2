@@ -20,6 +20,11 @@
   )
 )
 
+(assert (forall
+  ( (l (Lst Int)) )
+  (>= (len l) 0)
+))
+
 (define-funs-rec
   (
     (all_equal ( (l (Lst Int)) ) Bool)

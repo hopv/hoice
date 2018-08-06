@@ -181,8 +181,8 @@ impl RedStrat for OneLhs {
 
   fn new(_: & Instance) -> Self { OneLhs }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     let mut red_info = RedInfo::new() ;
 

@@ -143,8 +143,8 @@ impl RedStrat for OneRhs {
 
   fn new(_: & Instance) -> Self { OneRhs }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     let mut red_info = RedInfo::new() ;
 

@@ -9,21 +9,6 @@
 
 (define-funs-rec
   (
-    (len_tr ( (l (Lst Int)) ) Int )
-    (len_tailrec ( (acc Int) (l (Lst Int)) ) Int)
-  )
-  (
-    (len_tailrec 0 l)
-    (ite
-      (= l nil)
-      acc
-      (len_tailrec (+ 1 acc) (tail l))
-    )
-  )
-)
-
-(define-funs-rec
-  (
     (len ( (l (Lst Int)) ) Int)
   )
   (
@@ -34,6 +19,11 @@
     )
   )
 )
+
+(assert (forall
+  ( (l (Lst Int)) )
+  (>= (len l) 0)
+))
 
 (define-funs-rec
   (
@@ -102,6 +92,18 @@
       (not (= lst nil))
       (not (= (tail lst) nil))
       (not (< (head lst) (head (tail lst))))
+    )
+    (srt_pst lst false)
+  )
+) )
+
+(assert
+  (forall ( (lst (Lst Int)) )
+  (=>
+    (and
+      (not (= lst nil))
+      (not (= (tail lst) nil))
+      (not (< (head lst) (head (tail lst))))
       (srt_pst lst true)
     )
     false
@@ -129,7 +131,7 @@
 ;   and (sorted (rev lst))
 ;   then (assert (all_elements_the_same lst))
 (assert
-  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) (i Int) )
+  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) )
   (=>
     (and
       (= (rev lst1) lst2)

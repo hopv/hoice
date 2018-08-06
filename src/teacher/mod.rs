@@ -910,7 +910,7 @@ impl<'a> Teacher<'a> {
 
     if self.count % 100 == 0
     || conf.teacher.restart_on_cex {
-      smt::reset(& mut self.solver) ? ;
+      smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.pop(1) ?
     }
@@ -941,7 +941,7 @@ impl<'a> Teacher<'a> {
       ) ? ;
 
       if conf.teacher.restart_on_cex {
-        smt::reset(& mut self.solver) ?
+        smt::reset(& mut self.solver, & self.instance) ?
       } else {
         self.solver.pop(1) ?
       }

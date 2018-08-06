@@ -737,8 +737,8 @@ impl Graph {
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
-  pub fn inline<'a>(
-    & mut self, instance: & mut PreInstance<'a>,
+  pub fn inline(
+    & mut self, instance: & mut PreInstance,
     keep: & mut PrdSet, mut upper_bound: usize,
   ) -> Res< Vec< (PrdIdx, Dnf) > > {
     let (extractor, instance) = instance.extraction() ;
@@ -1189,8 +1189,8 @@ impl RedStrat for CfgRed {
     }
   }
 
-  fn apply<'a>(
-    & mut self, instance: & mut PreInstance<'a>
+  fn apply(
+    & mut self, instance: & mut PreInstance
   ) -> Res<RedInfo> {
     // use std::time::Instant ;
     // use common::profiling::DurationExt ;
