@@ -21,12 +21,19 @@ pub type Val = HConsed<RVal> ;
 
 /// Creates a value.
 pub fn mk<V: Into<RVal>>(val: V) -> Val {
-  factory.mk(val.into())
+  let val = val.into() ;
+  // if val.typ().has_unk() {
+  //   panic!(
+  //     "trying to create a value with a (partially) unknown type: {} ({})",
+  //     val, val.typ()
+  //   )
+  // }
+  factory.mk(val)
 }
 
 /// Creates a boolean value.
 pub fn bool(b: bool) -> Val {
-  factory.mk(RVal::B(b))
+  mk( RVal::B(b) )
 }
 
 /// Creates an array with a default value.
@@ -41,7 +48,7 @@ pub fn array<Tgt: Into<Val>>(
   } else {
     default
   } ;
-  factory.mk(
+  mk(
     RVal::Array { idx_typ, default, vals: Vec::new() }
   )
 }
@@ -117,19 +124,19 @@ pub fn array_of_fun(idx_typ: Typ, term: & Term) -> Res<Val> {
 
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
-  factory.mk(
+  mk(
     RVal::I( i.into() )
   )
 }
 /// Creates a rational value.
 pub fn real<R: Into<Rat>>(r: R) -> Val {
-  factory.mk(
+  mk(
     RVal::R( r.into() )
   )
 }
 /// Creates a non-value for a type.
 pub fn none(typ: Typ) -> Val {
-  factory.mk( RVal::N(typ) )
+  mk( RVal::N(typ) )
 }
 
 /// Creates a new datatype value.
@@ -162,7 +169,7 @@ pub fn dtyp_new(typ: Typ, name: String, mut args: Vec<Val>) -> Val {
       }
     }
   }
-  factory.mk( RVal::DTypNew { typ, name, args } )
+  mk( RVal::DTypNew { typ, name, args } )
 }
 
 
@@ -1448,6 +1455,16 @@ impl RVal {
       idx, idx.typ(), self, self.typ()
     )
   }
+
+  /// True if the value is composite (array or ADT).
+  pub fn is_composite(& self) -> bool {
+    match self {
+      RVal::Array { .. } |
+      RVal::DTypNew { .. } => true,
+      RVal::I(_) | RVal::R(_) | RVal::B(_) => false,
+      RVal::N(ref t) => t.is_dtyp() || t.is_array(),
+    }
+  }
 }
 
 
@@ -1455,31 +1472,57 @@ impl RVal {
 
 impl_fmt!{
   RVal(self, fmt) {
-    match self {
-      RVal::N(ref t) => write!(fmt, "_[{}]", t),
-      RVal::I(ref i) => int_to_smt!(fmt, i),
-      RVal::R(ref r) => rat_to_smt!(fmt, r),
-      RVal::B(b) => write!(fmt, "{}", b),
-      RVal::Array { ref default, ref vals, .. } => {
-        for _ in vals {
-          write!(fmt, "(store ") ?
-        }
-        write!(fmt, "((as const {}) {})", self.typ(), default) ? ;
-        for (cond, val) in vals.iter().rev() {
-          write!(fmt, " {} {})", cond, val) ?
-        }
-        Ok(())
-      },
-      RVal::DTypNew { ref name, ref args, .. } => if args.is_empty() {
-        write!(fmt, "{}", name)
-      } else {
-        write!(fmt, "({}", name) ? ;
-        for arg in args {
-          write!(fmt, " {}", arg) ?
-        }
-        write!(fmt, ")")
-      },
+
+    let mut stack = vec![ Either::Left( (false, self) ) ] ;
+
+    while let Some(curr) = stack.pop() {
+
+      match curr {
+        Either::Right(()) => write!(fmt, ")") ?,
+
+        Either::Left( (sep, curr) ) => {
+          if sep {
+            write!(fmt, " ") ?
+          }
+
+          match curr {
+            RVal::N(ref t) => write!(fmt, "_[{}]", t) ?,
+            RVal::I(ref i) => int_to_smt!(fmt, i) ?,
+            RVal::R(ref r) => rat_to_smt!(fmt, r) ?,
+            RVal::B(b) => write!(fmt, "{}", b) ?,
+
+            RVal::DTypNew {
+              ref name, ref args, ref typ
+            } => if args.is_empty() {
+              write!(fmt, "(as {} {})", name, typ) ?
+            } else {
+              write!(fmt, "({}", name) ? ;
+              stack.push( Either::Right(()) ) ;
+              // Reversing since we're popping from the stack.
+              for arg in args.iter().rev() {
+                stack.push( Either::Left( (true, arg) ) )
+              }
+            },
+
+            RVal::Array { ref default, ref vals, .. } => {
+              for _ in vals {
+                write!(fmt, "(store ") ?
+              }
+              write!(fmt, "((as const {}) {})", self.typ(), default) ? ;
+              // Not reversing the list, we want to print in reverse order.
+              for (index, val) in vals.iter() {
+                stack.push( Either::Right(()) ) ;
+                stack.push( Either::Left( (true, val) ) ) ;
+                stack.push( Either::Left( (true, index) ) ) ;
+              }
+            },
+          }
+        },
+      }
+
     }
+
+    Ok(())
   }
 }
 

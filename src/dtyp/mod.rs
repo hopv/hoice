@@ -301,7 +301,7 @@ impl_fmt! {
 
         PartialTyp::Typ(typ) => write!(fmt, "{}{}", typ, post) ?,
 
-        PartialTyp::Param(idx) => write!(fmt, "'{}", idx) ?,
+        PartialTyp::Param(idx) => write!(fmt, "'{}{}", idx, post) ?,
 
         PartialTyp::DTyp(dtyp, _, typs) => {
           if ! typs.is_empty() {

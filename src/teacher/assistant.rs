@@ -254,6 +254,7 @@ impl Assistant {
           self.solver.assert(
             & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
+
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
           let sat = profile! {
             self wrap {

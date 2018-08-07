@@ -114,6 +114,14 @@ impl RTyp {
     }
   }
 
+  /// True if the type is a datatype.
+  pub fn is_dtyp(& self) -> bool {
+    match * self {
+      RTyp::DTyp { .. } => true,
+      _ => false,
+    }
+  }
+
   /// Inspects an array type.
   pub fn array_inspect(& self) -> Option<(& Typ, & Typ)> {
     if let RTyp::Array { src, tgt } = self {
@@ -126,6 +134,27 @@ impl RTyp {
   /// True if the type is unknown.
   pub fn is_unk(& self) -> bool {
     RTyp::Unk == * self
+  }
+
+  /// True if the type mentions an unknown type.
+  pub fn has_unk(& self) -> bool {
+    let mut stack = vec![ self ] ;
+    while let Some(curr) = stack.pop() {
+      match curr {
+        RTyp::Unk => return true,
+        RTyp::Array { src, tgt } => {
+          stack.push( src.get() ) ;
+          stack.push( tgt.get() )
+        },
+        RTyp::DTyp { prms, .. } => for typ in prms {
+          stack.push( typ.get() )
+        },
+        RTyp::Int |
+        RTyp::Real |
+        RTyp::Bool => (),
+      }
+    }
+    false
   }
 
   /// Inspects a datatype type.

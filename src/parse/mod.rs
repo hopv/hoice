@@ -105,7 +105,7 @@ pub trait ItemRead {
 impl<T: ::std::io::BufRead> ItemRead for T {
   fn read_item(& mut self, buf: & mut String) -> Res<usize> {
     let mut line_count = 0 ;
-    let mut start = buf.len() ;
+    let mut search_start = buf.len() ;
     let mut char_override: Option<char> = None ;
     let mut opn_parens = 0 ;
     let mut cls_parens = 0 ;
@@ -124,7 +124,7 @@ impl<T: ::std::io::BufRead> ItemRead for T {
     'read_lines: while self.read_line( buf ) ? != 0 {
       line_count += 1 ;
       debug_assert!( opn_parens >= cls_parens ) ;
-      let mut chars = buf[start..].chars() ;
+      let mut chars = buf[search_start ..].chars() ;
       
       if let Some(char) = char_override {
         char_override = search_char(char, & mut chars)
@@ -153,7 +153,7 @@ impl<T: ::std::io::BufRead> ItemRead for T {
         break 'read_lines
       }
 
-      start = buf.len()
+      search_start = buf.len()
     }
 
     Ok(line_count)
