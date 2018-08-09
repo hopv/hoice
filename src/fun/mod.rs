@@ -29,6 +29,69 @@ lazy_static! {
   ) ;
 }
 
+
+lazy_static! {
+  /// Stores function declarations before obtaining the actual definition.
+  static ref fun_decs: RwLock< BTreeMap<String, RFun> > = RwLock::new(
+    BTreeMap::new()
+  ) ;
+}
+
+/// Registers a function declaration.
+pub fn register_dec(fun: RFun) -> Res<()> {
+  if let Ok(mut decs) = fun_decs.write() {
+    let prev = decs.insert( fun.name.clone(), fun ) ;
+    if let Some(prev) = prev {
+      bail!("the function {} is declared twice", conf.bad(& prev.name))
+    }
+  } else {
+    bail!("unable to access function declarations")
+  }
+  Ok(())
+}
+
+/// Retrieves a function declaration.
+pub fn retrieve_dec(fun: & str) -> Res<RFun> {
+  if let Ok(mut decs) = fun_decs.write() {
+    if let Some(dec) = decs.remove(fun) {
+      Ok(dec)
+    } else {
+      bail!("unable to retrieve function declaration for {}", conf.bad(fun))
+    }
+  } else {
+    bail!("unable to access function declarations")
+  }
+}
+
+
+
+/// Accesses the declaration of a function.
+pub fn dec_do<F, T>(fun: & str, mut f: F) -> Res<T>
+where F: for<'a> FnMut(& 'a RFun) -> Res<T> {
+  if let Ok(defs) = factory.read() {
+    if let Some(def) = defs.0.get(fun) {
+      return f(def)
+    }
+  } else {
+    bail!("unable to retrieve function factory")
+  }
+
+  if let Ok(defs) = fun_decs.read() {
+    if let Some(def) = defs.get(fun) {
+      f(def)
+    } else {
+      bail!(
+        "trying to retrieve declaration for unknown function {}",
+        conf.bad(fun)
+      )
+    }
+  } else {
+    bail!("unable to retrieve function declarations")
+  }
+}
+
+
+
 /// Read version of the factory.
 fn read_factory<'a>() -> RwLockReadGuard<
   'a, (BTreeMap<String, Fun>, usize)
@@ -56,6 +119,15 @@ fn write_factory<'a>() -> RwLockWriteGuard<
 macro_rules! factory {
   (read) => (& read_factory().0) ;
   (write) => (& mut write_factory().0) ;
+}
+
+
+/// Iterates over all function definitions.
+pub fn iter<F>(mut f: F) -> Res<()>
+where F: FnMut(& Fun) -> Res<()> {
+  let defs = read_factory() ;
+  for def in defs.0.values() { f(def) ? }
+  Ok(())
 }
 
 

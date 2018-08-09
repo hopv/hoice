@@ -1494,7 +1494,11 @@ impl_fmt!{
             RVal::DTypNew {
               ref name, ref args, ref typ
             } => if args.is_empty() {
-              write!(fmt, "(as {} {})", name, typ) ?
+              if typ.has_unk() {
+                write!(fmt, "{}", name) ?
+              } else {
+                write!(fmt, "(as {} {})", name, typ) ?
+              }
             } else {
               write!(fmt, "({}", name) ? ;
               stack.push( Either::Right(()) ) ;

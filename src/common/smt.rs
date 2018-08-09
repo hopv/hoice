@@ -113,6 +113,58 @@ impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
 }
 
 
+/// Smt-prints a clause with its quantifiers, under an actlit.
+pub struct SmtQClause<'a> {
+  /// The clause.
+  pub clause: & 'a Clause,
+}
+impl<'a> SmtQClause<'a> {
+  /// Constructor.
+  pub fn new(clause: & 'a Clause) -> Self {
+    SmtQClause { clause }
+  }
+}
+impl<'a, 'b> Expr2Smt<
+  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
+> for SmtQClause<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer,
+    info: & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
+  ) -> SmtRes<()> {
+    let (
+      ref true_preds, ref false_preds, ref prd_info
+    ) = * info ;
+
+    self.clause.naked_write(
+      w, |w, prd, args| {
+        if true_preds.contains(& prd) {
+          write!(w, "true")
+        } else if false_preds.contains(& prd) {
+          write!(w, "false")
+        } else {
+          if ! args.is_empty() {
+            write!(w, "(") ?
+          }
+          write!(w, "{}", prd_info[prd].name) ? ;
+          for arg in args.iter() {
+            write!(w, " ") ? ;
+            arg.write(
+              w, |w, var| write!(w, "{}", self.clause[var])
+            ) ?
+          }
+          if ! args.is_empty() {
+            write!(w, ")") ?
+          }
+          Ok(())
+        }
+      }
+    ) ? ;
+
+    Ok(())
+  }
+}
+
+
 /// SMT-prints a collection of terms as a conjunction with default var writer.
 pub struct SmtConj<Trms> {
   /// Conjunction.

@@ -794,10 +794,22 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
 
+  /// Tries to parse a sort.
+  pub fn sort_opt(& mut self) -> Res<Option<Typ>> {
+    let start_pos = self.pos() ;
+    let res = self.internal_sort_opt() ;
+    if let Ok( Some(typ) ) = & res {
+      typ.check().chain_err(
+        || self.error(start_pos, "")
+      ) ?
+    }
+    res
+  }
+
 
 
   /// Tries to parse a sort.
-  pub fn sort_opt(& mut self) -> Res<Option<Typ>> {
+  pub fn internal_sort_opt(& mut self) -> Res<Option<Typ>> {
     // Compound type under construction.
     //
     // The position is always that of the opening paren of the type.
@@ -878,6 +890,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       }
 
       'go_up: loop {
+        if let Some(typ) = & typ {
+          typ.check().chain_err(
+            || self.error(start_pos, "while parsing this sort")
+          ) ?
+        }
 
         match stack.pop() {
 
@@ -975,7 +992,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   }
 
 
-
   /// Tries to parse a sort.
   pub fn nu_sort_opt(
     & mut self, type_params: & BTreeMap<& 's str, dtyp::TPrmIdx>
@@ -1063,6 +1079,17 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       }
 
       'go_up: loop {
+        // if let Some(typ) = & typ {
+        //   if let Err((_, err)) = typ.check() {
+        //     let err: Error = err.into() ;
+
+        //     bail!(
+        //       err.chain_err(
+        //         || self.error(start_pos, "while parsing this sort")
+        //       )
+        //     )
+        //   }
+        // }
 
         match stack.pop() {
 
@@ -1240,6 +1267,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ) ? ;
 
       let mut fun = RFun::new(name, args, typ) ;
+      fun::register_dec( fun.clone() ) ? ;
 
       // Check this is the first time we see this function and populate
       // dependencies.
@@ -1308,6 +1336,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           )
         )
       }
+
+      let _ = fun::retrieve_dec(& fun.name) ? ;
 
       fun::mk(fun).chain_err(
         || self.error(pos, "while registering this function")
@@ -2614,15 +2644,51 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         } else if frame.is_cast() {
           // Cast expect a type after the term being cast.
-          let _sort = self.sort().chain_err(
-            || "in term casting, after term"
+          let sort = self.sort().chain_err(
+            || "expected sort"
+          ).chain_err(
+            || self.error(frame.op_pos, "in this cast")
           ) ? ;
 
-          bail!(
-            self.error(
-              frame.op_pos, "casts are not supported"
+          self.ws_cmt() ;
+          self.tag(")") ? ;
+
+          self.ws_cmt() ;
+          self.close_let_bindings( frame.let_count() ) ? ;
+
+          if frame.args.len() != 1 {
+            bail!(
+              self.error(
+                frame.op_pos, format!(
+                  "ill-formed cast: expected one term, found {}",
+                  frame.args.len()
+                )
+              )
             )
-          )
+          }
+
+          let (sub_term, pos) = (
+            frame.args.pop().unwrap(),
+            frame.args_pos.pop().unwrap()
+          ) ;
+
+          if let Some(typ) = sub_term.typ().merge( & sort ) {
+            if let Some(nu_term) = sub_term.force_dtyp(typ) {
+              term = nu_term
+            } else {
+              term = sub_term
+            }
+          } else {
+            bail!(
+              self.error(
+                pos, format!(
+                  "cannot cast `{}` to `{}`", sub_term.typ(), sort
+                )
+              )
+            )
+          }
+
+          continue 'go_up
 
         } else {
           // Keep on parsing terms.

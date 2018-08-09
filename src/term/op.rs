@@ -195,11 +195,13 @@ impl Op {
                 typ = merged_typ.clone() ;
                 * fst = nu ;
                 // println!("  -> {}", fst)
+                // println!("{}: {}", fst, fst.typ()) ;
               }
               if let Some(nu) = next.force_dtyp( merged_typ ) {
                 // println!("  -> {} {}", nu, nu.typ()) ;
                 * next = nu ;
                 // println!("     {} {}", next, next.typ())
+                // println!("{}: {}", next, next.typ()) ;
               }
             } else {
               err!(lft Some(typ), next.typ(), index)

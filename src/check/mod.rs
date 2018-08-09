@@ -143,6 +143,7 @@ impl Output {
   pub fn check_consistency(& mut self, input: & Input) -> Res<()> {
     log_info!{ "checking predicate signature consistency..." }
     let mut map = HashMap::with_capacity( self.pred_defs.len() ) ;
+    log! { @4 "checking for duplicate definitions" }
     for & PredDef { ref pred, ref args, .. } in & self.pred_defs {
       let prev = map.insert(pred.clone(), args.clone()) ;
       if prev.is_some() {
@@ -151,6 +152,7 @@ impl Output {
         )
       }
     }
+    log! { @4 "checking signatures" }
     for & PredDec { ref pred, ref sig } in & input.pred_decs {
       if let Some(args) = map.get(pred) {
 
@@ -187,6 +189,7 @@ impl Output {
         )
       }
     }
+    log! { @4 "done" }
     Ok(())
   }
 }
@@ -320,6 +323,8 @@ impl Data {
 /// Checks a `hoice` run from two files.
 pub fn do_it(input_file: & str, output_file: & str) -> Res<()> {
   let data = Data::of_files(input_file, output_file) ? ;
+
+  log! { @4 "spawning solver" }
 
   let mut solver = conf.solver.spawn(
     "check", Parser, & ::instance::Instance::new()

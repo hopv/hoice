@@ -234,8 +234,32 @@ pub fn select(array: Term, idx: Term) -> Term {
 }
 
 /// Function application.
+///
+/// # Panics
+///
+/// - if the function does not exist
+/// - if the type does not make sense
+/// - if the arguments are illegal
 #[inline]
-pub fn fun(typ: Typ, name: String, args: Vec<Term>) -> Term {
+pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
+  if let Err(e) = fun::dec_do(
+    & name, |fun| {
+      debug_assert_eq! { typ, fun.typ }
+      if args.len() != fun.sig.len() {
+        panic!("illegal application of function {}", conf.bad(& name))
+      }
+      for (info, arg) in fun.sig.iter().zip( args.iter_mut() ) {
+        if let Some(nu_arg) = arg.force_dtyp( info.typ.clone() ) {
+          * arg = nu_arg
+        }
+      }
+      Ok(())
+    }
+  ) {
+    print_err(& e) ;
+    panic!("illegal function application")
+  }
+
   factory.mk( RTerm::Fun { typ, name, args } )
 }
 
@@ -288,9 +312,47 @@ pub fn val(val: Val) -> Term {
 }
 
 
+/// Tries to create a constant datatype constructor.
+fn cst_dtyp_new(
+  typ: Typ, name: String, args: Vec<Term>
+) -> Either<Val, (Typ, String, Vec<Term>)> {
+  if args.is_empty() {
+    return Either::Left(
+      val::dtyp_new( typ, name, vec![] )
+    )
+  }
+
+  let mut nu_args = None ;
+
+  for arg in & args {
+    if let Some(val) = arg.val() {
+      nu_args.get_or_insert_with(
+        || Vec::with_capacity( args.len() )
+      ).push(val)
+    } else {
+      nu_args = None ;
+      break
+    }
+  }
+
+  if let Some(args) = nu_args {
+    Either::Left( val::dtyp_new(typ, name, args) )
+  } else {
+    Either::Right( (typ, name, args) )
+  }
+}
+
+
 /// Creates a datatype constructor.
 pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
-  if let Some((dtyp, _)) = typ.dtyp_inspect() {
+  let (typ, name, mut args) = match cst_dtyp_new(typ, name, args) {
+    Either::Left(val) => {
+      return cst(val)
+    },
+    Either::Right(stuff) => stuff,
+  } ;
+
+  if let Some((dtyp, prms)) = typ.dtyp_inspect() {
     if let Some(fargs) = dtyp.news.get(& name) {
       if args.len() != fargs.len() {
         panic!(
@@ -298,6 +360,17 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
           conf.emph(& name), conf.emph(& dtyp.name),
           fargs.len(), args.len()
         )
+      }
+
+      for (arg, param) in args.iter_mut().zip( fargs.iter() ) {
+        let typ = param.1.to_type(prms).unwrap_or_else(
+          |_| panic!("ill-formed datatype constructor: {}", typ)
+        ) ;
+        if let Some(typ) = typ.merge( & arg.typ() ) {
+          if let Some(nu_arg) = arg.force_dtyp(typ) {
+            * arg = nu_arg
+          }
+        }
       }
     } else {
       panic!(
@@ -330,6 +403,9 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
     debug_assert_eq! { vals.len(), args.len() }
     val( val::dtyp_new(typ, name, vals) )
   } else {
+    if args.is_empty() {
+      panic!("aaaaaa")
+    }
     factory.mk( RTerm::DTypNew { typ, name, args } )
   }
 }

@@ -790,12 +790,23 @@ impl Clause {
     Ok(())
   }
 
-  /// Writes a clause given a special function to write predicates.  
+  /// Writes a clause given a special function to write predicates.
   pub fn write<W, WritePrd>(
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
+    write!(w, "({} ", keywords::cmd::assert) ? ;
+    self.naked_write(w, write_prd) ? ;
+    writeln!(w, ")") ? ;
+    Ok(())
+  }
+
+  /// Writes a clause without the `assert` around it.
+  pub fn naked_write<W, WritePrd>(
+    & self, w: & mut W, write_prd: WritePrd
+  ) -> IoRes<()>
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    write!(w, "({}\n  (", keywords::forall) ? ;
 
     let mut inactive = 0 ;
     for var in & self.vars {
@@ -864,7 +875,7 @@ impl Clause {
     if let Some(suff) = suff {
       writeln!(w, "{}", suff) ?
     }
-    write!(w, "))")
+    write!(w, ")")
   }
 }
 
@@ -932,12 +943,17 @@ impl<'a, 'b> ::rsmt2::print::Expr2Smt<
       } else if false_preds.contains(& prd) {
         write!(writer, "false") ?
       } else {
-        write!(writer, "({}", prd_info[prd].name) ? ;
+        if ! args.is_empty() {
+          write!(writer, "(") ?
+        }
+        write!(writer, "{}", prd_info[prd].name) ? ;
         for arg in args.iter() {
           write!(writer, " ") ? ;
           arg.write(writer, |w, var| var.default_write(w)) ?
         }
-        write!(writer, ")") ?
+        if ! args.is_empty() {
+          write!(writer, ")") ?
+        }
       }
     } else {
       write!(writer, "false") ?

@@ -840,7 +840,8 @@ impl RTerm {
         ZipFrame { thing: ZipOp::Slc(_), .. } => Err(()),
         mut frame => {
           let nu_term = frame.rgt_args.next().expect(
-            "illegal call to `partial_op`: empty `rgt_args`"
+            "illegal call to `partial_op`:
+            empty `rgt_args` (has_fun_app_or_adt)"
           ) ;
           Ok( ZipDo::Trm { nu_term, frame } )
         },
@@ -920,7 +921,7 @@ impl RTerm {
 
       |mut frame| {
         let nu_term = frame.rgt_args.next().expect(
-          "illegal call to `partial_op`: empty `rgt_args`"
+          "illegal call to `partial_op`: empty `rgt_args` (subst_custom)"
         ) ;
         Ok( ZipDo::Trm { nu_term, frame } )
       },

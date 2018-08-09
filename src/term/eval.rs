@@ -27,11 +27,13 @@ pub fn eval<E: Evaluator>(term: & Term, model: & E) -> Res<Val> {
 
   let mut fun_ref_count = 0 ;
 
+
   let res = zip(
     term, |zip_null| leaf(model, zip_null),
     |op, typ, values| total(op, typ, values, & mut fun_ref_count),
     partial
   ) ;
+
   fun::decrease_ref_count(fun_ref_count) ;
   // if let Ok(res) = res.as_ref() {
   //   if model.len() > 0
@@ -190,7 +192,7 @@ fn partial<'a>(
     thing @ ZipOp::CArray |
     thing @ ZipOp::Slc(_) => {
       let nu_term = rgt_args.next().expect(
-        "illegal call to `partial_op`: empty `rgt_args`"
+        "illegal call to `partial_op`: empty `rgt_args` (eval::partial)"
       ) ;
       Ok(
         ZipDo::Trm {
@@ -320,16 +322,23 @@ fn partial_op<'a>(
   }
 
   // Normal exit.
-  let nu_term = rgt_args.next().expect(
-    "illegal call to `partial_op`: empty `rgt_args`"
-  ) ;
-  Ok(
-    ZipDo::Trm {
-      nu_term, frame: Frame {
-        thing: ZipOp::Op(op), typ, lft_args, rgt_args
+  if let Some(nu_term) = rgt_args.next() {
+    Ok(
+      ZipDo::Trm {
+        nu_term, frame: Frame {
+          thing: ZipOp::Op(op), typ, lft_args, rgt_args
+        }
       }
+    )
+  } else {
+    log!(@4 "{}", op) ;
+    for arg in & lft_args {
+      log!(@4 "  {}", arg)
     }
-  )
+    panic!(
+      "illegal call to `partial_op`: empty `rgt_args` (partial_op)"
+    )
+  }
 }
 
 

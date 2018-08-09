@@ -185,6 +185,9 @@ pub struct Teacher<'a> {
   /// Map from 
   /// Number of guesses.
   count: usize,
+
+  /// True if some recursive functions are defined.
+  using_rec_funs: bool,
 }
 
 impl<'a> Teacher<'a> {
@@ -237,6 +240,12 @@ impl<'a> Teacher<'a> {
       None
     } ;
 
+    let mut using_rec_funs = false ; 
+
+    fun::iter(
+      |_| { using_rec_funs = true ; Ok(()) }
+    ) ? ;
+
     Ok(
       Teacher {
         solver, instance, data, from_learners,
@@ -244,7 +253,7 @@ impl<'a> Teacher<'a> {
         _profiler: profiler, partial_model, count: 0,
         tru_preds: PrdSet::new(), fls_preds: PrdSet::new(),
         clauses_to_ignore: ClsSet::new(),
-        bias: CexBias::new(),
+        bias: CexBias::new(), using_rec_funs,
       }
     )
   }
@@ -1050,7 +1059,16 @@ impl<'a> Teacher<'a> {
   pub fn get_cex(
     & mut self, clause_idx: ClsIdx, bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
+    let mut cexs = vec![] ;
+
     log! { @debug "working on clause #{}", clause_idx }
+
+    if self.using_rec_funs {
+      let falsifiable = self.quantified_checksat(clause_idx) ? ;
+      if ! falsifiable {
+        return Ok(cexs)
+      }
+    }
 
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
@@ -1075,8 +1093,6 @@ impl<'a> Teacher<'a> {
       )
     ) ? ;
     profile!{ self mark "cexs", "prep" }
-
-    let mut cexs = vec![] ;
 
     macro_rules! get_cex {
 
@@ -1130,6 +1146,33 @@ impl<'a> Teacher<'a> {
     }
 
     Ok(cexs)
+  }
+
+
+  /// Checks a clause using qualifiers.
+  ///
+  /// Returns `true` if the clause is falsifiable with the current candidates.
+  ///
+  /// This is used when manipulating recursive ADTs and functions.
+  pub fn quantified_checksat(
+    & mut self, clause: ClsIdx
+  ) -> Res<bool> {
+    let actlit = self.solver.get_actlit() ? ;
+    let wrapped = smt::SmtQClause::new( & self.instance[clause] ) ;
+
+    self.solver.assert_act_with(
+      & actlit, & wrapped, & (
+        & self.tru_preds, & self.fls_preds, self.instance.preds()
+      )
+    ) ? ;
+
+    let falsifiable = ! self.solver.check_sat_act(
+      Some(& actlit)
+    ) ? ;
+
+    self.solver.de_actlit(actlit) ? ;
+
+    Ok(falsifiable)
   }
 
 }

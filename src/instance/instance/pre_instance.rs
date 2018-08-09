@@ -31,7 +31,7 @@ pub struct PreInstance<'a> {
 impl<'a> PreInstance<'a> {
   /// Constructor.
   pub fn new(instance: & 'a mut Instance) -> Res<Self> {
-    let solver = conf.solver.preproc_spawn("preproc", (), &* instance) ? ;
+    let solver = conf.solver.spawn("preproc", (), &* instance) ? ;
 
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
@@ -250,6 +250,18 @@ impl<'a> PreInstance<'a> {
     }
 
     info += self.force_trivial() ? ;
+
+    // Check side-clauses.
+    let instance = & mut self.instance ;
+    let solver = & mut self.solver ;
+    info += instance.side_clauses_retain(
+      |clause| {
+        match solver.is_clause_trivial(clause) ? {
+          None => bail!( ErrorKind::Unsat ),
+          Some(is_trivial) => Ok(is_trivial),
+        }
+      }
+    ) ? ;
 
     Ok(info)
   }

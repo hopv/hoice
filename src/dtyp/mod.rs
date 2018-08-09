@@ -36,6 +36,7 @@ impl From<Typ> for PartialTyp {
 }
 
 impl PartialTyp {
+
   /// True if the type mentions the datatype provided.
   pub fn mentions_dtyp(
     & self, dtyp_name: & str
@@ -130,8 +131,6 @@ impl PartialTyp {
 
     Ok(())
   }
-
-
 
 
   fn write<W: Write>(
@@ -280,6 +279,7 @@ impl PartialTyp {
 
     }
   }
+
 }
 
 impl_fmt! {

@@ -166,6 +166,21 @@ impl RTyp {
     }
   }
 
+  /// Checks a type is legal.
+  pub fn check(& self) -> Res<()> {
+    match self {
+      RTyp::DTyp { dtyp, prms } => if dtyp.prms.len() != prms.len() {
+        bail!(
+          "datatype {} expects {} parameters, found {}",
+          conf.emph(& dtyp.name), dtyp.prms.len(), prms.len()
+        )
+      },
+      RTyp::Unk | RTyp::Array { .. } |
+      RTyp::Int | RTyp::Real | RTyp::Bool => (),
+    }
+    Ok(())
+  }
+
   /// True if the types are compatible.
   ///
   /// Two types are compatible if they're the same except for unknown subtypes.
@@ -263,9 +278,7 @@ impl RTyp {
         (
           RTyp::DTyp { dtyp: dtyp_1, prms: prms_1 },
           RTyp::DTyp { dtyp: dtyp_2, prms: prms_2 },
-        ) => if dtyp_1.name != dtyp_2.name {
-          return None
-        } else {
+        ) => if dtyp_1.name == dtyp_2.name && prms_1.len() == prms_2.len() {
           debug_assert_eq! { prms_1.len(), prms_2.len() }
 
           let mut prms = prms_1.iter().zip( prms_2.iter() ) ;
@@ -284,6 +297,8 @@ impl RTyp {
           } else {
             lft.clone()
           }
+        } else {
+          return None
         },
 
         (RTyp::Int, _) |

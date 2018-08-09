@@ -840,6 +840,25 @@ impl Instance {
     Ok(())
   }
 
+  /// Mutable accessor for side clauses.
+  pub fn side_clauses_retain<Keep>(
+    & mut self, mut keep: Keep
+  ) -> Res<RedInfo>
+  where Keep: FnMut(& mut Clause) -> Res<bool> {
+    let mut info = RedInfo::new() ;
+    let mut cnt = 0 ;
+    while cnt < self.side_clauses.len() {
+      if ! keep(& mut self.side_clauses[cnt]) ? {
+        info.clauses_rmed += 1 ;
+        self.side_clauses.swap_remove(cnt) ;
+        ()
+      } else {
+        cnt += 1
+      }
+    }
+    Ok(info)
+  }
+
   /// Asserts all the side-clauses in a solver.
   pub fn assert_side_clauses<P>(
     & self, solver: & mut Solver<P>
@@ -883,7 +902,10 @@ impl Instance {
     }
 
     if clause.lhs_preds().is_empty()
-    && clause.rhs().is_none() {
+    && clause.rhs().is_none()
+    && clause.lhs_terms().iter().any(
+      |term| term.has_fun_app_or_adt()
+    ) {
       self.add_side_clause(clause) ? ;
       return Ok(None)
     }

@@ -4,6 +4,7 @@
 //!
 //! - explain
 
+use std::fmt ;
 use std::slice::Iter ;
 
 use common::* ;
@@ -110,6 +111,14 @@ pub enum ZipNullary<'a> {
   Cst(& 'a Val),
   /// A variable.
   Var(& 'a Typ, VarIdx),
+}
+impl<'a> fmt::Display for ZipNullary<'a> {
+  fn fmt(& self, fmt: & mut fmt::Formatter) -> fmt::Result {
+    match self {
+      ZipNullary::Cst(val) => write!(fmt, "{}", val),
+      ZipNullary::Var(typ, var) => write!(fmt, "v_{}<{}>", var ,typ),
+    }
+  }
 }
 
 
