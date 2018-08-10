@@ -69,7 +69,9 @@ impl TheoSynth for AdtSynth {
   fn project(
     & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
+    // println!("projecting {} to {}", self.typ, typ) ;
     for fun in & self.funs.from_typ {
+      // println!("> {} (-> {})", fun.name, fun.typ) ;
 
       if & fun.typ != typ {
         continue

@@ -188,6 +188,8 @@ pub struct Teacher<'a> {
 
   /// True if some recursive functions are defined.
   using_rec_funs: bool,
+  /// Forces to restart the solver after each check.
+  restart_on_cex: bool,
 }
 
 impl<'a> Teacher<'a> {
@@ -246,6 +248,12 @@ impl<'a> Teacher<'a> {
       |_| { using_rec_funs = true ; Ok(()) }
     ) ? ;
 
+    let restart_on_cex =
+      conf.teacher.restart_on_cex ||
+      ! dtyp::get_all().is_empty() ||
+      using_rec_funs
+    ;
+
     Ok(
       Teacher {
         solver, instance, data, from_learners,
@@ -253,7 +261,8 @@ impl<'a> Teacher<'a> {
         _profiler: profiler, partial_model, count: 0,
         tru_preds: PrdSet::new(), fls_preds: PrdSet::new(),
         clauses_to_ignore: ClsSet::new(),
-        bias: CexBias::new(), using_rec_funs,
+        bias: CexBias::new(),
+        using_rec_funs, restart_on_cex
       }
     )
   }
@@ -843,7 +852,7 @@ impl<'a> Teacher<'a> {
 
     let mut map = ClsHMap::with_capacity( self.instance.clauses().len() ) ;
 
-    if ! conf.teacher.restart_on_cex {
+    if ! self.restart_on_cex {
       self.solver.push(1) ? ;
       self.define_preds(cands) ?
     }
@@ -918,7 +927,7 @@ impl<'a> Teacher<'a> {
     // }
 
     if self.count % 100 == 0
-    || conf.teacher.restart_on_cex {
+    || self.restart_on_cex {
       smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.pop(1) ?
@@ -935,7 +944,7 @@ impl<'a> Teacher<'a> {
     clause: ClsIdx, map: & mut ClsHMap<Vec<BCex>>, bias: bool,
   ) -> Res<()> {
     if ! self.clauses_to_ignore.contains(& clause) {
-      if conf.teacher.restart_on_cex {
+      if self.restart_on_cex {
         self.define_preds(cands) ?
       } else {
         self.solver.push(1) ?
@@ -949,7 +958,7 @@ impl<'a> Teacher<'a> {
         || format!("while getting counterexample for clause #{}", clause)
       ) ? ;
 
-      if conf.teacher.restart_on_cex {
+      if self.restart_on_cex {
         smt::reset(& mut self.solver, & self.instance) ?
       } else {
         self.solver.pop(1) ?
@@ -1166,7 +1175,7 @@ impl<'a> Teacher<'a> {
       )
     ) ? ;
 
-    let falsifiable = ! self.solver.check_sat_act(
+    let falsifiable = self.solver.check_sat_act(
       Some(& actlit)
     ) ? ;
 

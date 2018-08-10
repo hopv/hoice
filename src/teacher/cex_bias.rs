@@ -44,6 +44,10 @@ impl CexBias {
     clause: ClsIdx, instance: & Instance, data: & Data,
     bias_only: bool,
   ) -> Res< Vec<(Actlit, Bias)> > {
+    if ! conf.teacher.bias_cexs {
+      return Ok( vec![] )
+    }
+
     macro_rules! clause {
       () => ( instance[clause] ) ;
     }

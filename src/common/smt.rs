@@ -113,7 +113,7 @@ impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
 }
 
 
-/// Smt-prints a clause with its quantifiers, under an actlit.
+/// Smt-prints a clause with its quantifiers, negated.
 pub struct SmtQClause<'a> {
   /// The clause.
   pub clause: & 'a Clause,
@@ -134,6 +134,8 @@ impl<'a, 'b> Expr2Smt<
     let (
       ref true_preds, ref false_preds, ref prd_info
     ) = * info ;
+
+    write!(w, "(not ") ? ;
 
     self.clause.naked_write(
       w, |w, prd, args| {
@@ -159,6 +161,8 @@ impl<'a, 'b> Expr2Smt<
         }
       }
     ) ? ;
+
+    write!(w, ")") ? ;
 
     Ok(())
   }
