@@ -213,6 +213,8 @@ enum FrameOp {
   DTypNew(String, DTyp),
   /// A datatype selector.
   DTypSlc(String),
+  /// A datatype tester.
+  DTypTst(String),
   /// A function application.
   Fun(String),
 }
@@ -229,6 +231,7 @@ impl FrameOp {
         "`{}` constructor ({})", name, typ
       ),
       FrameOp::DTypSlc(name) => format!("`{}` selector", name),
+      FrameOp::DTypTst(name) => format!("`{}` tester", name),
       FrameOp::Fun(name) => format!("`{}` function", name),
     }
   }
@@ -1445,6 +1448,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       self.tag("(").chain_err(
         || "opening sort parameter list"
       ) ? ;
+      self.ws_cmt() ;
 
       while let Some((pos, ident)) = self.ident_opt() ? {
         let idx = dtyp.push_typ_param(ident) ;
@@ -2063,7 +2067,13 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         name, op_pos, & args_pos, args
       ),
 
-      _ => unimplemented!(),
+      FrameOp::DTypTst(name) => self.build_dtyp_tst(
+        name, op_pos, & args_pos, args
+      ),
+
+      op => bail!(
+        "unsupported operator {}", conf.bad( op.as_str() )
+      ),
     }
   }
 
@@ -2222,8 +2232,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         bail!(
           self.error(
             slc_pos, format!(
-              "illegal datatype selector application to {} (> 1) arguments",
-              args.len() + 2
+              "illegal application of datatype selector {} \
+              to {} (> 1) arguments",
+              conf.bad(name), args.len() + 2
             )
           )
         )
@@ -2234,7 +2245,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     } else {
       bail!(
         self.error(
-          slc_pos, "illegal datatype selector application to nothing"
+          slc_pos, format!(
+            "illegal application of datatype selector {} to nothing",
+            conf.bad(name)
+          )
         )
       )
     } ;
@@ -2242,6 +2256,49 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     match dtyp::type_selector( & name, slc_pos, & arg ) {
       Ok(typ) => Ok(
         ( term::dtyp_slc(typ, name, arg), slc_pos )
+      ),
+
+      Err((pos, blah)) => bail!( self.error(pos, blah) ),
+    }
+  }
+
+  /// Type checks and builds a datatype tester.
+  fn build_dtyp_tst(
+    & self,
+    name: String, tst_pos: Pos, _args_pos: & [ Pos ], mut args: Vec<Term>
+  ) -> Res<(Term, Pos)> {
+    debug_assert_eq! { _args_pos.len(), args.len() }
+
+    let arg = if let Some(arg) = args.pop() {
+
+      if args.pop().is_some() {
+        bail!(
+          self.error(
+            tst_pos, format!(
+              "illegal application of datatype tester {} \
+              to {} (> 1) arguments",
+              conf.bad(name), args.len() + 2
+            )
+          )
+        )
+      } else {
+        arg
+      }
+
+    } else {
+      bail!(
+        self.error(
+          tst_pos, format!(
+            "illegal application of datatype tester {} to nothing",
+            conf.bad(name)
+          )
+        )
+      )
+    } ;
+
+    match dtyp::type_tester( & name, tst_pos, & arg ) {
+      Ok(()) => Ok(
+        ( term::dtyp_tst(name, arg), tst_pos )
       ),
 
       Err((pos, blah)) => bail!( self.error(pos, blah) ),
@@ -2527,7 +2584,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.cxt.term_stack.push(frame) ;
           continue 'read_kids
 
-        } else if self.tag_opt("as") {
+        } else if self.tag_opt(keywords::op::as_) {
           let frame = TermFrame::new(
             FrameOp::Cast, op_pos, bind_count
           ) ;
@@ -2538,8 +2595,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
           self.ws_cmt() ;
 
           // Try to parse a constant array.
-          if self.tag_opt("as")
-          && { self.ws_cmt() ; self.tag_opt("const") } {
+          if self.tag_opt(keywords::op::as_) {
+            self.ws_cmt() ;
+            self.tag(keywords::op::const_) ? ;
             self.ws_cmt() ;
             let sort_pos = self.pos() ;
             let typ = self.sort() ? ;
@@ -2549,6 +2607,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
             let frame = TermFrame::new(
               FrameOp::CArray(typ, sort_pos), op_pos, bind_count
+            ) ;
+            self.cxt.term_stack.push(frame) ;
+            continue 'read_kids
+
+          } else if self.tag_opt(keywords::op::lambda_) {
+            self.ws_cmt() ;
+            self.tag(keywords::op::is_) ? ;
+            self.ws_cmt() ;
+            let (op_pos, ident) = self.ident() ? ;
+            self.ws_cmt() ;
+            self.tag(")") ? ;
+
+            let frame = TermFrame::new(
+              FrameOp::DTypTst( ident.into() ), op_pos, bind_count
             ) ;
             self.cxt.term_stack.push(frame) ;
             continue 'read_kids

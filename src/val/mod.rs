@@ -1497,7 +1497,7 @@ impl_fmt!{
               if typ.has_unk() {
                 write!(fmt, "{}", name) ?
               } else {
-                write!(fmt, "(as {} {})", name, typ) ?
+                write!(fmt, "({} {} {})", keywords::op::as_, name, typ) ?
               }
             } else {
               write!(fmt, "({}", name) ? ;
@@ -1510,9 +1510,12 @@ impl_fmt!{
 
             RVal::Array { ref default, ref vals, .. } => {
               for _ in vals {
-                write!(fmt, "(store ") ?
+                write!(fmt, "({} ", keywords::op::store_) ?
               }
-              write!(fmt, "((as const {}) {})", self.typ(), default) ? ;
+              write!(
+                fmt, "(({} {} {}) {})",
+                keywords::op::as_, keywords::op::const_, self.typ(), default
+              ) ? ;
               // Not reversing the list, we want to print in reverse order.
               for (index, val) in vals.iter() {
                 stack.push( Either::Right(()) ) ;

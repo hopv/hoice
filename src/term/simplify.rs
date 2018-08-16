@@ -768,7 +768,8 @@ simpl_fun! {
       Some( // "else" term
         NormRes::Term( args.pop().unwrap() )
       )
-    } else if args[1].typ().is_bool() {
+    } else if args[1].typ().is_bool()
+    && args[0].dtyp_tst_inspect().is_none() {
       let (e, t, c) = (
         args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
       ) ;
@@ -1499,7 +1500,7 @@ simpl_fun! {
 
         Op::Ite => if args.len() != 3 {
           panic!("illegal ite application: {}", term)
-        } else {
+        } else if args[0].dtyp_tst_inspect().is_none() {
           let (c, t, e) = (
             args[0].clone(),
             args[1].clone(),

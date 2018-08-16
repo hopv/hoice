@@ -951,7 +951,7 @@ impl<'a> Teacher<'a> {
       }
 
       let cexs = self.get_cex(
-        clause, bias,
+        cands, clause, bias,
         // got_pos_neg_samples &&
         conf.teacher.max_bias
       ).chain_err(
@@ -998,7 +998,8 @@ impl<'a> Teacher<'a> {
 
   /// Check-sats given an optional bias.
   fn check_sat_cex(
-    & mut self, clause: ClsIdx, bias: Option<(Actlit, Bias)>
+    & mut self, clause: ClsIdx, main_actlit: & Actlit,
+    bias: Option<(Actlit, Bias)>
   ) -> Res< Option<(Cex, Bias)> > {
     if let Some((actlit, bias)) = bias {
 
@@ -1009,9 +1010,11 @@ impl<'a> Teacher<'a> {
         & format!("checksat with bias {}", bias.to_string(& self.instance))
       ) ? ;
       profile!{ self tick "cexs", "biased check-sat" }
-      let sat = self.solver.check_sat_act(
-        Some(& actlit)
-      ) ? ;
+      let sat = {
+        self.solver.check_sat_act(
+          vec![ main_actlit, & actlit ]
+        ) ?
+      } ;
 
       if sat {
         log! { @debug "  sat, getting cex" }
@@ -1030,7 +1033,11 @@ impl<'a> Teacher<'a> {
 
       log! { @debug "  checksat" }
       let sat = profile! {
-        self wrap { self.solver.check_sat() } "cexs", "check-sat"
+        self wrap {
+          self.solver.check_sat_act(
+            Some(main_actlit)
+          )
+        } "cexs", "check-sat"
       } ? ;
 
       if sat {
@@ -1066,14 +1073,15 @@ impl<'a> Teacher<'a> {
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, clause_idx: ClsIdx, bias: bool, bias_only: bool
+    & mut self, cands: & Candidates,
+    clause_idx: ClsIdx, bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
     let mut cexs = vec![] ;
 
     log! { @debug "working on clause #{}", clause_idx }
 
     if self.using_rec_funs {
-      let falsifiable = self.quantified_checksat(clause_idx) ? ;
+      let falsifiable = self.quantified_checksat(cands, clause_idx) ? ;
       if ! falsifiable {
         return Ok(cexs)
       }
@@ -1096,8 +1104,9 @@ impl<'a> Teacher<'a> {
 
     profile!{ self tick "cexs", "prep" }
     clause!().declare(& mut self.solver) ? ;
-    self.solver.assert_with(
-      clause!(), & (
+    let main_actlit = self.solver.get_actlit() ? ;
+    self.solver.assert_act_with(
+      & main_actlit, clause!(), & (
         false, & self.tru_preds, & self.fls_preds, self.instance.preds()
       )
     ) ? ;
@@ -1107,7 +1116,7 @@ impl<'a> Teacher<'a> {
 
       () => ( // Normal check, no actlit.
         if let Some(cex) = self.check_sat_cex(
-          clause_idx, None
+          clause_idx, & main_actlit, None
         ) ? {
           cexs.push(cex)
         }
@@ -1115,7 +1124,7 @@ impl<'a> Teacher<'a> {
 
       ($actlit:expr ; $bias:expr) => (
         if let Some(cex) = self.check_sat_cex(
-          clause_idx, Some(($actlit, $bias))
+          clause_idx, & main_actlit, Some(($actlit, $bias))
         ) ? {
           cexs.push(cex)
         }
@@ -1164,22 +1173,29 @@ impl<'a> Teacher<'a> {
   ///
   /// This is used when manipulating recursive ADTs and functions.
   pub fn quantified_checksat(
-    & mut self, clause: ClsIdx
+    & mut self, cands: & Candidates, clause: ClsIdx
   ) -> Res<bool> {
     let actlit = self.solver.get_actlit() ? ;
-    let wrapped = smt::SmtQClause::new( & self.instance[clause] ) ;
 
-    self.solver.assert_act_with(
-      & actlit, & wrapped, & (
-        & self.tru_preds, & self.fls_preds, self.instance.preds()
-      )
-    ) ? ;
+    {
+      let wrapped = smt::SmtQClause::new( & self.instance[clause] ) ;
+
+      self.solver.assert_act_with(
+        & actlit, & wrapped, & (
+          & self.tru_preds, & self.fls_preds, self.instance.preds()
+        )
+      ) ?
+    }
 
     let falsifiable = self.solver.check_sat_act(
       Some(& actlit)
     ) ? ;
 
     self.solver.de_actlit(actlit) ? ;
+
+    smt::reset(& mut self.solver, & self.instance) ? ;
+
+    self.define_preds(cands) ? ;
 
     Ok(falsifiable)
   }

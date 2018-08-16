@@ -1,4 +1,6 @@
 //! Unsat core extraction.
+//!
+//! Currently inactive.
 
 use common::* ;
 

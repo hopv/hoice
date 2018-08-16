@@ -10,6 +10,29 @@ use instance::{
 } ;
 
 
+
+/// Performs a checksat.
+macro_rules! check_sat {
+  ($pre_instance:expr) => ({
+    let actlit = if $pre_instance.use_actlits {
+      Some( $pre_instance.solver.get_actlit() ? )
+    } else {
+      None
+    } ;
+
+    let sat = $pre_instance.solver.check_sat_act( actlit.as_ref() ) ? ;
+
+    if let Some(actlit) = actlit {
+      $pre_instance.solver.de_actlit(actlit) ?
+    }
+
+    sat
+  }) ;
+}
+
+
+
+
 /// Wraps an instance for pre-processing.
 pub struct PreInstance<'a> {
   /// The instance wrapped.
@@ -27,6 +50,9 @@ pub struct PreInstance<'a> {
 
   /// Term extraction context.
   extraction: ExtractionCxt,
+
+  /// Use actlits in checksats.
+  use_actlits: bool,
 }
 impl<'a> PreInstance<'a> {
   /// Constructor.
@@ -36,12 +62,19 @@ impl<'a> PreInstance<'a> {
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
 
+    let mut use_actlits = false ;
+
+    fun::iter(
+      |_| { use_actlits = true ; Ok(()) }
+    ) ? ;
+
     Ok(
       PreInstance {
         instance, solver, simplifier,
         clauses_to_simplify,
         vars: VarSet::new(),
         extraction: ExtractionCxt::new(),
+        use_actlits,
       }
     )
   }
@@ -253,7 +286,9 @@ impl<'a> PreInstance<'a> {
 
     // Check side-clauses.
     let instance = & mut self.instance ;
+    let use_actlits = self.use_actlits ;
     let solver = & mut self.solver ;
+
     info += instance.side_clauses_retain(
       |clause| {
         match solver.is_clause_trivial(clause) ? {
@@ -1878,7 +1913,8 @@ impl<'a> PreInstance<'a> {
         clause, & (false, & set, & set, & self.instance.preds)
       ) ? ;
 
-      let sat = self.solver.check_sat() ? ;
+      let sat = check_sat!(self) ;
+
       self.solver.pop(1) ? ;
       if sat {
         return Ok(false)
@@ -1900,7 +1936,7 @@ impl<'a> PreInstance<'a> {
         clause, & (false, & set, & set, & self.instance.preds)
       ) ? ;
 
-      let sat = self.solver.check_sat() ? ;
+      let sat = check_sat!(self) ;
       self.solver.pop(1) ? ;
       if sat {
         return Ok(false)

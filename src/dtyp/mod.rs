@@ -36,7 +36,6 @@ impl From<Typ> for PartialTyp {
 }
 
 impl PartialTyp {
-
   /// True if the type mentions the datatype provided.
   pub fn mentions_dtyp(
     & self, dtyp_name: & str
@@ -131,6 +130,8 @@ impl PartialTyp {
 
     Ok(())
   }
+
+
 
 
   fn write<W: Write>(
@@ -279,7 +280,6 @@ impl PartialTyp {
 
     }
   }
-
 }
 
 impl_fmt! {
@@ -679,6 +679,28 @@ pub fn type_selector(
       slc_pos, format!(
         "cannot apply selector `{}` to term of type {}",
         conf.bad(selector), term.typ()
+      )
+    )
+  )
+}
+
+
+
+/// Types a datatype tester application.
+pub fn type_tester(
+  tester: & str, tst_pos: ::parse::Pos, term: & Term
+) -> Result<(), (::parse::Pos, String)> {
+  if let Some((dtyp, _)) = term.typ().dtyp_inspect() {
+    if dtyp.news.contains_key(tester) {
+      return Ok(())
+    }
+  }
+
+  Err(
+    (
+      tst_pos, format!(
+        "cannot apply tester `{}` to term of type {}, no such constructor",
+        conf.bad(tester), term.typ()
       )
     )
   )

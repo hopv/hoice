@@ -29,17 +29,16 @@ fn scan_vars(t: & Term) -> VarSet {
         let _ = set.insert(* i) ; ()
       },
       RTerm::Cst(_) => (),
-      RTerm::CArray { term, .. } => to_do.push(& * term),
-      RTerm::App{ args, .. } => for arg in args {
-        to_do.push(arg)
-      },
+
+      RTerm::App     { args, .. } |
+      RTerm::Fun     { args, .. } |
       RTerm::DTypNew { args, .. } => for arg in args {
         to_do.push(arg)
       },
-      RTerm::DTypSlc { term, .. } => to_do.push(term),
-      RTerm::Fun { args, .. } => for arg in args {
-        to_do.push(arg)
-      },
+
+      RTerm::CArray  { term, .. } |
+      RTerm::DTypSlc { term, .. } |
+      RTerm::DTypTst { term, .. } => to_do.push(term),
     }
   }
   set.shrink_to_fit() ;
@@ -270,6 +269,7 @@ pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
 pub fn app(op: Op, mut args: Vec<Term>) -> Term {
+  println!("{} ({})", op, args.len()) ;
   let typ = expect!(
     op.type_check(& mut args) => |e|
       let res: Res<()> = Err(
@@ -403,16 +403,27 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
     debug_assert_eq! { vals.len(), args.len() }
     val( val::dtyp_new(typ, name, vals) )
   } else {
-    if args.is_empty() {
-      panic!("aaaaaa")
-    }
+    debug_assert!( ! args.is_empty() ) ;
     factory.mk( RTerm::DTypNew { typ, name, args } )
   }
 }
 
 /// Creates a new datatype selector.
+///
+/// # TODO
+///
+/// - treat constants better
 pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
   factory.mk( RTerm::DTypSlc { typ, name, term } )
+}
+
+/// Creates a new datatype tester.
+///
+/// # TODO
+///
+/// - treat constants better
+pub fn dtyp_tst(name: String, term: Term) -> Term {
+  factory.mk( RTerm::DTypTst { typ: typ::bool(), name, term } )
 }
 
 /// Creates an operator application.

@@ -134,6 +134,16 @@ pub enum RTerm {
     term: Term,
   },
 
+  /// A datatype tester application.
+  DTypTst {
+    /// Type of the term (always bool).
+    typ: Typ,
+    /// Name of the tester.
+    name: String,
+    /// Argument of the selector.
+    term: Term,
+  },
+
   /// A function application.
   Fun {
     /// Type of this term.
@@ -227,6 +237,15 @@ impl RTerm {
     } else { None }
   }
 
+  /// Returns the kids of a datatype tester.
+  pub fn dtyp_tst_inspect(& self) -> Option<(& str, & Term)> {
+    if let RTerm::DTypTst { name, term, .. } = self {
+      Some((name, term))
+    } else {
+      None
+    }
+  }
+
   /// Iterator over over all the leafs of a term.
   pub fn leaf_iter(& self) -> LeafIter {
     LeafIter::of_rterm(self)
@@ -245,8 +264,9 @@ impl RTerm {
           stack.push(term)
         },
 
-        RTerm::CArray { term, .. } => stack.push( term.get() ),
-        RTerm::DTypSlc { term, .. } => stack.push( term.get() ),
+        RTerm::CArray  { term, .. } |
+        RTerm::DTypSlc { term, .. } |
+        RTerm::DTypTst { term, .. } => stack.push( term.get() ),
 
 
         RTerm::Var(_, _) |
@@ -269,6 +289,7 @@ impl RTerm {
       RTerm::App { typ, .. } |
       RTerm::Fun { typ, .. } |
       RTerm::DTypSlc { typ, .. } |
+      RTerm::DTypTst { typ, .. } |
       RTerm::DTypNew { typ, .. } => typ.clone(),
     }
   }
@@ -318,7 +339,10 @@ impl RTerm {
           Cst(val) => write!(w, "{}", val) ?,
 
           CArray { term, .. } => {
-            write!(w, "((as const {})", this_term.typ()) ? ;
+            write!(
+              w, "(({} {} {})",
+              keywords::op::as_, keywords::op::const_, this_term.typ()
+            ) ? ;
             stack.push( (vec![term], " ", ")") )
           },
 
@@ -331,6 +355,14 @@ impl RTerm {
 
           DTypSlc { name, term, .. } => {
             write!(w, "({}", name) ? ;
+            stack.push( (vec![term], " ", ")") )
+          },
+
+          DTypTst { name, term, .. } => {
+            write!(
+              w, "(({} {} {})",
+              keywords::op::lambda_, keywords::op::is_, name
+            ) ? ;
             stack.push( (vec![term], " ", ")") )
           },
 
@@ -669,6 +701,11 @@ impl RTerm {
           term::dtyp_slc( typ.clone(), name.clone(), term.clone() )
         },
 
+        RTerm::DTypTst { name, term, typ } => {
+          debug_assert_eq! { typ, & nu_typ }
+          term::dtyp_tst( name.clone(), term.clone() )
+        },
+
         RTerm::Fun { typ, name, args } => {
           debug_assert_eq! { typ, & nu_typ }
           term::fun( typ.clone(), name.clone(), args.clone() )
@@ -816,6 +853,42 @@ impl RTerm {
 
 
 
+  /// Returns true if the term mentions a function.
+  pub fn has_fun_apps(& self) -> bool {
+    use self::zip::* ;
+
+    // Will be `Ok(())` if there's no function application, and `Err(())`
+    // otherwise.
+    let res = zip(
+      & self.to_hcons(),
+
+      |_| Ok(()),
+
+      |zip_op, _, _: ()| match zip_op {
+        ZipOp::Fun(_) |
+        ZipOp::New(_) |
+        ZipOp::Slc(_) => Err(()),
+        _ => Ok( ZipDoTotal::Upp { yielded: () } ),
+      },
+
+      |frame| match frame {
+        ZipFrame { thing: ZipOp::Fun(_), .. } => Err(()),
+        mut frame => {
+          let nu_term = frame.rgt_args.next().expect(
+            "illegal call to `partial_op`:
+            empty `rgt_args` (has_fun_app_or_adt)"
+          ) ;
+          Ok( ZipDo::Trm { nu_term, frame } )
+        },
+      }
+    ) ;
+
+    res.is_err()
+  }
+
+
+
+
   /// Returns true if the term mentions a function or an ADT.
   pub fn has_fun_app_or_adt(& self) -> bool {
     use self::zip::* ;
@@ -891,17 +964,37 @@ impl RTerm {
           ZipOp::New(name) => term::dtyp_new(
             typ.clone(), name.clone(), acc
           ),
+
           ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
             if ! acc.is_empty() {
               panic!(
-                "illegal datatype selector application to {} arguments",
-                acc.len() + 1
+                "illegal application of datatype selector {} to {} arguments",
+                conf.bad(name), acc.len() + 1
               )
             }
             term::dtyp_slc(typ.clone(), name.clone(), kid)
           } else {
-            panic!("illegal datatype selector application to 0 arguments")
+            panic!(
+              "illegal application of datatype selector {} to 0 arguments",
+              conf.bad(name)
+            )
           },
+
+          ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
+            if ! acc.is_empty() {
+              panic!(
+                "illegal application of datatype tester {} to {} arguments",
+                conf.bad(name), acc.len() + 1
+              )
+            }
+            term::dtyp_slc(typ.clone(), name.clone(), kid)
+          } else {
+            panic!(
+              "illegal application of datatype tester {} to 0 arguments",
+              conf.bad(name)
+            )
+          },
+
           ZipOp::CArray => if let Some(kid) = acc.pop() {
             if ! acc.is_empty() {
               panic!(
@@ -1191,7 +1284,8 @@ impl RTerm {
         RTerm::Fun     { .. } |
         RTerm::CArray  { .. } |
         RTerm::DTypNew { .. } |
-        RTerm::DTypSlc { .. } => return None,
+        RTerm::DTypSlc { .. } |
+        RTerm::DTypTst { .. } => return None,
 
       }
     }

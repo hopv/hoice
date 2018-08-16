@@ -135,7 +135,7 @@ impl<'a, 'b> Expr2Smt<
       ref true_preds, ref false_preds, ref prd_info
     ) = * info ;
 
-    write!(w, "(not ") ? ;
+    writeln!(w, "(not") ? ;
 
     self.clause.naked_write(
       w, |w, prd, args| {
@@ -159,10 +159,10 @@ impl<'a, 'b> Expr2Smt<
           }
           Ok(())
         }
-      }
+      }, 6
     ) ? ;
 
-    write!(w, ")") ? ;
+    write!(w, "    )") ? ;
 
     Ok(())
   }
@@ -170,40 +170,76 @@ impl<'a, 'b> Expr2Smt<
 
 
 /// SMT-prints a collection of terms as a conjunction with default var writer.
-pub struct SmtConj<Trms> {
+pub struct SmtConj<'a, Trms> {
   /// Conjunction.
   terms: Trms,
+  /// True if the terms have function applications.
+  has_fun_apps: bool,
+  /// Variable informations.
+  infos: & 'a VarInfos
 }
-impl<'a, Trms> SmtConj<Trms>
+impl<'a, 'b, Trms> SmtConj<'b, Trms>
 where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   /// Constructor.
-  pub fn new<IntoIter>(terms: IntoIter) -> Self
+  pub fn new<IntoIter>(terms: IntoIter, infos: & 'b VarInfos) -> Self
   where IntoIter: IntoIterator<IntoIter = Trms, Item = & 'a Term> {
-    SmtConj { terms: terms.into_iter() }
+    let terms = terms.into_iter() ;
+    let mut has_fun_apps = false ;
+    for term in terms.clone() {
+      if term.has_fun_apps() {
+        has_fun_apps = true ;
+        break
+      }
+    }
+    SmtConj { terms, has_fun_apps, infos }
   }
 
   /// Checks if this conjunction is unsatisfiable.
   pub fn is_unsat<Parser: Copy>(
-    & self, solver: & mut Solver<Parser>, vars: & VarInfos
+    & self, solver: & mut Solver<Parser>, actlit: Option<& Actlit>
   ) -> Res<bool> {
     if self.terms.len() == 0 { return Ok(false) }
     solver.push(1) ? ;
-    for var in vars {
-      if var.active {
-        solver.declare_const(& var.idx, var.typ.get()) ?
+    if ! self.has_fun_apps {
+      for var in self.infos {
+        if var.active {
+          solver.declare_const(& var.idx, var.typ.get()) ?
+        }
       }
     }
     solver.assert( self ) ? ;
-    let sat = solver.check_sat() ? ;
+    let sat = solver.check_sat_act(actlit) ? ;
     solver.pop(1) ? ;
     Ok(! sat)
   }
 }
-impl<'a, Trms> Expr2Smt<()> for SmtConj<Trms>
+
+impl<'a, 'b, Trms> Expr2Smt<()> for SmtConj<'b, Trms>
 where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
+    let suffix = if self.has_fun_apps {
+      write!(w, "(exists (") ? ;
+      let mut inactive = 0 ;
+      for var in self.infos {
+        if var.active {
+          write!(w, " (") ? ;
+          var.idx.default_write(w) ? ;
+          write!(w, " {})", var.typ) ?
+        } else {
+          inactive += 1
+        }
+      }
+      if inactive == self.infos.len() {
+        write!(w, " (unused Bool)") ?
+      }
+      write!(w, " ) ") ? ;
+      ")"
+    } else {
+      ""
+    } ;
+
     if self.terms.len() == 0 {
       write!(w, "true") ?
     } else {
@@ -216,6 +252,7 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
       }
       write!(w, ")") ?
     }
+    write!(w, "{}", suffix) ? ;
     Ok(())
   }
 }
@@ -861,38 +898,53 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
       }
     }
 
-    let conj = SmtConj::new( lhs.iter() ) ;
+    let mut actlit = None ;
 
-    if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+    let res = {
 
-      // Either it is trivial, or falsifiable regardless of the predicates.
-      if conj.is_unsat(
-        self, clause.vars()
-      ) ? {
-        Ok( Some(true) )
-      } else {
-        Ok(None)
-      }
+      let conj = SmtConj::new( lhs.iter(), & clause.vars ) ;
 
-    } else {
-
-      if let Some((pred, args)) = clause.rhs() {
-        if clause.lhs_preds().get(& pred).map(
-          |set| set.contains(args)
-        ).unwrap_or(false) {
-          return Ok( Some(true) )
+      if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+        if conj.has_fun_apps {
+          actlit = Some( self.get_actlit() ? )
         }
-      }
 
-      if lhs.is_empty() {
-        Ok( Some(false) )
+        // Either it is trivial, or falsifiable regardless of the predicates.
+        if conj.is_unsat( self, actlit.as_ref() ) ? {
+          Ok( Some(true) )
+        } else {
+          Ok(None)
+        }
+
       } else {
-        clause.lhs_terms_checked() ;
-        conj.is_unsat(
-          self, clause.vars()
-        ).map(Some)
-      }
 
+        if let Some((pred, args)) = clause.rhs() {
+          if clause.lhs_preds().get(& pred).map(
+            |set| set.contains(args)
+          ).unwrap_or(false) {
+            return Ok( Some(true) )
+          }
+        }
+
+        if lhs.is_empty() {
+          Ok( Some(false) )
+        } else {
+
+          if conj.has_fun_apps {
+            actlit = Some( self.get_actlit() ? )
+          }
+          conj.is_unsat( self, actlit.as_ref() ).map(Some)
+        }
+
+      }
+    } ;
+
+    if let Some(actlit) = actlit {
+      self.de_actlit(actlit) ?
     }
+
+    clause.lhs_terms_checked() ;
+
+    res
   }
 }

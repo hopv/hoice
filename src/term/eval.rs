@@ -14,6 +14,7 @@ pub type CmdT<'a> = ZipDoTotal< 'a, Val > ;
 
 /// Term evaluation.
 pub fn eval<E: Evaluator>(term: & Term, model: & E) -> Res<Val> {
+  println!("evaluating {}", term) ;
   if let Some(val) = term.val() {
     return Ok(val)
   } else if let Some(idx) = term.var_idx() {
@@ -63,6 +64,7 @@ macro_rules! go {
 fn leaf<'a, E: Evaluator>(
   model: & E, zip_null: ZipNullary<'a>,
 ) -> Res<Val> {
+  println!("leaf: {}", zip_null) ;
   match zip_null {
     ZipNullary::Cst(val) => Ok( val.clone() ),
     ZipNullary::Var(_, var) => if var < model.len() {
@@ -117,7 +119,7 @@ fn total<'a>(
 
           } else {
             let e: Error = format!(
-              "unknown constructor `{}` for datatype {}",
+              "unknown selector `{}` for datatype {}",
               conf.bad(constructor), dtyp.name
             ).into() ;
             bail!(
@@ -130,8 +132,28 @@ fn total<'a>(
         }
       } else {
         bail!(
-          "illegal application of constructor `{}` of `{}` to `{}`",
+          "illegal application of selector `{}` of `{}` to `{}`",
           conf.bad(& name), typ, value
+        )
+      }
+    } else {
+      bail!(
+        "expected one value for datatype selection, found {}", values.len()
+      )
+    },
+
+    ZipOp::Tst(name) => if values.len() == 1 {
+      let value = values.pop().unwrap() ;
+      if ! value.is_known() {
+        val::none( typ.clone() )
+      } else if let Some(
+        (_, constructor, _)
+      ) = value.dtyp_inspect() {
+        val::bool( constructor == name )
+      } else {
+        bail!(
+          "illegal application of tester `{}` to {}: {}",
+          conf.bad(& name), value, value.typ()
         )
       }
     } else {
@@ -165,6 +187,12 @@ fn total<'a>(
         )
       }
 
+      println!("fun | {}", name) ;
+      for value in & values {
+        println!("    |   {}", value)
+      }
+      println!("def | {}", fun.def) ;
+
       return Ok(
         ZipDoTotal::Dwn {
           nu_term: & fun.def,
@@ -190,7 +218,8 @@ fn partial<'a>(
     thing @ ZipOp::New(_) |
     thing @ ZipOp::Fun(_) |
     thing @ ZipOp::CArray |
-    thing @ ZipOp::Slc(_) => {
+    thing @ ZipOp::Slc(_) |
+    thing @ ZipOp::Tst(_) => {
       let nu_term = rgt_args.next().expect(
         "illegal call to `partial_op`: empty `rgt_args` (eval::partial)"
       ) ;
@@ -331,9 +360,9 @@ fn partial_op<'a>(
       }
     )
   } else {
-    log!(@4 "{}", op) ;
+    println!("{}", op) ;
     for arg in & lft_args {
-      log!(@4 "  {}", arg)
+      println!("  {}", arg)
     }
     panic!(
       "illegal call to `partial_op`: empty `rgt_args` (partial_op)"

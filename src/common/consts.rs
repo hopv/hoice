@@ -137,12 +137,16 @@ pub mod keywords {
         to_int_ ("to_int", doc = "Conversion from `Real` to `Int`.")
         to_real_ ("to_real", doc = "Conversion from `Int` to `Real`.")
 
-        as_ ("as", doc = "As.")
+        as_ ("as", doc = "Cast operator.")
+        is_ ("is", doc = "Datatype tester.")
+        const_ ("const", doc = "Constant cast.")
 
         store_ ("store", doc = "Updater for arrays.")
         select_ ("select", doc = "Accessor for arrays.")
 
         match_ ("match", doc = "Match operator.")
+
+        lambda_ ("_", doc = "Lambda abstraction.")
       }
     }
 

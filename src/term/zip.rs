@@ -90,6 +90,8 @@ pub enum ZipOp<'a> {
   CArray,
   /// A datatype selection.
   Slc(& 'a String),
+  /// A datatype tester.
+  Tst(& 'a String),
 }
 impl<'a> ::std::fmt::Display for ZipOp<'a> {
   fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
@@ -98,6 +100,7 @@ impl<'a> ::std::fmt::Display for ZipOp<'a> {
       ZipOp::New(inner) => inner.fmt(fmt),
       ZipOp::Fun(inner) => inner.fmt(fmt),
       ZipOp::Slc(inner) => inner.fmt(fmt),
+      ZipOp::Tst(inner) => inner.fmt(fmt),
       ZipOp::CArray => write!(fmt, "array"),
     }
   }
@@ -202,6 +205,9 @@ Partial: for<'a> FnMut(
   'inspect_term: loop {
     // stack_print!() ;
 
+    println!() ;
+    println!("zip | {}", term) ;
+
     let result = match * term.get() {
 
       RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
@@ -271,6 +277,20 @@ Partial: for<'a> FnMut(
       RTerm::DTypSlc { ref typ, ref name, term: ref nu_term } => {
         let mut rgt_args = empty.iter() ;
         let op = ZipOp::Slc(name) ;
+        let lft_args = Acc::new_empty(1) ;
+
+        let frame = ZipFrame {
+          thing: op, typ, lft_args, rgt_args,
+        } ;
+        stack.push( (frame, subst.clone()) ) ;
+        term = nu_term ;
+
+        continue 'inspect_term
+      },
+
+      RTerm::DTypTst { ref typ, ref name, term: ref nu_term } => {
+        let mut rgt_args = empty.iter() ;
+        let op = ZipOp::Tst(name) ;
         let lft_args = Acc::new_empty(1) ;
 
         let frame = ZipFrame {

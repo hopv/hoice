@@ -18,6 +18,7 @@ pub fn new(
     vars, lhs_terms, lhs_preds, rhs,
     terms_changed: true, preds_changed: true,
     from_unrolling: false, info, from,
+    has_fun_apps: false,
   } ;
   for tterm in lhs { clause.lhs_insert(tterm) ; }
   clause
@@ -57,6 +58,74 @@ pub struct Clause {
 
   /// Index of the original clause this comes from.
   from: ClsIdx,
+  /// True if the clause contains function applications.
+  has_fun_apps: bool,
+}
+
+/// Updates the `has_fun_apps` flag.
+///
+/// Doesn't do anything if `has_fun_apps` is already false.
+macro_rules! update_has_fun_apps {
+  ($slf:expr) => (
+    if $slf.has_fun_apps {
+      $slf.has_fun_apps = false ;
+      update_has_fun_apps!(@ $slf, (terms, lhs preds, rhs))
+    }
+  ) ;
+  ($slf:expr, $tail:tt) => (
+    if $slf.has_fun_apps {
+      $slf.has_fun_apps = false ;
+      update_has_fun_apps!(@ $slf, $tail)
+    }
+  ) ;
+
+  (@ $slf:expr, (, $($tail:tt)*)) => (
+    update_has_fun_apps!($slf, ($($tail)*))
+  ) ;
+
+  (@ $slf:expr, (terms $($tail:tt)*)) => ({
+    if ! $slf.has_fun_apps {
+      for term in & $slf.lhs_terms {
+        if term.has_fun_apps() {
+          $slf.has_fun_apps = true ;
+          break
+        }
+      }
+    }
+    update_has_fun_apps!($slf, ($($tail)*))
+  }) ;
+
+  (@ $slf:expr, (lhs preds $($tail:tt)*)) => ({
+    if ! $slf.has_fun_apps {
+      for argss in $slf.lhs_preds.values() {
+        for args in argss {
+          for arg in args.iter() {
+            if arg.has_fun_apps() {
+              $slf.has_fun_apps = true ;
+              break
+            }
+          }
+        }
+      }
+    }
+    update_has_fun_apps!($slf, ($($tail)*))
+  }) ;
+
+  (@ $slf:expr, (rhs $($tail:tt)*)) => ({
+    if ! $slf.has_fun_apps {
+      if let Some((_, args)) = $slf.rhs.as_ref() {
+        for arg in args.iter() {
+          if arg.has_fun_apps() {
+            $slf.has_fun_apps = true ;
+            break
+          }
+        }
+      }
+    }
+    update_has_fun_apps!($slf, ($($tail)*))
+  }) ;
+
+  (@ $slf:expr, ()) => (()) ;
 }
 
 
@@ -76,6 +145,7 @@ impl Clause {
     self.preds_changed = false ;
     self.shrink_vars()
   }
+
 
   /// Inserts a top term in the lhs.
   ///
@@ -98,6 +168,8 @@ impl Clause {
     }
   }
 
+
+
   /// Removes all predicate application of `pred` in the LHS.
   ///
   /// Returns true if the predicate application was there.
@@ -107,6 +179,7 @@ impl Clause {
   ) -> Option< VarTermsSet > {
     let res = self.lhs_preds.remove(& pred) ;
     if res.is_some() {
+      update_has_fun_apps!(self) ;
       self.preds_changed = true ;
       if self.lhs_preds.is_empty()
       && self.rhs.is_none() {
@@ -123,6 +196,15 @@ impl Clause {
   pub fn insert_pred_app(
     & mut self, pred: PrdIdx, args: VarTerms
   ) -> bool {
+    if ! self.has_fun_apps {
+      for arg in args.iter() {
+        if arg.has_fun_apps() {
+          self.has_fun_apps = true ;
+          break
+        }
+      }
+    }
+
     let is_new = self.lhs_preds.insert_pred_app(pred, args) ;
     self.preds_changed = self.preds_changed || is_new ;
     is_new
@@ -132,6 +214,9 @@ impl Clause {
   pub fn insert_term(
     & mut self, term: Term
   ) -> bool {
+    if ! self.has_fun_apps && term.has_fun_apps() {
+      self.has_fun_apps = true
+    }
     let is_new = Self::lhs_insert_term(& mut self.lhs_terms, term) ;
     self.terms_changed = self.terms_changed || is_new ;
     is_new
@@ -140,6 +225,7 @@ impl Clause {
   /// Removes a term from the LHS.
   pub fn rm_term(& mut self, term: & Term) -> bool {
     let was_there = self.lhs_terms.remove(term) ;
+    update_has_fun_apps!(self) ;
     self.terms_changed = self.terms_changed || was_there ;
     was_there
   }
@@ -151,6 +237,9 @@ impl Clause {
   ) -> ::std::collections::hash_map::Drain<PrdIdx, VarTermsSet> {
     self.terms_changed = self.terms_changed || self.rhs.is_none() ;
     self.preds_changed = true ;
+
+    update_has_fun_apps!(self, (terms, rhs)) ;
+
     self.lhs_preds.drain()
   }
 
@@ -159,13 +248,19 @@ impl Clause {
   pub fn lhs_map_args_of<F>(
     & mut self, pred: PrdIdx, mut f: F
   ) where F: FnMut(& VarTerms) -> VarTerms {
-    if let Some(argss) = self.lhs_preds.get_mut(& pred) {
+    let changed = if let Some(argss) = self.lhs_preds.get_mut(& pred) {
       self.preds_changed = true ;
       let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
       for args in argss.iter() {
         nu_argss.insert( f(args) ) ;
       }
-      ::std::mem::swap( & mut nu_argss, argss )
+      ::std::mem::swap( & mut nu_argss, argss ) ;
+      true
+    } else {
+      false
+    } ;
+    if changed {
+      update_has_fun_apps!(self)
     }
   }
 
@@ -173,11 +268,19 @@ impl Clause {
   #[inline]
   pub fn rhs_map_args<F>(& mut self, mut f: F)
   where F: FnMut(PrdIdx, & VarTerms) -> (PrdIdx, VarTerms) {
-    if let Some(& mut (ref mut pred, ref mut args)) = self.rhs.as_mut() {
+    let changed = if let Some(
+      & mut (ref mut pred, ref mut args)
+    ) = self.rhs.as_mut() {
       self.preds_changed = true ;
       let (nu_pred, mut nu_args) = f(* pred, args) ;
       * args = nu_args ;
-      * pred = nu_pred
+      * pred = nu_pred ;
+      true
+    } else {
+      false
+    } ;
+    if changed {
+      update_has_fun_apps!(self)
     }
   }
 
@@ -192,17 +295,24 @@ impl Clause {
       old_rhs.is_some() && self.lhs_preds.is_empty()
     ) ;
     self.preds_changed = self.preds_changed || old_rhs.is_some() ;
+    if old_rhs.is_some() {
+      update_has_fun_apps!(self)
+    }
     old_rhs
   }
 
   /// Forces the RHS of a clause.
   #[inline]
+  #[cfg_attr(
+    feature = "cargo-clippy", allow(block_in_if_condition_stmt)
+  )]
   pub fn set_rhs(& mut self, pred: PrdIdx, args: VarTerms) -> Res<()> {
-    let mut vars = VarSet::new() ;
-    for arg in args.iter() {
-      term::map_vars(arg, |v| { vars.insert(v) ; () })
-    }
     debug_assert! {{
+      let mut vars = VarSet::new() ;
+
+      for arg in args.iter() {
+        term::map_vars(arg, |v| { vars.insert(v) ; () })
+      }
       for var in vars {
         if var >= self.vars.len() {
           err_chain! {
@@ -224,8 +334,10 @@ impl Clause {
       }
       true
     }}
+
     self.rhs = Some((pred, args)) ;
     self.preds_changed = true ;
+    update_has_fun_apps!(self) ;
     Ok(())
   }
 
@@ -251,7 +363,7 @@ impl Clause {
       self.preds_changed || was_there
     ) ;
 
-    Clause {
+    let mut clause = Clause {
       vars: self.vars.clone(),
       lhs_terms: self.lhs_terms.clone(), lhs_preds,
       rhs: self.rhs.clone(),
@@ -259,7 +371,12 @@ impl Clause {
       from_unrolling: self.from_unrolling,
       info,
       from: self.from,
-    }
+      has_fun_apps: self.has_fun_apps,
+    } ;
+
+    update_has_fun_apps!(clause) ;
+
+    clause
   }
 
   /// Clones a clause but changes the rhs.
@@ -292,7 +409,7 @@ impl Clause {
       ),
     } ;
 
-    Clause {
+    let mut clause = Clause {
       vars: self.vars.clone(),
       lhs_terms,
       lhs_preds: self.lhs_preds.clone(),
@@ -300,12 +417,21 @@ impl Clause {
       terms_changed, preds_changed,
       from_unrolling: self.from_unrolling,
       info,
-      from: self.from
-    }
+      from: self.from,
+      has_fun_apps: true,
+    } ;
+
+    update_has_fun_apps!(clause) ;
+
+    clause
   }
 
 
   /// Removes all redundant terms from `lhs_terms`.
+  ///
+  /// # TODO
+  ///
+  /// - can be optimized by using `retain` (probably)
   fn prune(& mut self) {
     use std::cmp::Ordering::* ;
     use term::simplify::SimplRes::* ;
@@ -313,6 +439,7 @@ impl Clause {
     let mut to_add = TermSet::new() ;
 
     let mut prune_things = true ;
+    let mut pruned = false ;
 
     while prune_things {
       prune_things = false ;
@@ -345,6 +472,8 @@ impl Clause {
         }
       }
 
+      pruned = pruned || ! to_rm.is_empty() || ! to_add.is_empty() ;
+
       self.terms_changed = self.terms_changed
       || ! to_rm.is_empty() || ! to_add.is_empty() ;
 
@@ -358,6 +487,10 @@ impl Clause {
         prune_things = prune_things || is_new
       }
 
+    }
+
+    if pruned {
+      update_has_fun_apps!(self)
     }
   }
 
@@ -407,6 +540,7 @@ impl Clause {
     ) ;
 
     if changed {
+      update_has_fun_apps!(self) ;
       self.terms_changed = true ;
       self.preds_changed = true ;
       self.prune()
@@ -795,18 +929,29 @@ impl Clause {
     & self, w: & mut W, write_prd: WritePrd
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    write!(w, "({} ", keywords::cmd::assert) ? ;
-    self.naked_write(w, write_prd) ? ;
+    writeln!(w, "({} ", keywords::cmd::assert) ? ;
+    self.internal_naked_write(w, write_prd, true, 2) ? ;
     writeln!(w, ")") ? ;
     Ok(())
   }
 
   /// Writes a clause without the `assert` around it.
   pub fn naked_write<W, WritePrd>(
-    & self, w: & mut W, write_prd: WritePrd
+    & self, w: & mut W, write_prd: WritePrd, indent: usize
   ) -> IoRes<()>
   where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    write!(w, "({}\n  (", keywords::forall) ? ;
+    self.internal_naked_write(w, write_prd, false, indent)
+  }
+
+  /// Writes a clause without the `assert` around it.
+  fn internal_naked_write<W, WritePrd>(
+    & self, w: & mut W, write_prd: WritePrd, info: bool, indent: usize
+  ) -> IoRes<()>
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    write!(
+      w, "{nil: >indent$}({}\n{nil: >indent$}  (",
+      keywords::forall, nil="", indent=indent
+    ) ? ;
 
     let mut inactive = 0 ;
     for var in & self.vars {
@@ -819,64 +964,99 @@ impl Clause {
     if inactive == self.vars.len() {
       write!(w, " (unused Bool)") ?
     }
+    writeln!(w, " )") ? ;
 
-    write!(w, " )") ? ;
-    writeln!(
-      w, "\n  \
-        ; {} inactive variable(s)\n  \
-        ; unroll: {}\n  \
-        ; terms_changed: {}\n  \
-        ; preds_changed: {}\n  \
-        ; created by `{}`\
-      ",
-      inactive, self.from_unrolling,
-      self.terms_changed, self.preds_changed, self.info
+    if info {
+      writeln!(
+        w, "{nil: >indent$}  \
+          ; {} inactive variable(s)\n{nil: >indent$}  \
+          ; unroll: {}\n{nil: >indent$}  \
+          ; terms_changed: {}\n{nil: >indent$}  \
+          ; preds_changed: {}\n{nil: >indent$}  \
+          ; created by `{}`\
+        ",
+        inactive, self.from_unrolling,
+        self.terms_changed, self.preds_changed, self.info,
+        nil="", indent=indent
+      ) ?
+    }
+
+    self.internal_qf_write(w, write_prd, indent + 2) ? ;
+
+    writeln!(w, "{nil: >indent$})", nil="", indent=indent) ? ;
+
+    Ok(())
+  }
+
+
+  /// Writes a clause without the quantifiers around it.
+  fn internal_qf_write<W, WritePrd>(
+    & self, w: & mut W, write_prd: WritePrd, indent: usize
+  ) -> IoRes<()>
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    write!(
+      w, "{nil: >indent$}(=>\n{nil: >indent$}  (and\n{nil: >indent$}   ",
+      nil="", indent=indent
     ) ? ;
-    writeln!(w, "  ; from: #{}", self.from) ? ;
 
-    let lhs_len = self.lhs_len() ;
-
-    let (pref, suff) = if lhs_len != 0 {
-      write!(w, "  (=>") ? ;
-      let (pref, suff) = if lhs_len > 1 {
-        write!(w, "\n    (and") ? ;
-        ("      ", Some("    )"))
-      } else {
-        ("    ", None)
-      } ;
-
+    if self.lhs_terms.is_empty() {
+      write!(w, " true") ?
+    } else {
       for term in & self.lhs_terms {
-        write!(w, "\n{}", pref) ? ;
-        term.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
+        write!(w, " ") ? ;
+        term.write(
+          w,
+          |w, var| w.write_all( self.vars[var].as_bytes() )
+        ) ?
       }
+    }
+
+    write!(w, "\n{nil: >indent$}   ", nil="", indent=indent) ? ;
+
+    if self.lhs_preds.is_empty() {
+      write!(w, " true") ?
+    } else {
       for (pred, argss) in & self.lhs_preds {
         for args in argss {
-          write!(w, "\n{}", pref) ? ;
+          write!(w, " ") ? ;
           write_prd(w, * pred, args) ?
         }
       }
+    }
 
-      writeln!(w) ? ;
-      if let Some(suff) = suff {
-        writeln!(w, "{}", suff) ?
-      }
-      ("    ", Some("  )"))
-    } else {
-      ("  ", None)
-    } ;
+    write!(
+      w, "\n{nil: >indent$}  )\n{nil: >indent$}  ", nil="", indent=indent
+    ) ? ;
 
-    write!(w, "{}", pref) ? ;
     if let Some((pred, ref args)) = self.rhs {
       write_prd(w, pred, args) ?
     } else {
       write!(w, "false") ?
     }
-    writeln!(w) ? ;
-    if let Some(suff) = suff {
-      writeln!(w, "{}", suff) ?
-    }
-    write!(w, ")")
+    writeln!(
+      w, "\n{nil: >indent$})", nil="", indent=indent
+    ) ? ;
+
+    Ok(())
   }
+
+
+
+  /// Asserts a clause.
+  pub fn assert<P, W, WritePrd>(
+    & self, solver: Solver<P>, write_pred: WritePrd, need_model: bool
+  ) -> Res<()>
+  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+
+    if ! need_model && self.has_fun_apps {
+
+    } else {
+
+    }
+
+    Ok(())
+  }
+
 }
 
 impl ::std::ops::Index<VarIdx> for Clause {

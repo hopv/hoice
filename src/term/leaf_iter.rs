@@ -69,13 +69,14 @@ impl<'a> Iterator for LeafIter<'a> {
           Cst(ref val) => Either::Right(val),
 
           DTypSlc { ref term, .. } |
-          CArray { ref term, .. } => {
+          DTypTst { ref term, .. } |
+          CArray  { ref term, .. } => {
             current = term.get() ;
             continue 'go_down
           },
 
-          App { ref args, .. } |
-          Fun { ref args, .. } |
+          App     { ref args, .. } |
+          Fun     { ref args, .. } |
           DTypNew { ref args, .. } => {
             self.stack.push( args.iter() ) ;
             continue 'find_next
