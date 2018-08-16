@@ -205,18 +205,13 @@ Partial: for<'a> FnMut(
   'inspect_term: loop {
     // stack_print!() ;
 
-    println!() ;
-    println!("zip | {}", term) ;
-
     let result = match * term.get() {
 
       RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
-        println!("    | subst") ;
         ZipDoTotal::Upp {
           yielded: subst[var_idx].clone(),
         }
       } else {
-        println!("    | not subst") ;
         ZipDoTotal::Upp {
           yielded: nul_do( ZipNullary::Var(typ, var_idx) ) ?,
         }
@@ -344,18 +339,13 @@ Partial: for<'a> FnMut(
       match stack.pop() {
 
         // Done, we're at top level.
-        None => {
-          println!("stack empty") ;
-          return Ok(result)
-        },
+        None => return Ok(result),
 
         // Work on the next frame.
         Some(
           (ZipFrame { thing, typ, mut lft_args, rgt_args }, old_subst)
         ) => {
           subst = old_subst ;
-          println!("stack: {} ({})", thing, typ) ;
-
 
           // Update left args.
           lft_args.push( result ) ;

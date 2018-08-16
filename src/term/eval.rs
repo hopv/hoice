@@ -14,7 +14,6 @@ pub type CmdT<'a> = ZipDoTotal< 'a, Val > ;
 
 /// Term evaluation.
 pub fn eval<E: Evaluator>(term: & Term, model: & E) -> Res<Val> {
-  println!("evaluating {}", term) ;
   if let Some(val) = term.val() {
     return Ok(val)
   } else if let Some(idx) = term.var_idx() {
@@ -64,7 +63,6 @@ macro_rules! go {
 fn leaf<'a, E: Evaluator>(
   model: & E, zip_null: ZipNullary<'a>,
 ) -> Res<Val> {
-  println!("leaf: {}", zip_null) ;
   match zip_null {
     ZipNullary::Cst(val) => Ok( val.clone() ),
     ZipNullary::Var(_, var) => if var < model.len() {
@@ -80,11 +78,6 @@ fn total<'a>(
   op: ZipOp<'a>, typ: & 'a Typ, mut values: Vec<Val>,
   fun_ref_count: & mut usize
 ) -> Res< CmdT<'a> > {
-  println!() ;
-  println!("ttl | {}", op) ;
-  for value in & values {
-    println!("    |   {}", value)
-  }
   let yielded = match op {
     ZipOp::Op(op) => {
       op.eval(values).chain_err(
@@ -150,7 +143,6 @@ fn total<'a>(
     ZipOp::Tst(name) => if values.len() == 1 {
       let value = values.pop().unwrap() ;
       if ! value.is_known() {
-        println!("none") ;
         val::none( typ.clone() )
       } else if let Some(
         (_, constructor, _)
@@ -192,12 +184,6 @@ fn total<'a>(
           conf.bad(name), values.len(), fun.sig.len()
         )
       }
-
-      println!("fun | {}", name) ;
-      for value in & values {
-        println!("    |   {}", value)
-      }
-      println!("def | {}", fun.def) ;
 
       return Ok(
         ZipDoTotal::Dwn {
@@ -250,34 +236,34 @@ fn partial_op<'a>(
 
   match op {
 
-    Op::Ite => if let Some(c) = lft_args.pop() {
-      if ! lft_args.is_empty() {
-        bail!(
-          "partial `Ite` application with `lft_args` of length {}",
-          lft_args.len() + 1
-        )
-      }
+    Op::Ite => if lft_args.len() == 1 {
+      let cond = lft_args.pop().expect("pop failed on vector of length 1") ;
 
-      let (t, e) = if let (Some(t), Some(e), None) = (
-        rgt_args.next(), rgt_args.next(), rgt_args.next()
-      ) {
-        (t, e)
-      } else {
-        bail!("illegal application of `Ite`")
-      } ;
-
-      match c.to_bool().chain_err(
+      match cond.to_bool().chain_err(
         || "during `Ite` condition evaluation"
       ) ? {
+        Some(cond) => if let (Some(t), Some(e), None) = (
+          rgt_args.next(), rgt_args.next(), rgt_args.next()
+        ) {
+          if cond {
+            go!(down t)
+          } else {
+            go!(down e)
+          }
+        } else {
+          bail!("illegal application of `Ite`")
+        },
 
-        // Condition is true, go into the `then` branch.
-        Some(true) => go!(down t),
+        None if ! cond.is_known() => if let (Some(t), Some(e), None) = (
+          rgt_args.next(), rgt_args.next(), rgt_args.next()
+        ) {
+          debug_assert_eq!( t.typ(), e.typ() ) ;
 
-        // Condition is false, go into the `else` branch.
-        Some(false) => go!(down e),
+          go!(up val::none(t.typ()))
+        } else {
+          bail!("illegal application of `Ite`")
+        },
 
-        // Unknown condition value. Keep going, the Ite might still be
-        // evaluable if both branches are equal.
         None => (),
       }
     },

@@ -269,7 +269,6 @@ pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
 pub fn app(op: Op, mut args: Vec<Term>) -> Term {
-  println!("{} ({})", op, args.len()) ;
   let typ = expect!(
     op.type_check(& mut args) => |e|
       let res: Res<()> = Err(
