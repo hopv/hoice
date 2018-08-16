@@ -80,6 +80,11 @@ fn total<'a>(
   op: ZipOp<'a>, typ: & 'a Typ, mut values: Vec<Val>,
   fun_ref_count: & mut usize
 ) -> Res< CmdT<'a> > {
+  println!() ;
+  println!("ttl | {}", op) ;
+  for value in & values {
+    println!("    |   {}", value)
+  }
   let yielded = match op {
     ZipOp::Op(op) => {
       op.eval(values).chain_err(
@@ -145,6 +150,7 @@ fn total<'a>(
     ZipOp::Tst(name) => if values.len() == 1 {
       let value = values.pop().unwrap() ;
       if ! value.is_known() {
+        println!("none") ;
         val::none( typ.clone() )
       } else if let Some(
         (_, constructor, _)

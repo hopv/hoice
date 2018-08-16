@@ -96,11 +96,11 @@ pub enum ZipOp<'a> {
 impl<'a> ::std::fmt::Display for ZipOp<'a> {
   fn fmt(& self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
     match self {
-      ZipOp::Op(inner) => inner.fmt(fmt),
-      ZipOp::New(inner) => inner.fmt(fmt),
-      ZipOp::Fun(inner) => inner.fmt(fmt),
-      ZipOp::Slc(inner) => inner.fmt(fmt),
-      ZipOp::Tst(inner) => inner.fmt(fmt),
+      ZipOp::Op(inner) => write!(fmt, "Op({})", inner),
+      ZipOp::New(inner) => write!(fmt, "New({})", inner),
+      ZipOp::Fun(inner) => write!(fmt, "Fun({})", inner),
+      ZipOp::Slc(inner) => write!(fmt, "Slc({})", inner),
+      ZipOp::Tst(inner) => write!(fmt, "Tst({})", inner),
       ZipOp::CArray => write!(fmt, "array"),
     }
   }
@@ -211,10 +211,12 @@ Partial: for<'a> FnMut(
     let result = match * term.get() {
 
       RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
+        println!("    | subst") ;
         ZipDoTotal::Upp {
           yielded: subst[var_idx].clone(),
         }
       } else {
+        println!("    | not subst") ;
         ZipDoTotal::Upp {
           yielded: nul_do( ZipNullary::Var(typ, var_idx) ) ?,
         }
@@ -342,13 +344,17 @@ Partial: for<'a> FnMut(
       match stack.pop() {
 
         // Done, we're at top level.
-        None => return Ok(result),
+        None => {
+          println!("stack empty") ;
+          return Ok(result)
+        },
 
         // Work on the next frame.
         Some(
           (ZipFrame { thing, typ, mut lft_args, rgt_args }, old_subst)
         ) => {
           subst = old_subst ;
+          println!("stack: {} ({})", thing, typ) ;
 
 
           // Update left args.
