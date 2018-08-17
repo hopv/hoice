@@ -286,7 +286,6 @@ impl<'a> PreInstance<'a> {
 
     // Check side-clauses.
     let instance = & mut self.instance ;
-    let use_actlits = self.use_actlits ;
     let solver = & mut self.solver ;
 
     info += instance.side_clauses_retain(

@@ -998,8 +998,7 @@ impl<'a> Teacher<'a> {
 
   /// Check-sats given an optional bias.
   fn check_sat_cex(
-    & mut self, clause: ClsIdx, main_actlit: & Actlit,
-    bias: Option<(Actlit, Bias)>
+    & mut self, clause: ClsIdx, bias: Option<(Actlit, Bias)>
   ) -> Res< Option<(Cex, Bias)> > {
     if let Some((actlit, bias)) = bias {
 
@@ -1011,9 +1010,7 @@ impl<'a> Teacher<'a> {
       ) ? ;
       profile!{ self tick "cexs", "biased check-sat" }
       let sat = {
-        self.solver.check_sat_act(
-          vec![ main_actlit, & actlit ]
-        ) ?
+        self.solver.check_sat_act( Some(& actlit) ) ?
       } ;
 
       if sat {
@@ -1034,9 +1031,7 @@ impl<'a> Teacher<'a> {
       log! { @debug "  checksat" }
       let sat = profile! {
         self wrap {
-          self.solver.check_sat_act(
-            Some(main_actlit)
-          )
+          self.solver.check_sat()
         } "cexs", "check-sat"
       } ? ;
 
@@ -1073,19 +1068,19 @@ impl<'a> Teacher<'a> {
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, cands: & Candidates,
+    & mut self, _cands: & Candidates,
     clause_idx: ClsIdx, bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
     let mut cexs = vec![] ;
 
     log! { @debug "working on clause #{}", clause_idx }
 
-    if self.using_rec_funs {
-      let falsifiable = self.quantified_checksat(cands, clause_idx) ? ;
-      if ! falsifiable {
-        return Ok(cexs)
-      }
-    }
+    // if self.using_rec_funs {
+    //   let falsifiable = self.quantified_checksat(cands, clause_idx) ? ;
+    //   if ! falsifiable {
+    //     return Ok(cexs)
+    //   }
+    // }
 
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
@@ -1104,9 +1099,8 @@ impl<'a> Teacher<'a> {
 
     profile!{ self tick "cexs", "prep" }
     clause!().declare(& mut self.solver) ? ;
-    let main_actlit = self.solver.get_actlit() ? ;
-    self.solver.assert_act_with(
-      & main_actlit, clause!(), & (
+    self.solver.assert_with(
+      clause!(), & (
         false, & self.tru_preds, & self.fls_preds, self.instance.preds()
       )
     ) ? ;
@@ -1116,7 +1110,7 @@ impl<'a> Teacher<'a> {
 
       () => ( // Normal check, no actlit.
         if let Some(cex) = self.check_sat_cex(
-          clause_idx, & main_actlit, None
+          clause_idx, None
         ) ? {
           cexs.push(cex)
         }
@@ -1124,7 +1118,7 @@ impl<'a> Teacher<'a> {
 
       ($actlit:expr ; $bias:expr) => (
         if let Some(cex) = self.check_sat_cex(
-          clause_idx, & main_actlit, Some(($actlit, $bias))
+          clause_idx, Some(($actlit, $bias))
         ) ? {
           cexs.push(cex)
         }
@@ -1138,7 +1132,8 @@ impl<'a> Teacher<'a> {
       let unbiased_cex = cexs.pop() ;
 
       // Don't try bias examples if instance is unsat.
-      if unbiased_cex.is_some() {
+      if unbiased_cex.is_some()
+      && ! self.using_rec_funs {
         log! { @3 "generating bias actlits" }
         let biased = profile! { 
           self wrap {

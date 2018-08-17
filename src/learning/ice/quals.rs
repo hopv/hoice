@@ -672,16 +672,14 @@ impl NuQuals {
             },
 
             typ::RTyp::DTyp { ref dtyp, .. } => {
-              for (name, args) in & dtyp.news {
-                if args.is_empty() {
-                  quals.insert(
-                    term::eq(
-                      term::var( var, typ.clone() ),
-                      term::dtyp_new( typ.clone(), name.clone(), vec![] )
-                    ),
-                    pred_info.idx
-                  ) ? ;
-                }
+              for name in dtyp.news.keys() {
+                quals.insert(
+                  term::dtyp_tst(
+                    name.clone(),
+                    term::var( var, typ.clone() )
+                  ),
+                  pred_info.idx
+                ) ? ;
               }
               let functions = fun::Functions::new( typ.clone() ) ;
               for fun in functions.from_typ {

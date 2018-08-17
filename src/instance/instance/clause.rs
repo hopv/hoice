@@ -1042,20 +1042,20 @@ impl Clause {
 
 
 
-  /// Asserts a clause.
-  pub fn assert<P, W, WritePrd>(
-    & self, solver: Solver<P>, write_pred: WritePrd, need_model: bool
-  ) -> Res<()>
-  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+  // /// Asserts a clause.
+  // pub fn assert<P, W, WritePrd>(
+  //   & self, solver: Solver<P>, write_pred: WritePrd, need_model: bool
+  // ) -> Res<()>
+  // where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
 
-    if ! need_model && self.has_fun_apps {
+  //   if ! need_model && self.has_fun_apps {
 
-    } else {
+  //   } else {
 
-    }
+  //   }
 
-    Ok(())
-  }
+  //   Ok(())
+  // }
 
 }
 

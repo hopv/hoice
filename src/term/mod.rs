@@ -360,8 +360,7 @@ impl RTerm {
 
           DTypTst { name, term, .. } => {
             write!(
-              w, "(({} {} {})",
-              keywords::op::lambda_, keywords::op::is_, name
+              w, "({}-{}", keywords::op::is_, name
             ) ? ;
             stack.push( (vec![term], " ", ")") )
           },
