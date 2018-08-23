@@ -1486,7 +1486,7 @@ impl_fmt!{
           }
 
           match curr {
-            RVal::N(ref t) => write!(fmt, "_[{}]", t) ?,
+            RVal::N(_) => write!(fmt, "_") ?,
             RVal::I(ref i) => int_to_smt!(fmt, i) ?,
             RVal::R(ref r) => rat_to_smt!(fmt, r) ?,
             RVal::B(b) => write!(fmt, "{}", b) ?,

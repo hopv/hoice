@@ -1,9 +1,10 @@
 //! Qualifier synthesis in the theory of integers.
 
 use common::* ;
-
-use super::helpers::n_term_arith_synth ;
-use super::{ TermVals, TheoSynth } ;
+use super::{
+  helpers::n_term_arith_synth,
+  TermVals, TheoSynth,
+} ;
 
 
 /// Integer qualifier synthesizer.
@@ -60,7 +61,7 @@ impl TheoSynth for IntSynth {
           if ! done {
             n_term_arith_synth(sample, others, & self.typ, 2, f)
           } else {
-            Ok(false)
+            Ok(true)
           }
         } "learning", "qual", "synthesis", "int", "level 0"
       ),
@@ -74,7 +75,7 @@ impl TheoSynth for IntSynth {
       n if n < sample.len() => profile!(
         |_profiler| wrap {
           n_term_arith_synth(sample, others, & self.typ, n + 1, f)
-        } "learning", "qual", "synthesis", "int", "level 4"
+        } "learning", "qual", "synthesis", "int", "level n > 1"
       ),
 
       _ => {
@@ -138,114 +139,4 @@ where F: FnMut(Term) -> Res<bool> {
 
   Ok(false)
 }
-
-
-/// Lowest level of int synthesis.
-///
-/// All `v*` are variables. Synthesizes qualifiers of the form
-///
-/// - `v = n`, `v <= n`, `v >= n`,
-/// - `v_1 = v_2`, `v_1 = - v_2`,
-/// - `v_1 + v_2 >= n`, `v_1 + v_2 <= n`,
-/// - `v_1 - v_2 >= n`, `v_1 - v_2 <= n`,
-pub fn simple_int_synth<F>(
-  sample: & VarVals, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
-
-  // Iterate over the sample.
-  for (var_idx, val) in sample.index_iter() {
-    if let val::RVal::I(ref i) = val.get() {
-      let var = term::var(var_idx, val.typ().clone()) ;
-      simple_arith_synth! { previous_int, f, int | var = ( i.clone() ) }
-    }
-  }
-
-  // Iterate over the cross-theory terms.
-  for (term, val) in others.drain() {
-    if let val::RVal::I(ref val) = val.get() {
-      simple_arith_synth! { previous_int, f, int | term = val.clone() }
-    } else {
-      bail!(
-        "int synthesis expects projected integers (2), \
-        got {} for {}", val, term
-      )
-    }
-  }
-
-  Ok(false)
-}
-
-
-
-/// Level 1 for int synthesis.
-pub fn int_synth_1<F>(
-  sample: & VarVals, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
-
-  // Iterate over the sample.
-  for (var_idx, val) in sample.index_iter() {
-    if let val::RVal::I(ref i) = val.get() {
-      let var = term::var(var_idx, val.typ().clone()) ;
-      arith_synth_non_lin! {
-        previous_int, f, int | var = ( i.clone() )
-      }
-    }
-  }
-
-  // Iterate over the cross-theory terms.
-  for (term, val) in others.drain() {
-    if let val::RVal::I(ref val) = val.get() {
-      arith_synth_non_lin! {
-        previous_int, f, int | term = val.clone()
-      }
-    } else {
-      bail!(
-        "int synthesis expects projected integers (3), \
-        got {} for {}", val, term
-      )
-    }
-  }
-
-  Ok(false)
-}
-
-
-/// Level 2 for int synthesis.
-pub fn int_synth_2<F>(
-  sample: & VarVals, others: & mut TermVals, mut f: F
-) -> Res<bool>
-where F: FnMut(Term) -> Res<bool> {
-  let mut previous_int: BTreeSet<(Term, Int)> = BTreeSet::new() ;
-
-  // Iterate over the sample.
-  for (var_idx, val) in sample.index_iter() {
-    if let val::RVal::I(ref i) = val.get() {
-      let var = term::var(var_idx, val.typ().clone()) ;
-      arith_synth_three_terms! {
-        previous_int, f, int | var = ( i.clone() )
-      }
-    }
-  }
-
-  // Iterate over the cross-theory terms.
-  for (term, val) in others.drain() {
-    if let val::RVal::I(ref val) = val.get() {
-      arith_synth_three_terms! {
-        previous_int, f, int | term = val.clone()
-      }
-    } else {
-      bail!(
-        "int synthesis expects projected integers (4), \
-        got {} for {}", val, term
-      )
-    }
-  }
-
-  Ok(false)
-}
-
 

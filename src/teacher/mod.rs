@@ -49,8 +49,11 @@ pub fn start_class(
         Ok( TeachRes::Unsat(core) )
       },
       _ => {
-        conf.check_timeout() ? ;
-        Err(e)
+        if let Err(tmo) = conf.check_timeout() {
+          Err(tmo)
+        } else {
+          Err(e)
+        }
       },
     },
   } ;
