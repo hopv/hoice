@@ -864,12 +864,8 @@ impl Instance {
     & self, solver: & mut Solver<P>
   ) -> Res<()> {
     for side_clause in & self.side_clauses {
-      side_clause.write(
-        solver, |_, _, _| panic!(
-          "illegal side-clause: found predicate application(s)"
-        )
-      ) ? ;
-      writeln!(solver) ? ;
+      let side_clause = smt::SmtSideClause::new(side_clause) ;
+      solver.assert(& side_clause) ?
     }
     Ok(())
   }
@@ -1193,9 +1189,9 @@ impl Instance {
     writeln!(w, "; Side-clauses") ? ;
     for side_clause in & self.side_clauses {
       side_clause.write(
-        w, |_, _, _| panic!(
+        w, |w, var_info| write!(w, "{}", var_info.name), |_, _, _| panic!(
           "illegal side-clause: found predicate application(s)"
-        )
+        ), true
       ) ? ;
       writeln!(w) ? ;
     }
@@ -1235,21 +1231,21 @@ impl Instance {
       writeln!(w) ? ;
 
       clause.write(
-        w, |w, p, args| {
+        w, |w, var_info| write!(w, "{}", var_info.name), |w, p, args| {
           if ! args.is_empty() {
             write!(w, "(") ?
           }
           w.write_all( self[p].name.as_bytes() ) ? ;
           for arg in args.iter() {
             write!(w, " ") ? ;
-            arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
+            arg.write(w, |w, var| write!(w, "{}", clause.vars[var])) ?
           }
           if ! args.is_empty() {
             write!(w, ")")
           } else {
             Ok(())
           }
-        }
+        }, true
       ) ? ;
       writeln!(w) ? ;
       writeln!(w) ?
@@ -1734,15 +1730,17 @@ impl<'a> PebcakFmt<'a> for Clause {
     & self, w: & mut W, prds: & 'a PrdInfos
   ) -> IoRes<()> {
     self.write(
-      w, |w, prd, args| {
+      w, |w, var_info| write!(w, "{}", var_info.name), |w, prd, args| {
         write!(w, "(") ? ;
         w.write_all( prds[prd].as_bytes() ) ? ;
         for arg in args.iter() {
           write!(w, " ") ? ;
-          arg.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
+          arg.write(
+            w, |w, var| write!(w, "{}", self.vars[var])
+          ) ?
         }
         write!(w, ")")
-      }
+      }, false
     )
   }
 }

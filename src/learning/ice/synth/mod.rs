@@ -22,8 +22,10 @@ pub type TermVals = TermMap<Val> ;
 /// theories. These pairs are the result of projecting/casting/... an argument
 /// of a different theory to this one.
 ///
-/// It is iterable. Each version generates qualifiers more complex than the
-/// previous one, making synthesis more expressive with each call to `next`.
+/// A synthesizer generates more and more complex candidate qualifiers with
+/// each call to [`increment`][increment].
+///
+/// [increment]: #tymethod.increment (increment method)
 pub trait TheoSynth {
   /// Type of values supported by this synthesizer.
   fn typ(& self) -> & Typ ;
@@ -88,19 +90,6 @@ impl SynthSys {
           |adt| adt.typ() != typ
         ) {
           let synth = AdtSynth::new( typ.clone() ) ;
-          // println!("creating synth for {}", synth.typ()) ;
-          // println!("  from_typ:") ;
-          // for fun in & synth.funs.from_typ {
-          //   println!("  - {}", fun.name)
-          // }
-          // println!("  to_typ:") ;
-          // for fun in & synth.funs.to_typ {
-          //   println!("  - {}", fun.name)
-          // }
-          // println!("  from_to_typ:") ;
-          // for fun in & synth.funs.from_to_typ {
-          //   println!("  - {}", fun.name)
-          // }
           if synth.can_project_to_int() { set!(int) }
           if synth.can_project_to_real() { set!(real) }
           adt.push(synth)
@@ -229,7 +218,7 @@ impl SynthSys {
               int_synth.project(
                 sample, real_synth.typ(), & mut self.cross_synth
               )
-            } "learning", "qual", "synthesis", "real project"
+            } "learning", "qual", "synthesis", "int project"
           ) ?
         }
         for adt_synth in & mut self.adt {
@@ -258,7 +247,7 @@ impl SynthSys {
   }
 
 
-  /// Runs real synthesis.
+  /// Runs adt synthesis.
   pub fn adt_synth<F>(
     & mut self, sample: & VarVals, mut f: F, _profiler: & Profiler
   ) -> Res<bool>

@@ -950,11 +950,7 @@ impl<'a> Teacher<'a> {
         self.solver.push(1) ?
       }
 
-      let cexs = self.get_cex(
-        cands, clause, bias,
-        // got_pos_neg_samples &&
-        conf.teacher.max_bias
-      ).chain_err(
+      let cexs = self.get_cex(clause, bias, conf.teacher.max_bias).chain_err(
         || format!("while getting counterexample for clause #{}", clause)
       ) ? ;
 
@@ -965,11 +961,6 @@ impl<'a> Teacher<'a> {
       }
 
       if ! cexs.is_empty() {
-        // got_pos_neg_samples = got_pos_neg_samples || (
-        //   cexs.iter().any(
-        //     |(_, bias)| ! bias.is_none()
-        //   )
-        // ) ;
         let prev = map.insert(clause, cexs) ;
         debug_assert_eq!(prev, None)
       }
@@ -1068,19 +1059,11 @@ impl<'a> Teacher<'a> {
 
   /// Checks if a clause is falsifiable and returns a model if it is.
   pub fn get_cex(
-    & mut self, _cands: & Candidates,
-    clause_idx: ClsIdx, bias: bool, bias_only: bool
+    & mut self, clause_idx: ClsIdx, bias: bool, bias_only: bool
   ) -> Res< Vec<BCex> > {
     let mut cexs = vec![] ;
 
     log! { @debug "working on clause #{}", clause_idx }
-
-    // if self.using_rec_funs {
-    //   let falsifiable = self.quantified_checksat(cands, clause_idx) ? ;
-    //   if ! falsifiable {
-    //     return Ok(cexs)
-    //   }
-    // }
 
     // Macro to avoid borrowing `self.instance`.
     macro_rules! clause {
@@ -1159,40 +1142,6 @@ impl<'a> Teacher<'a> {
     }
 
     Ok(cexs)
-  }
-
-
-  /// Checks a clause using qualifiers.
-  ///
-  /// Returns `true` if the clause is falsifiable with the current candidates.
-  ///
-  /// This is used when manipulating recursive ADTs and functions.
-  pub fn quantified_checksat(
-    & mut self, cands: & Candidates, clause: ClsIdx
-  ) -> Res<bool> {
-    let actlit = self.solver.get_actlit() ? ;
-
-    {
-      let wrapped = smt::SmtQClause::new( & self.instance[clause] ) ;
-
-      self.solver.assert_act_with(
-        & actlit, & wrapped, & (
-          & self.tru_preds, & self.fls_preds, self.instance.preds()
-        )
-      ) ?
-    }
-
-    let falsifiable = self.solver.check_sat_act(
-      Some(& actlit)
-    ) ? ;
-
-    self.solver.de_actlit(actlit) ? ;
-
-    smt::reset(& mut self.solver, & self.instance) ? ;
-
-    self.define_preds(cands) ? ;
-
-    Ok(falsifiable)
   }
 
 }

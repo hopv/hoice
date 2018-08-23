@@ -103,67 +103,11 @@ impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
-    self.clause.write(
-      w, |_, _, _| panic!(
+    self.clause.forall_write(
+      w, |w, var_info| var_info.idx.default_write(w), |_, _, _| panic!(
         "illegal side clause: found predicate application(s)"
-      )
+      ), 2
     ) ? ;
-    Ok(())
-  }
-}
-
-
-/// Smt-prints a clause with its quantifiers, negated.
-pub struct SmtQClause<'a> {
-  /// The clause.
-  pub clause: & 'a Clause,
-}
-impl<'a> SmtQClause<'a> {
-  /// Constructor.
-  pub fn new(clause: & 'a Clause) -> Self {
-    SmtQClause { clause }
-  }
-}
-impl<'a, 'b> Expr2Smt<
-  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
-> for SmtQClause<'a> {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer,
-    info: & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
-  ) -> SmtRes<()> {
-    let (
-      ref true_preds, ref false_preds, ref prd_info
-    ) = * info ;
-
-    writeln!(w, "(not") ? ;
-
-    self.clause.naked_write(
-      w, |w, prd, args| {
-        if true_preds.contains(& prd) {
-          write!(w, "true")
-        } else if false_preds.contains(& prd) {
-          write!(w, "false")
-        } else {
-          if ! args.is_empty() {
-            write!(w, "(") ?
-          }
-          write!(w, "{}", prd_info[prd].name) ? ;
-          for arg in args.iter() {
-            write!(w, " ") ? ;
-            arg.write(
-              w, |w, var| write!(w, "{}", self.clause[var])
-            ) ?
-          }
-          if ! args.is_empty() {
-            write!(w, ")") ?
-          }
-          Ok(())
-        }
-      }, 6
-    ) ? ;
-
-    write!(w, "    )") ? ;
-
     Ok(())
   }
 }

@@ -2,7 +2,7 @@
 
 use common::* ;
 
-// use super::helpers::n_term_arith_synth ;
+use super::helpers::n_term_arith_synth ;
 use super::{ TermVals, TheoSynth } ;
 
 
@@ -12,6 +12,8 @@ pub struct IntSynth {
   expressivity: usize,
   /// The int type.
   typ: Typ,
+  /// True if the synth is done.
+  done: bool,
 }
 impl Default for IntSynth {
   fn default() -> Self { Self::new() }
@@ -23,6 +25,7 @@ impl IntSynth {
     IntSynth {
       expressivity: 0,
       typ: typ::int(),
+      done: false,
     }
   }
 }
@@ -30,11 +33,12 @@ impl TheoSynth for IntSynth {
   fn typ(& self) -> & Typ { & self.typ }
 
   fn is_done(& self) -> bool {
-    self.expressivity > 2
+    self.done
   }
 
   fn restart(& mut self) {
-    self.expressivity = 0
+    self.done = false ;
+    self.expressivity = 0 ;
   }
 
   fn increment(& mut self) {
@@ -42,54 +46,41 @@ impl TheoSynth for IntSynth {
   }
 
   fn synth<F>(
-    & mut self, f: F, sample: & VarVals, others: & mut TermVals,
+    & mut self, mut f: F, sample: & VarVals, others: & mut TermVals,
     _profiler: & Profiler
   ) -> Res<bool>
   where F: FnMut(Term) -> Res<bool> {
+    self.done = false ;
     match self.expressivity {
       0 => profile!(
         |_profiler| wrap {
-          simple_int_synth(sample, others, f)
+          let done = n_term_arith_synth(
+            sample, others, & self.typ, 1, & mut f
+          ) ? ;
+          if ! done {
+            n_term_arith_synth(sample, others, & self.typ, 2, f)
+          } else {
+            Ok(false)
+          }
         } "learning", "qual", "synthesis", "int", "level 0"
       ),
+
       1 => profile!(
         |_profiler| wrap {
-          int_synth_1(sample, others, f)
+          non_lin_int_synth(sample, others, f)
         } "learning", "qual", "synthesis", "int", "level 1"
       ),
-      2 => profile!(
-        |_profiler| wrap {
-          int_synth_2(sample, others, f)
-        } "learning", "qual", "synthesis", "int", "level 2"
-      ),
-      _ => Ok(false),
 
-      // 0 => profile!(
-      //   |_profiler| wrap {
-      //     n_term_arith_synth(sample, others, & self.typ, 1, f)
-      //   } "learning", "qual", "synthesis", "int", "level 0"
-      // ),
-      // 1 => profile!(
-      //   |_profiler| wrap {
-      //     non_lin_int_synth(sample, others, f)
-      //   } "learning", "qual", "synthesis", "int", "level 1"
-      // ),
-      // 2 => profile!(
-      //   |_profiler| wrap {
-      //     n_term_arith_synth(sample, others, & self.typ, 3, f)
-      //   } "learning", "qual", "synthesis", "int", "level 2"
-      // ),
-      // 3 => profile!(
-      //   |_profiler| wrap {
-      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
-      //   } "learning", "qual", "synthesis", "int", "level 3"
-      // ),
-      // 4 => profile!(
-      //   |_profiler| wrap {
-      //     n_term_arith_synth(sample, others, & self.typ, 4, f)
-      //   } "learning", "qual", "synthesis", "int", "level 4"
-      // ),
-      // _ => Ok(false),
+      n if n < sample.len() => profile!(
+        |_profiler| wrap {
+          n_term_arith_synth(sample, others, & self.typ, n + 1, f)
+        } "learning", "qual", "synthesis", "int", "level 4"
+      ),
+
+      _ => {
+        self.done = true ;
+        Ok(false)
+      },
     }
   }
 

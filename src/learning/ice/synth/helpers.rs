@@ -337,15 +337,13 @@ where F: FnMut(Term) -> Res<bool> {
   // Iterate over the sample.
   for (var_idx, val) in sample.index_iter() {
     if val.typ() == * typ && val.is_known() {
-      let var = term::var(var_idx, typ::int()) ;
+      let var = term::var( var_idx, typ.clone() ) ;
 
-      let done = ::learning::ice::synth::helpers::sum_diff_synth(
+      let done = sum_diff_synth(
         & ( var.clone(), val.clone() ), & previous, len, & mut f
       ) ? ;
 
-      if done {
-        return Ok(true)
-      }
+      if done { return Ok(true) }
 
       previous.push((var, val.clone()))
     }
@@ -404,6 +402,70 @@ where F: FnMut(Term) -> Res<bool> {
     ()
 
   }
+}
+
+#[test]
+fn sum_diff() {
+  let term = & (
+    term::var( 0, typ::int() ), val::int(0)
+  ) ;
+
+  let others = & [
+    (term::var( 1, typ::int() ), val::int(1)),
+    (term::var( 2, typ::int() ), val::int(2)),
+    (term::var( 3, typ::int() ), val::int(3)),
+  ] ;
+
+  let expected = vec![
+    "(>= (+ v_0 v_1 v_2) 3)",
+    "(>= (+ (* (- 1) v_0) (* (- 1) v_1) (* (- 1) v_2)) (- 3))",
+    "(= (+ v_0 v_1 v_2 (- 3)) 0)",
+    "(>= (+ v_1 v_2 (* (- 1) v_0)) 3)",
+    "(>= (+ v_0 (* (- 1) v_1) (* (- 1) v_2)) (- 3))",
+    "(= (+ v_1 v_2 (* (- 1) v_0) (- 3)) 0)",
+    "(>= (+ v_0 v_2 (* (- 1) v_1)) 1)",
+    "(>= (+ v_1 (* (- 1) v_0) (* (- 1) v_2)) (- 1))",
+    "(= (+ v_0 v_2 (- 1) (* (- 1) v_1)) 0)",
+    "(>= (+ v_2 (* (- 1) v_0) (* (- 1) v_1)) 1)",
+    "(>= (+ v_0 v_1 (* (- 1) v_2)) (- 1))",
+    "(= (+ v_2 (- 1) (* (- 1) v_0) (* (- 1) v_1)) 0)",
+
+    "(>= (+ v_0 v_1 v_3) 4)",
+    "(>= (+ (* (- 1) v_0) (* (- 1) v_1) (* (- 1) v_3)) (- 4))",
+    "(= (+ v_0 v_1 v_3 (- 4)) 0)",
+    "(>= (+ v_1 v_3 (* (- 1) v_0)) 4)",
+    "(>= (+ v_0 (* (- 1) v_1) (* (- 1) v_3)) (- 4))",
+    "(= (+ v_1 v_3 (* (- 1) v_0) (- 4)) 0)",
+    "(>= (+ v_0 v_3 (* (- 1) v_1)) 2)",
+    "(>= (+ v_1 (* (- 1) v_0) (* (- 1) v_3)) (- 2))",
+    "(= (+ v_0 v_3 (* (- 1) v_1) (- 2)) 0)",
+    "(>= (+ v_3 (* (- 1) v_0) (* (- 1) v_1)) 2)",
+    "(>= (+ v_0 v_1 (* (- 1) v_3)) (- 2))",
+    "(= (+ v_3 (* (- 1) v_0) (* (- 1) v_1) (- 2)) 0)",
+
+    "(>= (+ v_0 v_2 v_3) 5)",
+    "(>= (+ (* (- 1) v_0) (* (- 1) v_2) (* (- 1) v_3)) (- 5))",
+    "(= (+ v_0 v_2 v_3 (- 5)) 0)",
+    "(>= (+ v_2 v_3 (* (- 1) v_0)) 5)",
+    "(>= (+ v_0 (* (- 1) v_2) (* (- 1) v_3)) (- 5))",
+    "(= (+ v_2 v_3 (* (- 1) v_0) (- 5)) 0)",
+    "(>= (+ v_0 v_3 (* (- 1) v_2)) 1)",
+    "(>= (+ v_2 (* (- 1) v_0) (* (- 1) v_3)) (- 1))",
+    "(= (+ v_0 v_3 (- 1) (* (- 1) v_2)) 0)",
+    "(>= (+ v_3 (* (- 1) v_0) (* (- 1) v_2)) 1)",
+    "(>= (+ v_0 v_2 (* (- 1) v_3)) (- 1))",
+    "(= (+ v_3 (- 1) (* (- 1) v_0) (* (- 1) v_2)) 0)",
+  ] ;
+  let mut cnt = 0 ;
+
+  sum_diff_synth(
+    term, others, 3, |term| {
+      println!("{}", term) ;
+      assert_eq! { & format!("{}", term), & expected[cnt] } ;
+      cnt += 1 ;
+      Ok(false)
+    },
+  ).unwrap() ;
 }
 
 
