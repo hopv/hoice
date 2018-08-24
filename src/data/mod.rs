@@ -295,10 +295,9 @@ impl Data {
   /// Does not propagate.
   pub fn add_raw_pos(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
-  ) -> () {
+  ) -> bool {
     let args = var_to::vals::new(args) ;
-    self.add_pos(clause, pred, args.clone()) ;
-    ()
+    self.add_pos( clause, pred, args.clone() )
   }
 
   /// Adds a negative example.
@@ -308,10 +307,9 @@ impl Data {
   /// Does not propagate.
   pub fn add_raw_neg(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
-  ) -> () {
+  ) -> bool {
     let args = var_to::vals::new(args) ;
-    self.add_neg(clause, pred, args.clone()) ;
-    ()
+    self.add_neg( clause, pred, args.clone() )
   }
 
 
@@ -748,14 +746,14 @@ impl Data {
   pub fn add_data(
     & mut self, clause: ClsIdx,
     mut lhs: Vec< (PrdIdx, RVarVals) >, rhs: Option<(PrdIdx, RVarVals)>,
-  ) -> Res<()> {
+  ) -> Res<bool> {
 
     let rhs = match rhs {
 
       Some((pred, sample)) => if lhs.is_empty() {
         // Positive sample.
-        self.add_raw_pos(clause, pred, sample) ;
-        return Ok(())
+        let new = self.add_raw_pos(clause, pred, sample) ;
+        return Ok(new)
       } else {
         // Constraint.
         Some((pred, sample))
@@ -767,8 +765,8 @@ impl Data {
           "failed pop on vector of length 1"
         ) ;
         debug_assert_eq! { lhs.len(), 0 }
-        self.add_raw_neg(clause, pred, sample) ;
-        return Ok(())
+        let new = self.add_raw_neg(clause, pred, sample) ;
+        return Ok(new)
       } else {
         // Constraint.
         None
@@ -784,9 +782,7 @@ impl Data {
       )
     }
 
-    self.add_cstr(clause, lhs, rhs) ? ;
-
-    Ok(())
+    self.add_cstr(clause, lhs, rhs)
   }
 
 

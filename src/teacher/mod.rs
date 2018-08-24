@@ -270,6 +270,44 @@ impl<'a> Teacher<'a> {
     )
   }
 
+  /// Model from some candidates.
+  fn model_of_candidates(
+    & self, mut cands: Candidates
+  ) -> Candidates {
+    for (pred, cand) in cands.index_iter_mut() {
+      if let Some(cand) = cand.as_mut() {
+        if let Some(other) = self.instance.get_str(pred) {
+          * cand = term::and(
+            vec![ cand.clone(), other.clone() ]
+          )
+        }
+      }
+    }
+    cands
+  }
+
+
+  /// Completes some candidates with partial-model and partial-defs.
+  fn complete_candidates(
+    & self, mut cands: Candidates
+  ) -> Candidates {
+    for (pred, cand) in cands.index_iter_mut() {
+      if let Some(cand) = cand.as_mut() {
+        let mut others = None ;
+        if let Some(other) = self.instance.get_str(pred) {
+          others.get_or_insert_with(Vec::new).push( other.clone() )
+        }
+        if let Some(other) = self.partial_model.get(& pred) {
+          others.get_or_insert_with(Vec::new).push( other.clone() )
+        }
+        if let Some(mut others) = others {
+          others.push( cand.clone() ) ;
+          * cand = term::and(others)
+        }
+      }
+    }
+    cands
+  }
 
 
   /// Runs the initial check and registers the data.
@@ -279,7 +317,9 @@ impl<'a> Teacher<'a> {
     if cexs.is_empty() {
       log_debug!{ "solved by initial candidate..." }
       return Ok(
-        Some( TeachRes::Model(cands) )
+        Some(
+          TeachRes::Model( self.model_of_candidates(cands) )
+        )
       )
     }
 
@@ -552,7 +592,9 @@ impl<'a> Teacher<'a> {
 
     if cexs.is_empty() {
       return Ok(
-        Some( TeachRes::Model(candidates) )
+        Some(
+          TeachRes::Model( self.model_of_candidates(candidates) )
+        )
       )
     }
 
@@ -630,7 +672,11 @@ impl<'a> Teacher<'a> {
         MsgKind::Cands(cands) => {
           profile!{ self "candidates" => add 1 }
           if let Id::Learner(idx) = id {
-            return Ok( Either::Left( (idx, cands) ) )
+            return Ok(
+              Either::Left(
+                ( idx, self.complete_candidates(cands) )
+              )
+            )
           } else {
             bail!("received candidates from {}", id)
           }
@@ -759,6 +805,8 @@ impl<'a> Teacher<'a> {
       }
     }
 
+    let cands = self.complete_candidates(cands) ;
+
     if_verb! {
       log_verb! { "  initial candidates:" }
       for (pred, cand) in cands.index_iter() {
@@ -780,18 +828,8 @@ impl<'a> Teacher<'a> {
   pub fn define_preds(& mut self, cands: & Candidates) -> Res<()> {
     for (pred, cand) in cands.index_iter() {
       if let Some(ref term) = * cand {
-        let term = if let Some(other) = self.partial_model.get(& pred) {
-          term::and( vec![term.clone(), other.clone()] )
-        } else {
-          term.clone()
-        } ;
         match term.bool() {
           None => {
-            let term = if let Some(other) = self.partial_model.get(& pred) {
-              term::and( vec![term.clone(), other.clone()] )
-            } else {
-              term.clone()
-            } ;
             let pred = & self.instance[pred] ;
             let sig: Vec<_> = pred.sig.index_iter().map(
               |(var, typ)| (var, typ.get())
@@ -821,11 +859,6 @@ impl<'a> Teacher<'a> {
 
     for (pred, cand) in cands.index_iter() {
       if let Some(ref term) = * cand {
-        let term = if let Some(other) = self.partial_model.get(& pred) {
-          term::and( vec![term.clone(), other.clone()] )
-        } else {
-          term.clone()
-        } ;
 
         match term.bool() {
           Some(true) => {

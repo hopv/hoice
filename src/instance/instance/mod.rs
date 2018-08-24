@@ -44,6 +44,9 @@ pub struct Instance {
   /// Populated by the `finalize` function.
   sorted_pred_terms: Vec<PrdIdx>,
 
+  /// Strengthener for predicates.
+  pred_str: PrdMap< Option<Term> >,
+
   /// Side-clauses.
   ///
   /// A side clause
@@ -128,6 +131,7 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
+      pred_str: PrdMap::with_capacity(pred_capa),
 
       side_clauses: Vec::with_capacity(7),
       clauses: ClsMap::with_capacity(clause_capa),
@@ -166,6 +170,7 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(self.old_preds.len()),
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
+      pred_str: vec! [ None ; self.old_preds.len() ].into(),
 
       side_clauses: self.side_clauses.clone(),
       clauses: self.clauses.clone(),
@@ -711,12 +716,28 @@ impl Instance {
       name, idx, sig
     } ) ;
     self.pred_terms.push(None) ;
+    self.pred_str.push(None) ;
 
     self.pred_to_clauses.push(
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
     idx
   }
+
+
+  /// Sets the strengthener for a predicate.
+  pub fn set_str(& mut self, pred: PrdIdx, term: Term) -> Option<Term> {
+    ::std::mem::replace(
+      & mut self.pred_str[pred],
+      Some(term)
+    )
+  }
+
+  /// Retrieves the strengthener for a predicate if any.
+  pub fn get_str(& self, pred: PrdIdx) -> Option<& Term> {
+    self.pred_str[pred].as_ref()
+  }
+
 
   /// Removes and returns the indices of the clauses `pred` appears in the lhs
   /// of from `self.pred_to_clauses`.
@@ -1574,7 +1595,7 @@ impl Instance {
   /// Returns `true` if some new data was generated.
   pub fn clause_cex_to_data(
     & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
-  ) -> Res<()> {
+  ) -> Res<bool> {
     let (mut cex, bias) = cex ;
 
     if_log! { @6
@@ -1651,19 +1672,22 @@ impl Instance {
   pub fn cexs_to_data(
     & self, data: & mut Data, cexs: Cexs
   ) -> Res<bool> {
-    let metrics = data.metrics() ;
+    let mut changed = false ;
 
     for (clause_idx, cexs) in cexs {
       log! { @5 "adding cexs for #{}", clause_idx }
 
       for cex in cexs {
-        self.clause_cex_to_data(data, clause_idx, cex) ?
+        let new_stuff = self.clause_cex_to_data(
+          data, clause_idx, cex
+        ) ? ;
+        changed = changed || new_stuff
       }
     }
 
-    data.propagate() ? ;
+    let (pos, neg) = data.propagate() ? ;
 
-    Ok( metrics != data.metrics() )
+    Ok( changed || pos > 0 || neg > 0 )
   }
 }
 

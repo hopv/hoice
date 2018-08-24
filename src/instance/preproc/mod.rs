@@ -14,6 +14,7 @@ mod cfg_red ;
 mod arg_red ;
 mod bias_unroll ;
 mod unroll ;
+mod strict_neg_clauses ;
 
 use self::{
   one_lhs::OneLhs,
@@ -22,6 +23,7 @@ use self::{
   cfg_red::CfgRed,
   bias_unroll:: BiasedUnroll,
   unroll::RUnroll,
+  strict_neg_clauses::StrictNeg,
 } ;
 
 
@@ -301,6 +303,8 @@ pub struct Reductor<'a> {
   biased_unroll: Option<BiasedUnroll>,
   /// Optional reverse unroller.
   runroll: Option<RUnroll>,
+  /// Optional strengthener by strict negative clauses.
+  strict_neg: Option<StrictNeg>,
 }
 impl<'a> Reductor<'a> {
   /// Constructor.
@@ -342,12 +346,16 @@ impl<'a> Reductor<'a> {
     let runroll = some_new! {
       RUnroll if neg_unroll
     } ;
+    let strict_neg = some_new! {
+      StrictNeg if strict_neg
+    } ;
 
     Ok(
       Reductor {
         instance, simplify, arg_red,
         one_rhs, one_lhs,
         cfg_red, biased_unroll, runroll,
+        strict_neg,
       }
     )
   }
@@ -454,7 +462,7 @@ impl<'a> Reductor<'a> {
         run! { simplify } ;
       }
 
-      let strict_neg_count = self.instance.strict_neg_clauses().fold(
+      let strict_neg_count = self.instance.strict_neg_clauses().2.fold(
         0, |acc, _| acc + 1
       ) ;
       if strict_neg_count <= 1
@@ -465,6 +473,8 @@ impl<'a> Reductor<'a> {
         }
       }
     }
+
+    run! { strict_neg } ;
 
     utils::register_final_stats(& self.instance, _profiler) ? ;
 

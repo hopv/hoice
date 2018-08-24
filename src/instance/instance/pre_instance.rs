@@ -257,12 +257,20 @@ impl<'a> PreInstance<'a> {
 
 
   /// Strict negative clauses.
-  pub fn strict_neg_clauses(& self) -> impl Iterator<Item = & Clause> {
-    self.clauses.iter().filter(
-      |clause| clause.rhs().is_none() && clause.lhs_preds().len() == 1 && (
-        clause.lhs_preds().iter().next().map(
-          |(_, apps)| apps.len() == 1
-        ).unwrap_or(false)
+  pub fn strict_neg_clauses(& mut self) -> (
+    & mut ExtractionCxt, & Instance, impl Iterator<Item = (ClsIdx, & Clause)>
+  ) {
+    let extraction = & mut self.extraction ;
+    let instance = & self.instance ;
+    let clauses = & instance.clauses ;
+    (
+      extraction, instance, clauses.index_iter().filter(
+        |(_, clause)| clause.rhs().is_none()
+        && clause.lhs_preds().len() == 1 && (
+          clause.lhs_preds().iter().next().map(
+            |(_, apps)| apps.len() == 1
+          ).unwrap_or(false)
+        )
       )
     )
   }

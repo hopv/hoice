@@ -336,6 +336,9 @@ pub struct PreprocConf {
 
   /// Allows clause sorting when splitting.
   pub split_sort: bool,
+
+  /// Strengthening by strict clauses.
+  pub strict_neg: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -602,6 +605,18 @@ impl PreprocConf {
         true
       ).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("strict_neg").long("--strict_neg").help(
+        "(de)activates strengthening by strict negative clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").hidden(true).takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
     )
   }
 
@@ -623,12 +638,13 @@ impl PreprocConf {
     let neg_unroll = bool_of_matches(matches, "neg_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
+    let strict_neg = bool_of_matches(matches, "strict_neg") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
       arg_red, prune_terms, runroll, pos_unroll, neg_unroll,
-      split_strengthen, split_sort
+      split_strengthen, split_sort, strict_neg,
     }
   }
 }
