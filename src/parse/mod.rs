@@ -2667,6 +2667,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             break 'read_kids None
 
           } else {
+            for fun in self.functions.keys() {
+              println!("- {}", fun)
+            }
             bail!(
               self.error(
                 pos, format!(
@@ -2787,6 +2790,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
   fn define_fun(
     & mut self, instance: & mut Instance
   ) -> Res<bool> {
+    use fun::RFun ;
+
     if ! self.word_opt(keywords::cmd::def_fun) {
       return Ok(false)
     }
@@ -2827,12 +2832,24 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       ) ?
     }
 
-    let prev = instance.add_define_fun(name, var_info, body) ;
+    if let Some(term) = body.to_term() ? {
+      let mut fun = RFun::new(name, var_info, out_sort) ;
+      fun.set_def(term) ;
+      let _ = fun::mk(fun).chain_err(
+        || self.error(name_pos, "while registering this function")
+      ) ? ;
+      ()
 
-    if prev.is_some() {
-      bail!(
-        self.error(name_pos, format!("redefinition of {}", conf.emph(name)))
-      )
+    } else {
+
+      let prev = instance.add_define_fun(name, var_info, body) ;
+
+      if prev.is_some() {
+        bail!(
+          self.error(name_pos, format!("redefinition of {}", conf.emph(name)))
+        )
+      }
+
     }
 
     Ok(true)

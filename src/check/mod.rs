@@ -215,106 +215,126 @@ impl Data {
     Self::new(input, output)
   }
 
+  /// Checks a single clause.
+  pub fn check_clause(
+    & self, solver: & mut Solver<Parser>,
+    Clause { args, body }: & Clause, count: usize,
+  ) -> Res<bool> {
+    solver.reset() ? ;
+
+    for unknown in & self.input.unknown {
+      use std::io::Write ;
+      writeln!(solver, "{}", unknown) ?
+    }
+
+    // Define all functions.
+    for & FunDef {
+      ref name, ref args, ref typ, ref body
+    } in & self.input.fun_defs {
+      solver.define_fun(
+        name, args, typ, body
+      ) ?
+    }
+
+    // Define all predicates.
+    for & PredDef {
+      ref pred, ref args, ref body
+    } in & self.output.pred_defs {
+      if let Some(body) = body.as_ref() {
+        solver.define_fun(
+          pred, args, & "Bool".to_string(), body
+        ) ?
+      } else {
+        solver.declare_fun(
+          pred,
+          & args.iter().map(
+            |& (_, ref typ)| typ.clone()
+          ).collect::<Vec<_>>(),
+          & "Bool".to_string()
+        ) ?
+      }
+    }
+
+    // Declare arguments.
+    for & (ref ident, ref typ) in args {
+      solver.declare_const(ident, typ) ?
+    }
+
+    solver.assert( & format!("(not {})", body) ) ? ;
+
+    let res = solver.check_sat_or_unk() ? ;
+
+    if let Some(true) = res {
+      let exprs: Vec<_> = args.iter().map(
+        |& (ref id, _)| id.clone()
+      ).collect() ;
+      let model = solver.get_values(& exprs) ? ;
+      println!() ;
+      println!("({} \"", conf.bad("error")) ;
+      println!("  clause {} is falsifiable with {{", count) ;
+      // print!(  "   ") ;
+      // for & (ref id, ref ty) in args {
+      //   print!(" ({} {})", id, ty)
+      // }
+      // println!() ;
+      // println!("    (=>") ;
+      // println!("      (and") ;
+      // for lhs in lhs {
+      //   println!("        {}", lhs)
+      // }
+      // println!("      ) {}", rhs) ;
+      // println!("    )") ;
+      // println!("  is falsifiable with {{") ;
+      for (ident, value) in model {
+        println!("    {}: {},", ident, value)
+      }
+      println!("  }}") ;
+      println!("\")") ;
+      println!() ;
+      log_info!("clause {} is fine", count) ;
+      Ok(false)
+    } else if let Some(false) = res {
+      Ok(true)
+    } else {
+      bail!(
+        "clause {}'s check resulted in unknown", count
+      )
+    }
+  }
+
   /// Checks the output data works with the input data using an SMT solver.
   pub fn check(& self, solver: & mut Solver<Parser>) -> Res<()> {
 
     let mut okay = true ;
-    let mut count = 0 ;
+    let mut err = false ;
 
     // Check all clauses one by one.
-    for & Clause {
-      ref args, ref body // ref lets, ref lhs, ref rhs
-    } in & self.input.clauses {
-      solver.reset() ? ;
-
-      for unknown in & self.input.unknown {
-        use std::io::Write ;
-        writeln!(solver, "{}", unknown) ?
+    for (count, clause) in self.input.clauses.iter().enumerate() {
+      match self.check_clause(solver, clause, count) {
+        Ok(ok) => okay = okay && ok,
+        Err(e) => {
+          err = true ;
+          let e = e.chain_err(
+            || format!(
+              "while checking clause {}", count
+            )
+          ) ;
+          print_err(& e)
+        },
       }
-
-      // Define all functions.
-      for & FunDef {
-        ref name, ref args, ref typ, ref body
-      } in & self.input.fun_defs {
-        solver.define_fun(
-          name, args, typ, body
-        ) ?
-      }
-
-      // Define all predicates.
-      for & PredDef {
-        ref pred, ref args, ref body
-      } in & self.output.pred_defs {
-        if let Some(body) = body.as_ref() {
-          solver.define_fun(
-            pred, args, & "Bool".to_string(), body
-          ) ?
-        } else {
-          solver.declare_fun(
-            pred,
-            & args.iter().map(
-              |& (_, ref typ)| typ.clone()
-            ).collect::<Vec<_>>(),
-            & "Bool".to_string()
-          ) ?
-        }
-      }
-
-      // Declare arguments.
-      for & (ref ident, ref typ) in args {
-        solver.declare_const(ident, typ) ?
-      }
-
-      solver.assert( & format!("(not {})", body) ) ? ;
-
-      let res = solver.check_sat_or_unk() ? ;
-
-      if let Some(true) = res {
-        okay = false ;
-        let exprs: Vec<_> = args.iter().map(
-          |& (ref id, _)| id.clone()
-        ).collect() ;
-        let model = solver.get_values(& exprs) ? ;
-        println!() ;
-        println!("({} \"", conf.bad("error")) ;
-        println!("  clause {} is falsifiable with {{", count) ;
-        // print!(  "   ") ;
-        // for & (ref id, ref ty) in args {
-        //   print!(" ({} {})", id, ty)
-        // }
-        // println!() ;
-        // println!("    (=>") ;
-        // println!("      (and") ;
-        // for lhs in lhs {
-        //   println!("        {}", lhs)
-        // }
-        // println!("      ) {}", rhs) ;
-        // println!("    )") ;
-        // println!("  is falsifiable with {{") ;
-        for (ident, value) in model {
-          println!("    {}: {},", ident, value)
-        }
-        println!("  }}") ;
-        println!("\")") ;
-        println!()
-      } else if let Some(false) = res {
-        log_info!("clause {} is fine", count)
-      } else {
-        warn!(
-          "clause {}'s check resulted in unknown, assuming it's fine", count
-        )
-      }
-
-      count += 1 ;
     }
 
     if ! okay {
       bail!(
         "predicates do not verify all the clauses of the input file"
       )
+    } else if err {
+      bail!(
+        "at least one error while checking the clauses"
+      )
+    } else {
+      Ok(())
     }
-
-    Ok(())
   }
 }
 
