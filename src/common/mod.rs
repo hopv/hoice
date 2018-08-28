@@ -238,6 +238,11 @@ pub type TermSet = HConSet<Term> ;
 /// A map from terms to stuff.
 pub type TermMap<T> = HConMap<Term, T> ;
 
+/// A set of types.
+pub type TypSet = HConSet<Typ> ;
+/// A map from terms to stuff.
+pub type TypMap<T> = HConMap<Typ, T> ;
+
 /// A signature.
 pub type Sig = VarMap<Typ> ;
 

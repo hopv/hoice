@@ -582,6 +582,8 @@ impl NuQuals {
       rng: Rng::from_seed( [ 42 ; 16 ] ),
     } ;
 
+    let mut prev: TypMap<VarSet> = TypMap::new() ;
+
     if mine {
 
       'all_preds: for pred_info in instance.preds() {
@@ -589,8 +591,24 @@ impl NuQuals {
         if instance.is_known(pred_info.idx) { continue 'all_preds }
 
         let mut sig = pred_info.sig.index_iter() ;
+        prev.clear() ;
 
         for (var, typ) in sig {
+          if let Some(vars) = prev.get(typ) {
+            for v in vars {
+              quals.insert(
+                term::eq(
+                  term::var(* v, typ.clone()),
+                  term::var(var, typ.clone()),
+                ),
+                pred_info.idx
+              ) ? ;
+            }
+          }
+
+          scoped! {
+            prev.entry( typ.clone() ).or_insert_with(VarSet::new).insert(var) ;
+          }
 
           match ** typ {
 
