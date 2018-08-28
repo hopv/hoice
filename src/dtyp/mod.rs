@@ -877,6 +877,25 @@ impl RDTyp {
 
     Ok(())
   }
+
+  /// Returns a recursive constructor.
+  ///
+  /// Only returns something if
+  ///
+  /// - there are only two constructors
+  /// - one of them is recursive
+  pub fn rec_constructor(& self) -> Option<& str> {
+    if self.news.len() == 2 {
+      for (new, args) in & self.news {
+        for (_, ptyp) in args {
+          if ptyp.mentions_dtyp(& self.name) {
+            return Some(new)
+          }
+        }
+      }
+    }
+    None
+  }
 }
 impl_fmt! {
   RDTyp(self, fmt) { write!(fmt, "{}", self.name) }

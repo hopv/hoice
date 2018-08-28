@@ -1252,40 +1252,39 @@ impl RVal {
 
 
 
-/** Operations over arrays.
-
-# Examples
-
-```
-use hoice::term::typ ;
-use hoice::val::* ;
-
-let first_array = array( typ::int(), int(0) ) ;
-# println!("{}", first_array) ;
-
-assert_eq! { first_array.select( int(7) ), int(0) }
-// Following works because `first_array` is constant.
-assert_eq! { first_array.select( none(typ::int()) ), int(0) }
-
-let array = first_array.store(int(7), int(0)) ;
-# println!("{}", array) ;
-assert_eq! { array, first_array }
-
-let array = first_array.store(int(7), int(1)) ;
-# println!("{}", array) ;
-
-# println!("array[{}] = {}", 7, 1) ;
-assert_eq! { array.select( int(7) ), int(1) }
-# println!("array[{}] = {}", 5, 0) ;
-assert_eq! { array.select( int(5) ), int(0) }
-# println!("array[{}] = {}", 0, 0) ;
-assert_eq! { array.select( int(0) ), int(0) }
-# println!("array[_] = {}", 1) ;
-// Select on `none` does not work anymore, array is not constant.
-assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
-```
-*/
-impl RVal { 
+/// Operations over arrays.
+///
+/// # Examples
+///
+/// ```
+/// use hoice::term::typ ;
+/// use hoice::val::* ;
+///
+/// let first_array = array( typ::int(), int(0) ) ;
+/// # println!("{}", first_array) ;
+///
+/// assert_eq! { first_array.select( int(7) ), int(0) }
+/// // Following works because `first_array` is constant.
+/// assert_eq! { first_array.select( none(typ::int()) ), int(0) }
+///
+/// let array = first_array.store(int(7), int(0)) ;
+/// # println!("{}", array) ;
+/// assert_eq! { array, first_array }
+///
+/// let array = first_array.store(int(7), int(1)) ;
+/// # println!("{}", array) ;
+///
+/// # println!("array[{}] = {}", 7, 1) ;
+/// assert_eq! { array.select( int(7) ), int(1) }
+/// # println!("array[{}] = {}", 5, 0) ;
+/// assert_eq! { array.select( int(5) ), int(0) }
+/// # println!("array[{}] = {}", 0, 0) ;
+/// assert_eq! { array.select( int(0) ), int(0) }
+/// # println!("array[_] = {}", 1) ;
+/// // Select on `none` does not work anymore, array is not constant.
+/// assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
+/// ```
+impl RVal {
   /// Store over arrays, creates a `RVal`.
   ///
   /// Does not actually create a `Val`.
@@ -1464,6 +1463,36 @@ impl RVal {
       RVal::I(_) | RVal::R(_) | RVal::B(_) => false,
       RVal::N(ref t) => t.is_dtyp() || t.is_array(),
     }
+  }
+}
+
+
+
+
+/// Operation over datatype values.
+impl RVal {
+  /// Datatype selector.
+  pub fn dtyp_slc<S>(& self, field: S) -> Option<Val>
+  where S: AsRef<str> {
+    let field = field.as_ref() ;
+    if let Some((val_typ, constructor, args)) = self.dtyp_inspect() {
+      if let Some((dtyp, _)) = val_typ.dtyp_inspect() {
+        if let Some(params) = dtyp.news.get(constructor) {
+          debug_assert_eq! { params.len(), args.len() }
+          for ((name, _), arg) in params.iter().zip( args.iter() ) {
+            if name == field {
+              return Some( arg.clone() )
+            }
+          }
+        }
+      } else {
+        panic!("inconsistent internal datatype term")
+      }
+    } else {
+      panic!("inconsistent internal datatype selector term")
+    }
+
+    None
   }
 }
 

@@ -246,6 +246,15 @@ impl RTerm {
     }
   }
 
+  /// Returns the kids of a datatype constructor.
+  pub fn dtyp_new_inspect(& self) -> Option<(& Typ, & str, & [ Term ])> {
+    if let RTerm::DTypNew { typ, name, args } = self {
+      Some((typ, name, args))
+    } else {
+      None
+    }
+  }
+
   /// Iterator over over all the leafs of a term.
   pub fn leaf_iter(& self) -> LeafIter {
     LeafIter::of_rterm(self)

@@ -311,100 +311,10 @@ pub fn val(val: Val) -> Term {
 }
 
 
-/// Tries to create a constant datatype constructor.
-fn cst_dtyp_new(
-  typ: Typ, name: String, args: Vec<Term>
-) -> Either<Val, (Typ, String, Vec<Term>)> {
-  if args.is_empty() {
-    return Either::Left(
-      val::dtyp_new( typ, name, vec![] )
-    )
-  }
-
-  let mut nu_args = None ;
-
-  for arg in & args {
-    if let Some(val) = arg.val() {
-      nu_args.get_or_insert_with(
-        || Vec::with_capacity( args.len() )
-      ).push(val)
-    } else {
-      nu_args = None ;
-      break
-    }
-  }
-
-  if let Some(args) = nu_args {
-    Either::Left( val::dtyp_new(typ, name, args) )
-  } else {
-    Either::Right( (typ, name, args) )
-  }
-}
-
-
 /// Creates a datatype constructor.
 pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
-  let (typ, name, mut args) = match cst_dtyp_new(typ, name, args) {
-    Either::Left(val) => {
-      return cst(val)
-    },
-    Either::Right(stuff) => stuff,
-  } ;
-
-  if let Some((dtyp, prms)) = typ.dtyp_inspect() {
-    if let Some(fargs) = dtyp.news.get(& name) {
-      if args.len() != fargs.len() {
-        panic!(
-          "constructor `{}` for `{}` expects {} arguments, found {}",
-          conf.emph(& name), conf.emph(& dtyp.name),
-          fargs.len(), args.len()
-        )
-      }
-
-      for (arg, param) in args.iter_mut().zip( fargs.iter() ) {
-        let typ = param.1.to_type(prms).unwrap_or_else(
-          |_| panic!("ill-formed datatype constructor: {}", typ)
-        ) ;
-        if let Some(typ) = typ.merge( & arg.typ() ) {
-          if let Some(nu_arg) = arg.force_dtyp(typ) {
-            * arg = nu_arg
-          }
-        }
-      }
-    } else {
-      panic!(
-        "datatype `{}` has no constructor named `{}`",
-        conf.emph(& dtyp.name), conf.bad(& name)
-      )
-    }
-  } else {
-    panic!("ill-typed datatype constructor: {}", typ)
-  }
-
-  let mut vals = if args.is_empty() {
-    Some(vec![])
-  } else {
-    None
-  } ;
-
-  for arg in & args {
-    if let Some(val) = arg.val() {
-      vals.get_or_insert_with(
-        || Vec::with_capacity( args.len() )
-      ).push(val)
-    } else {
-      vals = None ;
-      break
-    }
-  }
-
-  if let Some(vals) = vals {
-    debug_assert_eq! { vals.len(), args.len() }
-    val( val::dtyp_new(typ, name, vals) )
-  } else {
-    debug_assert!( ! args.is_empty() ) ;
-    factory.mk( RTerm::DTypNew { typ, name, args } )
-  }
+  let rterm = term::simplify::dtyp_new(typ, name, args) ;
+  factory.mk(rterm)
 }
 
 /// Creates a new datatype selector.
@@ -413,7 +323,10 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
 ///
 /// - treat constants better
 pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
-  factory.mk( RTerm::DTypSlc { typ, name, term } )
+  match term::simplify::dtyp_slc(typ, name, term) {
+    Either::Left(rterm) => factory.mk(rterm),
+    Either::Right(term) => term,
+  }
 }
 
 /// Creates a new datatype tester.
@@ -422,7 +335,13 @@ pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
 ///
 /// - treat constants better
 pub fn dtyp_tst(name: String, term: Term) -> Term {
-  factory.mk( RTerm::DTypTst { typ: typ::bool(), name, term } )
+  let (rterm, positive) = term::simplify::dtyp_tst(name, term) ;
+  let res = factory.mk( rterm ) ;
+  if ! positive {
+    not(res)
+  } else {
+    res
+  }
 }
 
 /// Creates an operator application.
