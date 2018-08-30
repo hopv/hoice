@@ -202,7 +202,7 @@ impl ClauseRes {
 
 /// The operator of an s-expression.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum FrameOp {
+pub enum FrameOp {
   /// An actual operator.
   Op(Op),
   /// A constant array constructor.
@@ -240,7 +240,7 @@ impl FrameOp {
 
 
 /// Term stack frame used in the parser to avoid recursion.
-struct TermFrame {
+pub struct TermFrame {
   /// Operator when going up.
   op: FrameOp,
   /// Position of the operator.
@@ -315,6 +315,12 @@ impl ParserCxt {
       pred_name_map: BTreeMap::new(),
     }
   }
+
+  /// Term stack accessor.
+  pub fn term_stack(& self) -> & Vec<TermFrame> {
+    & self.term_stack
+  }
+
   /// Generates a parser from itself.
   pub fn parser<'cxt, 's>(
     & 'cxt mut self, string: & 's str, line_off: usize,
@@ -342,7 +348,7 @@ impl ParserCxt {
 /// Wraps an integer, represents a number of let-bindings parsed.
 #[must_use]
 #[derive(Clone, Copy)]
-struct LetCount {
+pub struct LetCount {
   n: usize
 }
 impl LetCount {
@@ -376,6 +382,10 @@ pub struct Parser<'cxt, 's> {
 
 
 impl<'cxt, 's> Parser<'cxt, 's> {
+  /// Context accessor.
+  pub fn cxt(& self) -> & ParserCxt {
+    & * self.cxt
+  }
 
 
   /// Returns the text that hasn't been parsed yet.
@@ -2478,6 +2488,26 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     map: & BTreeMap<& 's str, VarIdx>,
     instance: & Instance
   ) -> Res< Option<Term> > {
+    let start_pos = self.pos() ;
+    let res = self.inner_term_opt(var_map, map, instance) ;
+
+    if res.as_ref().map( |res| res.is_none() ).unwrap_or(true) {
+      self.cxt.term_stack.clear() ;
+      self.backtrack_to(start_pos) ;
+    } else {
+      debug_assert! { self.cxt.term_stack.is_empty() }
+    }
+
+    res
+  }
+
+  /// Parses a single term.
+  fn inner_term_opt(
+    & mut self,
+    var_map: & VarInfos,
+    map: & BTreeMap<& 's str, VarIdx>,
+    instance: & Instance
+  ) -> Res< Option<Term> > {
     if ! self.cxt.term_stack.is_empty() {
       let e: Error = self.error_here("non-empty term stack").into() ;
       let mut blah: String = "while parsing this:\n".into() ;
@@ -2486,13 +2516,16 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         blah.push_str(line) ;
         blah.push('\n')
       }
+      let mut blah_2: String = "term stack:\n".into() ;
+      for frame in & self.cxt.term_stack {
+        blah_2 += & format!("  {:?}", frame.op)
+      }
       print_err(
-        & e.chain_err(|| blah)
+        & e.chain_err(|| blah).chain_err(|| blah_2)
       ) ;
       panic!("non-empty term stack during parsing")
     }
     conf.check_timeout() ? ;
-    let start_pos = self.pos() ;
 
     // The correct (non-error) way to exit this loop is
     //
@@ -2615,7 +2648,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt() ;
             self.tag(keywords::op::is_) ? ;
             self.ws_cmt() ;
-            let (op_pos, ident) = self.ident() ? ;
+
+            let (op_pos, ident) = if let Some(res) = self.ident_opt() ? {
+              res
+            } else if self.tag_opt("(") {
+              self.ws_cmt() ;
+              let res = self.ident() ? ;
+              self.ws_cmt() ;
+              self.tag("(") ? ;
+              self.ws_cmt() ;
+              while self.sort_opt()?.is_some() {
+                self.ws_cmt()
+              }
+              self.tag(")") ? ;
+              self.ws_cmt() ;
+              self.sort() ? ;
+              self.ws_cmt() ;
+              self.tag(")") ? ;
+              res
+            } else {
+              bail!( self.error_here("unexpected token") )
+            } ;
+
             self.ws_cmt() ;
             self.tag(")") ? ;
 
@@ -2776,11 +2830,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
       debug_assert!( self.cxt.term_stack.is_empty() ) ;
       break 'read_kids Some(term)
     } ;
-
-    if res.is_none() {
-      self.cxt.term_stack.clear() ;
-      self.backtrack_to(start_pos) ;
-    }
 
     Ok(res)
   }

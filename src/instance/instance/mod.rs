@@ -47,6 +47,13 @@ pub struct Instance {
   /// Strengthener for predicates.
   pred_str: PrdMap< Option<Term> >,
 
+  /// Companion function for predicates.
+  ///
+  /// A companion function is a function that was created internally
+  /// specifically for a predicate. Meaning it needs to be given to the user
+  /// when printing the model.
+  companion_funs: PrdHMap< Vec<Fun> >,
+
   /// Side-clauses.
   ///
   /// A side clause
@@ -132,6 +139,7 @@ impl Instance {
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
       pred_str: PrdMap::with_capacity(pred_capa),
+      companion_funs: PrdHMap::new(),
 
       side_clauses: Vec::with_capacity(7),
       clauses: ClsMap::with_capacity(clause_capa),
@@ -171,6 +179,7 @@ impl Instance {
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
       pred_str: vec! [ None ; self.old_preds.len() ].into(),
+      companion_funs: self.companion_funs.clone(),
 
       side_clauses: self.side_clauses.clone(),
       clauses: self.clauses.clone(),
@@ -738,6 +747,18 @@ impl Instance {
     self.pred_str[pred].as_ref()
   }
 
+  /// Adds a companion function for a predicate.
+  pub fn add_companion_fun(& mut self, pred: PrdIdx, fun: Fun) {
+    self.companion_funs.entry(pred).or_insert_with(
+      Vec::new
+    ).push(fun)
+  }
+
+  /// Retrieves the companion functions for a predicate.
+  pub fn get_companion_funs(& self, pred: PrdIdx) -> Option< & Vec<Fun> > {
+    self.companion_funs.get(& pred)
+  }
+
 
   /// Removes and returns the indices of the clauses `pred` appears in the lhs
   /// of from `self.pred_to_clauses`.
@@ -862,6 +883,8 @@ impl Instance {
   }
 
   /// Mutable accessor for side clauses.
+  ///
+  /// Does not expose function invariants.
   pub fn side_clauses_retain<Keep>(
     & mut self, mut keep: Keep
   ) -> Res<RedInfo>
@@ -906,6 +929,22 @@ impl Instance {
     self.side_clauses.push(clause) ;
 
     Ok(())
+  }
+
+  /// Registers a new side clause: forces the term to be true.
+  ///
+  /// A side clause is a clause that does not mention any predicate, but
+  /// mentions a user-defined function.
+  pub fn add_new_side_clause(
+    & mut self,
+    vars: VarInfos, term: Term, info: & 'static str
+  ) -> Res<()> {
+    let clause = clause::new(
+      vars, vec![ TTerm::T( term::not(term) ) ], None,
+      info, self.side_clauses.len().into()
+    ) ;
+
+    self.add_side_clause(clause)
   }
 
   /// Pushes a clause.
@@ -1203,7 +1242,7 @@ impl Instance {
     writeln!(w) ? ;
 
     writeln!(w, "; Functions") ? ;
-    fun::write_all(w) ? ;
+    fun::write_all(w, "", true) ? ;
 
     writeln!(w) ? ;
 
@@ -1350,6 +1389,8 @@ impl Instance {
   pub fn write_definitions<W: Write>(
     & self, w: & mut W, pref: & str, model: ConjModelRef
   ) -> Res<()> {
+
+    fun::write_all(w, pref, false) ? ;
 
     for defs in model {
 

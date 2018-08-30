@@ -590,6 +590,34 @@ impl NuQuals {
 
         if instance.is_known(pred_info.idx) { continue 'all_preds }
 
+        // Add companion functions if any.
+        // fun::iter(
+        //   |fun| {
+        //     if fun.synthetic == Some(pred_info.idx) {
+        //       let mut args = Vec::with_capacity( pred_info.sig.len() - 1 ) ;
+        //       for (var, typ) in pred_info.sig.index_iter().take(
+        //         pred_info.sig.len() - 1
+        //       ) {
+        //         args.push( term::var(var, typ.clone()) )
+        //       }
+        //       let fun_app = term::fun(
+        //         fun.typ.clone(), fun.name.clone(), args
+        //       ) ;
+        //       let last: VarIdx = (
+        //         pred_info.sig.len() - 1
+        //       ).into() ;
+        //       quals.insert(
+        //         term::eq(
+        //           term::var( last, fun.typ.clone() ),
+        //           fun_app
+        //         ),
+        //         pred_info.idx
+        //       ) ? ;
+        //     }
+        //     Ok(())
+        //   }
+        // ) ? ;
+
         let mut sig = pred_info.sig.index_iter() ;
         prev.clear() ;
 

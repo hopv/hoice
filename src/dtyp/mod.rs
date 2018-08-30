@@ -896,6 +896,18 @@ impl RDTyp {
     }
     None
   }
+
+  /// Returns the selectors of a constructor.
+  pub fn selectors_of(& self, constructor: & str) -> Res<& CArgs> {
+    if let Some(selectors) = self.news.get(constructor) {
+      Ok(selectors)
+    } else {
+      bail!(
+        "unknown constructor {} for dtyp {}, no selectors",
+        conf.bad(constructor), conf.emph(& self.name)
+      )
+    }
+  }
 }
 impl_fmt! {
   RDTyp(self, fmt) { write!(fmt, "{}", self.name) }

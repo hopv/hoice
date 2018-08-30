@@ -68,6 +68,10 @@ impl<'a> PreInstance<'a> {
       |_| { use_actlits = true ; Ok(()) }
     ) ? ;
 
+    if dtyp::get_all().iter().next().is_some() {
+      use_actlits = true
+    }
+
     Ok(
       PreInstance {
         instance, solver, simplifier,
@@ -77,6 +81,11 @@ impl<'a> PreInstance<'a> {
         use_actlits,
       }
     )
+  }
+
+  /// Resets the solver.
+  pub fn reset_solver(& mut self) -> Res<()> {
+    smt::preproc_reset(& mut self.solver)
   }
 
   /// Accessor for the solver.
@@ -277,6 +286,27 @@ impl<'a> PreInstance<'a> {
 
 
 
+  /// Non-strict negative clauses.
+  pub fn non_strict_neg_clauses(& mut self) -> (
+    & mut ExtractionCxt, & Instance, impl Iterator<Item = (ClsIdx, & Clause)>
+  ) {
+    let extraction = & mut self.extraction ;
+    let instance = & self.instance ;
+    let clauses = & instance.clauses ;
+    (
+      extraction, instance, clauses.index_iter().filter(
+        |(_, clause)| clause.rhs().is_none()
+        && (
+          clause.lhs_preds().len() > 1 || clause.lhs_preds().iter().any(
+            |(_, apps)| apps.len() > 1
+          )
+        )
+      )
+    )
+  }
+
+
+
   /// Simplifies all the clauses.
   pub fn simplify_all(& mut self) -> Res<RedInfo> {
     let mut info = RedInfo::new() ; // self.force_trivial() ? ;
@@ -292,18 +322,33 @@ impl<'a> PreInstance<'a> {
 
     info += self.force_trivial() ? ;
 
-    // Check side-clauses.
-    let instance = & mut self.instance ;
-    let solver = & mut self.solver ;
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    }
 
-    info += instance.side_clauses_retain(
-      |clause| {
-        match solver.is_clause_trivial(clause) ? {
-          None => bail!( ErrorKind::Unsat ),
-          Some(is_trivial) => Ok(is_trivial),
+    // Check side-clauses.
+    scoped! {
+      let instance = & mut self.instance ;
+      let solver = & mut self.solver ;
+
+      log! { @4 "checking side clauses" }
+
+      info += instance.side_clauses_retain(
+        |clause| {
+          solver.push(1) ? ;
+          let res = match solver.is_clause_trivial(clause) ? {
+            None => bail!( ErrorKind::Unsat ),
+            Some(is_trivial) => Ok(is_trivial),
+          } ;
+          solver.pop(1) ? ;
+          res
         }
-      }
-    ) ? ;
+      ) ? ;
+    }
+
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    }
 
     Ok(info)
   }
@@ -649,9 +694,21 @@ impl<'a> PreInstance<'a> {
   /// - the rhs is a predicate application contained in the lhs.
   #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-    if let Some(res) = self.solver.is_clause_trivial(
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.push(1) ? ;
+    }
+    let res = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
-    ) ? {
+    ) ;
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.pop(1) ? ;
+    }
+
+    if let Some(res) = res ? {
       Ok(res)
     } else {
       log_debug!{
@@ -677,7 +734,18 @@ impl<'a> PreInstance<'a> {
   pub fn is_this_clause_trivial(
     & mut self, clause: & mut Clause
   ) -> Res< Option<bool> > {
-    self.solver.is_clause_trivial(clause)
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.push(1) ? ;
+    }
+    let res = self.solver.is_clause_trivial(clause) ;
+    if self.use_actlits {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.pop(1) ? ;
+    }
+    res
   }
 
 
@@ -1950,7 +2018,7 @@ impl<'a> PreInstance<'a> {
       }
     }
 
-    smt::preproc_reset(& mut self.solver) ? ;
+    self.reset_solver() ? ;
 
     Ok(true)
   }

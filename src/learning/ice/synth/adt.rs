@@ -39,6 +39,92 @@ impl Ord for AdtSynth {
   }
 }
 
+
+impl AdtSynth {
+  /// Bails by saying the internal is inconsistent.
+  #[inline]
+  fn typ_problem(& self) -> Error {
+    "inconsistent type for ADT synth".into()
+  }
+  /// Retrieves the content of an option or bails.
+  #[inline]
+  fn get_opt<T>(& self, opt: Option<T>) -> Res<T> {
+    if let Some(t) = opt {
+      Ok(t)
+    } else {
+      bail!( self.typ_problem() )
+    }
+  }
+
+  /// Projects a single value.
+  fn project_val(
+    & self, typ: & Typ, var: VarIdx, val: & Val, map: & mut TermVals
+  ) -> Res<()> {
+    if ! val.is_known()
+    || val.typ() != self.typ {
+      return Ok(())
+    }
+
+    let var = term::var( var, self.typ.clone() ) ;
+
+    // Apply unary functions from `self.typ` to `typ`.
+    for fun in & self.funs.from_typ {
+      if & fun.typ != typ {
+        continue
+      }
+
+      let input: VarMap<_> = vec![ val.clone() ].into() ;
+
+      let val = fun.def.eval(& input).chain_err(
+        || format!(
+          "while evaluating ({} {})", fun.name, val
+        )
+      ) ? ;
+
+      let term = term::fun(
+        typ.clone(), fun.name.clone(), vec![ var.clone() ]
+      ) ;
+
+      let prev = map.insert(term, val) ;
+      debug_assert! { prev.is_none() }
+    }
+
+    // Retrieve this value's constructor.
+    let (val_typ, val_cons, val_args) = self.get_opt(
+      val.dtyp_inspect()
+    ) ? ;
+    debug_assert_eq! { val_typ, & self.typ }
+
+    // Apply selectors from the variant of `val` to `typ`.
+    let (val_dtyp, _) = self.get_opt(
+      val_typ.dtyp_inspect()
+    ) ? ;
+
+    let selectors = self.get_opt(
+      val_dtyp.news.get(val_cons)
+    ) ? ;
+
+    debug_assert_eq! { selectors.len(), val_args.len() }
+
+    for ((slc, _), val_arg) in selectors.iter().zip( val_args.iter() ) {
+      if & val_arg.typ() == typ {
+        let term = term::dtyp_slc(
+          typ.clone(), slc.clone(), var.clone()
+        ) ;
+        let prev = map.insert( term, val_arg.clone() ) ;
+        debug_assert! { prev.is_none() }
+      }
+    }
+
+    Ok(())
+  }
+
+}
+
+
+
+
+
 impl TheoSynth for AdtSynth {
   fn typ(& self) -> & Typ { & self.typ }
 
@@ -69,29 +155,9 @@ impl TheoSynth for AdtSynth {
   fn project(
     & self, sample: & VarVals, typ: & Typ, map: & mut TermVals
   ) -> Res<()> {
-    for fun in & self.funs.from_typ {
-      if & fun.typ != typ {
-        continue
-      }
 
-      for (var, val) in sample.index_iter() {
-        if val.is_known()
-        && val.typ() == self.typ {
-          let var = term::var( var, self.typ.clone() ) ;
-          let input: VarMap<_> = vec![ val.clone() ].into() ;
-
-          let val = fun.def.eval(& input).chain_err(
-            || format!(
-              "while evaluating ({} {})", fun.name, val
-            )
-          ) ? ;
-
-          let term = term::fun( typ.clone(), fun.name.clone(), vec![var] ) ;
-
-          let prev = map.insert(term, val) ;
-          debug_assert! { prev.is_none() }
-        }
-      }
+    for (var, val) in sample.index_iter() {
+      self.project_val(typ, var, val, map) ?
     }
 
     Ok(())

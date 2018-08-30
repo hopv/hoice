@@ -163,6 +163,16 @@ impl Error {
     }
   }
 
+  /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
+  pub fn is_smt_unknown(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::SmtError(
+        ::rsmt2::errors::ErrorKind::Unknown
+      ) => true,
+      _ => false,
+    }
+  }
+
   /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
   ///
   /// [unknown]: enum.ErrorKind.html#variant.Unknown
@@ -170,7 +180,7 @@ impl Error {
   pub fn is_unknown(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unknown => true,
-      _ => false,
+      _ => self.is_smt_unknown(),
     }
   }
 

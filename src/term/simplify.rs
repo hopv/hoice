@@ -720,6 +720,30 @@ simpl_fun! {
           }
         }
 
+      // } else if let Some(val) = args[0].val() {
+      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+      //     if dtyp_args.is_empty() {
+      //       return Some(
+      //         NormRes::Term(
+      //           term::dtyp_tst(
+      //             constructor.into(), args[1].clone()
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
+      // } else if let Some(val) = args[1].val() {
+      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+      //     if dtyp_args.is_empty() {
+      //       return Some(
+      //         NormRes::Term(
+      //           term::dtyp_tst(
+      //             constructor.into(), args[0].clone()
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
       }
 
     } else {
@@ -791,6 +815,27 @@ simpl_fun! {
           ]
         )
       )
+    } else if let Some(eq_args) = args[0].eq_inspect().cloned() {
+
+      if let Some(val) = eq_args[0].val() {
+        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+          if dtyp_args.is_empty() {
+            args[0] = term::dtyp_tst(
+              constructor.into(), eq_args[1].clone()
+            )
+          }
+        }
+      } else if let Some(val) = eq_args[1].val() {
+        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+          if dtyp_args.is_empty() {
+            args[0] = term::dtyp_tst(
+              constructor.into(), eq_args[0].clone()
+            )
+          }
+        }
+      }
+
+      None
     } else {
       None
     }

@@ -157,6 +157,17 @@ impl RTyp {
     false
   }
 
+  /// Returns the selectors of a constructor.
+  ///
+  /// Only legal on a datatype.
+  pub fn selectors_of(& self, constructor: & str) -> Res<& dtyp::CArgs> {
+    if let Some((dtyp, _)) = self.dtyp_inspect() {
+      dtyp.selectors_of(constructor)
+    } else {
+      bail!("cannot retrieve dtyp selectors on non-dtyp sort {}", self)
+    }
+  }
+
   /// Inspects a datatype type.
   pub fn dtyp_inspect(& self) -> Option<(& DTyp, & TPrmMap<Typ>)> {
     if let RTyp::DTyp { dtyp, prms } = self {

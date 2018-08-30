@@ -260,8 +260,8 @@ impl RTerm {
     LeafIter::of_rterm(self)
   }
 
-  /// Iterates over the subterms of a term.
-  fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
+  /// Iterates over all the subterms of a term, including itself.
+  pub fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
     let mut stack = vec![self] ;
 
     while let Some(term) = stack.pop() {
@@ -859,8 +859,6 @@ impl RTerm {
   }
 
 
-
-
   /// Returns true if the term mentions a function.
   pub fn has_fun_apps(& self) -> bool {
     use self::zip::* ;
@@ -873,9 +871,7 @@ impl RTerm {
       |_| Ok(()),
 
       |zip_op, _, _: ()| match zip_op {
-        ZipOp::Fun(_) |
-        ZipOp::New(_) |
-        ZipOp::Slc(_) => Err(()),
+        ZipOp::Fun(_) => Err(()),
         _ => Ok( ZipDoTotal::Upp { yielded: () } ),
       },
 
@@ -995,7 +991,7 @@ impl RTerm {
                 conf.bad(name), acc.len() + 1
               )
             }
-            term::dtyp_slc(typ.clone(), name.clone(), kid)
+            term::dtyp_tst(name.clone(), kid)
           } else {
             panic!(
               "illegal application of datatype tester {} to 0 arguments",

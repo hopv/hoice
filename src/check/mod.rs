@@ -291,9 +291,9 @@ impl Data {
       println!("  }}") ;
       println!("\")") ;
       println!() ;
-      log_info!("clause {} is fine", count) ;
       Ok(false)
     } else if let Some(false) = res {
+      log_info!("clause {} is fine", count) ;
       Ok(true)
     } else {
       bail!(

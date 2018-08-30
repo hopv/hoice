@@ -10,7 +10,7 @@ use instance::{
 pub struct StrictNeg ;
 
 impl RedStrat for StrictNeg {
-  fn name(& self) -> & 'static str { "one_rhs" }
+  fn name(& self) -> & 'static str { "strict_neg" }
 
   fn new(_: & Instance) -> Self { StrictNeg }
 
@@ -44,6 +44,7 @@ impl RedStrat for StrictNeg {
       ) = instance.strict_neg_clauses() ;
 
       for (clause_idx, clause) in strict_clauses {
+        log! { @3 "working on clause #{}", clause_idx }
 
         let (pred, args) = if let Some(
           (pred, argss)

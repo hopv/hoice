@@ -848,11 +848,11 @@ impl Clause {
     if info {
       writeln!(
         w, "\
-          ; {} inactive variable(s)\n  \
-          ; unroll: {}\n  \
-          ; terms_changed: {}\n  \
-          ; preds_changed: {}\n  \
-          ; created by `{}`\
+          ;   {} inactive variable(s)\n\
+          ;   unroll: {}\n\
+          ;   terms_changed: {}\n\
+          ;   preds_changed: {}\n\
+          ;   created by `{}`\
         ",
         self.vars.iter().fold(
           0, |acc, var| acc + if var.active { 1 } else { 0 }

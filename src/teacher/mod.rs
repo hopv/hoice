@@ -986,9 +986,7 @@ impl<'a> Teacher<'a> {
         self.solver.push(1) ?
       }
 
-      let cexs = self.get_cex(clause, bias, conf.teacher.max_bias).chain_err(
-        || format!("while getting counterexample for clause #{}", clause)
-      ) ? ;
+      let cexs = self.get_cex(clause, bias, conf.teacher.max_bias) ? ;
 
       if self.restart_on_cex {
         smt::reset(& mut self.solver, & self.instance) ?
@@ -1056,13 +1054,26 @@ impl<'a> Teacher<'a> {
     } else {
 
       log! { @debug "  checksat" }
-      let sat = profile! {
+      let (sat, actlit) = profile! {
         self wrap {
-          self.solver.check_sat()
+
+          if self.using_rec_funs {
+            self.solver.get_actlit().and_then(
+              |actlit| {
+                let sat = self.solver.check_sat_act( Some(& actlit) ) ? ;
+                Ok( (sat, Some(actlit)) )
+              }
+            )
+          } else {
+            self.solver.check_sat().map(
+              |sat| (sat, None)
+            )
+          }
+
         } "cexs", "check-sat"
       } ? ;
 
-      if sat {
+      let res = if sat {
         log! { @debug "  sat, getting cex" }
         let bias = if self.instance[clause].is_positive() {
           Bias::Lft
@@ -1086,7 +1097,13 @@ impl<'a> Teacher<'a> {
 
       } else {
         Ok(None)
+      } ;
+
+      if let Some(actlit) = actlit {
+        self.solver.de_actlit(actlit) ?
       }
+
+      res
 
     }
   }

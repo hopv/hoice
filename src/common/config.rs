@@ -339,6 +339,9 @@ pub struct PreprocConf {
 
   /// Strengthening by strict clauses.
   pub strict_neg: bool,
+
+  /// Activates predicates to function reduction
+  pub fun_preds: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -617,6 +620,18 @@ impl PreprocConf {
         true
       ).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("fun_preds").long("--fun_preds").help(
+        "(de)activates predicate-to-function reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").hidden(true).takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
     )
   }
 
@@ -639,12 +654,13 @@ impl PreprocConf {
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
     let strict_neg = bool_of_matches(matches, "strict_neg") ;
+    let fun_preds = bool_of_matches(matches, "fun_preds") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
       arg_red, prune_terms, runroll, pos_unroll, neg_unroll,
-      split_strengthen, split_sort, strict_neg,
+      split_strengthen, split_sort, strict_neg, fun_preds,
     }
   }
 }

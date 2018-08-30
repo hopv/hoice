@@ -25,7 +25,7 @@ pub fn init<P, I>(
 ) -> Res<()>
 where I: AsRef<Instance> {
   dtyp::write_all(solver, "") ? ;
-  fun::write_all(solver) ? ;
+  fun::write_all(solver, "", true) ? ;
   instance.as_ref().assert_side_clauses(solver)
 }
 
@@ -36,7 +36,7 @@ where I: AsRef<Instance> {
 /// - asserts all the side-clauses if `preproc` is false
 pub fn preproc_init<P>( solver: & mut Solver<P> ) -> Res<()> {
   dtyp::write_all(solver, "") ? ;
-  fun::write_all(solver) ? ;
+  fun::write_all(solver, "", true) ? ;
   Ok(())
 }
 
@@ -139,11 +139,10 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   }
 
   /// Checks if this conjunction is unsatisfiable.
-  pub fn is_unsat<Parser: Copy>(
+  fn is_unsat<Parser: Copy>(
     & self, solver: & mut Solver<Parser>, actlit: Option<& Actlit>
   ) -> Res<bool> {
     if self.terms.len() == 0 { return Ok(false) }
-    solver.push(1) ? ;
     if ! self.has_fun_apps {
       for var in self.infos {
         if var.active {
@@ -153,7 +152,6 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
     }
     solver.assert( self ) ? ;
     let sat = solver.check_sat_act(actlit) ? ;
-    solver.pop(1) ? ;
     Ok(! sat)
   }
 }
@@ -197,6 +195,49 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
       write!(w, ")") ?
     }
     write!(w, "{}", suffix) ? ;
+    Ok(())
+  }
+}
+
+
+/// SMT-prints a collection of terms as a conjunction with default var writer.
+pub struct TermConj<Trms> {
+  /// Conjunction.
+  terms: Trms,
+}
+impl<'a, Trms> TermConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  /// Constructor.
+  pub fn new<IntoIter>(terms: IntoIter) -> Self
+  where IntoIter: IntoIterator<IntoIter = Trms, Item = & 'a Term> {
+    let terms = terms.into_iter() ;
+    TermConj { terms }
+  }
+}
+
+impl<'a, Trms> Expr2Smt<bool> for TermConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, pos: bool
+  ) -> SmtRes<()> {
+    if ! pos {
+      write!(w, "(not ") ?
+    }
+    if self.terms.len() == 0 {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and") ? ;
+      for term in self.terms.clone() {
+        write!(w, " ") ? ;
+        term.write(
+          w, |w, var| var.default_write(w)
+        ) ? ;
+      }
+      write!(w, ")") ?
+    }
+    if ! pos {
+      write!(w, ")") ?
+    }
     Ok(())
   }
 }
@@ -849,16 +890,19 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
       let conj = SmtConj::new( lhs.iter(), & clause.vars ) ;
 
       if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+
         if conj.has_fun_apps {
           actlit = Some( self.get_actlit() ? )
         }
 
         // Either it is trivial, or falsifiable regardless of the predicates.
-        if conj.is_unsat( self, actlit.as_ref() ) ? {
+        let res = if conj.is_unsat( self, actlit.as_ref() ) ? {
           Ok( Some(true) )
         } else {
           Ok(None)
-        }
+        } ;
+
+        res
 
       } else {
 
@@ -877,6 +921,7 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
           if conj.has_fun_apps {
             actlit = Some( self.get_actlit() ? )
           }
+
           conj.is_unsat( self, actlit.as_ref() ).map(Some)
         }
 

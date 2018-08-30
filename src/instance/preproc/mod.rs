@@ -15,6 +15,7 @@ mod arg_red ;
 mod bias_unroll ;
 mod unroll ;
 mod strict_neg_clauses ;
+mod fun_preds ;
 
 use self::{
   one_lhs::OneLhs,
@@ -24,6 +25,7 @@ use self::{
   bias_unroll:: BiasedUnroll,
   unroll::RUnroll,
   strict_neg_clauses::StrictNeg,
+  fun_preds:: FunPreds,
 } ;
 
 
@@ -305,6 +307,8 @@ pub struct Reductor<'a> {
   runroll: Option<RUnroll>,
   /// Optional strengthener by strict negative clauses.
   strict_neg: Option<StrictNeg>,
+  /// Optional predicate-to-function reduction.
+  fun_preds: Option<FunPreds>,
 }
 impl<'a> Reductor<'a> {
   /// Constructor.
@@ -349,13 +353,16 @@ impl<'a> Reductor<'a> {
     let strict_neg = some_new! {
       StrictNeg if strict_neg
     } ;
+    let fun_preds = some_new! {
+      FunPreds if fun_preds
+    } ;
 
     Ok(
       Reductor {
         instance, simplify, arg_red,
         one_rhs, one_lhs,
         cfg_red, biased_unroll, runroll,
-        strict_neg,
+        strict_neg, fun_preds,
       }
     )
   }
@@ -438,6 +445,13 @@ impl<'a> Reductor<'a> {
       }
 
       if self.instance.is_solved() { break }
+
+      let changed = run! { fun_preds } ;
+
+      if changed {
+        changed_since_cfg_red = true ;
+        continue
+      }
 
       if changed_since_cfg_red {
         let changed = run! { cfg_red } ;

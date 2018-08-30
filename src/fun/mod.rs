@@ -145,64 +145,196 @@ pub fn mk(fun: RFun) -> Res<Fun> {
 }
 
 
+/// Orders all functions by dependencies.
+///
+/// Assumes there's no circular dependencies between the `mentions` fields.
+/// Meaning the semantics of `deps` and `mentions` are respected.
+pub fn ordered() -> Res< Vec< Vec<Fun> > > {
+  let mut all: Vec<_> = read_factory().0.values().cloned().collect() ;
 
-/// Defines all the functions.
-pub fn write_all<W: Write>(w: & mut W) -> Res<()> {
+  let mut groups = vec![] ;
+
+  while let Some(fun) = all.pop() {
+    let mut group = vec![ fun ] ;
+    if ! group[0].deps.is_empty() {
+      all.retain(
+        |fun| if group[0].deps.contains(& fun.name) {
+          group.push( fun.clone() ) ;
+          false
+        } else {
+          true
+        }
+      ) ;
+    }
+    groups.push(group)
+  }
+
+  groups.sort_by(
+    |g_1, g_2| {
+      use std::cmp::Ordering::* ;
+      for f_1 in g_1 {
+        for f_2 in g_2 {
+          if f_2.mentions.contains( & f_1.name ) {
+            return Less
+          } else if f_1.mentions.contains( & f_2.name ) {
+            return Greater
+          }
+        }
+      }
+      Equal
+    }
+  ) ;
+
+  // println!() ;
+  // println!("groups:") ;
+  // for group in & groups {
+  //   print!(" ") ;
+  //   for fun in group {
+  //     print!(" {},", fun.name)
+  //   }
+  //   println!()
+  // }
+
+  Ok(groups)
+}
+
+
+
+/// Defines a function, and all functions related to it.
+pub fn write<W>(w: & mut W, fun: & RFun, pref: & str) -> Res<()>
+where W: Write {
   let f = factory!(read) ;
-
-  if f.is_empty() { return Ok(()) }
-
-  let mut set = BTreeSet::new() ;
-
   let mut all = vec![] ;
 
-  for fun in f.values() {
-    let do_it = set.insert(& fun.name) ;
-    if ! do_it { continue }
-
-    debug_assert! { all.is_empty() }
-
-    all.reserve( fun.deps.len() + 1 ) ;
-    all.push(fun) ;
-    for dep in & fun.deps {
-      set.insert(dep) ;
-      if let Some(dep) = f.get(dep) {
-        all.push(dep)
-      } else {
-        bail!(
-          "function `{}` depends on unknown function `{}`",
-          conf.emph(& fun.name), conf.bad(& dep)
-        )
-      }
+  all.reserve( fun.deps.len() + 1 ) ;
+  all.push(fun) ;
+  for dep in & fun.deps {
+    if let Some(dep) = f.get(dep) {
+      all.push(dep)
+    } else {
+      bail!(
+        "function `{}` depends on unknown function `{}`",
+        conf.emph(& fun.name), conf.bad(& dep)
+      )
     }
+  }
 
-    writeln!(w, "(define-funs-rec (") ? ;
+  writeln!(w, "{}({} (", pref, consts::keywords::cmd::def_funs_rec) ? ;
 
-    // Write all signatures.
-    for fun in & all {
-      write!(w, "  (") ? ;
-      write!(w, "{} (", fun.name) ? ;
+  // Write all signatures.
+  for fun in & all {
+    write!(w, "{}  (", pref) ? ;
+    write!(w, "{} (", fun.name) ? ;
+    for info in & fun.sig {
+      write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+    }
+    writeln!(w, " ) {})", fun.typ) ?
+  }
+
+  writeln!(w, "{}) (", pref) ? ;
+
+  // Write all definitions.
+  for fun in all.drain( 0 .. ) {
+    write!(w, "{}  ", pref) ? ;
+    fun.def.write(
+      w, |w, var| var.default_write(w)
+    ) ? ;
+    writeln!(w) ?
+  }
+
+  writeln!(w, "{}) )", pref) ? ;
+
+  Ok(())
+}
+
+
+/// Defines all the functions.
+pub fn write_all<W: Write>(
+  w: & mut W, pref: & str, invariants: bool
+) -> Res<()> {
+  for mut group in ordered() ? {
+
+    if group.len() == 1 {
+      let fun = & group[0] ;
+
+      let def_key = if fun.mentions.contains(& fun.name) {
+        consts::keywords::cmd::def_fun_rec
+      } else {
+        consts::keywords::cmd::def_fun
+      } ;
+
+      writeln!(
+        w, "{}({} {}", pref, def_key, fun.name
+      ) ? ;
+      write!(w, "{}  (", pref) ? ;
       for info in & fun.sig {
         write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
       }
-      writeln!(w, " ) {})", fun.typ) ?
-    }
+      writeln!(w, " ) {}", fun.typ) ? ;
 
-    writeln!(w, ") (") ? ;
+      write!(w, "{}  ", pref) ? ;
 
-    // Write all definitions.
-    for fun in all.drain( 0 .. ) {
-      write!(w, "  ") ? ;
       fun.def.write(
         w, |w, var| var.default_write(w)
       ) ? ;
-      writeln!(w) ?
+      writeln!(w, "\n{})", pref) ?
+
+    } else if group.len() > 1 {
+      writeln!(
+        w, "{}({} (", pref, consts::keywords::cmd::def_funs_rec
+      ) ? ;
+
+      // Write all signatures.
+      for fun in & group {
+        write!(w, "{}  (", pref) ? ;
+        write!(w, "{} (", fun.name) ? ;
+        for info in & fun.sig {
+          write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+        }
+        writeln!(w, " ) {})", fun.typ) ?
+      }
+
+      writeln!(w, "{}) (", pref) ? ;
+
+      // Write all definitions.
+      for fun in & group {
+        write!(w, "{}  ", pref) ? ;
+        fun.def.write(
+          w, |w, var| var.default_write(w)
+        ) ? ;
+        writeln!(w) ?
+      }
+
+      writeln!(w, "{}) )", pref) ?
     }
 
-    writeln!(w, ") )") ?
-  }
+    writeln!(w) ? ;
 
-  writeln!(w) ? ;
+    if invariants {
+      let mut one_or_more = false ;
+      for fun in group {
+        for inv in & fun.invariants {
+          one_or_more = true ;
+          writeln!(w, "{}(assert", pref) ? ;
+          writeln!(w, "{}  (forall", pref) ? ;
+          write!(w, "{}    (", pref) ? ;
+          for info in & fun.sig {
+            write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+          }
+          writeln!(w, " )") ? ;
+          write!(w, "{}    ", pref) ? ;
+          inv.write(
+            w, |w, var| var.default_write(w)
+          ) ? ;
+          writeln!(w, "\n{}) )", pref) ?
+        }
+      }
+
+      if one_or_more {
+        writeln!(w) ?
+      }
+    }
+  }
 
   Ok(())
 }
@@ -319,6 +451,8 @@ pub struct RFun {
   pub name: String,
   /// Other functions this function depends on.
   pub deps: BTreeSet<String>,
+  /// Functions mentioned in the body of the function.
+  pub mentions: BTreeSet<String>,
   /// Signature.
   ///
   /// The string stored is the original name of the argument.
@@ -327,6 +461,10 @@ pub struct RFun {
   pub typ: Typ,
   /// Definition.
   pub def: Term,
+  /// The index of the predicate this function was created for.
+  pub synthetic: Option<PrdIdx>,
+  /// Invariants of the function.
+  pub invariants: TermSet,
 }
 
 impl PartialEq for RFun {
@@ -362,7 +500,11 @@ impl RFun {
     name: S, sig: VarInfos, typ: Typ
   ) -> Self {
     let name = name.into() ;
-    RFun { name, deps: BTreeSet::new(), sig, typ, def: term::tru() }
+    RFun {
+      name, deps: BTreeSet::new(), mentions: BTreeSet::new(),
+      sig, typ, def: term::tru(), synthetic: None,
+      invariants: TermSet::new(),
+    }
   }
 
   /// Insert a dependency.
@@ -377,12 +519,25 @@ impl RFun {
     }
   }
 
+  /// Flips the flag indicating that the function was created internally for a
+  /// predicate.
+  pub fn set_synthetic(& mut self, pred: PrdIdx) {
+    self.synthetic = Some(pred)
+  }
+
   /// Sets the definition of a function.
   ///
   /// # Panics
   ///
   /// - if `self.def` is not `term::tru()`
   pub fn set_def(& mut self, def: Term) {
+    def.iter(
+      |trm| if let Some((name, _)) = trm.fun_inspect() {
+        if ! self.deps.contains(name) {
+          self.mentions.insert( name.to_string() ) ;
+        }
+      }
+    ) ;
     match * self.def {
       RTerm::Cst(ref cst) if cst.is_true() => (),
       _ => panic!("trying to set the definition of a function twice"),
@@ -401,6 +556,12 @@ impl RFun {
       }
     }
     Ok(())
+  }
+
+  /// Writes itself and all its dependencies.
+  pub fn write<W>(& self, w: & mut W, pref: & str) -> Res<()>
+  where W: Write {
+    write(w, self, pref)
   }
 }
 
