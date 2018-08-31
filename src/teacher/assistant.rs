@@ -271,7 +271,9 @@ impl Assistant {
             } "smt"
           } ;
 
-          if ! self.using_adts {
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
             self.solver.pop(1) ?
           }
 
@@ -309,7 +311,12 @@ impl Assistant {
             }
           } ;
 
-          self.solver.push(1) ? ;
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.push(1) ?
+          }
+
           clause.declare(& mut self.solver) ? ;
           self.solver.assert(
             & ConjWrap::new( clause.lhs_terms() )
@@ -320,7 +327,12 @@ impl Assistant {
               self.solver.check_sat() ?
             } "smt"
           } ;
-          self.solver.pop(1) ? ;
+
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.pop(1) ?
+          }
 
           if sat {
             // msg! { debug self => "  forcing negative" }
