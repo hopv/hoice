@@ -219,7 +219,7 @@ impl Data {
   pub fn check_clause(
     & self, solver: & mut Solver<Parser>,
     Clause { args, body }: & Clause, count: usize,
-  ) -> Res<bool> {
+  ) -> Res< Option<bool> > {
     solver.reset() ? ;
 
     for unknown in & self.input.unknown {
@@ -291,14 +291,13 @@ impl Data {
       println!("  }}") ;
       println!("\")") ;
       println!() ;
-      Ok(false)
+      Ok( Some(false) )
     } else if let Some(false) = res {
       log_info!("clause {} is fine", count) ;
-      Ok(true)
+      Ok( Some(true) )
     } else {
-      bail!(
-        "clause {}'s check resulted in unknown", count
-      )
+      log_info!("got unknown on clause {}, assuming it's okay", count) ;
+      Ok(None)
     }
   }
 
@@ -311,7 +310,8 @@ impl Data {
     // Check all clauses one by one.
     for (count, clause) in self.input.clauses.iter().enumerate() {
       match self.check_clause(solver, clause, count) {
-        Ok(ok) => okay = okay && ok,
+        Ok( Some(ok) ) => okay = okay && ok,
+        Ok(None) => (),
         Err(e) => {
           err = true ;
           let e = e.chain_err(

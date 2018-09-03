@@ -364,6 +364,16 @@ lazy_static! {
 }
 
 
+/// True if there is at least one datatype declared.
+pub fn one_or_more() -> Res<bool> {
+  if let Ok(f) = factory.read() {
+    Ok( f.len() > 0 )
+  } else {
+    bail!("could not access dtyp factory")
+  }
+}
+
+
 /// Checks whether a datatype is reserved.
 pub fn check_reserved(name: & str) -> Res<()> {
   if reserved_dtyps.contains(name) {

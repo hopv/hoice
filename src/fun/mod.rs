@@ -145,10 +145,7 @@ pub fn mk(fun: RFun) -> Res<Fun> {
 }
 
 
-/// Orders all functions by dependencies.
-///
-/// Assumes there's no circular dependencies between the `mentions` fields.
-/// Meaning the semantics of `deps` and `mentions` are respected.
+/// Groups all functions by dependencies.
 pub fn ordered() -> Res< Vec< Vec<Fun> > > {
   let mut all: Vec<_> = read_factory().0.values().cloned().collect() ;
 
@@ -168,32 +165,6 @@ pub fn ordered() -> Res< Vec< Vec<Fun> > > {
     }
     groups.push(group)
   }
-
-  groups.sort_by(
-    |g_1, g_2| {
-      use std::cmp::Ordering::* ;
-      for f_1 in g_1 {
-        for f_2 in g_2 {
-          if f_2.mentions.contains( & f_1.name ) {
-            return Less
-          } else if f_1.mentions.contains( & f_2.name ) {
-            return Greater
-          }
-        }
-      }
-      Equal
-    }
-  ) ;
-
-  // println!() ;
-  // println!("groups:") ;
-  // for group in & groups {
-  //   print!(" ") ;
-  //   for fun in group {
-  //     print!(" {},", fun.name)
-  //   }
-  //   println!()
-  // }
 
   Ok(groups)
 }
@@ -257,7 +228,7 @@ pub fn write_all<W: Write>(
     if group.len() == 1 {
       let fun = & group[0] ;
 
-      let def_key = if fun.mentions.contains(& fun.name) {
+      let def_key = if fun.recursive {
         consts::keywords::cmd::def_fun_rec
       } else {
         consts::keywords::cmd::def_fun
@@ -451,8 +422,6 @@ pub struct RFun {
   pub name: String,
   /// Other functions this function depends on.
   pub deps: BTreeSet<String>,
-  /// Functions mentioned in the body of the function.
-  pub mentions: BTreeSet<String>,
   /// Signature.
   ///
   /// The string stored is the original name of the argument.
@@ -465,6 +434,8 @@ pub struct RFun {
   pub synthetic: Option<PrdIdx>,
   /// Invariants of the function.
   pub invariants: TermSet,
+  /// True if the function is recursive.
+  recursive: bool,
 }
 
 impl PartialEq for RFun {
@@ -501,9 +472,9 @@ impl RFun {
   ) -> Self {
     let name = name.into() ;
     RFun {
-      name, deps: BTreeSet::new(), mentions: BTreeSet::new(),
+      name, deps: BTreeSet::new(),
       sig, typ, def: term::tru(), synthetic: None,
-      invariants: TermSet::new(),
+      invariants: TermSet::new(), recursive: false,
     }
   }
 
@@ -525,6 +496,11 @@ impl RFun {
     self.synthetic = Some(pred)
   }
 
+  /// True if the function is recursive.
+  pub fn is_recursive(& self) -> bool {
+    self.recursive
+  }
+
   /// Sets the definition of a function.
   ///
   /// # Panics
@@ -533,8 +509,10 @@ impl RFun {
   pub fn set_def(& mut self, def: Term) {
     def.iter(
       |trm| if let Some((name, _)) = trm.fun_inspect() {
-        if ! self.deps.contains(name) {
-          self.mentions.insert( name.to_string() ) ;
+        if name == & self.name {
+          self.recursive = true
+        } else {
+          self.deps.insert( name.to_string() ) ;
         }
       }
     ) ;

@@ -14,19 +14,21 @@ use instance::{
 /// Performs a checksat.
 macro_rules! check_sat {
   ($pre_instance:expr) => ({
-    let actlit = if $pre_instance.use_actlits {
-      Some( $pre_instance.solver.get_actlit() ? )
-    } else {
-      None
-    } ;
+    // let actlit = if $pre_instance.reset_solver {
+    //   Some( $pre_instance.solver.get_actlit() ? )
+    // } else {
+    //   None
+    // } ;
 
-    let sat = $pre_instance.solver.check_sat_act( actlit.as_ref() ) ? ;
+    // let sat =
+      $pre_instance.solver.check_sat() ?
+    // ;
 
-    if let Some(actlit) = actlit {
-      $pre_instance.solver.de_actlit(actlit) ?
-    }
+    // if let Some(actlit) = actlit {
+    //   $pre_instance.solver.de_actlit(actlit) ?
+    // }
 
-    sat
+    // sat
   }) ;
 }
 
@@ -52,7 +54,7 @@ pub struct PreInstance<'a> {
   extraction: ExtractionCxt,
 
   /// Use actlits in checksats.
-  use_actlits: bool,
+  reset_solver: bool,
 }
 impl<'a> PreInstance<'a> {
   /// Constructor.
@@ -62,14 +64,14 @@ impl<'a> PreInstance<'a> {
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
 
-    let mut use_actlits = false ;
+    let mut reset_solver = false ;
 
     fun::iter(
-      |_| { use_actlits = true ; Ok(()) }
+      |_| { reset_solver = true ; Ok(()) }
     ) ? ;
 
     if dtyp::get_all().iter().next().is_some() {
-      use_actlits = true
+      reset_solver = true
     }
 
     Ok(
@@ -78,7 +80,7 @@ impl<'a> PreInstance<'a> {
         clauses_to_simplify,
         vars: VarSet::new(),
         extraction: ExtractionCxt::new(),
-        use_actlits,
+        reset_solver,
       }
     )
   }
@@ -322,7 +324,7 @@ impl<'a> PreInstance<'a> {
 
     info += self.force_trivial() ? ;
 
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     }
 
@@ -346,7 +348,7 @@ impl<'a> PreInstance<'a> {
       ) ? ;
     }
 
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     }
 
@@ -694,7 +696,7 @@ impl<'a> PreInstance<'a> {
   /// - the rhs is a predicate application contained in the lhs.
   #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.push(1) ? ;
@@ -702,7 +704,7 @@ impl<'a> PreInstance<'a> {
     let res = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
     ) ;
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.pop(1) ? ;
@@ -734,13 +736,13 @@ impl<'a> PreInstance<'a> {
   pub fn is_this_clause_trivial(
     & mut self, clause: & mut Clause
   ) -> Res< Option<bool> > {
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.push(1) ? ;
     }
     let res = self.solver.is_clause_trivial(clause) ;
-    if self.use_actlits {
+    if self.reset_solver {
       smt::reset(& mut self.solver, & self.instance) ? ;
     } else {
       self.solver.pop(1) ? ;

@@ -353,8 +353,10 @@ impl<'a> Reductor<'a> {
     let strict_neg = some_new! {
       StrictNeg if strict_neg
     } ;
-    let fun_preds = some_new! {
-      FunPreds if fun_preds
+    let fun_preds = if ! dtyp::one_or_more() ? {
+      None
+    } else {
+      some_new! { FunPreds if fun_preds }
     } ;
 
     Ok(

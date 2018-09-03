@@ -1,4 +1,4 @@
-//! Predicate-to-function reduction.
+  //! Predicate-to-function reduction.
 
 use common::* ;
 use instance::{
@@ -11,6 +11,7 @@ use fun::RFun ;
 pub struct FunPreds ;
 
 
+
 impl FunPreds {
   /// Finalizes a definition for a predicate.
   ///
@@ -18,7 +19,8 @@ impl FunPreds {
   pub fn finalize_definition(
     instance: & mut PreInstance,
     name: & str, sig: & VarInfos, typ: & Typ,
-    mut definitions: Vec<(TermSet, Term)>
+    mut definitions: Vec<(TermSet, Term, bool)>,
+    check: bool
   ) -> Res< Option<(Term, Option<TermSet>)> > {
     instance.reset_solver() ? ;
 
@@ -35,65 +37,69 @@ impl FunPreds {
       }
     }
 
-    log! { @3 "checking conditions are mutually exclusive" }
-    let solver = instance.solver() ;
+    if check {
 
-    for info in sig {
-      solver.declare_const(& info.idx, info.typ.get()) ?
-    }
+      log! { @3 "checking conditions are mutually exclusive" }
+      let solver = instance.solver() ;
 
-    solver.declare_fun(name, sig, typ.get()) ? ;
+      for info in sig {
+        solver.declare_const(& info.idx, info.typ.get()) ?
+      }
 
-    let mut actlits = Vec::with_capacity( definitions.len() ) ;
+      solver.declare_fun(name, sig, typ.get()) ? ;
 
-    for (cube, _) in & definitions {
-      use smt::TermConj ;
-      let conj = TermConj::new( cube.iter() ) ;
-      let actlit = solver.get_actlit() ? ;
-      solver.assert_act_with( & actlit, & conj, true ) ? ;
-      actlits.push(actlit)
-    }
+      let mut actlits = Vec::with_capacity( definitions.len() ) ;
 
-    scoped! {
-      let mut actlits_iter = actlits.iter() ;
+      for (cube, _, _) in & definitions {
+        use smt::TermConj ;
+        let conj = TermConj::new( cube.iter() ) ;
+        let actlit = solver.get_actlit() ? ;
+        solver.assert_act_with( & actlit, & conj, true ) ? ;
+        actlits.push(actlit)
+      }
 
-      while let Some(actlit) = actlits_iter.next() {
-        for other in actlits_iter.clone() {
-          let not_exclusive = solver.check_sat_act(
-            vec![ actlit, other ]
-          ) ? ;
-          if not_exclusive {
-            return Ok(None)
+      scoped! {
+        let mut actlits_iter = actlits.iter() ;
+
+        while let Some(actlit) = actlits_iter.next() {
+          for other in actlits_iter.clone() {
+            let not_exclusive = solver.check_sat_act(
+              vec![ actlit, other ]
+            ) ? ;
+            if not_exclusive {
+              return Ok(None)
+            }
           }
         }
       }
-    }
 
-    for actlit in actlits {
-      solver.de_actlit(actlit) ?
-    }
+      for actlit in actlits {
+        solver.de_actlit(actlit) ?
+      }
 
-    log! { @3 "all branches are exclusive, checking they're exhaustive" }
+      log! { @3 "all branches are exclusive, checking they're exhaustive" }
 
-    for (cube, _) in & definitions {
-      use smt::TermConj ;
-      let conj = TermConj::new( cube.iter() ) ;
-      solver.assert_with( & conj, false ) ? ;
-    }
+      for (cube, _, _) in & definitions {
+        use smt::TermConj ;
+        let conj = TermConj::new( cube.iter() ) ;
+        solver.assert_with( & conj, false ) ? ;
+      }
 
-    let not_exhaustive = solver.check_sat() ? ;
+      let not_exhaustive = solver.check_sat() ? ;
 
-    if not_exhaustive {
-      // warn!("fun_preds: branches are not exhaustive, moving on anyways") ;
-      log! { @3 "branches are not exhaustive, aborting" }
-      return Ok(None)
-    } else {
-      log! { @3 "branches are exhaustive, building definition" }
+      if not_exhaustive {
+        // warn!("fun_preds: branches are not exhaustive, moving on anyways") ;
+        log! { @3 "branches are not exhaustive, aborting" }
+        return Ok(None)
+      } else {
+        log! { @3 "branches are exhaustive, building definition" }
+      }
+
     }
 
     let mut def = None ;
 
-    for (cube, value) in definitions.into_iter().rev() {
+    for (cube, value, _) in definitions.into_iter().rev() {
       let nu_def = if let Some(def) = def {
         term::ite(
           term::and( cube.into_iter().collect() ),
@@ -116,7 +122,7 @@ impl FunPreds {
 
   /// Reduces a predicate to a function.
   pub fn reduce_pred(
-    instance: & mut PreInstance, pred: PrdIdx
+    instance: & mut PreInstance, pred: PrdIdx, use_all_args: bool
   ) -> Res< Option<RedInfo> > {
     let mut info = RedInfo::new() ;
     // Clauses to remove.
@@ -127,17 +133,37 @@ impl FunPreds {
     debug_assert! { to_rm.is_empty() }
 
     let mut var_infos = VarInfos::new() ;
-    for typ in & instance[pred].sig[ 0 .. instance[pred].sig.len() - 1 ] {
+
+    let args_len = if use_all_args {
+      instance[pred].sig.len()
+    } else {
+      instance[pred].sig.len() - 1
+    } ;
+
+    for typ in & instance[pred].sig[ 0 .. args_len ] {
       let idx = var_infos.next_index() ;
       let var_info = VarInfo::new(
         idx.default_str(), typ.clone(), idx
       ) ;
       var_infos.push(var_info)
     }
-    let last: VarIdx = ( instance[pred].sig.len() - 1 ).into() ;
+    let last: Option<VarIdx> = if use_all_args {
+      None
+    } else {
+      Some( ( instance[pred].sig.len() - 1 ).into() )
+    } ;
 
-    let pred_fun_name = format!("{}_hoice_reserved_fun", instance[pred]) ;
-    let pred_fun_typ = instance[pred].sig[last].clone() ;
+    let pred_fun_name = make_fun_name(& instance[pred].name).chain_err(
+      || format!(
+        "while creating function for predicate {}",
+        conf.emph(& instance[pred].name)
+      )
+    ) ? ;
+    let pred_fun_typ = if let Some(last) = last.as_ref() {
+      instance[pred].sig[* last].clone()
+    } else {
+      typ::bool()
+    } ;
 
     let mut rfun = RFun::new(
       pred_fun_name.clone(), var_infos, pred_fun_typ.clone()
@@ -177,7 +203,7 @@ impl FunPreds {
 
       let (
         mut cube, mut subst
-      ) = if let Some((cube, subst)) = args_invert(rhs_args) ? {
+      ) = if let Some((cube, subst)) = args_invert(rhs_args, args_len) ? {
         (cube, subst)
       } else {
         log!(@3 "failed to invert rhs arguments") ;
@@ -195,6 +221,8 @@ impl FunPreds {
         }
       }
 
+      let recursive = instance[clause].lhs_preds().contains_key(& pred) ;
+
       let mut lhs_argss: Vec<_> = instance[
         clause
       ].lhs_preds().get(& pred).map(
@@ -202,8 +230,10 @@ impl FunPreds {
       ).unwrap_or_else( Vec::new ) ;
 
       let mut nu_args = Vec::with_capacity(
-        instance[pred].sig.len() - 1
+        args_len
       ) ;
+
+      let mut value = None ;
 
       while ! lhs_argss.is_empty() {
         let prev_len = lhs_argss.len() ;
@@ -211,7 +241,7 @@ impl FunPreds {
 
         lhs_argss.retain(
           |args| {
-            for arg in & args[ 0 .. args.len() - 1 ] {
+            for arg in & args[ 0 .. args_len ] {
               if let Some((arg, _)) = arg.subst_total( & subst ) {
                 nu_args.push(arg)
               } else {
@@ -219,8 +249,6 @@ impl FunPreds {
                 return true
               }
             }
-
-            let last: VarIdx = (args.len() - 1).into() ;
             let nu_args = ::std::mem::replace(
               & mut nu_args, Vec::with_capacity(
                 instance[pred].sig.len() - 1
@@ -231,9 +259,16 @@ impl FunPreds {
               pred_fun_typ.clone(), pred_fun_name.clone(), nu_args
             ) ;
 
-            let okay = map_invert(
-              & args[ last ], fun_app, & mut subst, & mut cube
-            ) ;
+            let okay = if let Some(last) = last.as_ref() {
+              let last = * last ;
+
+              map_invert(
+                & args[ last ], fun_app, & mut subst, & mut cube
+              )
+            } else {
+              value.get_or_insert_with(Vec::new).push(fun_app) ;
+              Ok(true)
+            } ;
 
             match okay {
               // Success, don't retain.
@@ -241,7 +276,7 @@ impl FunPreds {
               // Failure, retain.
               Ok(false) => {
                 log!(@3
-                  "could not invert last argument ({}) of ({} {})",
+                  "could not invert last argument ({:?}) of ({} {})",
                   last, instance[pred], args
                 ) ;
                 if let Ok(failed) = failed.as_mut() {
@@ -252,7 +287,7 @@ impl FunPreds {
               // Error, do whatever.
               err => {
                 failed = err.chain_err(
-                  || format!("while inverting {}", & args[last])
+                  || format!("while inverting ({} {})", instance[pred], args)
                 ) ;
                 true
               },
@@ -293,30 +328,53 @@ impl FunPreds {
         }
       }
 
-      let res = if let Some((res, _)) = rhs_args[last].subst_total(& subst) {
-        res
+      let res = if let Some(last) = last.as_ref() {
+        if let Some((res, _)) = rhs_args[* last].subst_total(& subst) {
+          res
+        } else {
+          log!(@3 "failed to retrieve value, aborting") ;
+          abort!()
+        }
+      } else if let Some(conj) = value {
+        term::and(conj)
       } else {
-        log!(@3 "failed to retrieve value, aborting") ;
-        abort!()
+        term::tru()
       } ;
 
       log!(@4 "value: {}", res) ;
 
-      definitions.push( (cube, res) )
+      definitions.push( (cube, res, recursive) )
     }
 
     definitions.sort_by(
-      |(c_1, _), (c_2, _)| c_1.len().cmp( & c_2.len() )
+      |(c_1, _, rec_1), (c_2, _, rec_2)| {
+        use std::cmp::Ordering::* ;
+        if * rec_1 && ! * rec_2 {
+          Less
+        } else if * rec_2 && ! * rec_1 {
+          Greater
+        } else {
+          c_1.len().cmp( & c_2.len() )
+        }
+      }
     ) ;
+
+    if use_all_args {
+      let mut tru = TermSet::new() ;
+      tru.insert( term::tru() ) ;
+      definitions.push(
+        (tru, term::fls(), false)
+      )
+    }
 
     log!(@3 "done working on {}", instance[pred]) ;
     if_log! { @4
-      for (cube, res) in & definitions {
+      for (cube, res, recursive) in & definitions {
         log!(@4 "when {{") ;
         for term in cube {
           log!(@4 "  {}", term)
         }
-        log!(@4 "}} -> {}", res)
+        log!(@4 "}} -{}> {}", if * recursive { "rec-" } else { "" }, res)
       }
     }
 
@@ -332,7 +390,8 @@ impl FunPreds {
     let mut dec = fun::retrieve_dec(& pred_fun_name) ? ;
 
     let (def, invs) = if let Some(def) = FunPreds::finalize_definition(
-      instance, & pred_fun_name, & dec.sig, & pred_fun_typ, definitions
+      instance, & pred_fun_name, & dec.sig, & pred_fun_typ, definitions,
+      ! use_all_args
     ) ? {
       def
     } else {
@@ -368,9 +427,9 @@ impl FunPreds {
     info.clauses_rmed += to_rm.len() ;
     instance.forget_clauses(& mut to_rm) ? ;
 
-    let mut args = Vec::with_capacity( instance[pred].sig.len() - 1 ) ;
+    let mut args = Vec::with_capacity( args_len ) ;
     for (var, typ) in instance[pred].sig.index_iter().take(
-      instance[pred].sig.len() - 1
+      args_len
     ) {
       args.push( term::var(var, typ.clone()) )
     }
@@ -378,10 +437,14 @@ impl FunPreds {
       fun.typ.clone(), fun.name.clone(), args
     ) ;
 
-    let def = term::eq(
-      term::var( last, fun.typ.clone() ),
+    let def = if let Some(last) = last.as_ref() {
+      term::eq(
+        term::var( * last, fun.typ.clone() ),
+        fun_app
+      )
+    } else {
       fun_app
-    ) ;
+    } ;
 
     info.preds += 1 ;
     let mut tterm_set = TTermSet::new() ;
@@ -474,12 +537,21 @@ impl RedStrat for FunPreds {
       }
 
       while let Some(pred) = to_inline.pop() {
-        let res = FunPreds::reduce_pred(instance, pred) ? ;
+        let res = FunPreds::reduce_pred(instance, pred, false) ? ;
         // pause("to resume fun_preds", & Profiler::new()) ;
         if let Some(red_info) = res {
           new_stuff = true ;
           info += red_info ;
           break
+        } else {
+          // let res = FunPreds::reduce_pred(instance, pred, true) ? ;
+          // // pause("to resume fun_preds", & Profiler::new()) ;
+          // if let Some(red_info) = res {
+          //   new_stuff = true ;
+          //   info += red_info ;
+          //   break
+          // }
+          ()
         }
       }
 
@@ -495,7 +567,7 @@ impl RedStrat for FunPreds {
 
 /// Builds a cube and a substitution corresponding to inverting some arguments.
 pub fn args_invert(
-  args: & VarTerms
+  args: & VarTerms, args_len: usize
 ) -> Res< Option<(TermSet, VarHMap<Term>)> > {
   let (mut cube, mut subst) = (
     TermSet::new(), VarHMap::new()
@@ -505,7 +577,7 @@ pub fn args_invert(
 
   let mut postponed = Vec::new() ;
   let mut current: Vec<_> = args.index_iter().take(
-    args.len() - 1
+    args_len
   ).map(
     |(var, term)| ( term::var(var, term.typ()), term )
   ).collect() ;
@@ -839,13 +911,13 @@ pub fn map_invert(
 fn get_invariants(
   instance: & mut PreInstance,
   name: & str, sig: & VarInfos, typ: & Typ,
-  definitions: & mut Vec< (TermSet, Term) >,
+  definitions: & mut Vec< (TermSet, Term, bool) >,
 ) -> Res< Option<TermSet> > {
   let mut candidates = TermMap::new() ;
 
   log! { @3 "looking for invariants..." }
 
-  for (idx, (cube, _)) in definitions.iter_mut().enumerate() {
+  for (idx, (cube, _, _)) in definitions.iter_mut().enumerate() {
     cube.retain(
       |term| {
         let mut applications = None ;
@@ -893,7 +965,7 @@ fn get_invariants(
       log! { @4 "checking candidate: {}", candidate }
       let mut invariant = true ;
 
-      for (cube, value) in definitions.iter() {
+      for (cube, value, _) in definitions.iter() {
         if_log! { @5
           log! { @5 "cube:" }
           for term in cube {
@@ -947,4 +1019,14 @@ fn get_invariants(
 }
 
 
-
+fn make_fun_name(other_name: & str) -> Res<String> {
+  let split: Vec<_> = other_name.split('|').collect() ;
+  let str = match split.len() {
+    1 => format!("{}_hoice_reserved_fun", other_name),
+    3 if split[0] == "" && split[2] == "" && split[1] != "" => {
+        format!("|{}_hoice_reserved_fun|", split[1])
+    },
+    _ => bail!("illegal symbol `{}`", other_name),
+  } ;
+  Ok(str)
+}

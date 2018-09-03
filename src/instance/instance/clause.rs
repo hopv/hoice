@@ -607,7 +607,6 @@ impl Clause {
           // `term` is more generic, discard.
           Cmp(Less) => {
             rmed_stuff = true ;
-            // println!("  removing {}", t) ;
             false
           },
           // No relation, keep `t`.
@@ -623,8 +622,8 @@ impl Clause {
         }
       )
     }
+
     // If we removed stuff, it means the term should not be redundant.
-    assert! { ! rmed_stuff || ! redundant }
     if ! redundant {
       let is_new = set.insert(term) ;
       debug_assert! { is_new }
