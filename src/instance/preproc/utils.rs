@@ -1,6 +1,8 @@
 //! Helper types and functions for preprocessing.
 
 use common::* ;
+
+use super::{ PreInstance, RedStrat } ;
 use var_to::terms::VarTermsSet ;
 
 
@@ -342,7 +344,6 @@ impl ExtractionCxt {
   }
 
 
-
   fn terms_of_lhs_part<'a>(
     & mut self, instance: & Instance, var_info: & VarInfos,
     (lhs_terms, lhs_preds): (& TermSet, & 'a PredApps),
@@ -577,4 +578,250 @@ pub enum TExtractRes<T> {
   Success(T),
   /// Failure: need qualifiers.
   Failed,
+}
+
+
+
+
+
+
+
+
+
+
+
+/// Registers statistics of the original instance.
+///
+/// Dumps the instance if asked to do so.
+pub fn register_stats(
+  instance: & Instance, _profiler: & Profiler, count: usize
+) -> Res<()> {
+
+  preproc_dump!(
+    instance =>
+      format!("preproc_{:0>4}_original_instance", count),
+      "Instance before pre-processing."
+  ) ? ;
+  profile!{
+    |_profiler|
+      "clause count original" => add instance.clauses().len()
+  }
+  profile!{
+    |_profiler|
+      "nl clause count original" => add {
+        let mut count = 0 ;
+        'clause_iter: for clause in instance.clauses() {
+          for (_, argss) in clause.lhs_preds() {
+            if argss.len() > 1 {
+              count += 1 ;
+              continue 'clause_iter
+            }
+          }
+        }
+        count
+      }
+  }
+  profile!{
+    |_profiler|
+      "pred count original" => add {
+        let mut count = 0 ;
+        for pred in instance.pred_indices() {
+          if ! instance.is_known(pred) {
+            count += 1
+          }
+        }
+        count
+      }
+  }
+  profile!{
+    |_profiler|
+      "arg count original" => add {
+        let mut args = 0 ;
+        for info in instance.preds() {
+          if ! instance.is_known(info.idx) {
+            args += info.sig.len()
+          }
+        }
+        args
+      }
+  }
+
+  Ok(())
+}
+
+/// Registers some info for a preprocessor.
+pub fn register_info(
+  instance: & Instance, _profiler: & Profiler,
+  preproc: & 'static str, _red_info: & RedInfo,
+  count: usize,
+) -> Res<()> {
+  preproc_dump!(
+    instance =>
+    format!("preproc_{:0>4}_{}", count, preproc),
+    format!("Instance after running `{}`.", preproc)
+  ) ? ;
+
+  profile!{
+    |_profiler| format!(
+      "{:>10}   pred red", preproc
+    ) => add _red_info.preds
+  }
+  profile!{
+    |_profiler| format!(
+      "{:>10} clause red", preproc
+    ) => add _red_info.clauses_rmed
+  }
+  profile!{
+    |_profiler| format!(
+      "{:>10} clause add", preproc
+    ) => add _red_info.clauses_added
+  }
+  profile!{
+    |_profiler| format!(
+      "{:>10}    arg red", preproc
+    ) => add _red_info.args_rmed
+  }
+  log! { @verb
+    "{}: {}", conf.emph( preproc ), _red_info
+  }
+  Ok(())
+}
+
+/// Registers the final info, after preprocessing.
+pub fn register_final_stats(
+  instance: & Instance, _profiler: & Profiler
+) -> Res<()> {
+  preproc_dump!(
+    instance =>
+      "preproc_0000_fixed_point",
+      "Instance after reaching preproc fixed-point."
+  ) ? ;
+
+  profile!{
+    |_profiler|
+      "clause count    final" => add instance.clauses().len()
+  }
+  profile!{
+    |_profiler|
+      "nl clause count    final" => add {
+        let mut count = 0 ;
+        'clause_iter: for clause in instance.clauses() {
+          for (_, argss) in clause.lhs_preds() {
+            if argss.len() > 1 {
+              count += 1 ;
+              continue 'clause_iter
+            }
+          }
+        }
+        count
+      }
+  }
+
+  profile!{
+    |_profiler|
+      "pred count    final" => add {
+        let mut count = 0 ;
+        for pred in instance.pred_indices() {
+          if ! instance.is_known(pred) {
+            count += 1
+          }
+        }
+        count
+      }
+  }
+
+  profile!{
+    |_profiler|
+      "arg count    final" => add {
+        let mut args = 0 ;
+        for info in instance.preds() {
+          if ! instance.is_known(info.idx) {
+            args += info.sig.len()
+          }
+        }
+        args
+      }
+  }
+
+  Ok(())
+}
+
+
+
+
+/// Processes the information generated after a preprocessor run.
+pub fn process_red_info(
+  instance: & Instance, _profiler: & Profiler,
+  preproc: & 'static str, count: & mut usize, red_info: & RedInfo
+) -> Res<()> {
+  if red_info.non_zero() {
+    * count += 1 ;
+    register_info(
+      instance, _profiler, preproc, & red_info, * count
+    ) ? ;
+    conf.check_timeout() ?
+  } else {
+    log! { @verb "{}: did nothing", conf.emph(preproc) }
+  }
+  Ok(())
+}
+
+
+/// Checks whether an instance is solved.
+///
+/// Can return `Error::Unsat` if unsat, else returns a boolean indicating
+/// whether the instance is solved.
+pub fn check_solved(
+  instance: & mut PreInstance, _profiler: & Profiler
+) -> Res<bool> {
+  let res = if instance.is_solved() {
+    if ! instance.is_unsat() {
+      profile! {
+        |_profiler| tick "preproc", "final simplify"
+      }
+      // Check remaining clauses, maybe some of them are unsat.
+      match instance.simplify_all() {
+        Ok(_) => (),
+        Err(ref e) if e.is_unsat() => instance.set_unsat(),
+        Err(e) => bail!(e),
+      }
+      profile! {
+        |_profiler| mark "preproc", "final simplify"
+      }
+    }
+    true
+  } else {
+    false
+  } ;
+  Ok(res)
+}
+
+
+/// Runs a technique, returns it's info.
+///
+/// Returns `None` if the instance is solved.
+pub fn run_preproc<Strat: RedStrat>(
+  instance: & mut PreInstance, _profiler: & Profiler,
+  preproc: & mut Strat, count: & mut usize,
+) -> Res< Option<RedInfo> > {
+  profile! {
+    |_profiler| tick "preproc", preproc.name()
+  }
+  log! { @verb
+    "running {}", conf.emph( preproc.name() )
+  }
+  let red_info = preproc.apply(instance) ? ;
+  profile! {
+    |_profiler| mark "preproc", preproc.name()
+  }
+
+  process_red_info(
+    instance, _profiler, preproc.name(), count, & red_info
+  ) ? ;
+
+  if check_solved(instance, _profiler) ? {
+    Ok(None)
+  } else {
+    Ok( Some(red_info) )
+  }
 }

@@ -720,6 +720,30 @@ simpl_fun! {
           }
         }
 
+      // } else if let Some(val) = args[0].val() {
+      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+      //     if dtyp_args.is_empty() {
+      //       return Some(
+      //         NormRes::Term(
+      //           term::dtyp_tst(
+      //             constructor.into(), args[1].clone()
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
+      // } else if let Some(val) = args[1].val() {
+      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+      //     if dtyp_args.is_empty() {
+      //       return Some(
+      //         NormRes::Term(
+      //           term::dtyp_tst(
+      //             constructor.into(), args[0].clone()
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
       }
 
     } else {
@@ -768,7 +792,8 @@ simpl_fun! {
       Some( // "else" term
         NormRes::Term( args.pop().unwrap() )
       )
-    } else if args[1].typ().is_bool() {
+    } else if args[1].typ().is_bool()
+    && args[0].dtyp_tst_inspect().is_none() {
       let (e, t, c) = (
         args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
       ) ;
@@ -790,6 +815,27 @@ simpl_fun! {
           ]
         )
       )
+    } else if let Some(eq_args) = args[0].eq_inspect().cloned() {
+
+      if let Some(val) = eq_args[0].val() {
+        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+          if dtyp_args.is_empty() {
+            args[0] = term::dtyp_tst(
+              constructor.into(), eq_args[1].clone()
+            )
+          }
+        }
+      } else if let Some(val) = eq_args[1].val() {
+        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+          if dtyp_args.is_empty() {
+            args[0] = term::dtyp_tst(
+              constructor.into(), eq_args[0].clone()
+            )
+          }
+        }
+      }
+
+      None
     } else {
       None
     }
@@ -1499,7 +1545,7 @@ simpl_fun! {
 
         Op::Ite => if args.len() != 3 {
           panic!("illegal ite application: {}", term)
-        } else {
+        } else if args[0].dtyp_tst_inspect().is_none() {
           let (c, t, e) = (
             args[0].clone(),
             args[1].clone(),
@@ -1704,4 +1750,189 @@ simpl_fun! {
     }
   } ;
 
+}
+
+
+
+/// Tries to create a constant datatype constructor.
+fn cst_dtyp_new(
+  typ: Typ, name: String, args: Vec<Term>
+) -> Either<Val, (Typ, String, Vec<Term>)> {
+  if args.is_empty() {
+    return Either::Left(
+      val::dtyp_new( typ, name, vec![] )
+    )
+  }
+
+  let mut nu_args = None ;
+
+  for arg in & args {
+    if let Some(val) = arg.val() {
+      nu_args.get_or_insert_with(
+        || Vec::with_capacity( args.len() )
+      ).push(val)
+    } else {
+      nu_args = None ;
+      break
+    }
+  }
+
+  if let Some(args) = nu_args {
+    Either::Left( val::dtyp_new(typ, name, args) )
+  } else {
+    Either::Right( (typ, name, args) )
+  }
+}
+
+
+/// Simplifies a datatype constructor.
+pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> RTerm {
+  let (typ, name, mut args) = match cst_dtyp_new(typ, name, args) {
+    Either::Left(val) => {
+      return RTerm::Cst(val)
+    },
+    Either::Right(stuff) => stuff,
+  } ;
+
+  if let Some((dtyp, prms)) = typ.dtyp_inspect() {
+    if let Some(fargs) = dtyp.news.get(& name) {
+      if args.len() != fargs.len() {
+        panic!(
+          "constructor `{}` for `{}` expects {} arguments, found {}",
+          conf.emph(& name), conf.emph(& dtyp.name),
+          fargs.len(), args.len()
+        )
+      }
+
+      for (arg, param) in args.iter_mut().zip( fargs.iter() ) {
+        let typ = param.1.to_type(prms).unwrap_or_else(
+          |_| panic!("ill-formed datatype constructor: {}", typ)
+        ) ;
+        if let Some(typ) = typ.merge( & arg.typ() ) {
+          if let Some(nu_arg) = arg.force_dtyp(typ) {
+            * arg = nu_arg
+          }
+        }
+      }
+    } else {
+      panic!(
+        "datatype `{}` has no constructor named `{}`",
+        conf.emph(& dtyp.name), conf.bad(& name)
+      )
+    }
+  } else {
+    panic!("ill-typed datatype constructor: {}", typ)
+  }
+
+  let mut vals = if args.is_empty() {
+    Some(vec![])
+  } else {
+    None
+  } ;
+
+  for arg in & args {
+    if let Some(val) = arg.val() {
+      vals.get_or_insert_with(
+        || Vec::with_capacity( args.len() )
+      ).push(val)
+    } else {
+      vals = None ;
+      break
+    }
+  }
+
+  if let Some(vals) = vals {
+    debug_assert_eq! { vals.len(), args.len() }
+    RTerm::Cst( val::dtyp_new(typ, name, vals) )
+  } else {
+    debug_assert!( ! args.is_empty() ) ;
+    RTerm::DTypNew { typ, name, args }
+  }
+}
+
+
+
+/// Simplifies a datatype selector.
+pub fn dtyp_slc(typ: Typ, field: String, term: Term) -> Either<RTerm, Term> {
+  if let Some(val) = term.val() {
+    if let Some(res) = val.dtyp_slc(& field) {
+      return Either::Left( RTerm::Cst(res) )
+    }
+  }
+
+  if let Some((typ, constructor, args)) = term.dtyp_new_inspect() {
+    if let Some((dtyp, _)) = typ.dtyp_inspect() {
+      if let Some(params) = dtyp.news.get(constructor) {
+        debug_assert_eq! { args.len(), params.len() }
+        for ((fld, _), arg) in params.iter().zip( args.iter() ) {
+          if fld == & field {
+            return Either::Right( arg.clone()  )
+          }
+        }
+      } else {
+        panic!("inconsistent internal datatype term")
+      }
+    } else {
+      panic!("inconsistent application of datatype selector")
+    }
+  }
+
+  Either::Left(
+    RTerm::DTypSlc { typ, name: field, term }
+  )
+}
+
+
+/// Simplifies a datatype tester.
+///
+/// The boolean flag returned indicates the polarity of the result. That is, if
+/// it is `false` then the term should be negated.
+pub fn dtyp_tst(constructor: String, term: Term) -> (RTerm, bool) {
+  if let Some(val) = term.val() {
+    if let val::RVal::DTypNew { name, .. } = val.get() {
+      return (
+        RTerm::Cst( val::bool(& constructor == name) ),
+        true
+      )
+    } else {
+      panic!("illegal datatype tester (ill-typed)")
+    }
+  } else if let Some((_, name, _)) = term.dtyp_new_inspect() {
+    return (
+      RTerm::Cst( val::bool(constructor == name) ),
+      true
+    )
+  }
+
+  // The following tries to find a constructor that's more complex than the
+  // current one. The reason is that so far, it seems to work better that way.
+  if let Some(dtyp) = dtyp::of_constructor(& constructor) {
+    if let Some(args) = dtyp.news.get(& constructor) {
+
+      if args.is_empty() {
+        if let Some(constructor) = dtyp.rec_constructor() {
+          return (
+            RTerm::DTypTst {
+              typ: typ::bool(), name: constructor.into(), term
+            },
+            false
+          )
+        }
+      }
+
+    } else {
+      panic!("inconsistent maps for datatypes")
+    }
+  } else {
+    panic!(
+      "trying to construct a tester for unknown constructor {}", constructor
+    )
+  }
+
+  (
+    RTerm::DTypTst {
+      typ: typ::bool(), name: constructor, term
+    },
+    true
+  )
 }

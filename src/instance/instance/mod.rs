@@ -44,6 +44,27 @@ pub struct Instance {
   /// Populated by the `finalize` function.
   sorted_pred_terms: Vec<PrdIdx>,
 
+  /// Strengthener for predicates.
+  pred_str: PrdMap< Option<Term> >,
+
+  /// Companion function for predicates.
+  ///
+  /// A companion function is a function that was created internally
+  /// specifically for a predicate. Meaning it needs to be given to the user
+  /// when printing the model.
+  companion_funs: PrdHMap< Vec<Fun> >,
+
+  /// Side-clauses.
+  ///
+  /// A side clause
+  /// - does not mention any predicate
+  /// - mentions a user-defined function
+  ///
+  /// It will be asserted when the instance is asked to initialize a solver. A
+  /// side-clause is viewed as additional information provided by the user, a
+  /// kind of lemma for the actual clauses.
+  side_clauses: Vec<Clause>,
+
   /// Clauses.
   clauses: ClsMap<Clause>,
   /// Maps predicates to the clauses where they appear in the lhs and rhs
@@ -85,7 +106,7 @@ pub struct Instance {
   split: Option<ClsIdx>,
 
   /// Define-funs parsed.
-  define_funs: HashMap<String, (VarInfos, ::instance::parse::PTTerms)>,
+  define_funs: HashMap<String, (VarInfos, ::parse::PTTerms)>,
 
   /// Maps **original** clause indexes to their optional name.
   old_names: ClsHMap<String>,
@@ -117,7 +138,10 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(pred_capa),
       pred_terms: PrdMap::with_capacity(pred_capa),
       sorted_pred_terms: Vec::with_capacity(pred_capa),
+      pred_str: PrdMap::with_capacity(pred_capa),
+      companion_funs: PrdHMap::new(),
 
+      side_clauses: Vec::with_capacity(7),
       clauses: ClsMap::with_capacity(clause_capa),
       // clusters: CtrMap::with_capacity( clause_capa / 3 ),
       pred_to_clauses: PrdMap::with_capacity(pred_capa),
@@ -154,7 +178,10 @@ impl Instance {
       old_var_maps: PrdMap::with_capacity(self.old_preds.len()),
       pred_terms: self.pred_terms.clone(),
       sorted_pred_terms: Vec::with_capacity( self.preds.len() ),
+      pred_str: vec! [ None ; self.old_preds.len() ].into(),
+      companion_funs: self.companion_funs.clone(),
 
+      side_clauses: self.side_clauses.clone(),
       clauses: self.clauses.clone(),
       pred_to_clauses: self.pred_to_clauses.clone(),
       is_unsat: false,
@@ -268,14 +295,14 @@ impl Instance {
 
   /// Adds a define fun.
   pub fn add_define_fun<S: Into<String>>(
-    & mut self, name: S, sig: VarInfos, body: ::instance::parse::PTTerms
-  ) -> Option<(VarInfos, ::instance::parse::PTTerms)> {
+    & mut self, name: S, sig: VarInfos, body: ::parse::PTTerms
+  ) -> Option<(VarInfos, ::parse::PTTerms)> {
     self.define_funs.insert(name.into(), (sig, body))
   }
   /// Retrieves a define fun.
   pub fn get_define_fun(
     & self, name: & str
-  ) -> Option<& (VarInfos, ::instance::parse::PTTerms)> {
+  ) -> Option<& (VarInfos, ::parse::PTTerms)> {
     self.define_funs.get(name)
   }
 
@@ -698,12 +725,40 @@ impl Instance {
       name, idx, sig
     } ) ;
     self.pred_terms.push(None) ;
+    self.pred_str.push(None) ;
 
     self.pred_to_clauses.push(
       ( ClsSet::with_capacity(17), ClsSet::with_capacity(17) )
     ) ;
     idx
   }
+
+
+  /// Sets the strengthener for a predicate.
+  pub fn set_str(& mut self, pred: PrdIdx, term: Term) -> Option<Term> {
+    ::std::mem::replace(
+      & mut self.pred_str[pred],
+      Some(term)
+    )
+  }
+
+  /// Retrieves the strengthener for a predicate if any.
+  pub fn get_str(& self, pred: PrdIdx) -> Option<& Term> {
+    self.pred_str[pred].as_ref()
+  }
+
+  /// Adds a companion function for a predicate.
+  pub fn add_companion_fun(& mut self, pred: PrdIdx, fun: Fun) {
+    self.companion_funs.entry(pred).or_insert_with(
+      Vec::new
+    ).push(fun)
+  }
+
+  /// Retrieves the companion functions for a predicate.
+  pub fn get_companion_funs(& self, pred: PrdIdx) -> Option< & Vec<Fun> > {
+    self.companion_funs.get(& pred)
+  }
+
 
   /// Removes and returns the indices of the clauses `pred` appears in the lhs
   /// of from `self.pred_to_clauses`.
@@ -827,6 +882,71 @@ impl Instance {
     Ok(())
   }
 
+  /// Mutable accessor for side clauses.
+  ///
+  /// Does not expose function invariants.
+  pub fn side_clauses_retain<Keep>(
+    & mut self, mut keep: Keep
+  ) -> Res<RedInfo>
+  where Keep: FnMut(& mut Clause) -> Res<bool> {
+    let mut info = RedInfo::new() ;
+    let mut cnt = 0 ;
+    while cnt < self.side_clauses.len() {
+      if ! keep(& mut self.side_clauses[cnt]) ? {
+        info.clauses_rmed += 1 ;
+        self.side_clauses.swap_remove(cnt) ;
+        ()
+      } else {
+        cnt += 1
+      }
+    }
+    Ok(info)
+  }
+
+  /// Asserts all the side-clauses in a solver.
+  pub fn assert_side_clauses<P>(
+    & self, solver: & mut Solver<P>
+  ) -> Res<()> {
+    for side_clause in & self.side_clauses {
+      let side_clause = smt::SmtSideClause::new(side_clause) ;
+      solver.assert(& side_clause) ?
+    }
+    Ok(())
+  }
+
+  /// Registers a clause as a side-clause.
+  ///
+  /// A side clause is a clause that does not mention any predicate, but
+  /// mentions a user-defined function.
+  pub fn add_side_clause(& mut self, clause: Clause) -> Res<()> {
+    if clause.rhs().is_some() {
+      bail!("cannot convert to side-clause: predicate application in rhs")
+    }
+    if ! clause.lhs_preds().is_empty() {
+      bail!("cannot convert to side-clause: predicate application(s) in lhs")
+    }
+
+    self.side_clauses.push(clause) ;
+
+    Ok(())
+  }
+
+  /// Registers a new side clause: forces the term to be true.
+  ///
+  /// A side clause is a clause that does not mention any predicate, but
+  /// mentions a user-defined function.
+  pub fn add_new_side_clause(
+    & mut self,
+    vars: VarInfos, term: Term, info: & 'static str
+  ) -> Res<()> {
+    let clause = clause::new(
+      vars, vec![ TTerm::T( term::not(term) ) ], None,
+      info, self.side_clauses.len().into()
+    ) ;
+
+    self.add_side_clause(clause)
+  }
+
   /// Pushes a clause.
   ///
   /// Returns its index, if it was added.
@@ -836,6 +956,16 @@ impl Instance {
         return Ok(None)
       }
     }
+
+    if clause.lhs_preds().is_empty()
+    && clause.rhs().is_none()
+    && clause.lhs_terms().iter().any(
+      |term| term.has_fun_app_or_adt()
+    ) {
+      self.add_side_clause(clause) ? ;
+      return Ok(None)
+    }
+
     let idx = self.clauses.next_index() ;
     let is_new = self.push_clause_unchecked(clause) ;
     // self.check("after `push_clause`") ? ;
@@ -1104,6 +1234,31 @@ impl Instance {
     writeln!(w, "(set-logic HORN)") ? ;
     writeln!(w) ? ;
 
+    writeln!(w, "; Datatypes") ? ;
+
+    dtyp::write_all(w, "") ? ;
+
+    dtyp::write_constructor_map(w, "; ") ? ;
+    writeln!(w) ? ;
+
+    writeln!(w, "; Functions") ? ;
+    fun::write_all(w, "", true) ? ;
+
+    writeln!(w) ? ;
+
+    writeln!(w, "; Side-clauses") ? ;
+    for side_clause in & self.side_clauses {
+      side_clause.write(
+        w, |w, var_info| write!(w, "{}", var_info.name), |_, _, _| panic!(
+          "illegal side-clause: found predicate application(s)"
+        ), true
+      ) ? ;
+      writeln!(w) ? ;
+    }
+
+    writeln!(w) ? ;
+    writeln!(w) ? ;
+
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {
         write!(
@@ -1136,21 +1291,21 @@ impl Instance {
       writeln!(w) ? ;
 
       clause.write(
-        w, |w, p, args| {
+        w, |w, var_info| write!(w, "{}", var_info.name), |w, p, args| {
           if ! args.is_empty() {
             write!(w, "(") ?
           }
           w.write_all( self[p].name.as_bytes() ) ? ;
           for arg in args.iter() {
             write!(w, " ") ? ;
-            arg.write(w, |w, var| w.write_all( clause.vars[var].as_bytes() )) ?
+            arg.write(w, |w, var| write!(w, "{}", clause.vars[var])) ?
           }
           if ! args.is_empty() {
             write!(w, ")")
           } else {
             Ok(())
           }
-        }
+        }, true
       ) ? ;
       writeln!(w) ? ;
       writeln!(w) ?
@@ -1235,6 +1390,8 @@ impl Instance {
     & self, w: & mut W, pref: & str, model: ConjModelRef
   ) -> Res<()> {
 
+    fun::write_all(w, pref, false) ? ;
+
     for defs in model {
 
       if defs.is_empty() {
@@ -1253,7 +1410,7 @@ impl Instance {
 
       } else {
         write!(
-          w, "{}({} (", pref, keywords::cmd::def_funs
+          w, "{}({} (", pref, keywords::cmd::def_funs_rec
         ) ? ;
         for & (pred, _) in defs {
           write!(w, "\n{}  {} ", pref, self[pred].name) ? ;
@@ -1479,7 +1636,7 @@ impl Instance {
   /// Returns `true` if some new data was generated.
   pub fn clause_cex_to_data(
     & self, data: & mut Data, clause_idx: ClsIdx, cex: BCex
-  ) -> Res<()> {
+  ) -> Res<bool> {
     let (mut cex, bias) = cex ;
 
     if_log! { @6
@@ -1556,19 +1713,22 @@ impl Instance {
   pub fn cexs_to_data(
     & self, data: & mut Data, cexs: Cexs
   ) -> Res<bool> {
-    let metrics = data.metrics() ;
+    let mut changed = false ;
 
     for (clause_idx, cexs) in cexs {
       log! { @5 "adding cexs for #{}", clause_idx }
 
       for cex in cexs {
-        self.clause_cex_to_data(data, clause_idx, cex) ?
+        let new_stuff = self.clause_cex_to_data(
+          data, clause_idx, cex
+        ) ? ;
+        changed = changed || new_stuff
       }
     }
 
-    data.propagate() ? ;
+    let (pos, neg) = data.propagate() ? ;
 
-    Ok( metrics != data.metrics() )
+    Ok( changed || pos > 0 || neg > 0 )
   }
 }
 
@@ -1635,15 +1795,17 @@ impl<'a> PebcakFmt<'a> for Clause {
     & self, w: & mut W, prds: & 'a PrdInfos
   ) -> IoRes<()> {
     self.write(
-      w, |w, prd, args| {
+      w, |w, var_info| write!(w, "{}", var_info.name), |w, prd, args| {
         write!(w, "(") ? ;
         w.write_all( prds[prd].as_bytes() ) ? ;
         for arg in args.iter() {
           write!(w, " ") ? ;
-          arg.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
+          arg.write(
+            w, |w, var| write!(w, "{}", self.vars[var])
+          ) ?
         }
         write!(w, ")")
-      }
+      }, false
     )
   }
 }
@@ -1656,6 +1818,11 @@ impl<'a> PebcakFmt<'a> for Instance {
   fn pebcak_io_fmt<W: Write>(
     & self, w: & mut W, _: ()
   ) -> IoRes<()> {
+    writeln!(w, "; Datatypes:") ? ;
+
+    dtyp::write_all(w, "") ? ;
+
+    dtyp::write_constructor_map(w, "; ") ? ;
 
     for (pred_idx, pred) in self.preds.index_iter() {
       if self.pred_terms[pred_idx].is_none() {

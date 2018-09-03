@@ -1,18 +1,13 @@
 //! Term creation functions.
 
-use hashconsing::{ HashConsign, HConser } ;
+use hashconsing::HashConsign ;
 
 use common::* ;
 use term::{ RTerm, Term, Op } ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RTerm> > ;
-
-lazy_static! {
+new_consign! {
   /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+  let factory = consign(conf.instance.term_capa) for RTerm ;
 }
 
 lazy_static! {
@@ -27,18 +22,23 @@ lazy_static! {
 fn scan_vars(t: & Term) -> VarSet {
   let mut to_do = vec![ t ] ;
   let mut set = VarSet::with_capacity(11) ;
+
   while let Some(term) = to_do.pop() {
     match term.get() {
       RTerm::Var(_, i) => {
         let _ = set.insert(* i) ; ()
       },
-      RTerm::Int(_) => (),
-      RTerm::Real(_) => (),
-      RTerm::Bool(_) => (),
-      RTerm::CArray { ref term, .. } => to_do.push(& * term),
-      RTerm::App{ ref args, .. } => for arg in args {
+      RTerm::Cst(_) => (),
+
+      RTerm::App     { args, .. } |
+      RTerm::Fun     { args, .. } |
+      RTerm::DTypNew { args, .. } => for arg in args {
         to_do.push(arg)
       },
+
+      RTerm::CArray  { term, .. } |
+      RTerm::DTypSlc { term, .. } |
+      RTerm::DTypTst { term, .. } => to_do.push(term),
     }
   }
   set.shrink_to_fit() ;
@@ -86,54 +86,56 @@ where F: FnMut(VarIdx) {
 }
 
 /// Creates a term.
-#[inline(always)]
+#[inline]
 pub fn term(t: RTerm) -> Term {
   factory.mk(t)
 }
 
 /// Creates a variable.
-#[inline(always)]
+#[inline]
 pub fn var<V: Into<VarIdx>>(v: V, typ: Typ) -> Term {
   factory.mk( RTerm::Var(typ, v.into()) )
 }
 
 /// Creates an integer variable.
-#[inline(always)]
+#[inline]
 pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::int(), v.into()) )
 }
 
 /// Creates a real variable.
-#[inline(always)]
+#[inline]
 pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::real(), v.into()) )
 }
 
 /// Creates a boolean variable.
-#[inline(always)]
+#[inline]
 pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
   factory.mk( RTerm::Var(typ::bool(), v.into()) )
 }
 
+/// Creates a constant.
+#[inline]
+pub fn cst<V: Into<Val>>(val: V) -> Term {
+  let val = val.into() ;
+  if ! val.is_known() {
+    panic!("trying to construct a constant term from a non-value {}", val)
+  }
+  factory.mk( RTerm::Cst( val ) )
+}
+
 /// Creates an integer constant.
-#[inline(always)]
+#[inline]
 pub fn int<I: Into<Int>>(i: I) -> Term {
   let i = i.into() ;
-  factory.mk( RTerm::Int(i) )
+  factory.mk( RTerm::Cst( val::int(i) ) )
 }
 /// Creates a real constant.
-#[inline(always)]
+#[inline]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
   let r = r.into() ;
-  if r.denom().is_zero() {
-    panic!("division by zero while constructing real term")
-  }
-  let r = if r.numer().is_negative() == r.denom().is_negative() {
-    r
-  } else {
-    - r.abs()
-  } ;
-  factory.mk( RTerm::Real(r) )
+  factory.mk( RTerm::Cst( val::real(r) ) )
 }
 /// Creates a real constant from a float.
 #[inline]
@@ -141,66 +143,66 @@ pub fn real_of_float(f: f64) -> Term {
   real( rat_of_float(f) )
 }
 /// Creates the constant `0`.
-#[inline(always)]
+#[inline]
 pub fn int_zero() -> Term {
   int( Int::zero() )
 }
 /// Creates the constant `1`.
-#[inline(always)]
+#[inline]
 pub fn int_one() -> Term {
   int( Int::one() )
 }
 /// Creates the constant `0`.
-#[inline(always)]
+#[inline]
 pub fn real_zero() -> Term {
   real( Rat::zero() )
 }
 /// Creates the constant `1`.
-#[inline(always)]
+#[inline]
 pub fn real_one() -> Term {
   real( Rat::one() )
 }
 
 /// Creates a boolean.
-#[inline(always)]
+#[inline]
 pub fn bool(b: bool) -> Term {
-  factory.mk( RTerm::Bool(b) )
+  factory.mk( RTerm::Cst( val::bool(b) ) )
 }
 /// Creates the constant `true`.
-#[inline(always)]
+#[inline]
 pub fn tru() -> Term {
   bool(true)
 }
 /// Creates the constant `false`.
-#[inline(always)]
+#[inline]
 pub fn fls() -> Term {
   bool(false)
 }
 
 /// If-then-else.
-#[inline(always)]
+#[inline]
 pub fn ite(c: Term, t: Term, e: Term) -> Term {
   app(Op::Ite, vec![c, t, e])
 }
 
 /// Implication.
-#[inline(always)]
+#[inline]
 pub fn implies(lhs: Term, rhs: Term) -> Term {
   app(Op::Impl, vec![lhs, rhs])
 }
 
 /// Negates a term.
-#[inline(always)]
+#[inline]
 pub fn not(term: Term) -> Term {
   app(Op::Not, vec![term])
 }
 /// Disjunction.
-#[inline(always)]
+#[inline]
 pub fn or(terms: Vec<Term>) -> Term {
   app(Op::Or, terms)
 }
 /// Conjunction.
-#[inline(always)]
+#[inline]
 pub fn and(terms: Vec<Term>) -> Term {
   app(Op::And, terms)
 }
@@ -210,7 +212,13 @@ pub fn and(terms: Vec<Term>) -> Term {
 /// The type is the type of **the indices** of the array.
 #[inline]
 pub fn cst_array(typ: Typ, default: Term) -> Term {
-  factory.mk( RTerm::CArray { typ, term: Box::new(default) } )
+  if let Some(val) = default.val() {
+    factory.mk(
+      RTerm::Cst( val::array(typ, val) )
+    )
+  } else {
+    factory.mk( RTerm::CArray { typ, term: default } )
+  }
 }
 
 /// Store operation in an array.
@@ -224,15 +232,45 @@ pub fn select(array: Term, idx: Term) -> Term {
   app( Op::Select, vec![ array, idx ] )
 }
 
+/// Function application.
+///
+/// # Panics
+///
+/// - if the function does not exist
+/// - if the type does not make sense
+/// - if the arguments are illegal
+#[inline]
+pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
+  if let Err(e) = fun::dec_do(
+    & name, |fun| {
+      debug_assert_eq! { typ, fun.typ }
+      if args.len() != fun.sig.len() {
+        panic!("illegal application of function {}", conf.bad(& name))
+      }
+      for (info, arg) in fun.sig.iter().zip( args.iter_mut() ) {
+        if let Some(nu_arg) = arg.force_dtyp( info.typ.clone() ) {
+          * arg = nu_arg
+        }
+      }
+      Ok(())
+    }
+  ) {
+    print_err(& e) ;
+    panic!("illegal function application")
+  }
+
+  factory.mk( RTerm::Fun { typ, name, args } )
+}
+
 /// Creates an operator application.
 ///
 /// Assumes the application is well-typed, modulo int to real casting.
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
-#[inline(always)]
-pub fn app(op: Op, args: Vec<Term>) -> Term {
+#[inline]
+pub fn app(op: Op, mut args: Vec<Term>) -> Term {
   let typ = expect!(
-    op.type_check(& args) => |e|
+    op.type_check(& mut args) => |e|
       let res: Res<()> = Err(
         "Fatal internal type checking error, \
         please notify the developer(s)".into()
@@ -267,79 +305,124 @@ pub fn app(op: Op, args: Vec<Term>) -> Term {
   normalize(op, args, typ.clone())
 }
 
+/// Creates a constant term.
+pub fn val(val: Val) -> Term {
+  factory.mk( RTerm::Cst(val) )
+}
+
+
+/// Creates a datatype constructor.
+pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
+  let rterm = term::simplify::dtyp_new(typ, name, args) ;
+  factory.mk(rterm)
+}
+
+/// Creates a new datatype selector.
+///
+/// # TODO
+///
+/// - treat constants better
+pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
+  match term::simplify::dtyp_slc(typ, name, term) {
+    Either::Left(rterm) => factory.mk(rterm),
+    Either::Right(term) => term,
+  }
+}
+
+/// Creates a new datatype tester.
+///
+/// # TODO
+///
+/// - treat constants better
+pub fn dtyp_tst(name: String, term: Term) -> Term {
+  let (rterm, positive) = term::simplify::dtyp_tst(name, term) ;
+  let res = factory.mk( rterm ) ;
+  if ! positive {
+    not(res)
+  } else {
+    res
+  }
+}
+
 /// Creates an operator application.
 ///
 /// Error if the application is ill-typed (int will be cast to real
 /// automatically).
 ///
 /// Runs [`normalize`](fn.normalize.html) and returns its result.
-#[inline(always)]
-pub fn try_app(op: Op, args: Vec<Term>) -> Result<Term, term::TypError> {
-  let typ = op.type_check(& args) ? ;
+#[inline]
+pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
+  let typ = op.type_check(& mut args) ? ;
   Ok( normalize(op, args, typ) )
 }
 
 /// Creates a less than or equal to.
-#[inline(always)]
+#[inline]
 pub fn le(lhs: Term, rhs: Term) -> Term {
   app(Op::Le, vec![lhs, rhs])
 }
 /// Creates a less than.
-#[inline(always)]
+#[inline]
 pub fn lt(lhs: Term, rhs: Term) -> Term {
   app(Op::Lt, vec![lhs, rhs])
 }
 /// Creates a greater than.
-#[inline(always)]
+#[inline]
 pub fn gt(lhs: Term, rhs: Term) -> Term {
   app(Op::Gt, vec![lhs, rhs])
 }
 /// Creates a greater than or equal to.
-#[inline(always)]
+#[inline]
 pub fn ge(lhs: Term, rhs: Term) -> Term {
   app(Op::Ge, vec![lhs, rhs])
 }
 
 /// Creates an equality.
-#[inline(always)]
+#[inline]
 pub fn eq(lhs: Term, rhs: Term) -> Term {
   app(Op::Eql, vec![lhs, rhs])
 }
 
+/// Creates a distinct application.
+#[inline]
+pub fn distinct(terms: Vec<Term>) -> Term {
+  app(Op::Distinct, terms)
+}
+
 /// Creates a sum.
-#[inline(always)]
+#[inline]
 pub fn add(kids: Vec<Term>) -> Term {
   app(Op::Add, kids)
 }
 /// Creates a sum, binary version.
-#[inline(always)]
+#[inline]
 pub fn add2(kid_1: Term, kid_2: Term) -> Term {
   app(Op::Add, vec![kid_1, kid_2])
 }
 
 /// Creates a subtraction.
-#[inline(always)]
+#[inline]
 pub fn sub(kids: Vec<Term>) -> Term {
   app(Op::Sub, kids)
 }
 /// Creates a subtraction, binary version.
-#[inline(always)]
+#[inline]
 pub fn sub2(kid_1: Term, kid_2: Term) -> Term {
   app(Op::Sub, vec![kid_1, kid_2])
 }
 
 /// Creates a unary minus.
-#[inline(always)]
+#[inline]
 pub fn u_minus(kid: Term) -> Term {
   app(Op::Sub, vec![kid])
 }
 /// Creates a multiplication.
-#[inline(always)]
+#[inline]
 pub fn mul(kids: Vec<Term>) -> Term {
   app(Op::Mul, kids)
 }
 /// Creates a multiplication by a constant.
-#[inline(always)]
+#[inline]
 pub fn cmul<V>(cst: V, term: Term) -> Term
 where V: Into<val::RVal> {
   app(
@@ -353,28 +436,28 @@ where V: Into<val::RVal> {
 }
 
 /// Creates an integer division.
-#[inline(always)]
+#[inline]
 pub fn idiv(kids: Vec<Term>) -> Term {
   app(Op::IDiv, kids)
 }
 /// Creates a division.
-#[inline(always)]
+#[inline]
 pub fn div(kids: Vec<Term>) -> Term {
   app(Op::Div, kids)
 }
 /// Creates a modulo application.
-#[inline(always)]
+#[inline]
 pub fn modulo(a: Term, b: Term) -> Term {
   app(Op::Mod, vec![a, b])
 }
 
 /// Creates a conversion from `Int` to `Real`.
-#[inline(always)]
+#[inline]
 pub fn to_real(int: Term) -> Term {
   app(Op::ToReal, vec![int])
 }
 /// Creates a conversion from `Real` to `Int`.
-#[inline(always)]
+#[inline]
 pub fn to_int(real: Term) -> Term {
   app(Op::ToInt, vec![real])
 }

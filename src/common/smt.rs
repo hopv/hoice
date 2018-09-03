@@ -12,6 +12,56 @@ use common::{
   var_to::vals::{ VarValsMap, VarValsSet }
 } ;
 use data::Constraint ;
+use instance::Clause ;
+
+
+/// Initial setup for a solver.
+///
+/// - declares all the datatypes
+/// - defines all the functions
+/// - asserts all the side-clauses if `preproc` is false
+pub fn init<P, I>(
+  solver: & mut Solver<P>, instance: I
+) -> Res<()>
+where I: AsRef<Instance> {
+  dtyp::write_all(solver, "") ? ;
+  fun::write_all(solver, "", true) ? ;
+  instance.as_ref().assert_side_clauses(solver)
+}
+
+/// Initial setup for a preprocessing solver.
+///
+/// - declares all the datatypes
+/// - defines all the functions
+/// - asserts all the side-clauses if `preproc` is false
+pub fn preproc_init<P>( solver: & mut Solver<P> ) -> Res<()> {
+  dtyp::write_all(solver, "") ? ;
+  fun::write_all(solver, "", true) ? ;
+  Ok(())
+}
+
+
+/// Resets a smt solver.
+///
+/// Use this and not `solver.reset()`. This declares all the
+/// datatypes/functions used in the instance.
+pub fn reset<P, I>(
+  solver: & mut Solver<P>, instance: I
+) -> Res<()>
+where I: AsRef<Instance> {
+  solver.reset() ? ;
+  init(solver, instance)
+}
+
+/// Resets a smt preprocessing solver.
+///
+/// Use this and not `solver.reset()`. This declares all the
+/// datatypes/functions used in the instance.
+pub fn preproc_reset<P>( solver: & mut Solver<P> ) -> Res<()> {
+  solver.reset() ? ;
+  preproc_init(solver)
+}
+
 
 
 /// SMT-prints a term using the default var writer.
@@ -37,41 +87,101 @@ impl<'a> Expr2Smt<()> for SmtTerm<'a> {
 }
 
 
+
+/// Smt-prints a clause that has no predicate application.
+pub struct SmtSideClause<'a> {
+  /// The clause.
+  pub clause: & 'a Clause,
+}
+impl<'a> SmtSideClause<'a> {
+  /// Constructor.
+  pub fn new(clause: & 'a Clause) -> Self {
+    SmtSideClause { clause }
+  }
+}
+impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, _: ()
+  ) -> SmtRes<()> {
+    self.clause.forall_write(
+      w, |w, var_info| var_info.idx.default_write(w), |_, _, _| panic!(
+        "illegal side clause: found predicate application(s)"
+      ), 2
+    ) ? ;
+    Ok(())
+  }
+}
+
+
 /// SMT-prints a collection of terms as a conjunction with default var writer.
-pub struct SmtConj<Trms> {
+pub struct SmtConj<'a, Trms> {
   /// Conjunction.
   terms: Trms,
+  /// True if the terms have function applications.
+  has_fun_apps: bool,
+  /// Variable informations.
+  infos: & 'a VarInfos
 }
-impl<'a, Trms> SmtConj<Trms>
+impl<'a, 'b, Trms> SmtConj<'b, Trms>
 where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   /// Constructor.
-  pub fn new<IntoIter>(terms: IntoIter) -> Self
+  pub fn new<IntoIter>(terms: IntoIter, infos: & 'b VarInfos) -> Self
   where IntoIter: IntoIterator<IntoIter = Trms, Item = & 'a Term> {
-    SmtConj { terms: terms.into_iter() }
+    let terms = terms.into_iter() ;
+    let mut has_fun_apps = false ;
+    for term in terms.clone() {
+      if term.has_fun_apps() {
+        has_fun_apps = true ;
+        break
+      }
+    }
+    SmtConj { terms, has_fun_apps, infos }
   }
 
   /// Checks if this conjunction is unsatisfiable.
-  pub fn is_unsat<Parser: Copy>(
-    & self, solver: & mut Solver<Parser>, vars: & VarInfos
+  fn is_unsat<Parser: Copy>(
+    & self, solver: & mut Solver<Parser>, actlit: Option<& Actlit>
   ) -> Res<bool> {
     if self.terms.len() == 0 { return Ok(false) }
-    solver.push(1) ? ;
-    for var in vars {
-      if var.active {
-        solver.declare_const(& var.idx, var.typ.get()) ?
+    if ! self.has_fun_apps {
+      for var in self.infos {
+        if var.active {
+          solver.declare_const(& var.idx, var.typ.get()) ?
+        }
       }
     }
     solver.assert( self ) ? ;
-    let sat = solver.check_sat() ? ;
-    solver.pop(1) ? ;
+    let sat = solver.check_sat_act(actlit) ? ;
     Ok(! sat)
   }
 }
-impl<'a, Trms> Expr2Smt<()> for SmtConj<Trms>
+
+impl<'a, 'b, Trms> Expr2Smt<()> for SmtConj<'b, Trms>
 where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
   fn expr_to_smt2<Writer: Write>(
     & self, w: & mut Writer, _: ()
   ) -> SmtRes<()> {
+    let suffix = if self.has_fun_apps {
+      write!(w, "(exists (") ? ;
+      let mut inactive = 0 ;
+      for var in self.infos {
+        if var.active {
+          write!(w, " (") ? ;
+          var.idx.default_write(w) ? ;
+          write!(w, " {})", var.typ) ?
+        } else {
+          inactive += 1
+        }
+      }
+      if inactive == self.infos.len() {
+        write!(w, " (unused Bool)") ?
+      }
+      write!(w, " ) ") ? ;
+      ")"
+    } else {
+      ""
+    } ;
+
     if self.terms.len() == 0 {
       write!(w, "true") ?
     } else {
@@ -82,6 +192,50 @@ where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
           w, |w, var| var.default_write(w)
         ) ? ;
       }
+      write!(w, ")") ?
+    }
+    write!(w, "{}", suffix) ? ;
+    Ok(())
+  }
+}
+
+
+/// SMT-prints a collection of terms as a conjunction with default var writer.
+pub struct TermConj<Trms> {
+  /// Conjunction.
+  terms: Trms,
+}
+impl<'a, Trms> TermConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  /// Constructor.
+  pub fn new<IntoIter>(terms: IntoIter) -> Self
+  where IntoIter: IntoIterator<IntoIter = Trms, Item = & 'a Term> {
+    let terms = terms.into_iter() ;
+    TermConj { terms }
+  }
+}
+
+impl<'a, Trms> Expr2Smt<bool> for TermConj<Trms>
+where Trms: Iterator<Item = & 'a Term> + ExactSizeIterator + Clone {
+  fn expr_to_smt2<Writer: Write>(
+    & self, w: & mut Writer, pos: bool
+  ) -> SmtRes<()> {
+    if ! pos {
+      write!(w, "(not ") ?
+    }
+    if self.terms.len() == 0 {
+      write!(w, "true") ?
+    } else {
+      write!(w, "(and") ? ;
+      for term in self.terms.clone() {
+        write!(w, " ") ? ;
+        term.write(
+          w, |w, var| var.default_write(w)
+        ) ? ;
+      }
+      write!(w, ")") ?
+    }
+    if ! pos {
       write!(w, ")") ?
     }
     Ok(())
@@ -404,6 +558,7 @@ impl<'a> Expr2Smt<()> for DisjArgs<'a> {
 
 
 /// Type of values returned by the full parser.
+#[derive(Debug)]
 pub enum FPVal {
   /// A normal value.
   Val(Val),
@@ -413,6 +568,7 @@ pub enum FPVal {
   FunDef(String),
 }
 /// Type of variables returned by the full parser.
+#[derive(Debug)]
 pub enum FPVar {
   /// A normal variable.
   Var(VarIdx),
@@ -446,7 +602,7 @@ impl FullParser {
     let mut postponed = Vec::new() ;
 
     let mut instance = Instance::new() ;
-    let mut context = ::instance::parse::ParserCxt::new() ;
+    let mut context = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
 
     let mut stuck ;
@@ -454,7 +610,7 @@ impl FullParser {
     while ! model.is_empty() {
       let model_len = model.len() ;
 
-      while let Some((var, sig, typ, val)) = model.pop() {
+      while let Some((var, sig, mut typ, val)) = model.pop() {
         match var {
 
           FPVar::Var(var) => match val {
@@ -504,11 +660,11 @@ impl FullParser {
               }
             }
 
-            if let Ok(Some(term)) = match val {
+            if let Ok( Some(mut term) ) = match val {
               FPVal::FunDef(ref fun) => {
-                let mut var_hmap: HashMap<
+                let mut var_hmap: BTreeMap<
                   & str, VarIdx
-                > = HashMap::with_capacity( sig.len() ) ;
+                > = BTreeMap::new() ;
 
                 for (idx, info) in var_infos.index_iter() {
                   let prev = var_hmap.insert(
@@ -520,7 +676,7 @@ impl FullParser {
                 let mut parser = context.parser(fun, 0, & dummy_profiler) ;
 
                 parser.term_opt(
-                    & var_infos, & var_hmap, & instance
+                  & var_infos, & var_hmap, & instance
                 )
               },
 
@@ -532,10 +688,20 @@ impl FullParser {
                 name, fun
               ),
             } {
+              if let Some(new_typ) = term.typ().merge(& typ) {
+                if typ != new_typ {
+                  typ = new_typ.clone()
+                }
+                if term.typ() != new_typ {
+                  if let Some(nu_term) = term.force_dtyp(new_typ) {
+                    term = nu_term
+                  }
+                }
+              }
               debug_assert_eq! { term.typ(), typ }
               let prev = instance.add_define_fun(
                 name.clone(), var_infos,
-                ::instance::parse::PTTerms::tterm( TTerm::T(term.clone()) )
+                ::parse::PTTerms::tterm( TTerm::T(term.clone()) )
               ) ;
               debug_assert! { prev.is_none() }
               let prev = fun_defs.insert(name, (nu_sig, term)) ;
@@ -579,7 +745,7 @@ impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
     }
   }
   fn parse_type(self, input: & 'a str) -> SmtRes<Typ> {
-    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut cxt = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
     let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
     match parser.sort_opt() {
@@ -594,9 +760,9 @@ impl<'a> IdentParser<FPVar, Typ, & 'a str> for FullParser {
 impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
   fn parse_value(
     self, input: & 'a str,
-    _id: & FPVar, _params: & Vec<(FPVar, Typ)>, _out: & Typ
+    _id: & FPVar, _params: & [ (FPVar, Typ) ], _out: & Typ
   ) -> SmtRes<FPVal> {
-    let mut cxt = ::instance::parse::ParserCxt::new() ;
+    let mut cxt = ::parse::ParserCxt::new() ;
     let dummy_profiler = Profiler::new() ;
     let mut parser = cxt.parser(input, 0, & dummy_profiler) ;
 
@@ -646,6 +812,15 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
 
       Ok( FPVal::Val( val::bool(val) ) )
 
+    } else if let Ok( Some(term) ) = parser.term_opt(
+      & vec![].into(), & BTreeMap::new(), & Instance::new()
+    ) {
+      if let Some(val) = term.val() {
+        Ok( FPVal::Val(val) )
+      } else {
+        bail!("cannot turn term into a value: {}", term)
+      }
+
     } else if parser.tag_opt("(") && {
       parser.ws_cmt() ; parser.tag_opt("_")
     } && {
@@ -657,7 +832,12 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, & 'a str> for FullParser {
       parser.ws_cmt() ;
 
       if let Ok((_, ident)) = parser.ident() {
-        Ok( FPVal::FunToArray( ident.into() ) )
+        parser.ws_cmt() ;
+        if parser.tag_opt(")") {
+          Ok( FPVal::FunToArray( ident.into() ) )
+        } else {
+          bail!("ill-formed value, missing closing paren")
+        }
       } else {
         bail!("expected symbol in function to array conversion `{}`", input)
       }
@@ -703,38 +883,57 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
       }
     }
 
-    let conj = SmtConj::new( lhs.iter() ) ;
+    let mut actlit = None ;
 
-    if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
+    let res = {
 
-      // Either it is trivial, or falsifiable regardless of the predicates.
-      if conj.is_unsat(
-        self, clause.vars()
-      ) ? {
-        Ok( Some(true) )
-      } else {
-        Ok(None)
-      }
+      let conj = SmtConj::new( lhs.iter(), & clause.vars ) ;
 
-    } else {
+      if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
 
-      if let Some((pred, args)) = clause.rhs() {
-        if clause.lhs_preds().get(& pred).map(
-          |set| set.contains(args)
-        ).unwrap_or(false) {
-          return Ok( Some(true) )
+        if conj.has_fun_apps {
+          actlit = Some( self.get_actlit() ? )
         }
-      }
 
-      if lhs.is_empty() {
-        Ok( Some(false) )
+        // Either it is trivial, or falsifiable regardless of the predicates.
+        let res = if conj.is_unsat( self, actlit.as_ref() ) ? {
+          Ok( Some(true) )
+        } else {
+          Ok(None)
+        } ;
+
+        res
+
       } else {
-        clause.lhs_terms_checked() ;
-        conj.is_unsat(
-          self, clause.vars()
-        ).map(Some)
-      }
 
+        if let Some((pred, args)) = clause.rhs() {
+          if clause.lhs_preds().get(& pred).map(
+            |set| set.contains(args)
+          ).unwrap_or(false) {
+            return Ok( Some(true) )
+          }
+        }
+
+        if lhs.is_empty() {
+          Ok( Some(false) )
+        } else {
+
+          if conj.has_fun_apps {
+            actlit = Some( self.get_actlit() ? )
+          }
+
+          conj.is_unsat( self, actlit.as_ref() ).map(Some)
+        }
+
+      }
+    } ;
+
+    if let Some(actlit) = actlit {
+      self.de_actlit(actlit) ?
     }
+
+    clause.lhs_terms_checked() ;
+
+    res
   }
 }

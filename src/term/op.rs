@@ -102,10 +102,10 @@ impl Op {
   /// If there is an error, returns the type the spurious argument should have
   /// (if it is known) and the one found.
   pub fn type_check(
-    self, args: & [ Term ]
+    self, args: & mut [ Term ]
   ) -> Result<Typ, term::TypError> {
     use Op::* ;
-    let mut args_iter = args.iter().enumerate() ;
+
     macro_rules! err {
       (lft $($lft:tt)*) => (
         return Err( term::TypError::typ($($lft)*) )
@@ -124,10 +124,10 @@ impl Op {
 
     macro_rules! arity_check {
       ( [ $min:tt, . ] => $e:expr ) => (
-        if args_iter.len() < $min {
+        if args.len() < $min {
           err!(rgt
             "illegal application of `{}` to {} arguments (> {})",
-            self, args_iter.len(), $min
+            self, args.len(), $min
           )
         } else {
           $e
@@ -135,10 +135,10 @@ impl Op {
       ) ;
 
       ( [ $min:tt, $max:tt ] => $e:expr ) => (
-        if args_iter.len() > $max {
+        if args.len() > $max {
           err!(rgt
             "illegal application of `{}` to {} arguments (> {})",
-            self, args_iter.len(), $max
+            self, args.len(), $max
           )
         } else {
           arity_check!( [ $min, .] => $e )
@@ -147,13 +147,14 @@ impl Op {
     }
 
     macro_rules! all_same {
-      (arith) => (
+      (arith) => ({
+        let mut args_iter = args.iter_mut().enumerate() ;
         if let Some((index, fst)) = args_iter.next() {
           let typ = fst.typ() ;
           if ! typ.is_arith() {
             err!(lft None, typ, index)
           }
-          while let Some((index, next)) = args_iter.next() {
+          for (index, next) in args_iter {
             if typ != next.typ() {
               err!(lft Some(typ), next.typ(), index)
             }
@@ -162,10 +163,11 @@ impl Op {
         } else {
           err!(nullary)
         }
-      ) ;
+      }) ;
 
       (bool) => ({
-        while let Some((index, fst)) = args_iter.next() {
+        let mut args_iter = args.iter_mut().enumerate() ;
+        for (index, fst) in args_iter {
           let typ = fst.typ() ;
           if typ != typ::bool() {
             err!(lft Some(typ::bool()), typ, index)
@@ -174,11 +176,34 @@ impl Op {
         typ::bool()
       }) ;
 
-      () => ({
+      () => (
+        all_same!( sub args args.iter_mut().enumerate() )
+      ) ;
+
+      (sub args $args:expr) => ({
+        let mut args_iter = $args ;
         if let Some((_, fst)) = args_iter.next() {
-          let typ = fst.typ() ;
-          while let Some((index, next)) = args_iter.next() {
-            if typ != next.typ() {
+          // println!("all same") ;
+          let mut typ = fst.typ() ;
+          // println!("  {} | {}", typ, fst) ;
+          for (index, next) in args_iter {
+            let next_typ = next.typ() ;
+            // println!("  {} | {}", next_typ, next) ;
+            if let Some(merged_typ) = typ.merge( & next_typ ) {
+              // println!("  nu_typ: {}", merged_typ) ;
+              if let Some(nu) = fst.force_dtyp( merged_typ.clone() ) {
+                typ = merged_typ.clone() ;
+                * fst = nu ;
+                // println!("  -> {}", fst)
+                // println!("{}: {}", fst, fst.typ()) ;
+              }
+              if let Some(nu) = next.force_dtyp( merged_typ ) {
+                // println!("  -> {} {}", nu, nu.typ()) ;
+                * next = nu ;
+                // println!("     {} {}", next, next.typ())
+                // println!("{}: {}", next, next.typ()) ;
+              }
+            } else {
               err!(lft Some(typ), next.typ(), index)
             }
           }
@@ -189,7 +214,8 @@ impl Op {
       }) ;
 
       ($typ:expr) => ({
-        while let Some((index, fst)) = args_iter.next() {
+        let mut args_iter = args.iter_mut().enumerate() ;
+        for (index, fst) in args_iter {
           if fst.typ() != $typ {
             err!(lft Some($typ), fst.typ(), index)
           }
@@ -236,13 +262,17 @@ impl Op {
         }
       ),
       Ite => arity_check!(
-        [ 3, 3 ] => if let Some((index, cond)) = args_iter.next() {
-          if ! cond.typ().is_bool() {
-            err!(lft Some(typ::bool()), cond.typ(), index)
+        [ 3, 3 ] => {
+          let mut args_iter = args.iter_mut().enumerate() ;
+
+          if let Some((index, cond)) = args_iter.next() {
+            if ! cond.typ().is_bool() {
+              err!(lft Some(typ::bool()), cond.typ(), index)
+            }
+            all_same!(sub args args_iter)
+          } else {
+            err!(nullary)
           }
-          all_same!()
-        } else {
-          err!(nullary)
         }
       ),
 

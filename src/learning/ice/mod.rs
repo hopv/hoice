@@ -29,7 +29,6 @@ impl Launcher {
   pub fn launch(
     core: & MsgCore, instance: Arc<Instance>, data: Data, mine: bool
   ) -> Res<()> {
-
     let mut learner = IceLearner::new(
       & core, instance, data, mine
     ).chain_err(
@@ -40,6 +39,7 @@ impl Launcher {
     res
   }
 }
+
 impl Learner for Launcher {
   fn run(
     & self, core: MsgCore,
@@ -192,7 +192,7 @@ impl<'core> IceLearner<'core> {
         Ok(data) => {
           self.count += 1 ;
           if self.count % 50 == 0 {
-            self.solver.reset() ?
+            smt::reset(& mut self.solver, & self.instance) ?
           }
           profile! { self "learn steps" => add 1 }
           if let Some(candidates) = profile!(
@@ -247,7 +247,7 @@ impl<'core> IceLearner<'core> {
       } "sending"
     ) ? ;
     // // Reset and clear declaration memory.
-    // self.solver.reset().chain_err(
+    // smt::reset(& mut self.solver).chain_err(
     //   || "during solver reset"
     // ) ? ;
     for set in self.dec_mem.iter_mut() {
@@ -587,8 +587,6 @@ impl<'core> IceLearner<'core> {
 
     self.unfinished.push( (vec![], data) ) ;
 
-    // let mut branch = Vec::with_capacity(17) ;
-
     'learning: while let Some(
       (mut branch, data)
     ) = self.choose_branch(pred) {
@@ -766,7 +764,7 @@ impl<'core> IceLearner<'core> {
   ///
   /// The `simple` flag forces to use simple, unclassified-agnostic gain.
   pub fn get_qualifier(
-    & mut self, pred: PrdIdx, data: CData, simple: bool
+    & mut self, pred: PrdIdx, mut data: CData, simple: bool
   ) -> Res< Option< (Term, CData, CData) > > {
     let simple = data.unc().is_empty() || (
       ! data.pos().is_empty() && ! data.neg().is_empty() && (
@@ -792,7 +790,7 @@ impl<'core> IceLearner<'core> {
       msg! { self => s }
     }
 
-    let mut best_qual = self.get_best_qual(simple, pred, & data) ? ;
+    let mut best_qual = self.get_best_qual(simple, pred, & mut data) ? ;
 
     if let Some((qual, gain)) = best_qual {
       best_qual = if gain >= self.gain_pivot && gain > 0.0 {
@@ -869,15 +867,23 @@ impl<'core> IceLearner<'core> {
 
   /// Gets the best qualifier available for some data.
   pub fn get_best_qual(
-    & mut self, simple_gain: bool, pred: PrdIdx, data: & CData
+    & mut self, simple_gain: bool, pred: PrdIdx, data: & mut CData
   ) -> Res< Option<(Term, f64)> > {
     let core = & self.core ;
 
+    let bias = data.pop_single_sample() ;
+
     // Run simple if in simple mode.
     if simple_gain {
+
       profile!{ self tick "learning", "qual", "simple gain" }
       let res = self.qualifiers.maximize(
-        pred, |qual| {
+        pred, bias, |qual| {
+          if conf.ice.qual_step {
+            let _ = core.msg(
+              format!("evaluating {} (simple gain)", qual)
+            ) ;
+          }
           let res = data.simple_gain(qual, false) ? ;
           if conf.ice.qual_step {
             let _ = core.msg(
@@ -897,6 +903,7 @@ impl<'core> IceLearner<'core> {
       ) ;
       profile!{ self mark "learning", "qual", "simple gain" }
       res
+
     } else {
 
       let qualifiers = & mut self.qualifiers ;
@@ -905,7 +912,12 @@ impl<'core> IceLearner<'core> {
 
       profile!{ |self.core._profiler| tick "learning", "qual", "gain" }
       let res = qualifiers.maximize(
-        pred, |qual| {
+        pred, bias, |qual| {
+          if conf.ice.qual_step {
+            let _ = core.msg(
+              format!("evaluating {} (gain)", qual)
+            ) ;
+          }
           let res = data.gain(
             pred, all_data, qual, & self_core._profiler, false
           ) ? ;
@@ -927,6 +939,7 @@ impl<'core> IceLearner<'core> {
       ) ;
       profile!{ |self.core._profiler| mark "learning", "qual", "gain" }
       res
+
     }
   }
 
@@ -1029,6 +1042,11 @@ impl<'core> IceLearner<'core> {
           // Term already known, skip.
           Ok(false)
         } else {
+          if conf.ice.qual_step || conf.ice.qual_synth_step {
+            let _ = self_core.msg(
+              format!("synth evaluating {}", term)
+            ) ;
+          }
           let gain = if simple {
             data.simple_gain(& term, false) ?
           } else {

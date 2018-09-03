@@ -1,13 +1,13 @@
 //! Types to store information about variables and predicates.
 
-use rsmt2::print::Sym2Smt ;
+use rsmt2::print::{ Sym2Smt, Sort2Smt } ;
 
 use common::* ;
 
 use super::Typ ;
 
 /// Variable info.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VarInfo {
   /// Variable's name.
   pub name: String,
@@ -34,6 +34,13 @@ impl Sym2Smt<()> for VarInfo {
   ) -> SmtRes<()> where Writer: Write {
     write!(w, "v{}", self.idx) ? ;
     Ok(())
+  }
+}
+impl Sort2Smt for VarInfo {
+  fn sort_to_smt2<Writer>(
+    & self, w: & mut Writer
+  ) -> SmtRes<()> where Writer: Write {
+    self.typ.get().sort_to_smt2(w)
   }
 }
 impl_fmt!{

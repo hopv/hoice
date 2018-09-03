@@ -17,16 +17,23 @@ pub struct CData {
   unc: Vec<VarVals>,
   /// Total number of samples.
   len: f64,
+  /// Positive samples with a single known value.
+  pos_single: Vec<VarVals>,
+  /// Negative samples with a single known value.
+  neg_single: Vec<VarVals>,
 }
 impl CData {
   /// Constructor.
   #[inline]
-  pub fn new(pos: Vec<VarVals>, neg: Vec<VarVals>, unc: Vec<VarVals>) -> Self {
+  pub fn new(
+    pos: Vec<VarVals>, neg: Vec<VarVals>, unc: Vec<VarVals>,
+    pos_single: Vec<VarVals>, neg_single: Vec<VarVals>,
+  ) -> Self {
     let len = (
       pos.len() + neg.len() + unc.len()
     ) as f64 ;
     CData {
-      pos, neg, unc, len,
+      pos, neg, unc, len, pos_single, neg_single
     }
   }
 
@@ -42,6 +49,16 @@ impl CData {
   #[inline]
   pub fn destroy(self) -> (Vec<VarVals>, Vec<VarVals>, Vec<VarVals>) {
     (self.pos, self.neg, self.unc)
+  }
+
+  /// Pops a single sample.
+  pub fn pop_single_sample(& mut self) -> Option<VarVals> {
+    let res = self.pos_single.pop() ;
+    if res.is_some() {
+      res
+    } else {
+      self.neg_single.pop()
+    }
   }
 
   /// Adds a positive sample.
@@ -378,13 +395,47 @@ impl CData {
         Vec::with_capacity( self.pos.len() ),
         Vec::with_capacity( self.neg.len() ),
         Vec::with_capacity( self.unc.len() ),
+        Vec::with_capacity( self.pos_single.len() ),
+        Vec::with_capacity( self.neg_single.len() ),
       ),
       CData::new(
         Vec::with_capacity( self.pos.len() ),
         Vec::with_capacity( self.neg.len() ),
         Vec::with_capacity( self.unc.len() ),
+        Vec::with_capacity( self.pos_single.len() ),
+        Vec::with_capacity( self.neg_single.len() ),
       )
     ) ;
+
+    for pos_single in self.pos_single {
+      if let Some(value) = qual.bool_eval( pos_single.get() ).expect(
+        "During qualifier evaluation"
+      ) {
+        if value {
+          q.pos_single.push(pos_single)
+        } else {
+          nq.pos_single.push(pos_single)
+        }
+      } else {
+        q.pos_single.push( pos_single.clone() ) ;
+        nq.pos_single.push(pos_single)
+      }
+    }
+
+    for neg_single in self.neg_single {
+      if let Some(value) = qual.bool_eval( neg_single.get() ).expect(
+        "During qualifier evaluation"
+      ) {
+        if value {
+          q.neg_single.push(neg_single)
+        } else {
+          nq.neg_single.push(neg_single)
+        }
+      } else {
+        q.neg_single.push( neg_single.clone() ) ;
+        nq.neg_single.push(neg_single)
+      }
+    }
 
     for pos in self.pos {
       if let Some(value) = qual.bool_eval( pos.get() ).expect(
@@ -400,6 +451,7 @@ impl CData {
         nq.add_pos( pos )
       }
     }
+
     for neg in self.neg {
       if let Some(value) = qual.bool_eval( neg.get() ).expect(
         "During qualifier evaluation"
@@ -414,6 +466,7 @@ impl CData {
         nq.add_neg( neg )
       }
     }
+
     for unc in self.unc {
       if let Some(value) = qual.bool_eval( unc.get() ).expect(
         "During qualifier evaluation"
@@ -432,9 +485,14 @@ impl CData {
     q.pos.shrink_to_fit() ;
     q.neg.shrink_to_fit() ;
     q.unc.shrink_to_fit() ;
+    q.pos_single.shrink_to_fit() ;
+    q.neg_single.shrink_to_fit() ;
+
     nq.pos.shrink_to_fit() ;
     nq.neg.shrink_to_fit() ;
     nq.unc.shrink_to_fit() ;
+    nq.pos_single.shrink_to_fit() ;
+    nq.neg_single.shrink_to_fit() ;
 
     (q, nq)
   }

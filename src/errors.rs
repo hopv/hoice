@@ -15,6 +15,40 @@
 use common::* ;
 
 
+
+
+
+/// A term type-checking error.
+pub enum TypError {
+  /// No type info, just an error message.
+  Msg(String),
+  /// Type info:
+  ///
+  /// - the type expected (if known),
+  /// - the type obtained,
+  /// - the index of the argument that caused it.
+  Typ {
+    expected: Option<Typ>,
+    obtained: Typ,
+    index: usize,
+  }
+}
+impl TypError {
+  /// Message constructor.
+  pub fn msg<S: Into<String>>(s: S) -> Self {
+    TypError::Msg( s.into() )
+  }
+
+  /// Type info constructor.
+  pub fn typ(
+    expected: Option<Typ>, obtained: Typ, index: usize
+  ) -> Self {
+    TypError::Typ { expected, obtained, index }
+  }
+}
+
+
+
 /// Parse error data.
 #[derive(Debug)]
 pub struct ParseErrorData {
@@ -129,6 +163,16 @@ impl Error {
     }
   }
 
+  /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
+  pub fn is_smt_unknown(& self) -> bool {
+    match * self.kind() {
+      ErrorKind::SmtError(
+        ::rsmt2::errors::ErrorKind::Unknown
+      ) => true,
+      _ => false,
+    }
+  }
+
   /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
   ///
   /// [unknown]: enum.ErrorKind.html#variant.Unknown
@@ -136,26 +180,27 @@ impl Error {
   pub fn is_unknown(& self) -> bool {
     match * self.kind() {
       ErrorKind::Unknown => true,
-      _ => false,
+      _ => self.is_smt_unknown(),
     }
   }
 
   /// Returns the clause explaining an unsat result if any.
   pub fn unsat_cause(& self) -> Option<ClsIdx> {
-    match * self.kind() {
-      ErrorKind::UnsatFrom(clause) => Some(clause),
+    match self.kind() {
+      ErrorKind::UnsatFrom(clause) => Some(* clause),
       _ => None,
     }
   }
 
 
-  /// True if the kind of the error is [`ErrorKind::Timeout`][timeout].
+  /// True if the kind of the error is a timeout.
   ///
   /// [timeout]: enum.ErrorKind.html#variant.Timeout
   /// (ErrorKind's Timeout variant)
   pub fn is_timeout(& self) -> bool {
-    match * self.kind() {
+    match self.kind() {
       ErrorKind::Timeout => true,
+      ErrorKind::SmtError(smt_err) => smt_err.is_timeout(),
       _ => false,
     }
   }
@@ -178,7 +223,11 @@ pub fn print_err(errs: & Error) {
   println!(
     "({} \"", conf.bad("error")
   ) ;
+  let mut list = vec![] ;
   for err in errs.iter() {
+    list.push( err )
+  }
+  for err in list.into_iter().rev() {
     for line in format!("{}", err).lines() {
       println!("  {}", line)
     }

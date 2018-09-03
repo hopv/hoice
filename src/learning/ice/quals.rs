@@ -402,12 +402,25 @@ fn apply_mappings(
   quals: & mut NuQuals, clause: & Clause, build_conj: bool,
   maps: Vec<(PrdIdx, VarHMap<Term>, TermSet)>, clause_count: usize,
 ) -> Res<()> {
+  let term_count = clause.lhs_terms().len() ;
+
   // Stores the subterms of `lhs_terms`.
   let mut subterms = Vec::with_capacity(7) ;
   // Stores all (sub-)terms.
-  let mut all_terms = TermSet::with_capacity(
-    clause.lhs_terms().len()
-  ) ;
+  let mut all_terms = if term_count <= 100 {
+    Some(
+      TermSet::with_capacity( clause.lhs_terms().len() )
+    )
+  } else { None } ;
+
+  macro_rules! all_terms {
+    ( $fun:ident( $($args:tt)* ) ) => (
+      if let Some(all_terms) = all_terms.as_mut() {
+        all_terms.$fun($($args)*) ;
+      }
+    ) ;
+  }
+
   // Stores all top terms.
   let mut conj = TermSet::with_capacity(
     clause.lhs_terms().len()
@@ -415,13 +428,13 @@ fn apply_mappings(
 
   // Look for atoms and try to apply the mappings.
   for (pred, map, app_quals) in maps {
-    all_terms.clear() ;
+    all_terms!( clear() ) ;
     conj.clear() ;
 
     for term in clause.lhs_terms() {
 
       if let Some( (term, true) ) = term.subst_total(& map) {
-        all_terms.insert( term.clone() ) ;
+        all_terms!( insert( term.clone() ) ) ;
         conj.insert( term.clone() ) ;
         let term = if let Some(term) = term.rm_neg() {
           term
@@ -435,7 +448,7 @@ fn apply_mappings(
 
       while let Some(subterm) = subterms.pop() {
         if let Some( (qual, true) ) = subterm.subst_total(& map) {
-          all_terms.insert(qual) ;
+          all_terms!( insert(qual) ) ;
         }
 
         match subterm.app_inspect() {
@@ -460,11 +473,11 @@ fn apply_mappings(
           //     }
           //   }
           // } else if let Some( (qual, true) ) = subterm.subst_total(& map) {
-          //   all_terms.insert(qual) ;
+          //   all_terms!().insert(qual) ;
           // },
 
           _ => if let Some( (qual, true) ) = subterm.subst_total(& map) {
-            all_terms.insert(qual) ;
+            all_terms!( insert(qual) ) ;
           }
         }
       }
@@ -487,14 +500,18 @@ fn apply_mappings(
       }
     }
 
-    let mut all_terms = all_terms.iter() ;
+    if let Some(all_terms) = all_terms.as_ref() {
+      let mut all_terms = all_terms.iter() ;
 
-    while let Some(term) = all_terms.next() {
-      for other in all_terms.clone() {
-        qual_of_terms(
-          |qual| { quals.insert(qual, pred) ? ; Ok(()) },
-          term, other, clause_count
-        ) ?
+      if all_terms.len() <= 100 {
+        while let Some(term) = all_terms.next() {
+          for other in all_terms.clone() {
+            qual_of_terms(
+              |qual| { quals.insert(qual, pred) ? ; Ok(()) },
+              term, other, clause_count
+            ) ?
+          }
+        }
       }
     }
 
@@ -565,17 +582,64 @@ impl NuQuals {
       rng: Rng::from_seed( [ 42 ; 16 ] ),
     } ;
 
+    let mut prev: TypMap<VarSet> = TypMap::new() ;
+
     if mine {
 
       'all_preds: for pred_info in instance.preds() {
 
         if instance.is_known(pred_info.idx) { continue 'all_preds }
 
+        // Add companion functions if any.
+        // fun::iter(
+        //   |fun| {
+        //     if fun.synthetic == Some(pred_info.idx) {
+        //       let mut args = Vec::with_capacity( pred_info.sig.len() - 1 ) ;
+        //       for (var, typ) in pred_info.sig.index_iter().take(
+        //         pred_info.sig.len() - 1
+        //       ) {
+        //         args.push( term::var(var, typ.clone()) )
+        //       }
+        //       let fun_app = term::fun(
+        //         fun.typ.clone(), fun.name.clone(), args
+        //       ) ;
+        //       let last: VarIdx = (
+        //         pred_info.sig.len() - 1
+        //       ).into() ;
+        //       quals.insert(
+        //         term::eq(
+        //           term::var( last, fun.typ.clone() ),
+        //           fun_app
+        //         ),
+        //         pred_info.idx
+        //       ) ? ;
+        //     }
+        //     Ok(())
+        //   }
+        // ) ? ;
+
         let mut sig = pred_info.sig.index_iter() ;
+        prev.clear() ;
 
         for (var, typ) in sig {
+          if let Some(vars) = prev.get(typ) {
+            for v in vars {
+              quals.insert(
+                term::eq(
+                  term::var(* v, typ.clone()),
+                  term::var(var, typ.clone()),
+                ),
+                pred_info.idx
+              ) ? ;
+            }
+          }
+
+          scoped! {
+            prev.entry( typ.clone() ).or_insert_with(VarSet::new).insert(var) ;
+          }
 
           match ** typ {
+
             typ::RTyp::Int => {
               quals.insert(
                 term::ge( term::var(var, typ.clone()),
@@ -608,6 +672,7 @@ impl NuQuals {
               //   pred_info.idx
               // ) ? ;
             },
+
             typ::RTyp::Real => {
               quals.insert(
                 term::ge(
@@ -652,6 +717,7 @@ impl NuQuals {
               //   pred_info.idx
               // ) ? ;
             },
+
             typ::RTyp::Bool => {
               let var = term::bool_var(var) ;
               quals.insert( var.clone(), pred_info.idx ) ? ;
@@ -667,6 +733,34 @@ impl NuQuals {
                 pred_info.idx
               ) ? ;
             },
+
+            typ::RTyp::DTyp { ref dtyp, .. } => {
+              for name in dtyp.news.keys() {
+                quals.insert(
+                  term::dtyp_tst(
+                    name.clone(),
+                    term::var( var, typ.clone() )
+                  ),
+                  pred_info.idx
+                ) ? ;
+              }
+              let functions = fun::Functions::new( typ.clone() ) ;
+              for fun in functions.from_typ {
+                if fun.typ.is_bool() {
+                  quals.insert(
+                    term::fun(
+                      fun.typ.clone(), fun.name.clone(),
+                      vec![ term::var(var, typ.clone()) ],
+                    ),
+                    pred_info.idx
+                  ) ? ;
+                }
+              }
+            },
+
+            typ::RTyp::Unk => bail!(
+              "unexpected unknown type"
+            ),
           }
         }
       }
@@ -743,16 +837,39 @@ impl NuQuals {
   /// fashion, if any. Early-returns if the criterion is `>=` to the gain pivot
   /// defined in the configuration at some point.
   pub fn maximize<Crit>(
-    & mut self, pred: PrdIdx, mut crit: Crit
+    & mut self, pred: PrdIdx, bias: Option<VarVals>, mut crit: Crit
   ) -> Res< Option<(Term, f64)> >
   where Crit: FnMut( & Term ) -> Res< Option<f64> > {
     use rand::Rng ;
 
+    let var_bias = if let Some(sample) = bias {
+      let mut set = VarSet::new() ;
+      for (var, val) in sample.index_iter() {
+        if val.is_known() {
+          set.insert(var) ;
+        }
+      }
+      if set.is_empty() {
+        bail!("empty bias sample in gain maximization")
+      }
+      Some(set)
+    } else {
+      None
+    } ;
+
     let mut best = None ;
     let rng = & mut self.rng ;
 
-    let mut quals: Vec<_> = self.quals[pred].iter().map(
-      |(_, terms)| terms
+    let mut quals: Vec<_> = self.quals[pred].iter().filter_map(
+      | (count, terms) | if let Some(var_bias) = var_bias.as_ref() {
+        if var_bias.len() == ** count {
+          Some(terms)
+        } else {
+          None
+        }
+      } else {
+        Some(terms)
+      }
     ).collect() ;
 
     if conf.ice.rand_quals {
@@ -769,6 +886,12 @@ impl NuQuals {
 
       // for terms in terms {
       for term in terms {
+        if let Some(var_bias) = var_bias.as_ref() {
+          if var_bias != & term::vars(term) {
+            continue
+          }
+        }
+
         if let Some(value) = crit(term) ? {
           best = if value > 0.9999 {
             return Ok( Some((term.clone(), value)) )

@@ -77,6 +77,7 @@ impl Clause {
     self.shrink_vars()
   }
 
+
   /// Inserts a top term in the lhs.
   ///
   /// Returns true if it was not there (`is_new`).
@@ -97,6 +98,8 @@ impl Clause {
       },
     }
   }
+
+
 
   /// Removes all predicate application of `pred` in the LHS.
   ///
@@ -151,6 +154,7 @@ impl Clause {
   ) -> ::std::collections::hash_map::Drain<PrdIdx, VarTermsSet> {
     self.terms_changed = self.terms_changed || self.rhs.is_none() ;
     self.preds_changed = true ;
+
     self.lhs_preds.drain()
   }
 
@@ -165,7 +169,7 @@ impl Clause {
       for args in argss.iter() {
         nu_argss.insert( f(args) ) ;
       }
-      ::std::mem::swap( & mut nu_argss, argss )
+      ::std::mem::swap( & mut nu_argss, argss ) ;
     }
   }
 
@@ -173,7 +177,9 @@ impl Clause {
   #[inline]
   pub fn rhs_map_args<F>(& mut self, mut f: F)
   where F: FnMut(PrdIdx, & VarTerms) -> (PrdIdx, VarTerms) {
-    if let Some(& mut (ref mut pred, ref mut args)) = self.rhs.as_mut() {
+    if let Some(
+      & mut (ref mut pred, ref mut args)
+    ) = self.rhs.as_mut() {
       self.preds_changed = true ;
       let (nu_pred, mut nu_args) = f(* pred, args) ;
       * args = nu_args ;
@@ -197,12 +203,16 @@ impl Clause {
 
   /// Forces the RHS of a clause.
   #[inline]
+  #[cfg_attr(
+    feature = "cargo-clippy", allow(block_in_if_condition_stmt)
+  )]
   pub fn set_rhs(& mut self, pred: PrdIdx, args: VarTerms) -> Res<()> {
-    let mut vars = VarSet::new() ;
-    for arg in args.iter() {
-      term::map_vars(arg, |v| { vars.insert(v) ; () })
-    }
     debug_assert! {{
+      let mut vars = VarSet::new() ;
+
+      for arg in args.iter() {
+        term::map_vars(arg, |v| { vars.insert(v) ; () })
+      }
       for var in vars {
         if var >= self.vars.len() {
           err_chain! {
@@ -224,6 +234,7 @@ impl Clause {
       }
       true
     }}
+
     self.rhs = Some((pred, args)) ;
     self.preds_changed = true ;
     Ok(())
@@ -300,7 +311,7 @@ impl Clause {
       terms_changed, preds_changed,
       from_unrolling: self.from_unrolling,
       info,
-      from: self.from
+      from: self.from,
     }
   }
 
@@ -309,15 +320,56 @@ impl Clause {
   fn prune(& mut self) {
     use std::cmp::Ordering::* ;
     use term::simplify::SimplRes::* ;
-    let mut to_rm = TermSet::new() ;
-    let mut to_add = TermSet::new() ;
+
+    let mut to_rmv: Option<TermSet> = Option::None ;
+    let mut to_add: Option<TermSet> = Option::None ;
+
+    let new_set = || TermSet::new() ;
+
+    macro_rules! mem {
+      (apply) => ({
+        if let Some(to_rmv) = to_rmv.as_mut() {
+          for term in to_rmv.drain() {
+            let was_there = self.lhs_terms.remove(& term) ;
+            debug_assert! { was_there }
+          }
+        }
+        let mut added_stuff = false ;
+        if let Some(to_add) = to_add.as_mut() {
+          for term in to_add.drain() {
+            let is_new = self.lhs_terms.insert(term) ;
+            added_stuff = added_stuff || is_new
+          }
+        }
+        added_stuff
+      }) ;
+
+      (check empty) => ({
+        debug_assert!( mem!(rmv empty) ) ;
+        debug_assert!( mem!(add empty) ) ;
+      }) ;
+
+      (rmv empty) => ( mem!( @empty to_rmv ) ) ;
+      (add empty) => ( mem!( @empty to_add ) ) ;
+      (@ empty $coll:expr) => (
+        to_add.as_ref().map(
+          |to_add| to_add.is_empty()
+        ).unwrap_or(true)
+      ) ;
+
+      (rmv $term:expr) => ( mem!(@ to_rmv, $term) ) ;
+      (add $term:expr) => ( mem!(@ to_add, $term) ) ;
+      (@ $coll:expr, $term:expr) => (
+        $coll.get_or_insert_with(new_set).insert($term)
+      ) ;
+    }
 
     let mut prune_things = true ;
+    let mut pruned = false ;
 
     while prune_things {
       prune_things = false ;
-      debug_assert! { to_rm.is_empty() }
-      debug_assert! { to_add.is_empty() }
+      mem! { check empty }
 
       scoped! {
         let mut terms = self.lhs_terms.iter() ;
@@ -326,37 +378,32 @@ impl Clause {
             match t.conj_simpl(term) {
               // `t` is more generic, `term` is redundant, keep `t`.
               Cmp(Equal) | Cmp(Greater) => {
-                to_rm.insert( term.clone() ) ;
+                mem!( rmv term.clone() ) ;
               },
               // `term` is more generic, discard `t`.
               Cmp(Less) => {
-                to_rm.insert( t.clone() ) ;
+                mem!( rmv t.clone() ) ;
               },
               // No relation.
               None => (),
+              // The conjunction of the two terms yields a new one.
               Yields(nu_term) => {
-                to_rm.insert( t.clone() ) ;
-                to_rm.insert( term.clone() ) ;
-                to_add.insert(nu_term) ;
-                ()
+                mem!( rmv t.clone() ) ;
+                mem!( rmv term.clone() ) ;
+                mem!( add nu_term ) ;
               },
             }
           }
         }
       }
 
+      pruned = pruned || ! mem!(rmv empty) || ! mem!(add empty) ;
+
       self.terms_changed = self.terms_changed
-      || ! to_rm.is_empty() || ! to_add.is_empty() ;
+      || ! mem!(rmv empty) || ! mem!(add empty) ;
 
-      for to_rm in to_rm.drain() {
-        let was_there = self.lhs_terms.remove(& to_rm) ;
-        debug_assert! { was_there }
-      }
-
-      for to_add in to_add.drain() {
-        let is_new = self.lhs_terms.insert(to_add) ;
-        prune_things = prune_things || is_new
-      }
+      let added_stuff = mem!(apply) ;
+      prune_things = prune_things || added_stuff
 
     }
   }
@@ -560,7 +607,6 @@ impl Clause {
           // `term` is more generic, discard.
           Cmp(Less) => {
             rmed_stuff = true ;
-            // println!("  removing {}", t) ;
             false
           },
           // No relation, keep `t`.
@@ -576,8 +622,8 @@ impl Clause {
         }
       )
     }
+
     // If we removed stuff, it means the term should not be redundant.
-    assert! { ! rmed_stuff || ! redundant }
     if ! redundant {
       let is_new = set.insert(term) ;
       debug_assert! { is_new }
@@ -790,17 +836,56 @@ impl Clause {
     Ok(())
   }
 
-  /// Writes a clause given a special function to write predicates.  
-  pub fn write<W, WritePrd>(
-    & self, w: & mut W, write_prd: WritePrd
+  /// Writes a clause given a special function to write predicates.
+  pub fn write<W, WriteVar, WritePrd>(
+    & self, w: & mut W, write_var: WriteVar, write_prd: WritePrd, info: bool
   ) -> IoRes<()>
-  where W: Write, WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    write!(w, "({} ({}\n  (", keywords::cmd::assert, keywords::forall) ? ;
+  where
+  W: Write,
+  WriteVar: Fn(& mut W, & VarInfo) -> IoRes<()>,
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    if info {
+      writeln!(
+        w, "\
+          ;   {} inactive variable(s)\n\
+          ;   unroll: {}\n\
+          ;   terms_changed: {}\n\
+          ;   preds_changed: {}\n\
+          ;   created by `{}`\
+        ",
+        self.vars.iter().fold(
+          0, |acc, var| acc + if var.active { 1 } else { 0 }
+        ), self.from_unrolling,
+        self.terms_changed, self.preds_changed, self.info,
+      ) ?
+    }
+
+    writeln!(w, "({} ", keywords::cmd::assert) ? ;
+    self.forall_write(w, write_var, write_prd, 2) ? ;
+    writeln!(w, ")") ? ;
+    Ok(())
+  }
+
+  /// Writes the body of a clause with its quantifier.
+  pub fn forall_write<W, WriteVar, WritePrd>(
+    & self, w: & mut W,
+    write_var: WriteVar, write_prd: WritePrd, indent: usize
+  ) -> IoRes<()>
+  where
+  W: Write,
+  WriteVar: Fn(& mut W, & VarInfo) -> IoRes<()>,
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    write!(
+      w, "{nil: >indent$}({}\n{nil: >indent$}  (",
+      keywords::forall, nil="", indent=indent
+    ) ? ;
 
     let mut inactive = 0 ;
     for var in & self.vars {
       if var.active {
-        write!(w, " ({} {})", var.name, var.typ) ?
+        write!(w, " (") ? ;
+        write_var(w, var) ? ;
+        write!(w, " {})", var.typ) ?
       } else {
         inactive += 1 ;
       }
@@ -808,71 +893,79 @@ impl Clause {
     if inactive == self.vars.len() {
       write!(w, " (unused Bool)") ?
     }
+    writeln!(w, " )") ? ;
 
-    write!(w, " )") ? ;
-    writeln!(
-      w, "\n  \
-        ; {} inactive variable(s)\n  \
-        ; unroll: {}\n  \
-        ; terms_changed: {}\n  \
-        ; preds_changed: {}\n  \
-        ; created by `{}`\
-      ",
-      inactive, self.from_unrolling,
-      self.terms_changed, self.preds_changed, self.info
+    self.qf_write(w, write_var, write_prd, indent + 2) ? ;
+
+    writeln!(w, "{nil: >indent$})", nil="", indent=indent) ? ;
+
+    Ok(())
+  }
+
+
+  /// Writes a clause without the quantifiers around it.
+  pub fn qf_write<W, WriteVar, WritePrd>(
+    & self, w: & mut W,
+    write_var: WriteVar, write_prd: WritePrd, indent: usize
+  ) -> IoRes<()>
+  where
+  W: Write,
+  WriteVar: Fn(& mut W, & VarInfo) -> IoRes<()>,
+  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
+    write!(
+      w, "{nil: >indent$}(=>\n{nil: >indent$}  (and\n{nil: >indent$}   ",
+      nil="", indent=indent
     ) ? ;
-    writeln!(w, "  ; from: #{}", self.from) ? ;
 
-    let lhs_len = self.lhs_len() ;
-
-    let (pref, suff) = if lhs_len != 0 {
-      write!(w, "  (=>") ? ;
-      let (pref, suff) = if lhs_len > 1 {
-        write!(w, "\n    (and") ? ;
-        ("      ", Some("    )"))
-      } else {
-        ("    ", None)
-      } ;
-
+    if self.lhs_terms.is_empty() {
+      write!(w, " true") ?
+    } else {
       for term in & self.lhs_terms {
-        write!(w, "\n{}", pref) ? ;
-        term.write(w, |w, var| w.write_all( self.vars[var].as_bytes() )) ?
+        write!(w, " ") ? ;
+        term.write(
+          w, |w, var| write_var( w, & self.vars[var] )
+        ) ?
       }
+    }
+
+    write!(w, "\n{nil: >indent$}   ", nil="", indent=indent) ? ;
+
+    if self.lhs_preds.is_empty() {
+      write!(w, " true") ?
+    } else {
       for (pred, argss) in & self.lhs_preds {
         for args in argss {
-          write!(w, "\n{}", pref) ? ;
+          write!(w, " ") ? ;
           write_prd(w, * pred, args) ?
         }
       }
+    }
 
-      writeln!(w) ? ;
-      if let Some(suff) = suff {
-        writeln!(w, "{}", suff) ?
-      }
-      ("    ", Some("  )"))
-    } else {
-      ("  ", None)
-    } ;
+    write!(
+      w, "\n{nil: >indent$}  )\n{nil: >indent$}  ", nil="", indent=indent
+    ) ? ;
 
-    write!(w, "{}", pref) ? ;
     if let Some((pred, ref args)) = self.rhs {
       write_prd(w, pred, args) ?
     } else {
       write!(w, "false") ?
     }
-    writeln!(w) ? ;
-    if let Some(suff) = suff {
-      writeln!(w, "{}", suff) ?
-    }
-    write!(w, "))")
+    writeln!(
+      w, "\n{nil: >indent$})", nil="", indent=indent
+    ) ? ;
+
+    Ok(())
   }
+
 }
+
 impl ::std::ops::Index<VarIdx> for Clause {
   type Output = VarInfo ;
   fn index(& self, index: VarIdx) -> & VarInfo {
     & self.vars[index]
   }
 }
+
 impl<'a, 'b> ::rsmt2::print::Expr2Smt<
   & 'b (bool, & 'a PrdSet, & 'a PrdSet, & 'a PrdInfos)
 > for Clause {
@@ -930,12 +1023,17 @@ impl<'a, 'b> ::rsmt2::print::Expr2Smt<
       } else if false_preds.contains(& prd) {
         write!(writer, "false") ?
       } else {
-        write!(writer, "({}", prd_info[prd].name) ? ;
+        if ! args.is_empty() {
+          write!(writer, "(") ?
+        }
+        write!(writer, "{}", prd_info[prd].name) ? ;
         for arg in args.iter() {
           write!(writer, " ") ? ;
           arg.write(writer, |w, var| var.default_write(w)) ?
         }
-        write!(writer, ")") ?
+        if ! args.is_empty() {
+          write!(writer, ")") ?
+        }
       }
     } else {
       write!(writer, "false") ?

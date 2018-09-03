@@ -29,6 +29,9 @@ pub use term::{
   typ,
 } ;
 
+pub use dtyp ;
+pub use dtyp::DTyp ;
+
 pub use val ;
 pub use val::Val ;
 
@@ -235,6 +238,11 @@ pub type TermSet = HConSet<Term> ;
 /// A map from terms to stuff.
 pub type TermMap<T> = HConMap<Term, T> ;
 
+/// A set of types.
+pub type TypSet = HConSet<Typ> ;
+/// A map from terms to stuff.
+pub type TypMap<T> = HConMap<Typ, T> ;
+
 /// A signature.
 pub type Sig = VarMap<Typ> ;
 
@@ -264,6 +272,16 @@ pub type VarInfos = VarMap<::instance::info::VarInfo> ;
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap< Option<Term> > ;
 unsafe impl<T: Send> Send for PrdMap<T> {}
+
+
+/// Teaching result.
+pub enum TeachRes {
+  /// A model.
+  Model(Candidates),
+  /// An unsat result.
+  Unsat( ::unsat_core::UnsatRes ),
+}
+
 
 /// Quantified variables for a top term.
 pub type Quantfed = VarHMap<Typ> ;
@@ -390,6 +408,8 @@ pub trait Evaluator {
   fn get(& self, var: VarIdx) -> & Val ;
   /// Number of variables the evaluator supports.
   fn len(& self) -> usize ;
+  /// Prints itself (for debug).
+  fn print(& self) ;
 }
 impl Evaluator for VarMap<Val> {
   #[inline]
@@ -398,6 +418,14 @@ impl Evaluator for VarMap<Val> {
   }
   #[inline]
   fn len(& self) -> usize { VarMap::len(self) }
+  fn print(& self) {
+    println!("varmap:") ;
+    print!("  ") ;
+    for (var, val) in self.index_iter() {
+      print!("{} -> {}, ", var, val)
+    }
+    println!()
+  }
 }
 impl Evaluator for () {
   #[inline]
@@ -406,6 +434,7 @@ impl Evaluator for () {
   }
   #[inline]
   fn len(& self) -> usize { 0 }
+  fn print(& self) { println!("()") }
 }
 /// This implements a redirection `(map, vals)`, where a variable `var` from
 /// the term evaluated is evaluated to `vals[ map[var] ]`.
@@ -417,6 +446,15 @@ where E: Evaluator {
   }
   #[inline]
   fn len(& self) -> usize { self.0.len() }
+  fn print(& self) {
+    println!("varmap<(varidx, typ)>") ;
+    print!("  ") ;
+    for (v1, (v2, _)) in self.0.index_iter() {
+      print!("{} -> {}", v1, v2)
+    }
+    println!() ;
+    self.1.print()
+  }
 }
 
 
@@ -625,7 +663,7 @@ impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
     )
   }
 }
-impl VarIndexed<Term> for VarMap<::instance::parse::PTTerms> {
+impl VarIndexed<Term> for VarMap<::parse::PTTerms> {
   #[inline]
   fn var_get(& self, var: VarIdx) -> Option<Term> {
     if self.len() < * var {

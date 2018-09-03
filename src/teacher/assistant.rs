@@ -6,6 +6,19 @@ use common::* ;
 use data::{ Data, Sample } ;
 
 
+
+/// Result of trying to force a sample positive/negative.
+pub enum ForceRes {
+  /// Failure.
+  None,
+  /// Sample was classified as positive.
+  Pos { sample: Sample, clause: ClsIdx },
+  /// Sample was classified as negative.
+  Neg { sample: Sample, clause: ClsIdx },
+}
+
+
+
 /// Propagates examples, tries to break implication constraints.
 pub struct Assistant {
   /// Core, to communicate with the teacher.
@@ -20,6 +33,8 @@ pub struct Assistant {
   neg: PrdHMap< ClsSet >,
   /// Profiler.
   _profiler: Profiler,
+  /// True if we're using ADTs.
+  using_adts: bool,
 }
 
 impl Assistant {
@@ -38,6 +53,8 @@ impl Assistant {
 
     let mut pos_clauses = ClsSet::new() ;
     let mut neg_clauses = ClsSet::new() ;
+
+    let using_adts = dtyp::get_all().iter().next().is_some() ;
 
     macro_rules! add_clauses {
       ($pred:expr) => ({
@@ -83,7 +100,7 @@ impl Assistant {
     Ok(
       Assistant {
         // core,
-        solver, instance, pos, neg, _profiler
+        solver, instance, pos, neg, _profiler, using_adts
       }
     )
   }
@@ -154,15 +171,15 @@ impl Assistant {
         & Sample { pred, ref args }
       ) = data.constraints[cstr].rhs() {
         match self.try_force(data, pred, args) ? {
-          None => (),
-          Some( Either::Left(pos_sample) ) => {
-            pos.push(pos_sample) ;
+          ForceRes::None => (),
+          ForceRes::Pos { sample, clause } => {
+            pos.push( (sample, clause) ) ;
             // Constraint is trivial, move on.
             trivial = true
           },
-          Some( Either::Right(neg_sample) ) => {
+          ForceRes::Neg { sample, clause } => {
             rhs_false = true ;
-            neg.push(neg_sample)
+            neg.push( (sample, clause) )
           },
         }
       }
@@ -174,13 +191,15 @@ impl Assistant {
           let mut lhs_trivial = true ;
           for sample in samples {
             match self.try_force(data, * pred, sample) ? {
-              None => {
+              ForceRes::None => {
                 lhs_unknown += 1 ;
                 lhs_trivial = false
               },
-              Some( Either::Left(pos_sample) ) => pos.push(pos_sample),
-              Some( Either::Right(neg_sample) ) => {
-                neg.push(neg_sample) ;
+              ForceRes::Pos { sample, clause } => pos.push(
+                (sample, clause)
+              ),
+              ForceRes::Neg { sample, clause } => {
+                neg.push( (sample, clause) ) ;
                 trivial = true ;
                 // Constraint is trivial, move on.
                 // break 'lhs
@@ -210,15 +229,15 @@ impl Assistant {
 
   /// Checks if a sample can be forced to anything.
   ///
-  /// If it can't, return None. If it can, returns `Either`
+  /// If it can't, return None. If it can, returns
   ///
-  /// - `Left` of a sample which, when forced positive, will force the input
-  ///   sample to be classified positive.
-  /// - `Right` of a sample which, when forced negative, will force the input
-  ///   sample to be classified negative.
+  /// - `ForceRes::Pos` of a sample which, when forced positive, will force the
+  ///   input sample to be classified positive.
+  /// - `ForceRes::Neg` of a sample which, when forced negative, will force the
+  ///   input sample to be classified negative.
   pub fn try_force(
     & mut self, _data: & Data, pred: PrdIdx, vals: & VarVals
-  ) -> Res< Option< Either<(Sample, ClsIdx), (Sample, ClsIdx)> > > {
+  ) -> Res<ForceRes> {
     self.solver.comment_args(
       format_args!("working on sample ({} {})", self.instance[pred], vals)
     ) ? ;
@@ -234,27 +253,37 @@ impl Assistant {
           debug_assert_eq! { pred, p }
           debug_assert! { clause.lhs_preds().is_empty() }
 
-          self.solver.push(1) ? ;
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.push(1) ?
+          }
+
           clause.declare(& mut self.solver) ? ;
           self.solver.assert(
             & ConjWrap::new( clause.lhs_terms() )
           ) ? ;
+
           self.solver.assert( & ArgValEq::new(args, vals) ) ? ;
           let sat = profile! {
             self wrap {
               self.solver.check_sat() ?
             } "smt"
           } ;
-          self.solver.pop(1) ? ;
+
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.pop(1) ?
+          }
 
           if sat {
             // msg! { debug self => "  forcing positive" }
             return Ok(
-              Some(
-                Either::Left(
-                  (Sample { pred, args: vals.clone() }, clause_idx)
-                )
-              )
+              ForceRes::Pos {
+                sample: Sample { pred, args: vals.clone() },
+                clause: clause_idx,
+              }
             )
           }
         } else {
@@ -282,7 +311,12 @@ impl Assistant {
             }
           } ;
 
-          self.solver.push(1) ? ;
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.push(1) ?
+          }
+
           clause.declare(& mut self.solver) ? ;
           self.solver.assert(
             & ConjWrap::new( clause.lhs_terms() )
@@ -293,16 +327,20 @@ impl Assistant {
               self.solver.check_sat() ?
             } "smt"
           } ;
-          self.solver.pop(1) ? ;
+
+          if self.using_adts {
+            smt::reset(& mut self.solver, & self.instance) ?
+          } else {
+            self.solver.pop(1) ?
+          }
 
           if sat {
             // msg! { debug self => "  forcing negative" }
             return Ok(
-              Some(
-                Either::Right(
-                  (Sample { pred, args: vals.clone() }, clause_idx)
-                )
-              )
+              ForceRes::Neg {
+                sample: Sample { pred, args: vals.clone() },
+                clause: clause_idx,
+              }
             )
           }
         } else {
@@ -312,9 +350,7 @@ impl Assistant {
 
     }
 
-    // msg! { debug self => "  giving up" }
-
-    Ok(None)
+    Ok(ForceRes::None)
   }
 
 }
@@ -378,6 +414,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
         unknown += 1 ;
         continue
       }
+
       match val.get() {
         val::RVal::B(b) => {
           write!(w, " ") ? ;
@@ -391,6 +428,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
             write!(w, ")") ?
           }
         },
+
         val::RVal::I(ref i) => {
           write!(w, " (= ") ? ;
           arg.write(
@@ -400,6 +438,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           int_to_smt!(w, i) ? ;
           write!(w, ")") ?
         },
+
         val::RVal::R(ref r) => {
           write!(w, " (= ") ? ;
           arg.write(
@@ -409,13 +448,16 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
           rat_to_smt!(w, r) ? ;
           write!(w, ")") ?
         },
-        val::RVal::Array { .. } => {
+
+        val::RVal::Array { .. } |
+        val::RVal::DTypNew { .. } => {
           write!(w, " (= ") ? ;
           arg.write(
             w, |w, v| w.write_all( v.default_str().as_bytes() )
           ) ? ;
           write!(w, " {})", val) ?
         },
+
         val::RVal::N(_) => (),
       }
     }

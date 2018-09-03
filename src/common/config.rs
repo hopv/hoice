@@ -82,12 +82,21 @@ impl SmtConf {
 
   /// Spawns a solver.
   ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
   /// If logging is active, will log to `<name>.smt2`.
-  pub fn spawn<Parser, I>(
-    & self, name: & 'static str, parser: Parser, instance: I
+  fn internal_spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I, preproc: bool
   ) -> Res< ::rsmt2::Solver<Parser> >
   where I: AsRef<Instance> {
-    let mut solver = ::rsmt2::Solver::new(self.conf(), parser) ? ;
+    let mut smt_conf = self.conf.clone() ;
+    if let Some(timeout) = ::common::conf.until_timeout() {
+      smt_conf.option(
+        format!( "-T:{}", timeout.as_secs() + 1 )
+      ) ;
+    }
+
+    let mut solver = ::rsmt2::Solver::new(smt_conf, parser) ? ;
     if let Some(log) = self.log_file(name, instance.as_ref()).chain_err(
       || format!(
         "While opening log file for {}", ::common::conf.emph(name)
@@ -95,7 +104,37 @@ impl SmtConf {
     ) ? {
       solver.tee(log) ?
     }
+
+    if preproc {
+      ::smt::preproc_init(& mut solver) ?
+    } else {
+      ::smt::init(& mut solver, instance) ?
+    }
     Ok(solver)
+  }
+
+  /// Spawns a solver.
+  ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
+    self.internal_spawn(name, parser, instance, false)
+  }
+
+  /// Spawns a preprocessing solver.
+  ///
+  /// Performs the solver initialization step given by `common::smt::init`.
+  ///
+  /// If logging is active, will log to `<name>.smt2`.
+  pub fn preproc_spawn<Parser, I>(
+    & self, name: & 'static str, parser: Parser, instance: I
+  ) -> Res< ::rsmt2::Solver<Parser> >
+  where I: AsRef<Instance> {
+    self.internal_spawn(name, parser, instance, true)
   }
 
   /// Smt log dir, if any.
@@ -297,6 +336,12 @@ pub struct PreprocConf {
 
   /// Allows clause sorting when splitting.
   pub split_sort: bool,
+
+  /// Strengthening by strict clauses.
+  pub strict_neg: bool,
+
+  /// Activates predicates to function reduction
+  pub fun_preds: bool,
 }
 impl SubConf for PreprocConf {
   fn need_out_dir(& self) -> bool {
@@ -563,6 +608,30 @@ impl PreprocConf {
         true
       ).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("strict_neg").long("--strict_neg").help(
+        "(de)activates strengthening by strict negative clauses"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").hidden(true).takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
+    ).arg(
+
+      Arg::with_name("fun_preds").long("--fun_preds").help(
+        "(de)activates predicate-to-function reduction"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value("on").hidden(true).takes_value(
+        true
+      ).number_of_values(1).display_order( order() )
+
     )
   }
 
@@ -584,12 +653,14 @@ impl PreprocConf {
     let neg_unroll = bool_of_matches(matches, "neg_unroll") ;
     let split_strengthen = bool_of_matches(matches, "split_strengthen") ;
     let split_sort = bool_of_matches(matches, "split_sort") ;
+    let strict_neg = bool_of_matches(matches, "strict_neg") ;
+    let fun_preds = bool_of_matches(matches, "fun_preds") ;
 
     PreprocConf {
       dump, dump_pred_dep, active,
       reduction, one_rhs, one_rhs_full, one_lhs, one_lhs_full, cfg_red,
       arg_red, prune_terms, runroll, pos_unroll, neg_unroll,
-      split_strengthen, split_sort
+      split_strengthen, split_sort, strict_neg, fun_preds,
     }
   }
 }
@@ -935,6 +1006,8 @@ pub struct TeacherConf {
   pub max_bias: bool,
   /// Allow partial samples.
   pub partial: bool,
+  /// Restart the teacher's solver everytime it's used.
+  pub restart_on_cex: bool,
 }
 impl SubConf for TeacherConf {
   fn need_out_dir(& self) -> bool { false }
@@ -980,7 +1053,7 @@ impl TeacherConf {
       ).value_name(
         bool_format
       ).default_value(
-        "off"
+        "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
     ).arg(
@@ -1010,6 +1083,20 @@ impl TeacherConf {
         "on"
       ).takes_value(true).number_of_values(1).display_order( order() )
 
+    ).arg(
+
+      Arg::with_name("restart_on_cex").long("--restart_on_cex").help(
+        "restart the teacher's solver for each cex query"
+      ).validator(
+        bool_validator
+      ).value_name(
+        bool_format
+      ).default_value(
+        "off"
+      ).takes_value(true).number_of_values(1).display_order(
+        order()
+      ).hidden(true)
+
     )
   }
 
@@ -1020,9 +1107,10 @@ impl TeacherConf {
     let bias_cexs = bool_of_matches(matches, "bias_cexs") ;
     let max_bias = bool_of_matches(matches, "max_bias") ;
     let partial = bool_of_matches(matches, "partial") ;
+    let restart_on_cex = bool_of_matches(matches, "restart_on_cex") ;
 
     TeacherConf {
-      step, assistant, bias_cexs, max_bias, partial
+      step, assistant, bias_cexs, max_bias, partial, restart_on_cex
     }
   }
 }

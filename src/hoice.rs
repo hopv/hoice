@@ -10,7 +10,6 @@
 #![doc(test(attr(deny(warnings))))]
 #![allow(non_upper_case_globals)]
 
-#[macro_use]
 extern crate lazy_static ;
 #[macro_use]
 extern crate mylib ;
@@ -19,6 +18,7 @@ extern crate error_chain ;
 #[macro_use]
 extern crate clap ;
 extern crate ansi_term as ansi ;
+#[macro_use]
 extern crate hashconsing ;
 extern crate rsmt2 ;
 extern crate num ;
@@ -34,9 +34,11 @@ pub mod val ;
 pub mod term ;
 pub mod fun ;
 pub mod var_to ;
+pub mod dtyp ;
 
 pub mod data ;
 pub mod instance ;
+pub mod parse ;
 pub mod teacher ;
 pub mod learning ;
 pub mod check ;
@@ -94,7 +96,7 @@ pub fn work() -> Res<()> {
 pub fn read_and_work<R: ::std::io::Read>(
   reader: R, file_input: bool, stop_on_check: bool, stop_on_err: bool
 ) -> Res< (Option<ConjModel>, Instance) > {
-  use instance::parse::ItemRead ;
+  use parse::ItemRead ;
 
   let profiler = Profiler::new() ;
 
@@ -102,7 +104,7 @@ pub fn read_and_work<R: ::std::io::Read>(
   // String buffer.
   let buf = & mut String::with_capacity(2000) ;
   // Parser context.
-  let mut parser_cxt = ::instance::parse::ParserCxt::new() ;
+  let mut parser_cxt = ::parse::ParserCxt::new() ;
   // Line offset of the parser.
   let mut line_off = 0 ;
   // Instance.
@@ -118,7 +120,7 @@ pub fn read_and_work<R: ::std::io::Read>(
   let mut unsat = None ;
 
   'parse_work: loop {
-    use instance::parse::Parsed ;
+    use parse::Parsed ;
 
     profile!{ |profiler| tick "parsing" }
 
@@ -174,7 +176,7 @@ pub fn read_and_work<R: ::std::io::Read>(
         } {
           Ok(()) => (),
           Err(e) => if e.is_timeout() {
-            println!("unknown") ;
+            println!("timeout") ;
             print_stats("top", profiler) ;
             ::std::process::exit(0)
           } else if e.is_unknown() {
@@ -244,17 +246,25 @@ pub fn read_and_work<R: ::std::io::Read>(
               None
             },
             Err(ref e) if e.is_timeout() => {
-              println!("unknown") ;
+              println!("timeout") ;
               print_stats("top", profiler) ;
               ::std::process::exit(0)
+            },
+            Err(ref e) if e.is_smt_unknown() => {
+              println!(
+                "; underlying SMT solver reported unknown, giving up..."
+              ) ;
+              println!("unknown") ;
+              None
             },
             Err(ref e) if e.is_unknown() => {
               println!("unknown") ;
               None
-              // print_stats("top", profiler) ;
-              // ::std::process::exit(0)
             },
-            Err(e) => bail!(e),
+            Err(e) => {
+              println!("bail, {}", e.description()) ;
+              bail!(e)
+            },
           }
         } ;
 

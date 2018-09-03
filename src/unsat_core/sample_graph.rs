@@ -1,11 +1,14 @@
 //! Sample dependency tracking.
 
+#![allow(dead_code)]
+
 use std::borrow::Borrow ;
 
 use common::{
   *,
-  smt::FullParser as Parser,
-  var_to::vals::{ VarValsMap, VarValsSet },
+  // smt::FullParser as Parser,
+  // var_to::vals::{ VarValsMap, VarValsSet },
+  var_to::vals::VarValsMap,
 } ;
 
 use unsat_core::* ;
@@ -808,189 +811,186 @@ impl SampleGraph {
 
 
 
-  /// Traces the origin of a sample.
-  ///
-  /// # TODO
-  ///
-  /// - should not be public
-  fn trace<'a>(
-    & 'a self,
-    pred: PrdIdx, args: & VarVals,
-    polarity: Polarity,
-    known: & KnownSamples,
-    solver: & mut Solver<Parser>,
-    instance: & Instance,
-  ) -> Res<Trace> {
+  // /// Traces the origin of a sample.
+  // fn trace<'a>(
+  //   & 'a self,
+  //   pred: PrdIdx, args: & VarVals,
+  //   polarity: Polarity,
+  //   known: & KnownSamples,
+  //   solver: & mut Solver<Parser>,
+  //   instance: & Instance,
+  // ) -> Res<Trace> {
 
-    // Samples for which we already have an explanation for.
-    let mut explained = PrdHMap::<VarValsSet>::new() ;
+  //   // Samples for which we already have an explanation for.
+  //   let mut explained = PrdHMap::<VarValsSet>::new() ;
 
-    // Checks whether a sample is explained or inserts a sample in explained
-    // samples.
-    macro_rules! explained {
-      // Checks whether a sample is already explained.
-      (contains $pred:expr, $args:expr) => (
-        explained.get(& $pred).map(
-          |set| set.contains(& $args)
-        ).unwrap_or(false)
-      ) ;
+  //   // Checks whether a sample is explained or inserts a sample in explained
+  //   // samples.
+  //   macro_rules! explained {
+  //     // Checks whether a sample is already explained.
+  //     (contains $pred:expr, $args:expr) => (
+  //       explained.get(& $pred).map(
+  //         |set| set.contains(& $args)
+  //       ).unwrap_or(false)
+  //     ) ;
 
-      // Adds a sample as explained.
-      (insert $pred:expr, $args:expr) => ({
-        let is_new = explained.entry($pred).or_insert_with(
-          VarValsSet::new
-        ).insert($args) ;
-        debug_assert! { is_new }
-      }) ;
-    }
+  //     // Adds a sample as explained.
+  //     (insert $pred:expr, $args:expr) => ({
+  //       let is_new = explained.entry($pred).or_insert_with(
+  //         VarValsSet::new
+  //       ).insert($args) ;
+  //       debug_assert! { is_new }
+  //     }) ;
+  //   }
 
-    // Result: full trace of explanation.
-    let mut res = vec![] ;
+  //   // Result: full trace of explanation.
+  //   let mut res = vec![] ;
 
-    // Stores the samples we need to explain.
-    let mut to_explain = vec![ (polarity, pred, args.clone()) ] ;
+  //   // Stores the samples we need to explain.
+  //   let mut to_explain = vec![ (polarity, pred, args.clone()) ] ;
 
-    // Explain all samples.
-    'all_samples: while let Some(
-      (polarity, pred, args)
-    ) = to_explain.pop() {
+  //   // Explain all samples.
+  //   'all_samples: while let Some(
+  //     (polarity, pred, args)
+  //   ) = to_explain.pop() {
 
-      // Already explained?
-      if explained!(contains pred, & args) {
-        continue 'all_samples
-      }
+  //     // Already explained?
+  //     if explained!(contains pred, & args) {
+  //       continue 'all_samples
+  //     }
 
-      let (rhs, (clause, lhs)) = if let Some(origin) = known.get(
-        polarity, pred, & args
-      ) {
-        origin
-      } else {
-        bail!("unable to explain why sample ({} {}) is positive", pred, args)
-      } ;
+  //     let (rhs, (clause, lhs)) = if let Some(origin) = known.get(
+  //       polarity, pred, & args
+  //     ) {
+  //       origin
+  //     } else {
+  //       bail!("unable to explain why sample ({} {}) is positive", pred, args)
+  //     } ;
 
-      // Take care of the antecedents.
-      for (pred, argss) in lhs.iter() {
-        for (_, args) in argss {
-          to_explain.push(
-            (Polarity::pos(), * pred, args.clone())
-          )
-        }
-      }
+  //     // Take care of the antecedents.
+  //     for (pred, argss) in lhs.iter() {
+  //       for (_, args) in argss {
+  //         to_explain.push(
+  //           (Polarity::pos(), * pred, args.clone())
+  //         )
+  //       }
+  //     }
 
-      let mut map = VarHMap::new() ;
+  //     let mut map = VarHMap::new() ;
 
-      {
-        use common::smt::{ SmtConj, EqConj } ;
+  //     {
+  //       use common::smt::{ SmtConj, EqConj } ;
 
-        solver.comment(
-          & format!("Working on clause #{}", clause)
-        ) ? ;
-        let clause = & instance[clause] ;
+  //       solver.comment(
+  //         & format!("Working on clause #{}", clause)
+  //       ) ? ;
+  //       let clause = & instance[clause] ;
 
-        solver.push(1) ? ;
+  //       solver.push(1) ? ;
 
-        clause.declare(solver) ? ;
+  //       clause.declare(solver) ? ;
 
-        let conj = SmtConj::new(clause.lhs_terms()) ;
+  //       let conj = SmtConj::new(clause.lhs_terms()) ;
 
-        solver.assert(& conj) ? ;
+  //       solver.assert(& conj) ? ;
 
-        debug_assert_eq! { clause.lhs_preds().len(), lhs.len() }
+  //       debug_assert_eq! { clause.lhs_preds().len(), lhs.len() }
 
-        debug_assert! {
-          lhs.iter().all(
-            |(pred, argss)| clause.lhs_preds().iter().any(
-              |(p, a)| p == pred && argss.len() == a.len() && argss.iter().all(
-                |(args, _)| a.iter().any(
-                  |a| a == args
-                )
-              )
-            )
-          )
-        }
+  //       debug_assert! {
+  //         lhs.iter().all(
+  //           |(pred, argss)| clause.lhs_preds().iter().any(
+  //             |(p, a)| p == pred && argss.len() == a.len() && argss.iter().all(
+  //               |(args, _)| a.iter().any(
+  //                 |a| a == args
+  //               )
+  //             )
+  //           )
+  //         )
+  //       }
 
-        for argss in lhs.values() {
-          for (fargs, sample) in argss {
-            let eq_conj = EqConj::new(fargs, sample) ;
-            solver.assert(& eq_conj) ?
-          }
-        }
+  //       for argss in lhs.values() {
+  //         for (fargs, sample) in argss {
+  //           let eq_conj = EqConj::new(fargs, sample) ;
+  //           solver.assert(& eq_conj) ?
+  //         }
+  //       }
 
-        if let Some((pred, ref fargs, ref args)) = rhs {
-          debug_assert! {
-            if let Some((p, fa)) = clause.rhs() {
-              pred == p && fa == fargs
-            } else {
-              false
-            }
-          }
-          let eq_conj = EqConj::new(fargs, args) ;
-          solver.assert(& eq_conj) ?
-        }
+  //       if let Some((pred, ref fargs, ref args)) = rhs {
+  //         debug_assert! {
+  //           if let Some((p, fa)) = clause.rhs() {
+  //             pred == p && fa == fargs
+  //           } else {
+  //             false
+  //           }
+  //         }
+  //         let eq_conj = EqConj::new(fargs, args) ;
+  //         solver.assert(& eq_conj) ?
+  //       }
 
-        if ! solver.check_sat() ? {
-          bail!("error retrieving unsat core, trace is not feasible")
-        }
+  //       if ! solver.check_sat() ? {
+  //         bail!("error retrieving unsat core, trace is not feasible")
+  //       }
 
-        let model = solver.get_model() ? ;
-        let model = Parser.fix_model(model) ? ;
+  //       let model = solver.get_model() ? ;
+  //       let model = Parser.fix_model(model) ? ;
 
-        solver.pop(1) ? ;
+  //       solver.pop(1) ? ;
 
-        for (var, _, val) in model {
-          let prev = map.insert(var, val) ;
-          debug_assert_eq! { prev, None }
-        }
+  //       for (var, _, val) in model {
+  //         let prev = map.insert(var, val) ;
+  //         debug_assert_eq! { prev, None }
+  //       }
 
-      }
+  //     }
 
-      // Append to result.
-      res.push(
-        TraceFrame::new(
-          clause, map, polarity, pred, args.clone(), rhs, lhs
-        )
-      ) ;
+  //     // Append to result.
+  //     res.push(
+  //       TraceFrame::new(
+  //         clause, map, polarity, pred, args.clone(), rhs, lhs
+  //       )
+  //     ) ;
 
-      // Remember we explained this sample.
-      explained! { insert pred, args }
+  //     // Remember we explained this sample.
+  //     explained! { insert pred, args }
 
-    }
+  //   }
 
-    res.reverse() ;
+  //   res.reverse() ;
 
-    Ok( Trace::new(res) )
-  }
+  //   Ok( Trace::new(res) )
+  // }
 
 
 
 
   /// Extracts a proof for unsat.
-  pub fn get_proof(& mut self, instance: & Instance) -> Res<UnsatProof> {
-    let (
-      pred, pos, neg, known
-    ) = if let Some(contradiction) = self.find_contradiction() {
-      contradiction
-    } else {
-      bail!("could not retrieve unsat result")
-    } ;
+  pub fn get_proof(& mut self, _instance: & Instance) -> Res<UnsatProof> {
+    bail!("unimplemented") ;
+    // let (
+    //   pred, pos, neg, known
+    // ) = if let Some(contradiction) = self.find_contradiction() {
+    //   contradiction
+    // } else {
+    //   bail!("could not retrieve unsat result")
+    // } ;
 
-    let mut solver = conf.solver.spawn(
-      "core_extraction", Parser, & instance
-    ) ? ;
-    let pos_trace = self.trace(
-      pred, & pos, Polarity::pos(), & known, & mut solver,
-      instance
-    ) ? ;
-    let neg_trace = self.trace(
-      pred, & neg, Polarity::neg(), & known, & mut solver,
-      instance
-    ) ? ;
+    // let mut solver = conf.solver.spawn(
+    //   "core_extraction", Parser, & instance
+    // ) ? ;
+    // let pos_trace = self.trace(
+    //   pred, & pos, Polarity::pos(), & known, & mut solver,
+    //   instance
+    // ) ? ;
+    // let neg_trace = self.trace(
+    //   pred, & neg, Polarity::neg(), & known, & mut solver,
+    //   instance
+    // ) ? ;
 
-    Ok(
-      UnsatProof {
-        pred, pos, neg, pos_trace, neg_trace
-      }
-    )
+    // Ok(
+    //   UnsatProof {
+    //     pred, pos, neg, pos_trace, neg_trace
+    //   }
+    // )
   }
 
 

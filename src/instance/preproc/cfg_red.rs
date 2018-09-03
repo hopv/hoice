@@ -4,7 +4,9 @@
 use common::* ;
 use var_to::terms::VarTermsSet ;
 use instance::{
-  preproc::utils, preproc::utils::ExtractionCxt,
+  preproc::{
+    RedStrat, utils, utils::ExtractionCxt,
+  },
   instance::PreInstance,
 } ;
 
@@ -246,15 +248,8 @@ impl Graph {
     )
   }
 
-  /// Predicates that directly depend on this predicate.
-  pub fn forward_dep(& self, pred: PrdIdx) -> & PrdMap<usize> {
-    & self.forward[pred]
-  }
 
-  /// Predicates this predicate directly depends on.
-  pub fn bakward_dep(& self, pred: PrdIdx) -> & PrdMap<usize> {
-    & self.bakward[pred]
-  }
+
 
   /// Follows a forward map. Returns the predicates it encountered and how many
   /// times it encountered them.
@@ -742,8 +737,8 @@ impl Graph {
   /// Constructs all the predicates not in `keep` by inlining the constraints.
   ///
   /// Returns a disjunction of conjunctions.
-  pub fn inline<'a>(
-    & mut self, instance: & mut PreInstance<'a>,
+  pub fn inline(
+    & mut self, instance: & mut PreInstance,
     keep: & mut PrdSet, mut upper_bound: usize,
   ) -> Res< Vec< (PrdIdx, Dnf) > > {
     let (extractor, instance) = instance.extraction() ;
@@ -1064,5 +1059,211 @@ impl Graph {
     } else {
       bail!("try to find heaviest predicate in empty weight map")
     }
+  }
+}
+
+
+
+
+
+
+
+
+/// Detects cycles and keeps a minimal set of predicates to infer.
+pub struct CfgRed {
+  /// Internal counter for log files.
+  cnt: usize,
+  /// Upper bound computed once at the beginning to avoid a progressive
+  /// blow-up.
+  upper_bound: usize,
+  /// Graph, factored to avoid reallocation.
+  graph: Graph,
+}
+
+
+impl CfgRed {
+
+  /// Removes all clauses leading to some predicates and forces them in the
+  /// instance.
+  fn apply_pred_defs(
+    & self, instance: & mut PreInstance, pred_defs: Vec< (PrdIdx, Dnf) >
+  ) -> Res<RedInfo> {
+    let mut info = RedInfo::new() ;
+
+    for (pred, def) in pred_defs {
+      if instance.is_known(pred) {
+        continue
+      }
+
+      conf.check_timeout() ? ;
+      info += instance.rm_rhs_clauses_of(pred) ? ;
+
+      if_log! { @5
+        let mut s = format!("{}(", instance[pred]) ;
+        let mut is_first = true ;
+        for (var, typ) in instance[pred].sig.index_iter() {
+          if ! is_first {
+            s.push_str(", ")
+          } else {
+            is_first = false
+          }
+          s.push_str( & var.default_str() ) ;
+          s.push_str( & format!(": {}", typ) ) ;
+        }
+        s.push_str(") = (or\n") ;
+
+        for & (ref qvars, ref conj) in & def {
+
+          let (suff, pref) = if qvars.is_empty() {
+            (None, "  ")
+          } else {
+            s.push_str("  (exists (") ;
+            for (var, typ) in qvars {
+              s.push_str(" (") ;
+              s.push_str( & var.default_str() ) ;
+              s.push_str( & format!(" {})", typ) )
+            }
+            s.push_str(" )\n") ;
+            (Some("  )"), "    ")
+          } ;
+
+          s.push_str(pref) ;
+          s.push_str("(and\n") ;
+          for term in conj.terms() {
+            s.push_str( & format!("{}  {}\n", pref, term) )
+          }
+          for (pred, argss) in conj.preds() {
+            for args in argss {
+              s.push_str(
+                & format!("{}  ({} {})\n", pref, instance[* pred], args)
+              )
+            }
+          }
+          s.push_str(pref) ;
+          s.push_str(")\n") ;
+          if let Some(suff) = suff {
+            s.push_str(suff) ;
+            s.push_str("\n")
+          }
+        }
+        s.push_str(")\n") ;
+
+        log! { @4 "{}", s }
+      }
+
+      log! { @4 "  unfolding {}", instance[pred] }
+
+      info += instance.force_dnf_left(pred, def) ? ;
+
+      preproc_dump!(
+        instance =>
+          format!("after_force_dnf_left_on_{}", pred),
+          "Instance after reaching preproc fixed-point."
+      ) ? ;
+    }
+
+    Ok(info)
+  }
+
+}
+
+
+
+
+impl RedStrat for CfgRed {
+  fn name(& self) -> & 'static str { "cfg_red" }
+
+  fn new(instance: & Instance) -> Self {
+    CfgRed {
+      cnt: 0,
+      upper_bound: {
+        let clause_count = instance.clauses().len() ;
+        let adjusted = 50. * ( clause_count as f64 ).log(2.) ;
+        ::std::cmp::min(
+          clause_count, (
+            adjusted
+          ).round() as usize
+        )
+      },
+      graph: Graph::new(instance),
+    }
+  }
+
+  fn apply(
+    & mut self, instance: & mut PreInstance
+  ) -> Res<RedInfo> {
+    // use std::time::Instant ;
+    // use common::profiling::DurationExt ;
+
+    let mut total_info = RedInfo::new() ;
+
+    loop {
+
+      let mut info = RedInfo::new() ;
+
+      // let start = Instant::now() ;
+      self.graph.setup(instance) ;
+      // let setup_duration = Instant::now() - start ;
+      // println!("setup time: {}", setup_duration.to_str()) ;
+
+      self.graph.check(& instance) ? ;
+
+      // let start = Instant::now() ;
+      let mut to_keep = self.graph.break_cycles(instance) ? ;
+      // let breaking_duration = Instant::now() - start ;
+      // println!("breaking time: {}", breaking_duration.to_str()) ;
+
+      self.graph.to_dot(
+        & instance, format!("{}_pred_dep_b4", self.cnt), & to_keep
+      ) ? ;
+
+      let pred_defs = self.graph.inline(
+        instance, & mut to_keep, self.upper_bound
+      ) ? ;
+
+      if pred_defs.is_empty() { break }
+
+      info.preds += pred_defs.len() ;
+
+      self.graph.check(& instance) ? ;
+      if_log! { @verb
+        log! { @verb "inlining {} predicates", pred_defs.len() }
+        for (pred, _) in & pred_defs {
+          log! { @verb "  {}", instance[* pred] }
+        }
+      }
+
+      if pred_defs.len() == instance.active_pred_count() {
+        let (is_sat, this_info) = instance.force_all_preds(pred_defs) ? ;
+        info += this_info ;
+        if ! is_sat {
+          unsat!("by preprocessing (all predicates resolved but unsat)")
+        } else {
+          total_info += info ;
+          break
+        }
+      }
+
+      info += self.apply_pred_defs(instance, pred_defs) ? ;
+
+      if conf.preproc.dump_pred_dep {
+        self.graph.setup(instance) ;
+        self.graph.check(& instance) ? ;
+        self.graph.to_dot(
+          & instance, format!("{}_pred_dep_reduced", self.cnt), & to_keep
+        ) ? ;
+      }
+
+      self.cnt += 1 ;
+
+      if info.non_zero() {
+        total_info += info
+      } else {
+        break
+      }
+
+    }
+
+    Ok(total_info)
   }
 }

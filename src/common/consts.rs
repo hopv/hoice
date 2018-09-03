@@ -137,10 +137,16 @@ pub mod keywords {
         to_int_ ("to_int", doc = "Conversion from `Real` to `Int`.")
         to_real_ ("to_real", doc = "Conversion from `Int` to `Real`.")
 
-        as_ ("as", doc = "As.")
+        as_ ("as", doc = "Cast operator.")
+        is_ ("is", doc = "Datatype tester.")
+        const_ ("const", doc = "Constant cast.")
 
         store_ ("store", doc = "Updater for arrays.")
         select_ ("select", doc = "Accessor for arrays.")
+
+        match_ ("match", doc = "Match operator.")
+
+        lambda_ ("_", doc = "Lambda abstraction.")
       }
     }
 
@@ -151,10 +157,19 @@ pub mod keywords {
       }
 
       keys {
+        dec_dtyp ("declare-datatype", doc = "Datatype declaration keyword.")
+        dec_dtyps (
+          "declare-datatypes", doc = "Multiple datatype declaration keyword."
+        )
         dec_fun ("declare-fun", doc = "Predicate declaration keyword.")
-        def_fun ("define-fun", doc = "Predicate definition keyword.")
-        def_funs (
-          "define-funs-rec", doc = "Multiple predicate declaration keyword."
+        def_fun ("define-fun", doc = "Function definition keyword.")
+        def_fun_rec (
+          "define-fun-rec",
+          doc = "Recursive function definition keyword."
+        )
+        def_funs_rec (
+          "define-funs-rec",
+          doc = "Multiple recursive functions definition keyword."
         )
 
         assert ("assert", doc = "Assertion keyword.")

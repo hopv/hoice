@@ -6,18 +6,13 @@
 //! - `Val::I` from `Int`, `usize`, `isize`, `u32`, `i32`, `u64`, `i64`
 //! - `Val::N` from `()`
 
-use hashconsing::{ HashConsign, HConser, HConsed } ;
+use hashconsing::HConsed ;
 
 use common::* ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RVal> > ;
-
-lazy_static! {
-  /// Term factory.
-  static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
-  ) ;
+new_consign! {
+  /// Value factory.
+  let factory = consign(conf.instance.term_capa) for RVal ;
 }
 
 /// A hash-consed type.
@@ -26,12 +21,19 @@ pub type Val = HConsed<RVal> ;
 
 /// Creates a value.
 pub fn mk<V: Into<RVal>>(val: V) -> Val {
-  factory.mk(val.into())
+  let val = val.into() ;
+  // if val.typ().has_unk() {
+  //   panic!(
+  //     "trying to create a value with a (partially) unknown type: {} ({})",
+  //     val, val.typ()
+  //   )
+  // }
+  factory.mk(val)
 }
 
 /// Creates a boolean value.
 pub fn bool(b: bool) -> Val {
-  factory.mk(RVal::B(b))
+  mk( RVal::B(b) )
 }
 
 /// Creates an array with a default value.
@@ -46,7 +48,7 @@ pub fn array<Tgt: Into<Val>>(
   } else {
     default
   } ;
-  factory.mk(
+  mk(
     RVal::Array { idx_typ, default, vals: Vec::new() }
   )
 }
@@ -122,17 +124,53 @@ pub fn array_of_fun(idx_typ: Typ, term: & Term) -> Res<Val> {
 
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
-  factory.mk(RVal::I(i.into()))
+  mk(
+    RVal::I( i.into() )
+  )
 }
 /// Creates a rational value.
 pub fn real<R: Into<Rat>>(r: R) -> Val {
-  factory.mk(RVal::R(r.into()))
+  mk(
+    RVal::R( r.into() )
+  )
 }
 /// Creates a non-value for a type.
 pub fn none(typ: Typ) -> Val {
-  factory.mk(RVal::N(typ))
+  mk( RVal::N(typ) )
 }
 
+/// Creates a new datatype value.
+pub fn dtyp_new(typ: Typ, name: String, mut args: Vec<Val>) -> Val {
+  {
+    let (dtyp, typ_args) = typ.dtyp_inspect().unwrap_or_else(
+      || panic!("illegal application of constructor {} of type {}", name, typ)
+    ) ;
+    let cargs = dtyp.news.get(& name).unwrap_or_else(
+      || panic!(
+        "unknown constructor {} for datatype {}", conf.bad(& name), dtyp.name
+      )
+    ) ;
+    if args.len() != cargs.len() {
+      panic!(
+        "illegal application of constructor {} for datatype {} to {} \
+        arguments, expected {}",
+        conf.bad(& name), dtyp.name, args.len(), cargs.len()
+      )
+    }
+
+    for (count, (_ , ptyp)) in cargs.iter().enumerate() {
+      let typ = ptyp.to_type(typ_args).unwrap_or_else(
+        |_| panic!("illegal datatype {}", typ)
+      ) ;
+      if let Some(nu) = args[count].typ().merge(& typ) {
+        if let Some(nu) = args[count].force_dtyp(nu) {
+          args[count] = nu
+        }
+      }
+    }
+  }
+  mk( RVal::DTypNew { typ, name, args } )
+}
 
 
 /// Values.
@@ -157,6 +195,17 @@ pub enum RVal {
   I(Int),
   /// Real value (actually a rational).
   R(Rat),
+
+  /// Datatype constructor.
+  DTypNew {
+    /// Type of the value.
+    typ: Typ,
+    /// Constructor.
+    name: String,
+    /// Arguments.
+    args: Vec<Val>,
+  },
+
   /// An array is a total function.
   ///
   /// The `vals` field encodes a sequence of if-then-else's.
@@ -181,6 +230,8 @@ pub enum RVal {
     vals: Vec<(Val, Val)>
   },
 }
+
+
 
 impl Into<Val> for RVal {
   fn into(self) -> Val {
@@ -333,6 +384,15 @@ impl RVal {
     }
   }
 
+  /// Inspects a datatype value.
+  pub fn dtyp_inspect(& self) -> Option<(& Typ, & str, & [Val])> {
+    if let RVal::DTypNew { typ, name, args } = self {
+      Some((typ, name, args))
+    } else {
+      None
+    }
+  }
+
   /// Returns the type of the value.
   pub fn typ(& self) -> Typ {
     use self::RVal::* ;
@@ -343,12 +403,25 @@ impl RVal {
       Array { ref idx_typ, ref default, .. } => typ::array(
         idx_typ.clone(), default.typ()
       ),
+      DTypNew{ ref typ, .. } => typ.clone(),
       N(ref typ) => typ.clone()
     }
   }
 
+  /// Forces the type of a datatype constructor.
+  pub fn force_dtyp(& self, nu_typ: Typ) -> Option<Val> {
+    if let RVal::DTypNew { typ, name, args } = self {
+      debug_assert! { nu_typ.is_compatible(typ) }
+      Some(
+        dtyp_new( nu_typ, name.clone(), args.clone() )
+      )
+    } else {
+      None
+    }
+  }
+
   /// Attempts to cast a value.
-  pub fn cast(& self, typ: & ::term::Typ) -> Res<Val> {
+  pub fn cast(& self, typ: & Typ) -> Res<Val> {
     use num::One ;
     use term::typ::RTyp ;
     if & self.typ() == typ {
@@ -370,6 +443,16 @@ impl RVal {
       // This is a bit lax as it allows to cast a non-value of any type to a
       // non-value of any other type...
       (& RVal::N(_), _) => Ok(none(typ.clone())),
+
+      (
+        & RVal::DTypNew { typ: ref vtyp, ref name, ref args }, _
+      ) => if let Some(typ) = vtyp.merge(typ) {
+        Ok( dtyp_new(typ, name.clone(), args.clone()) )
+      } else {
+        bail!(
+          "Cannot cast value {} to type {}", self, typ
+        )        
+      },
 
       (val, typ) => bail!(
         "Cannot cast value {} to type {}", val, typ
@@ -511,6 +594,19 @@ impl RVal {
           res = term::store(res, idx, val) ;
         }
         Some(res)
+      },
+      RVal::DTypNew { ref name, ref typ, ref args } => {
+        let mut t_args = Vec::with_capacity( args.len() ) ;
+        for arg in args {
+          if let Some(t_arg) = arg.to_term() {
+            t_args.push(t_arg)
+          } else {
+            return None
+          }
+        }
+        Some(
+          term::dtyp_new( typ.clone(), name.clone(), t_args )
+        )
       },
     }
   }
@@ -770,7 +866,7 @@ impl RVal {
     use num::Signed ;
     if num.is_negative() ^ den.is_negative()
     && den.clone() * & res != num {
-      res = res - 1
+      res -= 1
     }
     Ok( val::int(res) )
   }
@@ -1156,40 +1252,39 @@ impl RVal {
 
 
 
-/** Operations over arrays.
-
-# Examples
-
-```
-use hoice::term::typ ;
-use hoice::val::* ;
-
-let first_array = array( typ::int(), int(0) ) ;
-# println!("{}", first_array) ;
-
-assert_eq! { first_array.select( int(7) ), int(0) }
-// Following works because `first_array` is constant.
-assert_eq! { first_array.select( none(typ::int()) ), int(0) }
-
-let array = first_array.store(int(7), int(0)) ;
-# println!("{}", array) ;
-assert_eq! { array, first_array }
-
-let array = first_array.store(int(7), int(1)) ;
-# println!("{}", array) ;
-
-# println!("array[{}] = {}", 7, 1) ;
-assert_eq! { array.select( int(7) ), int(1) }
-# println!("array[{}] = {}", 5, 0) ;
-assert_eq! { array.select( int(5) ), int(0) }
-# println!("array[{}] = {}", 0, 0) ;
-assert_eq! { array.select( int(0) ), int(0) }
-# println!("array[_] = {}", 1) ;
-// Select on `none` does not work anymore, array is not constant.
-assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
-```
-*/
-impl RVal { 
+/// Operations over arrays.
+///
+/// # Examples
+///
+/// ```
+/// use hoice::term::typ ;
+/// use hoice::val::* ;
+///
+/// let first_array = array( typ::int(), int(0) ) ;
+/// # println!("{}", first_array) ;
+///
+/// assert_eq! { first_array.select( int(7) ), int(0) }
+/// // Following works because `first_array` is constant.
+/// assert_eq! { first_array.select( none(typ::int()) ), int(0) }
+///
+/// let array = first_array.store(int(7), int(0)) ;
+/// # println!("{}", array) ;
+/// assert_eq! { array, first_array }
+///
+/// let array = first_array.store(int(7), int(1)) ;
+/// # println!("{}", array) ;
+///
+/// # println!("array[{}] = {}", 7, 1) ;
+/// assert_eq! { array.select( int(7) ), int(1) }
+/// # println!("array[{}] = {}", 5, 0) ;
+/// assert_eq! { array.select( int(5) ), int(0) }
+/// # println!("array[{}] = {}", 0, 0) ;
+/// assert_eq! { array.select( int(0) ), int(0) }
+/// # println!("array[_] = {}", 1) ;
+/// // Select on `none` does not work anymore, array is not constant.
+/// assert_eq! { array.select( none(typ::int()) ), none(typ::int()) }
+/// ```
+impl RVal {
   /// Store over arrays, creates a `RVal`.
   ///
   /// Does not actually create a `Val`.
@@ -1359,6 +1454,46 @@ impl RVal {
       idx, idx.typ(), self, self.typ()
     )
   }
+
+  /// True if the value is composite (array or ADT).
+  pub fn is_composite(& self) -> bool {
+    match self {
+      RVal::Array { .. } |
+      RVal::DTypNew { .. } => true,
+      RVal::I(_) | RVal::R(_) | RVal::B(_) => false,
+      RVal::N(ref t) => t.is_dtyp() || t.is_array(),
+    }
+  }
+}
+
+
+
+
+/// Operation over datatype values.
+impl RVal {
+  /// Datatype selector.
+  pub fn dtyp_slc<S>(& self, field: S) -> Option<Val>
+  where S: AsRef<str> {
+    let field = field.as_ref() ;
+    if let Some((val_typ, constructor, args)) = self.dtyp_inspect() {
+      if let Some((dtyp, _)) = val_typ.dtyp_inspect() {
+        if let Some(params) = dtyp.news.get(constructor) {
+          debug_assert_eq! { params.len(), args.len() }
+          for ((name, _), arg) in params.iter().zip( args.iter() ) {
+            if name == field {
+              return Some( arg.clone() )
+            }
+          }
+        }
+      } else {
+        panic!("inconsistent internal datatype term")
+      }
+    } else {
+      panic!("inconsistent internal datatype selector term")
+    }
+
+    None
+  }
 }
 
 
@@ -1366,22 +1501,64 @@ impl RVal {
 
 impl_fmt!{
   RVal(self, fmt) {
-    match self {
-      RVal::N(ref t) => write!(fmt, "_[{}]", t),
-      RVal::I(ref i) => int_to_smt!(fmt, i),
-      RVal::R(ref r) => rat_to_smt!(fmt, r),
-      RVal::B(b) => write!(fmt, "{}", b),
-      RVal::Array { ref default, ref vals, .. } => {
-        for _ in vals {
-          write!(fmt, "(store ") ?
-        }
-        write!(fmt, "((as const {}) {})", self.typ(), default) ? ;
-        for (cond, val) in vals.iter().rev() {
-          write!(fmt, " {} {})", cond, val) ?
-        }
-        Ok(())
-      },
+
+    let mut stack = vec![ Either::Left( (false, self) ) ] ;
+
+    while let Some(curr) = stack.pop() {
+
+      match curr {
+        Either::Right(()) => write!(fmt, ")") ?,
+
+        Either::Left( (sep, curr) ) => {
+          if sep {
+            write!(fmt, " ") ?
+          }
+
+          match curr {
+            RVal::N(_) => write!(fmt, "_") ?,
+            RVal::I(ref i) => int_to_smt!(fmt, i) ?,
+            RVal::R(ref r) => rat_to_smt!(fmt, r) ?,
+            RVal::B(b) => write!(fmt, "{}", b) ?,
+
+            RVal::DTypNew {
+              ref name, ref args, ref typ
+            } => if args.is_empty() {
+              if typ.has_unk() {
+                write!(fmt, "{}", name) ?
+              } else {
+                write!(fmt, "({} {} {})", keywords::op::as_, name, typ) ?
+              }
+            } else {
+              write!(fmt, "({}", name) ? ;
+              stack.push( Either::Right(()) ) ;
+              // Reversing since we're popping from the stack.
+              for arg in args.iter().rev() {
+                stack.push( Either::Left( (true, arg) ) )
+              }
+            },
+
+            RVal::Array { ref default, ref vals, .. } => {
+              for _ in vals {
+                write!(fmt, "({} ", keywords::op::store_) ?
+              }
+              write!(
+                fmt, "(({} {} {}) {})",
+                keywords::op::as_, keywords::op::const_, self.typ(), default
+              ) ? ;
+              // Not reversing the list, we want to print in reverse order.
+              for (index, val) in vals.iter() {
+                stack.push( Either::Right(()) ) ;
+                stack.push( Either::Left( (true, val) ) ) ;
+                stack.push( Either::Left( (true, index) ) ) ;
+              }
+            },
+          }
+        },
+      }
+
     }
+
+    Ok(())
   }
 }
 

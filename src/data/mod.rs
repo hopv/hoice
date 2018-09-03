@@ -32,6 +32,11 @@ pub struct Data {
   /// Constraints.
   pub constraints: CstrMap<Constraint>,
 
+  /// Positive samples with a single non-partial sample.
+  pos_single: PrdMap< VarValsSet >,
+  /// Negative samples with a single non-partial sample.
+  neg_single: PrdMap< VarValsSet >,
+
   /// Map from samples to constraints.
   map: PrdMap< VarValsMap<CstrSet> >,
 
@@ -56,6 +61,9 @@ impl Clone for Data {
       neg: self.neg.clone(),
       constraints: self.constraints.clone(),
       map: self.map.clone(),
+
+      pos_single: self.pos_single.clone(),
+      neg_single: self.neg_single.clone(),
 
       staged: self.staged.clone(), // Empty anyway.
       cstr_info: self.cstr_info.clone(),
@@ -86,16 +94,22 @@ impl Data {
     let pred_count = instance.preds().len() ;
 
     let (
-      mut map, mut pos, mut neg
+      mut map, mut pos, mut neg,
+      mut pos_single, mut neg_single,
     ) = (
       PrdMap::with_capacity(pred_count),
       PrdMap::with_capacity(pred_count),
-      PrdMap::with_capacity(pred_count)
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count),
+      PrdMap::with_capacity(pred_count),
     ) ;
+
     for _ in instance.preds() {
       map.push( VarValsMap::with_capacity(103) ) ;
       pos.push( VarValsSet::with_capacity(103) ) ;
       neg.push( VarValsSet::with_capacity(103) ) ;
+      pos_single.push( VarValsSet::with_capacity(13) ) ;
+      neg_single.push( VarValsSet::with_capacity(13) ) ;
     }
     // let track_samples = instance.track_samples() ;
 
@@ -103,7 +117,7 @@ impl Data {
     Data {
       instance, pos, neg, constraints, map,
       staged: Staged::with_capacity(pred_count),
-      cstr_info: CstrInfo::new(),
+      cstr_info: CstrInfo::new(), pos_single, neg_single,
       // graph: if track_samples {
       //   Some( SampleGraph::new() )
       // } else {
@@ -281,10 +295,9 @@ impl Data {
   /// Does not propagate.
   pub fn add_raw_pos(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
-  ) -> () {
+  ) -> bool {
     let args = var_to::vals::new(args) ;
-    self.add_pos(clause, pred, args.clone()) ;
-    ()
+    self.add_pos( clause, pred, args.clone() )
   }
 
   /// Adds a negative example.
@@ -294,10 +307,9 @@ impl Data {
   /// Does not propagate.
   pub fn add_raw_neg(
     & mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals
-  ) -> () {
+  ) -> bool {
     let args = var_to::vals::new(args) ;
-    self.add_neg(clause, pred, args.clone()) ;
-    ()
+    self.add_neg( clause, pred, args.clone() )
   }
 
 
@@ -533,6 +545,16 @@ impl Data {
       (pred, mut argss, pos)
     ) = self.staged.pop() {
 
+      macro_rules! single_target_set {
+        () => (
+          if pos {
+            & mut self.pos_single[pred]
+          } else {
+            & mut self.neg_single[pred]
+          }
+        ) ;
+      }
+
       macro_rules! target_set {
         () => (
           if pos {
@@ -556,7 +578,18 @@ impl Data {
             debug_assert! { rmed == 0 }
             false
           } else {
-            let is_new = target_set!().insert(s.clone()) ;
+            if s.len() > 1 {
+              let count = s.iter().fold(
+                0, |acc, val| if ! val.is_known() { acc + 1 } else { acc }
+              ) ;
+              if count + 1 == s.len() {
+                let _ = single_target_set!().insert( s.clone() ) ;
+                ()
+              }
+            }
+
+            let is_new = target_set!().insert( s.clone() ) ;
+
             debug_assert! { is_new }
             true
           }
@@ -713,14 +746,14 @@ impl Data {
   pub fn add_data(
     & mut self, clause: ClsIdx,
     mut lhs: Vec< (PrdIdx, RVarVals) >, rhs: Option<(PrdIdx, RVarVals)>,
-  ) -> Res<()> {
+  ) -> Res<bool> {
 
     let rhs = match rhs {
 
       Some((pred, sample)) => if lhs.is_empty() {
         // Positive sample.
-        self.add_raw_pos(clause, pred, sample) ;
-        return Ok(())
+        let new = self.add_raw_pos(clause, pred, sample) ;
+        return Ok(new)
       } else {
         // Constraint.
         Some((pred, sample))
@@ -732,8 +765,8 @@ impl Data {
           "failed pop on vector of length 1"
         ) ;
         debug_assert_eq! { lhs.len(), 0 }
-        self.add_raw_neg(clause, pred, sample) ;
-        return Ok(())
+        let new = self.add_raw_neg(clause, pred, sample) ;
+        return Ok(new)
       } else {
         // Constraint.
         None
@@ -749,9 +782,7 @@ impl Data {
       )
     }
 
-    self.add_cstr(clause, lhs, rhs) ? ;
-
-    Ok(())
+    self.add_cstr(clause, lhs, rhs)
   }
 
 
@@ -995,11 +1026,17 @@ impl Data {
     let unc_set = & self.map[pred] ;
     let pos_set = & self.pos[pred] ;
     let neg_set = & self.neg[pred] ;
-    let (mut pos, mut neg, mut unc) = (
+    let pos_single_set  = & self.pos_single[pred] ;
+    let neg_single_set  = & self.neg_single[pred] ;
+
+    let (mut pos, mut neg, mut unc, mut pos_single, mut neg_single) = (
       Vec::with_capacity( pos_set.len() ),
       Vec::with_capacity( neg_set.len() ),
-      Vec::with_capacity( unc_set.len() )
+      Vec::with_capacity( unc_set.len() ),
+      Vec::with_capacity( pos_single_set.len() ),
+      Vec::with_capacity( neg_single_set.len() ),
     ) ;
+
     for sample in pos_set.iter() {
       pos.push( sample.clone() )
     }
@@ -1011,8 +1048,20 @@ impl Data {
         unc.push( sample.clone() )
       }
     }
+
+    for sample in pos_single_set {
+      if pos.contains(sample) {
+        pos_single.push( sample.clone() )
+      }
+    }
+    for sample in neg_single_set {
+      if neg.contains(sample) {
+        neg_single.push( sample.clone() )
+      }
+    }
+
     profile! { self mark "data of" }
-    CData::new(pos, neg, unc)
+    CData::new(pos, neg, unc, pos_single, neg_single)
   }
 
 
@@ -1459,6 +1508,7 @@ impl Staged {
     let is_new = set.insert(args) ;
     // We checked `args` is not subsumed already, so it's necessarily new.
     debug_assert! { is_new }
+
     true
   }
 

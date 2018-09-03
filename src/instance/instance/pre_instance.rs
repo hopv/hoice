@@ -10,6 +10,31 @@ use instance::{
 } ;
 
 
+
+/// Performs a checksat.
+macro_rules! check_sat {
+  ($pre_instance:expr) => ({
+    // let actlit = if $pre_instance.reset_solver {
+    //   Some( $pre_instance.solver.get_actlit() ? )
+    // } else {
+    //   None
+    // } ;
+
+    // let sat =
+      $pre_instance.solver.check_sat() ?
+    // ;
+
+    // if let Some(actlit) = actlit {
+    //   $pre_instance.solver.de_actlit(actlit) ?
+    // }
+
+    // sat
+  }) ;
+}
+
+
+
+
 /// Wraps an instance for pre-processing.
 pub struct PreInstance<'a> {
   /// The instance wrapped.
@@ -27,6 +52,9 @@ pub struct PreInstance<'a> {
 
   /// Term extraction context.
   extraction: ExtractionCxt,
+
+  /// Use actlits in checksats.
+  reset_solver: bool,
 }
 impl<'a> PreInstance<'a> {
   /// Constructor.
@@ -36,14 +64,30 @@ impl<'a> PreInstance<'a> {
     let simplifier = ClauseSimplifier::new() ;
     let clauses_to_simplify = Vec::with_capacity(7) ;
 
+    let mut reset_solver = false ;
+
+    fun::iter(
+      |_| { reset_solver = true ; Ok(()) }
+    ) ? ;
+
+    if dtyp::get_all().iter().next().is_some() {
+      reset_solver = true
+    }
+
     Ok(
       PreInstance {
         instance, solver, simplifier,
         clauses_to_simplify,
         vars: VarSet::new(),
         extraction: ExtractionCxt::new(),
+        reset_solver,
       }
     )
+  }
+
+  /// Resets the solver.
+  pub fn reset_solver(& mut self) -> Res<()> {
+    smt::preproc_reset(& mut self.solver)
   }
 
   /// Accessor for the solver.
@@ -224,12 +268,41 @@ impl<'a> PreInstance<'a> {
 
 
   /// Strict negative clauses.
-  pub fn strict_neg_clauses(& self) -> impl Iterator<Item = & Clause> {
-    self.clauses.iter().filter(
-      |clause| clause.rhs().is_none() && clause.lhs_preds().len() == 1 && (
-        clause.lhs_preds().iter().next().map(
-          |(_, apps)| apps.len() == 1
-        ).unwrap_or(false)
+  pub fn strict_neg_clauses(& mut self) -> (
+    & mut ExtractionCxt, & Instance, impl Iterator<Item = (ClsIdx, & Clause)>
+  ) {
+    let extraction = & mut self.extraction ;
+    let instance = & self.instance ;
+    let clauses = & instance.clauses ;
+    (
+      extraction, instance, clauses.index_iter().filter(
+        |(_, clause)| clause.rhs().is_none()
+        && clause.lhs_preds().len() == 1 && (
+          clause.lhs_preds().iter().next().map(
+            |(_, apps)| apps.len() == 1
+          ).unwrap_or(false)
+        )
+      )
+    )
+  }
+
+
+
+  /// Non-strict negative clauses.
+  pub fn non_strict_neg_clauses(& mut self) -> (
+    & mut ExtractionCxt, & Instance, impl Iterator<Item = (ClsIdx, & Clause)>
+  ) {
+    let extraction = & mut self.extraction ;
+    let instance = & self.instance ;
+    let clauses = & instance.clauses ;
+    (
+      extraction, instance, clauses.index_iter().filter(
+        |(_, clause)| clause.rhs().is_none()
+        && (
+          clause.lhs_preds().len() > 1 || clause.lhs_preds().iter().any(
+            |(_, apps)| apps.len() > 1
+          )
+        )
       )
     )
   }
@@ -250,6 +323,34 @@ impl<'a> PreInstance<'a> {
     }
 
     info += self.force_trivial() ? ;
+
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    }
+
+    // Check side-clauses.
+    scoped! {
+      let instance = & mut self.instance ;
+      let solver = & mut self.solver ;
+
+      log! { @4 "checking side clauses" }
+
+      info += instance.side_clauses_retain(
+        |clause| {
+          solver.push(1) ? ;
+          let res = match solver.is_clause_trivial(clause) ? {
+            None => bail!( ErrorKind::Unsat ),
+            Some(is_trivial) => Ok(is_trivial),
+          } ;
+          solver.pop(1) ? ;
+          res
+        }
+      ) ? ;
+    }
+
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    }
 
     Ok(info)
   }
@@ -595,9 +696,21 @@ impl<'a> PreInstance<'a> {
   /// - the rhs is a predicate application contained in the lhs.
   #[cfg_attr(feature = "cargo-clippy", allow(wrong_self_convention))]
   fn is_clause_trivial(& mut self, clause_idx: ClsIdx) -> Res<bool> {
-    if let Some(res) = self.solver.is_clause_trivial(
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.push(1) ? ;
+    }
+    let res = self.solver.is_clause_trivial(
       & mut self.instance[clause_idx]
-    ) ? {
+    ) ;
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.pop(1) ? ;
+    }
+
+    if let Some(res) = res ? {
       Ok(res)
     } else {
       log_debug!{
@@ -623,7 +736,18 @@ impl<'a> PreInstance<'a> {
   pub fn is_this_clause_trivial(
     & mut self, clause: & mut Clause
   ) -> Res< Option<bool> > {
-    self.solver.is_clause_trivial(clause)
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.push(1) ? ;
+    }
+    let res = self.solver.is_clause_trivial(clause) ;
+    if self.reset_solver {
+      smt::reset(& mut self.solver, & self.instance) ? ;
+    } else {
+      self.solver.pop(1) ? ;
+    }
+    res
   }
 
 
@@ -1851,6 +1975,31 @@ impl<'a> PreInstance<'a> {
       }
     }
 
+    self.solver.comment("checking side clauses") ? ;
+
+    for clause in & self.instance.side_clauses {
+      self.solver.push(1) ? ;
+      for info in clause.vars() {
+        if info.active {
+          self.solver.declare_const(
+            & info.idx.default_str(), info.typ.get()
+          ) ?
+        }
+      }
+      self.solver.assert_with(
+        clause, & (false, & set, & set, & self.instance.preds)
+      ) ? ;
+
+      let sat = check_sat!(self) ;
+
+      self.solver.pop(1) ? ;
+      if sat {
+        return Ok(false)
+      }
+    }
+
+    self.solver.comment("checking clauses") ? ;
+
     for clause in & self.instance.clauses {
       self.solver.push(1) ? ;
       for info in clause.vars() {
@@ -1864,14 +2013,14 @@ impl<'a> PreInstance<'a> {
         clause, & (false, & set, & set, & self.instance.preds)
       ) ? ;
 
-      let sat = self.solver.check_sat() ? ;
+      let sat = check_sat!(self) ;
       self.solver.pop(1) ? ;
       if sat {
         return Ok(false)
       }
     }
 
-    self.solver.reset() ? ;
+    self.reset_solver() ? ;
 
     Ok(true)
   }
@@ -2143,7 +2292,7 @@ impl ClauseSimplifier {
         bool_prop!() ;
 
         if ! changed {
-          break
+          break 'outter
         } else {
           changed = false ;
         }

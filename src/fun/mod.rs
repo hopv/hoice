@@ -1,131 +1,593 @@
-/*! Hash consed functions.
+//! Hash consed functions.
+//!
+//! # TODO
+//!
+//! Move this in the instance to avoid the unsafe code to borrow definitions.
 
-Note that [`Fun`][fun] is extended by [`FunExt`][fun ext] to allow
-
-- retrieving the name of the function,
-- defining the function in a solver.
-
-[fun]: type.Fun.html (Fun type)
-[fun ext]: trait.FunExt.html (FunExt trait)
-*/
-
-use hashconsing::{ HashConsign, HConser, HConsed } ;
+use std::sync::{
+  RwLockReadGuard, RwLockWriteGuard
+} ;
 
 use common::* ;
 
-/// Type of the term factory.
-type Factory = RwLock< HashConsign<RFun> > ;
+/// A function.
+pub type Fun = Arc<RFun> ;
 
+/// Type of the function factory.
+///
+/// The usize indicates whether an element of the factory is being borrowed
+/// **unsafely** by [`get_as_ref`](fun/fn.get_as_ref.html). If it is true, then
+/// borrowing the factory mutably is unsafe.
+///
+/// To avoid problems, **always** use the `factory` macro to access the
+/// factory.
+type Factory = RwLock< (BTreeMap<String, Fun>, usize) > ;
 lazy_static! {
-  /// Term factory.
+  /// Function factory.
   static ref factory: Factory = RwLock::new(
-    HashConsign::with_capacity( conf.instance.term_capa )
+    ( BTreeMap::new(), 0 )
   ) ;
 }
 
-/// A hash consed function.
-pub type Fun = HConsed<RFun> ;
 
+lazy_static! {
+  /// Stores function declarations before obtaining the actual definition.
+  static ref fun_decs: RwLock< BTreeMap<String, RFun> > = RwLock::new(
+    BTreeMap::new()
+  ) ;
+}
 
-/// Defines all functions.
-pub fn define_all<P>(solver: & mut Solver<P>) -> Res<()> {
-  if let Ok(f) = factory.read() {
-    f.fold_res(
-      (), |_, fun| fun.define(solver).map(|_| ())
-    )
+/// Registers a function declaration.
+pub fn register_dec(fun: RFun) -> Res<()> {
+  if let Ok(mut decs) = fun_decs.write() {
+    let prev = decs.insert( fun.name.clone(), fun ) ;
+    if let Some(prev) = prev {
+      bail!("the function {} is declared twice", conf.bad(& prev.name))
+    }
   } else {
-    bail!("failed to lock factory")
+    bail!("unable to access function declarations")
+  }
+  Ok(())
+}
+
+/// Retrieves a function declaration.
+pub fn retrieve_dec(fun: & str) -> Res<RFun> {
+  if let Ok(mut decs) = fun_decs.write() {
+    if let Some(dec) = decs.remove(fun) {
+      Ok(dec)
+    } else {
+      bail!("unable to retrieve function declaration for {}", conf.bad(fun))
+    }
+  } else {
+    bail!("unable to access function declarations")
   }
 }
 
 
-/// Extends [`Fun`][fun] with function declaration.
-///
-/// [fun]: type.Fun.html (Fun type)
-pub trait FunExt {
-  /// Defines itself as a function.
-  ///
-  /// Returns the name of the function.
-  fn define<P>(& self, & mut Solver<P>) -> Res<String> ;
-  /// Name of the function.
-  fn name(& self) -> String ;
+
+/// Accesses the declaration of a function.
+pub fn dec_do<F, T>(fun: & str, mut f: F) -> Res<T>
+where F: for<'a> FnMut(& 'a RFun) -> Res<T> {
+  if let Ok(defs) = factory.read() {
+    if let Some(def) = defs.0.get(fun) {
+      return f(def)
+    }
+  } else {
+    bail!("unable to retrieve function factory")
+  }
+
+  if let Ok(defs) = fun_decs.read() {
+    if let Some(def) = defs.get(fun) {
+      f(def)
+    } else {
+      bail!(
+        "trying to retrieve declaration for unknown function {}",
+        conf.bad(fun)
+      )
+    }
+  } else {
+    bail!("unable to retrieve function declarations")
+  }
 }
-impl FunExt for Fun {
-  fn define<P>(& self, solver: & mut Solver<P>) -> Res<String> {
-    use smt::SmtTerm ;
-    let name = self.name() ;
-    let sig: Vec<_> = self.sig.index_iter().map(
-      |(var, typ)| (var, typ.get())
-    ).collect() ;
-    solver.define_fun(
-      & name, & sig, self.out.get(), & SmtTerm::new(& self.def)
+
+
+
+/// Read version of the factory.
+fn read_factory<'a>() -> RwLockReadGuard<
+  'a, (BTreeMap<String, Fun>, usize)
+> {
+  if let Ok(res) = factory.read() {
+    res
+  } else {
+    panic!("failed to access function factory (read)")
+  }
+}
+/// Write version of the factory.
+fn write_factory<'a>() -> RwLockWriteGuard<
+  'a, (BTreeMap<String, Fun>, usize)
+> {
+  loop {
+    if let Ok(res) = factory.write() {
+      if res.1 != 0 { continue }
+      return res
+    } else {
+      panic!("failed to access function factory (write)")
+    }
+  }
+}
+
+macro_rules! factory {
+  (read) => (& read_factory().0) ;
+  (write) => (& mut write_factory().0) ;
+}
+
+
+/// Iterates over all function definitions.
+pub fn iter<F>(mut f: F) -> Res<()>
+where F: FnMut(& Fun) -> Res<()> {
+  let defs = read_factory() ;
+  for def in defs.0.values() { f(def) ? }
+  Ok(())
+}
+
+
+/// Creates a function definition.
+pub fn mk(fun: RFun) -> Res<Fun> {
+  let fun = Arc::new( fun ) ;
+  let f = factory!(write) ;
+  let prev = f.insert( fun.name.clone(), fun.clone() ) ;
+
+  if let Some(prev) = prev {
+    bail!("attempting to redefine function `{}`", prev.name)
+  }
+
+  Ok(fun)
+}
+
+
+/// Groups all functions by dependencies.
+pub fn ordered() -> Res< Vec< Vec<Fun> > > {
+  let mut all: Vec<_> = read_factory().0.values().cloned().collect() ;
+
+  let mut groups = vec![] ;
+
+  while let Some(fun) = all.pop() {
+    let mut group = vec![ fun ] ;
+    if ! group[0].deps.is_empty() {
+      all.retain(
+        |fun| if group[0].deps.contains(& fun.name) {
+          group.push( fun.clone() ) ;
+          false
+        } else {
+          true
+        }
+      ) ;
+    }
+    groups.push(group)
+  }
+
+  Ok(groups)
+}
+
+
+
+/// Defines a function, and all functions related to it.
+pub fn write<W>(w: & mut W, fun: & RFun, pref: & str) -> Res<()>
+where W: Write {
+  let f = factory!(read) ;
+  let mut all = vec![] ;
+
+  all.reserve( fun.deps.len() + 1 ) ;
+  all.push(fun) ;
+  for dep in & fun.deps {
+    if let Some(dep) = f.get(dep) {
+      all.push(dep)
+    } else {
+      bail!(
+        "function `{}` depends on unknown function `{}`",
+        conf.emph(& fun.name), conf.bad(& dep)
+      )
+    }
+  }
+
+  writeln!(w, "{}({} (", pref, consts::keywords::cmd::def_funs_rec) ? ;
+
+  // Write all signatures.
+  for fun in & all {
+    write!(w, "{}  (", pref) ? ;
+    write!(w, "{} (", fun.name) ? ;
+    for info in & fun.sig {
+      write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+    }
+    writeln!(w, " ) {})", fun.typ) ?
+  }
+
+  writeln!(w, "{}) (", pref) ? ;
+
+  // Write all definitions.
+  for fun in all.drain( 0 .. ) {
+    write!(w, "{}  ", pref) ? ;
+    fun.def.write(
+      w, |w, var| var.default_write(w)
     ) ? ;
-    Ok(name)
+    writeln!(w) ?
   }
-  fn name(& self) -> String {
-    format!("hoice_reserved_fun_{}", self.uid())
+
+  writeln!(w, "{}) )", pref) ? ;
+
+  Ok(())
+}
+
+
+/// Defines all the functions.
+pub fn write_all<W: Write>(
+  w: & mut W, pref: & str, invariants: bool
+) -> Res<()> {
+  for mut group in ordered() ? {
+
+    if group.len() == 1 {
+      let fun = & group[0] ;
+
+      let def_key = if fun.recursive {
+        consts::keywords::cmd::def_fun_rec
+      } else {
+        consts::keywords::cmd::def_fun
+      } ;
+
+      writeln!(
+        w, "{}({} {}", pref, def_key, fun.name
+      ) ? ;
+      write!(w, "{}  (", pref) ? ;
+      for info in & fun.sig {
+        write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+      }
+      writeln!(w, " ) {}", fun.typ) ? ;
+
+      write!(w, "{}  ", pref) ? ;
+
+      fun.def.write(
+        w, |w, var| var.default_write(w)
+      ) ? ;
+      writeln!(w, "\n{})", pref) ?
+
+    } else if group.len() > 1 {
+      writeln!(
+        w, "{}({} (", pref, consts::keywords::cmd::def_funs_rec
+      ) ? ;
+
+      // Write all signatures.
+      for fun in & group {
+        write!(w, "{}  (", pref) ? ;
+        write!(w, "{} (", fun.name) ? ;
+        for info in & fun.sig {
+          write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+        }
+        writeln!(w, " ) {})", fun.typ) ?
+      }
+
+      writeln!(w, "{}) (", pref) ? ;
+
+      // Write all definitions.
+      for fun in & group {
+        write!(w, "{}  ", pref) ? ;
+        fun.def.write(
+          w, |w, var| var.default_write(w)
+        ) ? ;
+        writeln!(w) ?
+      }
+
+      writeln!(w, "{}) )", pref) ?
+    }
+
+    writeln!(w) ? ;
+
+    if invariants {
+      let mut one_or_more = false ;
+      for fun in group {
+        for inv in & fun.invariants {
+          one_or_more = true ;
+          writeln!(w, "{}(assert", pref) ? ;
+          writeln!(w, "{}  (forall", pref) ? ;
+          write!(w, "{}    (", pref) ? ;
+          for info in & fun.sig {
+            write!(w, " ({} {})", info.idx.default_str(), info.typ) ?
+          }
+          writeln!(w, " )") ? ;
+          write!(w, "{}    ", pref) ? ;
+          inv.write(
+            w, |w, var| var.default_write(w)
+          ) ? ;
+          writeln!(w, "\n{}) )", pref) ?
+        }
+      }
+
+      if one_or_more {
+        writeln!(w) ?
+      }
+    }
+  }
+
+  Ok(())
+}
+
+
+
+/// Retrieves the definition of a function as a reference.
+///
+/// This actually uses unsafe code, this kind of borrow should not be possible.
+/// If something modifies the factory while the borrow is alive, then it might
+/// end up pointing to arbitrary data.
+///
+/// It's made safe by keeping track of how many references have been created
+/// and preventing modifying the factory as long as this count is not zero.
+/// This function hence works in conjunction with [`decrease_ref_count`][link].
+/// When using this function, you must keep track of how many references you
+/// have created and when you are sure they're dead, call `decrease_ref_count`.
+///
+/// link: fun/fn.decrease_ref_count.html
+/// (decrease_ref_count function)
+pub fn get_as_ref<'a>(name: & 'a str) -> Option<& 'a Fun> {
+  let mut pair = if let Ok(mut f) = factory.write() {
+    f
+  } else {
+    panic!("failed to access function factory (write)")
+  } ;
+  pair.1 += 1 ;
+  unsafe {
+    ::std::mem::transmute::<Option<& Fun>, Option<& 'a Fun>>(
+      pair.0.get(name)
+    )
+  }
+}
+
+pub fn decrease_ref_count(count: usize) {
+  if count == 0 { return () }
+  if let Ok(mut f) = factory.write() {
+    if count <= f.1 {
+      f.1 -= count
+    } else {
+      panic!("trying to decrease ref count for function factory by too much")
+    }
+  } else {
+    panic!("failed to access function factory (write)")
   }
 }
 
 
 
-/// Creates a hash consed function.
-pub fn mk<F: Into<RFun>>(val: F) -> Fun {
-  factory.mk(val.into())
+/// Retrieves the definition of a function.
+pub fn get(name: & str) -> Option<Fun> {
+  let f = factory!(read) ;
+  f.get(name).cloned()
 }
 
-/// Functions.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+
+/// Types and creates a function application.
+pub fn type_apply(
+  name: String, var_info: & VarInfos, out: & Typ, args: Vec<Term>
+) -> Result<Term, ::errors::TypError> {
+  if args.len() != var_info.len() {
+    return Err(
+      TypError::Msg(
+        format!(
+          "function `{}` is applied to {} arguments, expected {}",
+          conf.emph(name), args.len(), var_info.len()
+        )
+      )
+    )
+  }
+
+  for (arg, info) in args.iter().zip( var_info.iter() ) {
+    if ! arg.typ().is_compatible( & info.typ ) {
+      return Err(
+        TypError::Typ {
+          expected: Some( info.typ.clone() ),
+          obtained: arg.typ().clone(),
+          index: * info.idx,
+        }
+      )
+    }
+  }
+
+  Ok(
+    term::fun( out.clone(), name, args )
+  )
+}
+
+
+/// Creates a function application.
+pub fn apply(
+  name: String, args: Vec<Term>
+) -> Result<Term, ::errors::TypError> {
+  use ::errors::TypError ;
+
+  let def = if let Some(def) = get(& name) { def } else {
+    return Err(
+      TypError::Msg( format!("unknown function `{}`", conf.bad(name)) )
+    )
+  } ;
+
+  type_apply(name, & def.sig, & def.typ, args)
+}
+
+
+
+
+
+
+/// Real structure for functions.
+#[derive(Debug, Clone)]
 pub struct RFun {
-  /// Input signature.
-  sig: Sig,
-  /// Output type.
-  out: Typ,
+  /// Name.
+  pub name: String,
+  /// Other functions this function depends on.
+  pub deps: BTreeSet<String>,
+  /// Signature.
+  ///
+  /// The string stored is the original name of the argument.
+  pub sig: VarInfos,
+  /// Type.
+  pub typ: Typ,
   /// Definition.
-  def: Term,
+  pub def: Term,
+  /// The index of the predicate this function was created for.
+  pub synthetic: Option<PrdIdx>,
+  /// Invariants of the function.
+  pub invariants: TermSet,
+  /// True if the function is recursive.
+  recursive: bool,
 }
+
+impl PartialEq for RFun {
+  fn eq(& self, other: & Self) -> bool {
+    self.name == other.name
+  }
+}
+impl Eq for RFun {}
+
+impl PartialOrd for RFun {
+  fn partial_cmp(& self, other: & Self) -> Option< ::std::cmp::Ordering > {
+    self.name.partial_cmp(& other.name)
+  }
+}
+impl Ord for RFun {
+  fn cmp(& self, other: & Self) -> ::std::cmp::Ordering {
+    self.name.cmp(& other.name)
+  }
+}
+
+impl ::std::hash::Hash for RFun {
+  fn hash<H: ::std::hash::Hasher>(& self, state: & mut H) {
+    self.name.hash(state)
+  }
+}
+
 impl RFun {
   /// Constructor.
-  pub fn new(sig: Sig, out: Typ, def: Term) -> Self {
-    debug_assert_eq! { out, def.typ() }
-    RFun { sig, out, def }
+  ///
+  /// The dependencies are initially empty, and the definition is set to
+  /// `true`.
+  pub fn new<S: Into<String>>(
+    name: S, sig: VarInfos, typ: Typ
+  ) -> Self {
+    let name = name.into() ;
+    RFun {
+      name, deps: BTreeSet::new(),
+      sig, typ, def: term::tru(), synthetic: None,
+      invariants: TermSet::new(), recursive: false,
+    }
   }
 
-  /// Signature accessor.
-  pub fn sig(& self) -> (& Sig, & Typ) {
-    (& self.sig, & self.out)
+  /// Insert a dependency.
+  ///
+  /// Only inserts if `dep` is not `self.name`.
+  pub fn insert_dep<S: Into<String>>(& mut self, dep: S) -> bool {
+    let dep = dep.into() ;
+    if self.name == dep {
+      false
+    } else {
+      self.deps.insert(dep)
+    }
   }
 
-  /// Definition accessor.
-  pub fn def(& self) -> & Term {
-    & self.def
+  /// Flips the flag indicating that the function was created internally for a
+  /// predicate.
+  pub fn set_synthetic(& mut self, pred: PrdIdx) {
+    self.synthetic = Some(pred)
   }
 
-  /// Function evaluation.
-  pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    debug_assert_eq! { self.sig.len(), model.len() }
-    debug_assert! {{
-      for (var, typ) in self.sig.index_iter() {
-        debug_assert_eq! { * typ, model.get(var).typ() }
+  /// True if the function is recursive.
+  pub fn is_recursive(& self) -> bool {
+    self.recursive
+  }
+
+  /// Sets the definition of a function.
+  ///
+  /// # Panics
+  ///
+  /// - if `self.def` is not `term::tru()`
+  pub fn set_def(& mut self, def: Term) {
+    def.iter(
+      |trm| if let Some((name, _)) = trm.fun_inspect() {
+        if name == & self.name {
+          self.recursive = true
+        } else {
+          self.deps.insert( name.to_string() ) ;
+        }
       }
-      true
-    }}
-    self.def.eval(model)
+    ) ;
+    match * self.def {
+      RTerm::Cst(ref cst) if cst.is_true() => (),
+      _ => panic!("trying to set the definition of a function twice"),
+    }
+    self.def = def
+  }
+
+  /// Checks the function is legal.
+  pub fn check(& self) -> Res<()> {
+    for dep in & self.deps {
+      if get(dep).is_none() {
+        bail!(
+          "function `{}` depends on unknown function `{}`",
+          conf.emph(& self.name), conf.bad(dep)
+        )
+      }
+    }
+    Ok(())
+  }
+
+  /// Writes itself and all its dependencies.
+  pub fn write<W>(& self, w: & mut W, pref: & str) -> Res<()>
+  where W: Write {
+    write(w, self, pref)
   }
 }
 
 
 
-impl Into<RFun> for (Sig, Term) {
-  fn into(self) -> RFun {
-    let (sig, term) = self ;
-    RFun::new(sig, term.typ(), term)
-  }
-}
 
-impl Into<RFun> for (Sig, Typ, Term) {
-  fn into(self) -> RFun {
-    let (sig, out, term) = self ;
-    RFun::new(sig, out, term)
+
+/// Stores functions from and to some type.
+#[derive(Debug, Clone)]
+pub struct Functions {
+  /// Type these functions are for.
+  pub typ: Typ,
+  /// Functions from this type to another one.
+  pub from_typ: Vec<Fun>,
+  /// Function from another type to this one.
+  pub to_typ: Vec<Fun>,
+  /// Functions from this type to itself.
+  pub from_to_typ: Vec<Fun>,
+}
+impl Functions {
+
+  /// Constructor.
+  pub fn new(typ: Typ) -> Self {
+    let f = factory!(read) ;
+
+    let mut from_typ = vec![] ;
+    let mut to_typ = vec![] ;
+    let mut from_to_typ = vec![] ;
+
+    'find_funs: for fun in f.values() {
+      let mut sig = fun.sig.iter() ;
+
+      let ftyp = match sig.next() {
+        Some(info) => info.typ == typ && sig.next().is_none(),
+        _ => false,
+      } ;
+
+      let ttyp = fun.typ == typ ;
+
+      match (ftyp, ttyp) {
+        (true, true) => from_to_typ.push( fun.clone() ),
+        (true, false) => from_typ.push( fun.clone() ),
+        (false, true) => to_typ.push( fun.clone() ),
+        (false, false) => continue 'find_funs,
+      }
+    }
+
+    Functions { typ, from_typ, to_typ, from_to_typ }
   }
+
 }
