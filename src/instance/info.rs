@@ -1,47 +1,54 @@
 //! Types to store information about variables and predicates.
 
-use rsmt2::print::{ Sym2Smt, Sort2Smt } ;
+use rsmt2::print::{Sort2Smt, Sym2Smt};
 
-use common::* ;
+use common::*;
 
-use super::Typ ;
+use super::Typ;
 
 /// Variable info.
 #[derive(Clone, Debug)]
 pub struct VarInfo {
-  /// Variable's name.
-  pub name: String,
-  /// Variable's type.
-  pub typ: Typ,
-  /// Variable's index.
-  pub idx: VarIdx,
-  /// Is the variable active?
-  pub active: bool,
+    /// Variable's name.
+    pub name: String,
+    /// Variable's type.
+    pub typ: Typ,
+    /// Variable's index.
+    pub idx: VarIdx,
+    /// Is the variable active?
+    pub active: bool,
 }
 impl VarInfo {
-  /// Constructor.
-  pub fn new(name: String, typ: Typ, idx: VarIdx) -> Self {
-    VarInfo { name, typ, idx, active: true }
-  }
-  /// Name of the variable as bytes.
-  pub fn as_bytes(& self) -> & [u8] {
-    self.name.as_bytes()
-  }
+    /// Constructor.
+    pub fn new(name: String, typ: Typ, idx: VarIdx) -> Self {
+        VarInfo {
+            name,
+            typ,
+            idx,
+            active: true,
+        }
+    }
+    /// Name of the variable as bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.name.as_bytes()
+    }
 }
 impl Sym2Smt<()> for VarInfo {
-  fn sym_to_smt2<Writer>(
-    & self, w: & mut Writer, _: ()
-  ) -> SmtRes<()> where Writer: Write {
-    write!(w, "v{}", self.idx) ? ;
-    Ok(())
-  }
+    fn sym_to_smt2<Writer>(&self, w: &mut Writer, _: ()) -> SmtRes<()>
+    where
+        Writer: Write,
+    {
+        write!(w, "v{}", self.idx)?;
+        Ok(())
+    }
 }
 impl Sort2Smt for VarInfo {
-  fn sort_to_smt2<Writer>(
-    & self, w: & mut Writer
-  ) -> SmtRes<()> where Writer: Write {
-    self.typ.get().sort_to_smt2(w)
-  }
+    fn sort_to_smt2<Writer>(&self, w: &mut Writer) -> SmtRes<()>
+    where
+        Writer: Write,
+    {
+        self.typ.get().sort_to_smt2(w)
+    }
 }
 impl_fmt!{
   VarInfo(self, fmt) {
@@ -49,22 +56,21 @@ impl_fmt!{
   }
 }
 
-
 /// Predicate info.
 #[derive(Clone)]
 pub struct PrdInfo {
-  /// Predicate's name.
-  pub name: String,
-  /// Predicate's index.
-  pub idx: PrdIdx,
-  /// Signature.
-  pub sig: VarMap<Typ>,
+    /// Predicate's name.
+    pub name: String,
+    /// Predicate's index.
+    pub idx: PrdIdx,
+    /// Signature.
+    pub sig: VarMap<Typ>,
 }
 impl PrdInfo {
-  /// Name of the variable as bytes.
-  pub fn as_bytes(& self) -> & [u8] {
-    self.name.as_bytes()
-  }
+    /// Name of the variable as bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.name.as_bytes()
+    }
 }
 impl_fmt!{
   PrdInfo(self, fmt) {
@@ -72,10 +78,8 @@ impl_fmt!{
   }
 }
 impl Sym2Smt<()> for PrdInfo {
-  fn sym_to_smt2<Writer: Write>(
-    &self, w: & mut Writer, _: ()
-  ) -> SmtRes<()> {
-    write!(w, "p_{}", self.idx) ? ;
-    Ok(())
-  }
+    fn sym_to_smt2<Writer: Write>(&self, w: &mut Writer, _: ()) -> SmtRes<()> {
+        write!(w, "p_{}", self.idx)?;
+        Ok(())
+    }
 }

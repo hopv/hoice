@@ -36,7 +36,7 @@ clap = "*"
 hashconsing = "*"
 error-chain = "*"
 ansi_term = "*"
-rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
+rsmt2 = "^0.9.11"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 either = "*"

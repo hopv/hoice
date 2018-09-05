@@ -12,57 +12,53 @@
 //! [exit]: learners/enum.LError.html#variant.Exit
 //! (Exit variant of the LError enum)
 
-use common::* ;
-
-
-
-
+use common::*;
 
 /// A term type-checking error.
 pub enum TypError {
-  /// No type info, just an error message.
-  Msg(String),
-  /// Type info:
-  ///
-  /// - the type expected (if known),
-  /// - the type obtained,
-  /// - the index of the argument that caused it.
-  Typ {
-    expected: Option<Typ>,
-    obtained: Typ,
-    index: usize,
-  }
+    /// No type info, just an error message.
+    Msg(String),
+    /// Type info:
+    ///
+    /// - the type expected (if known),
+    /// - the type obtained,
+    /// - the index of the argument that caused it.
+    Typ {
+        expected: Option<Typ>,
+        obtained: Typ,
+        index: usize,
+    },
 }
 impl TypError {
-  /// Message constructor.
-  pub fn msg<S: Into<String>>(s: S) -> Self {
-    TypError::Msg( s.into() )
-  }
+    /// Message constructor.
+    pub fn msg<S: Into<String>>(s: S) -> Self {
+        TypError::Msg(s.into())
+    }
 
-  /// Type info constructor.
-  pub fn typ(
-    expected: Option<Typ>, obtained: Typ, index: usize
-  ) -> Self {
-    TypError::Typ { expected, obtained, index }
-  }
+    /// Type info constructor.
+    pub fn typ(expected: Option<Typ>, obtained: Typ, index: usize) -> Self {
+        TypError::Typ {
+            expected,
+            obtained,
+            index,
+        }
+    }
 }
-
-
 
 /// Parse error data.
 #[derive(Debug)]
 pub struct ParseErrorData {
-  /// Error message.
-  pub msg: String,
-  /// Portion of the line *before* the error token.
-  pub pref: String,
-  /// Token that caused the error.
-  pub token: String,
-  /// Portion of the line *after* the error token.
-  pub suff: String,
-  /// Line of the error, relative to the portion of the input accessible by
-  /// whoever constructed the error.
-  pub line: Option<usize>,
+    /// Error message.
+    pub msg: String,
+    /// Portion of the line *before* the error token.
+    pub pref: String,
+    /// Token that caused the error.
+    pub token: String,
+    /// Portion of the line *after* the error token.
+    pub suff: String,
+    /// Line of the error, relative to the portion of the input accessible by
+    /// whoever constructed the error.
+    pub line: Option<usize>,
 }
 impl_fmt!{
   ParseErrorData(self, fmt) {
@@ -151,86 +147,80 @@ error_chain!{
 }
 
 impl Error {
-  /// True if the kind of the error is [`ErrorKind::Unsat`][unsat].
-  ///
-  /// [unsat]: enum.ErrorKind.html#variant.Unsat
-  /// (ErrorKind's Unsat variant)
-  pub fn is_unsat(& self) -> bool {
-    match * self.kind() {
-      ErrorKind::Unsat => true,
-      ErrorKind::UnsatFrom(_) => true,
-      _ => false,
+    /// True if the kind of the error is [`ErrorKind::Unsat`][unsat].
+    ///
+    /// [unsat]: enum.ErrorKind.html#variant.Unsat
+    /// (ErrorKind's Unsat variant)
+    pub fn is_unsat(&self) -> bool {
+        match *self.kind() {
+            ErrorKind::Unsat => true,
+            ErrorKind::UnsatFrom(_) => true,
+            _ => false,
+        }
     }
-  }
 
-  /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
-  pub fn is_smt_unknown(& self) -> bool {
-    match * self.kind() {
-      ErrorKind::SmtError(
-        ::rsmt2::errors::ErrorKind::Unknown
-      ) => true,
-      _ => false,
+    /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
+    pub fn is_smt_unknown(&self) -> bool {
+        match *self.kind() {
+            ErrorKind::SmtError(::rsmt2::errors::ErrorKind::Unknown) => true,
+            _ => false,
+        }
     }
-  }
 
-  /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
-  ///
-  /// [unknown]: enum.ErrorKind.html#variant.Unknown
-  /// (ErrorKind's Unknown variant)
-  pub fn is_unknown(& self) -> bool {
-    match * self.kind() {
-      ErrorKind::Unknown => true,
-      _ => self.is_smt_unknown(),
+    /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
+    ///
+    /// [unknown]: enum.ErrorKind.html#variant.Unknown
+    /// (ErrorKind's Unknown variant)
+    pub fn is_unknown(&self) -> bool {
+        match *self.kind() {
+            ErrorKind::Unknown => true,
+            _ => self.is_smt_unknown(),
+        }
     }
-  }
 
-  /// Returns the clause explaining an unsat result if any.
-  pub fn unsat_cause(& self) -> Option<ClsIdx> {
-    match self.kind() {
-      ErrorKind::UnsatFrom(clause) => Some(* clause),
-      _ => None,
+    /// Returns the clause explaining an unsat result if any.
+    pub fn unsat_cause(&self) -> Option<ClsIdx> {
+        match self.kind() {
+            ErrorKind::UnsatFrom(clause) => Some(*clause),
+            _ => None,
+        }
     }
-  }
 
-
-  /// True if the kind of the error is a timeout.
-  ///
-  /// [timeout]: enum.ErrorKind.html#variant.Timeout
-  /// (ErrorKind's Timeout variant)
-  pub fn is_timeout(& self) -> bool {
-    match self.kind() {
-      ErrorKind::Timeout => true,
-      ErrorKind::SmtError(smt_err) => smt_err.is_timeout(),
-      _ => false,
+    /// True if the kind of the error is a timeout.
+    ///
+    /// [timeout]: enum.ErrorKind.html#variant.Timeout
+    /// (ErrorKind's Timeout variant)
+    pub fn is_timeout(&self) -> bool {
+        match self.kind() {
+            ErrorKind::Timeout => true,
+            ErrorKind::SmtError(smt_err) => smt_err.is_timeout(),
+            _ => false,
+        }
     }
-  }
 
-  /// True if the kind of the error is [`ErrorKind::Exit`][exit].
-  ///
-  /// [exit]: enum.ErrorKind.html#variant.Exit
-  /// (ErrorKind's Exit variant)
-  pub fn is_exit(& self) -> bool {
-    match * self.kind() {
-      ErrorKind::Exit => true,
-      _ => false,
+    /// True if the kind of the error is [`ErrorKind::Exit`][exit].
+    ///
+    /// [exit]: enum.ErrorKind.html#variant.Exit
+    /// (ErrorKind's Exit variant)
+    pub fn is_exit(&self) -> bool {
+        match *self.kind() {
+            ErrorKind::Exit => true,
+            _ => false,
+        }
     }
-  }
 }
 
-
 /// Prints an error.
-pub fn print_err(errs: & Error) {
-  println!(
-    "({} \"", conf.bad("error")
-  ) ;
-  let mut list = vec![] ;
-  for err in errs.iter() {
-    list.push( err )
-  }
-  for err in list.into_iter().rev() {
-    for line in format!("{}", err).lines() {
-      println!("  {}", line)
+pub fn print_err(errs: &Error) {
+    println!("({} \"", conf.bad("error"));
+    let mut list = vec![];
+    for err in errs.iter() {
+        list.push(err)
     }
-  }
-  println!("\")")
+    for err in list.into_iter().rev() {
+        for line in format!("{}", err).lines() {
+            println!("  {}", line)
+        }
+    }
+    println!("\")")
 }
