@@ -862,10 +862,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         // Parse closing paren.
                         self.ws_cmt();
                         if !self.tag_opt(")") {
-                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                                .chain_err(|| {
-                                    self.error(current_pos, "expected expected closing paren")
-                                })?
+                            let err: Error =
+                                self.error(pos, "while parsing this array sort").into();
+                            Err(err).chain_err(|| {
+                                self.error(current_pos, "expected expected closing paren")
+                            })?
                         }
 
                         continue 'go_up;
@@ -886,7 +887,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                             if let Ok(dtyp) = dtyp::get(name) {
                                 typ = Some(typ::dtyp(dtyp, typs))
                             } else {
-                                bail!(self.error(pos, format!("unknown sort `{}`", conf.bad(name))))
+                                let msg = format!("unknown sort `{}`", conf.bad(name));
+                                bail!(self.error(pos, msg))
                             }
                             continue 'go_up;
                         } else {
@@ -1040,10 +1042,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         // Parse closing paren.
                         self.ws_cmt();
                         if !self.tag_opt(")") {
-                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                                .chain_err(|| {
-                                    self.error(current_pos, "expected expected closing paren")
-                                })?
+                            let err: Error =
+                                self.error(pos, "while parsing this array sort").into();
+                            Err(err).chain_err(|| {
+                                self.error(current_pos, "expected expected closing paren")
+                            })?
                         }
 
                         continue 'go_up;
@@ -2403,7 +2406,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                             self.cxt.term_stack.push(frame);
                             continue 'read_kids;
                         } else if self.functions.get(id).is_some() || fun::get(id).is_some() {
-                            let frame = TermFrame::new(FrameOp::Fun(id.into()), op_pos, bind_count);
+                            let op = FrameOp::Fun(id.into());
+                            let frame = TermFrame::new(op, op_pos, bind_count);
                             self.cxt.term_stack.push(frame);
                             continue 'read_kids;
                         }
