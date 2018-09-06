@@ -13,6 +13,63 @@ pub enum ForceRes {
     Neg { sample: Sample, clause: ClsIdx },
 }
 
+/// Stores data from a positive / strict negative clause.
+///
+/// # Examples
+///
+/// If the clause is `forall x, y | x > 0 => p(x + 1, y)` then the data stored is
+///
+/// |      |                          |
+/// |:----:|:-------------------------|
+/// | conj | `x > 0`                  |
+/// | args | `v_0 -> x + 1, v_1 -> y` |
+/// | vars | `v_0`                    |
+#[derive(Clone, Debug)]
+pub struct ClauseData {
+    /// Index of the clause.
+    pub idx: ClsIdx,
+    /// Conjunction of lhs terms.
+    pub conj: Term,
+    /// Map from the clause's **only** predicate to the clause's variables.
+    pub args: VarTerms,
+    /// Variables of the predicate that are relevant w.r.t. `conj`. None if all are relevant.
+    pub vars: Option<VarSet>,
+    /// True if the clause is a positive one.
+    pub pos: bool,
+}
+impl ClauseData {
+    /// Constructor.
+    pub fn new(idx: ClsIdx, pos: bool, args: &VarTerms, lhs_terms: &TermSet) -> Self {
+        let conj = term::and(lhs_terms.iter().cloned().collect());
+        let args = args.clone();
+        let conj_vars = term::vars(&conj);
+
+        let mut vars = VarSet::new();
+        for (pred_var, arg) in args.index_iter() {
+            if let Some(var) = arg.var_idx() {
+                if !conj_vars.contains(&var) {
+                    continue;
+                }
+            }
+            let is_new = vars.insert(pred_var);
+            debug_assert! { is_new }
+        }
+        let vars = if vars.len() == args.len() {
+            None
+        } else {
+            Some(vars)
+        };
+
+        ClauseData {
+            idx,
+            conj,
+            args,
+            vars,
+            pos,
+        }
+    }
+}
+
 /// Propagates examples, tries to break implication constraints.
 pub struct Assistant {
     /// Core, to communicate with the teacher.
@@ -21,80 +78,88 @@ pub struct Assistant {
     solver: Solver<()>,
     /// Instance.
     instance: Arc<Instance>,
-    /// Positive constraints.
-    pos: PrdHMap<ClsSet>,
-    /// Negative constraints.
-    neg: PrdHMap<ClsSet>,
     /// Profiler.
     _profiler: Profiler,
     /// True if we're using ADTs.
     using_adts: bool,
+    /// Maps predicates to their positive / strict negative clause data.
+    clauses: PrdHMap<Vec<ClauseData>>,
 }
 
 impl Assistant {
     /// Constructor.
-    pub fn new(instance: Arc<Instance> // core: & 'a MsgCore
-        ) -> Res<Self> {
+    pub fn new(instance: Arc<Instance>) -> Res<Self> {
         let solver = conf.solver.spawn("assistant", (), &instance)?;
         let _profiler = Profiler::new();
 
-        let mut pos = PrdHMap::with_capacity(instance.preds().len());
-        let mut neg = PrdHMap::with_capacity(instance.preds().len());
-
-        let mut pos_clauses = ClsSet::new();
-        let mut neg_clauses = ClsSet::new();
-
         let using_adts = dtyp::get_all().iter().next().is_some();
 
-        macro_rules! add_clauses {
-            ($pred:expr) => {{
-                if !pos_clauses.is_empty() {
-                    let mut clause_set = ClsSet::new();
-                    ::std::mem::swap(&mut pos_clauses, &mut clause_set);
-                    let prev = pos.insert($pred, clause_set);
-                    debug_assert! { prev.is_none() }
-                }
-                if !neg_clauses.is_empty() {
-                    let mut clause_set = ClsSet::new();
-                    ::std::mem::swap(&mut neg_clauses, &mut clause_set);
-                    let prev = neg.insert($pred, clause_set);
-                    debug_assert! { prev.is_none() }
-                }
-            }};
-        }
+        let clauses = PrdHMap::new();
 
-        for pred in instance.pred_indices() {
-            debug_assert! { pos_clauses.is_empty() }
-            debug_assert! { neg_clauses.is_empty() }
-
-            for clause in instance.clauses_of(pred).1 {
-                let clause = *clause;
-                if instance[clause].lhs_preds().is_empty() {
-                    let is_new = pos_clauses.insert(clause);
-                    debug_assert! { is_new }
-                }
-            }
-
-            for clause in instance.clauses_of(pred).0 {
-                let clause = *clause;
-                if instance[clause].rhs().is_none() && instance[clause].lhs_pred_apps_len() == 1 {
-                    let is_new = neg_clauses.insert(clause);
-                    debug_assert! { is_new }
-                }
-            }
-
-            add_clauses!(pred)
-        }
-
-        Ok(Assistant {
+        let mut res = Assistant {
             // core,
             solver,
             instance,
-            pos,
-            neg,
             _profiler,
             using_adts,
-        })
+            clauses,
+        };
+
+        res.register_clauses()?;
+
+        Ok(res)
+    }
+
+    /// Registers all positive / strict negative clauses.
+    fn register_clauses(&mut self) -> Res<()> {
+        let instance = self.instance.clone();
+        for clause_idx in instance.pos_clauses() {
+            let clause = &instance[*clause_idx];
+
+            debug_assert! { clause.lhs_preds().is_empty() }
+
+            if let Some((pred, args)) = clause.rhs() {
+                self.register(*clause_idx, pred, args, clause.lhs_terms(), true)
+            } else {
+                bail!("inconsistent positive clause set from instance")
+            }
+        }
+
+        for clause_idx in instance.strict_neg_clauses() {
+            let clause = &instance[*clause_idx];
+
+            debug_assert! { clause.rhs().is_none() }
+            debug_assert! { clause.lhs_preds().len() == 1 }
+
+            if let Some((pred, argss)) = clause.lhs_preds().iter().next() {
+                debug_assert! { argss.len() == 1 }
+
+                if let Some(args) = argss.iter().next() {
+                    self.register(*clause_idx, *pred, args, clause.lhs_terms(), false)
+                } else {
+                    bail!("inconsistent clause state")
+                }
+            } else {
+                bail!("inconsistent strict negative clause set from instance")
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Registers some clause data for a predicate.
+    ///
+    /// Boolean flag indicates whether the original clause is positive or not.
+    fn register(
+        &mut self,
+        idx: ClsIdx,
+        pred: PrdIdx,
+        args: &VarTerms,
+        lhs_terms: &TermSet,
+        pos: bool,
+    ) {
+        let data = ClauseData::new(idx, pos, args, lhs_terms);
+        self.clauses.entry(pred).or_insert_with(Vec::new).push(data)
     }
 
     /// Destroys the assistant.
@@ -141,6 +206,7 @@ impl Assistant {
                     if trivial || lhs_unknown == 0 || rhs_false && lhs_unknown == 1 {
                         profile! { self "constraints   broken" => add 1 }
                     }
+
                     // Discard the constraint, regardless of what will happen.
                     profile! { self tick "data" }
                     data.tautologize(cstr)?;
@@ -220,141 +286,94 @@ impl Assistant {
     /// - `ForceRes::Neg` of a sample which, when forced negative, will force the
     ///   input sample to be classified negative.
     pub fn try_force(&mut self, _data: &Data, pred: PrdIdx, vals: &VarVals) -> Res<ForceRes> {
+        let clause_data = if let Some(data) = self.clauses.get(&pred) {
+            data
+        } else {
+            return Ok(ForceRes::None);
+        };
+
         self.solver.comment_args(format_args!(
             "working on sample ({} {})",
             self.instance[pred], vals
         ))?;
 
-        if let Some(clauses) = self.pos.get(&pred) {
-            self.solver.comment("working on positive clauses")?;
-
-            for clause_idx in clauses {
-                let clause_idx = *clause_idx;
-                let clause = &self.instance[clause_idx];
-                if let Some((p, args)) = clause.rhs() {
-                    debug_assert_eq! { pred, p }
-                    debug_assert! { clause.lhs_preds().is_empty() }
-
-                    if self.using_adts {
-                        smt::reset(&mut self.solver, &self.instance)?
-                    } else {
-                        self.solver.push(1)?
-                    }
-
-                    clause.declare(&mut self.solver)?;
-                    self.solver.assert(&ConjWrap::new(clause.lhs_terms()))?;
-
-                    self.solver.assert(&ArgValEq::new(args, vals))?;
-                    let sat = profile! {
-                      self wrap {
-                        self.solver.check_sat() ?
-                      } "smt"
-                    };
-
-                    if self.using_adts {
-                        smt::reset(&mut self.solver, &self.instance)?
-                    } else {
-                        self.solver.pop(1)?
-                    }
-
-                    if sat {
-                        // msg! { debug self => "  forcing positive" }
-                        return Ok(ForceRes::Pos {
-                            sample: Sample {
-                                pred,
-                                args: vals.clone(),
-                            },
-                            clause: clause_idx,
-                        });
-                    }
-                } else {
-                    bail!("inconsistent instance state")
+        macro_rules! solver {
+            (push) => {
+                if !self.using_adts {
+                    self.solver.push(1)?
                 }
-            }
+            };
+            (pop) => {
+                if self.using_adts {
+                    smt::reset(&mut self.solver, &self.instance)?
+                } else {
+                    self.solver.pop(1)?
+                }
+            };
         }
 
-        if let Some(clauses) = self.neg.get(&pred) {
-            self.solver.comment("working on negative clauses")?;
+        for ClauseData {
+            idx,
+            conj,
+            args,
+            vars,
+            pos,
+        } in clause_data
+        {
+            self.solver.comment_args(format_args!(
+                "working on positive clauses with lhs {}",
+                conj
+            ))?;
 
-            for clause_idx in clauses {
-                let clause_idx = *clause_idx;
-                let clause = &self.instance[clause_idx];
-                if let Some(argss) = clause.lhs_preds().get(&pred) {
-                    let args = {
-                        let mut argss = argss.iter();
-                        if let Some(args) = argss.next() {
-                            debug_assert! { argss.next().is_none() }
-                            args
+            let clause = *idx;
+
+            solver!(push);
+
+            self.instance[clause].declare(&mut self.solver)?;
+
+            self.solver.assert(&smt::SmtTerm::new(conj))?;
+            self.solver
+                .assert(&ArgValEq::new(args, vals, vars.as_ref()))?;
+
+            let sat = profile! {
+                self wrap { self.solver.check_sat() } "smt"
+            }?;
+
+            solver!(pop);
+
+            if sat {
+                let args = if let Some(vars) = vars {
+                    let mut nu_vals = var_to::vals::RVarVals::with_capacity(vals.len());
+                    for (idx, val) in vals.index_iter() {
+                        if vars.contains(&idx) {
+                            nu_vals.push(val.clone())
                         } else {
-                            bail!("inconsistent instance state")
+                            nu_vals.push(val::none(val.typ()))
                         }
-                    };
-
-                    if self.using_adts {
-                        smt::reset(&mut self.solver, &self.instance)?
-                    } else {
-                        self.solver.push(1)?
                     }
-
-                    clause.declare(&mut self.solver)?;
-                    self.solver.assert(&ConjWrap::new(clause.lhs_terms()))?;
-                    self.solver.assert(&ArgValEq::new(args, vals))?;
-                    let sat = profile! {
-                      self wrap {
-                        self.solver.check_sat() ?
-                      } "smt"
-                    };
-
-                    if self.using_adts {
-                        smt::reset(&mut self.solver, &self.instance)?
-                    } else {
-                        self.solver.pop(1)?
-                    }
-
-                    if sat {
-                        // msg! { debug self => "  forcing negative" }
-                        return Ok(ForceRes::Neg {
-                            sample: Sample {
-                                pred,
-                                args: vals.clone(),
-                            },
-                            clause: clause_idx,
-                        });
-                    }
+                    var_to::vals::new(nu_vals)
                 } else {
-                    bail!("inconsistent instance state")
+                    vals.clone()
+                };
+
+                self.solver.comment_args(format_args!(
+                    "success, yielding {} sample ({} {})",
+                    if *pos { "positive" } else { "negative" },
+                    self.instance[pred],
+                    args
+                ))?;
+
+                let sample = Sample { pred, args };
+
+                if *pos {
+                    return Ok(ForceRes::Pos { sample, clause });
+                } else {
+                    return Ok(ForceRes::Neg { sample, clause });
                 }
             }
         }
 
         Ok(ForceRes::None)
-    }
-}
-
-/// Wrapper around a conjunction for smt printing.
-struct ConjWrap<'a> {
-    /// Conjunction.
-    terms: &'a TermSet,
-}
-impl<'a> ConjWrap<'a> {
-    /// Constructor.
-    pub fn new(terms: &'a TermSet) -> Self {
-        ConjWrap { terms }
-    }
-}
-impl<'a> Expr2Smt<()> for ConjWrap<'a> {
-    fn expr_to_smt2<Writer: Write>(&self, w: &mut Writer, _: ()) -> SmtRes<()> {
-        if self.terms.is_empty() {
-            write!(w, "true")?
-        } else {
-            write!(w, "(and")?;
-            for term in self.terms {
-                write!(w, " ")?;
-                term.write(w, |w, var| var.default_write(w))?;
-            }
-            write!(w, ")")?
-        }
-        Ok(())
     }
 }
 
@@ -366,12 +385,14 @@ pub struct ArgValEq<'a> {
     args: &'a VarTerms,
     /// Values.
     vals: &'a VarVals,
+    /// Only assert equalities for variables that are in this set. Assert all if none.
+    vars: Option<&'a VarSet>,
 }
 impl<'a> ArgValEq<'a> {
     /// Constructor.
-    pub fn new(args: &'a VarTerms, vals: &'a VarVals) -> Self {
+    pub fn new(args: &'a VarTerms, vals: &'a VarVals, vars: Option<&'a VarSet>) -> Self {
         debug_assert_eq! { args.len(), vals.len() }
-        ArgValEq { args, vals }
+        ArgValEq { args, vals, vars }
     }
 }
 impl<'a> Expr2Smt<()> for ArgValEq<'a> {
@@ -380,11 +401,13 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
         Writer: Write,
     {
         write!(w, "(and")?;
-        let mut unknown = 0;
+        let mut skipped = 0;
 
-        for (arg, val) in self.args.iter().zip(self.vals.iter()) {
-            if !val.is_known() {
-                unknown += 1;
+        for ((var, arg), val) in self.args.index_iter().zip(self.vals.iter()) {
+            // Skip if variable has no value, or the set of variables to assert does not contain
+            // it.
+            if !val.is_known() || self.vars.map(|set| !set.contains(&var)).unwrap_or(false) {
+                skipped += 1;
                 continue;
             }
 
@@ -426,7 +449,7 @@ impl<'a> Expr2Smt<()> for ArgValEq<'a> {
             }
         }
 
-        if unknown == self.args.len() {
+        if skipped == self.args.len() {
             write!(w, " true")?
         }
         write!(w, ")")?;
