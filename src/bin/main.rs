@@ -1,25 +1,25 @@
 //! Entry point for the binary.
 
 extern crate hoice;
-extern crate libc;
+// extern crate libc;
 
 use hoice::common::*;
 
-/// Renices the process group.
-#[cfg(windows)]
-fn renice() {}
+// /// Renices the process group.
+// #[cfg(windows)]
+// fn renice() {}
 
-/// Renices the process group.
-#[cfg(not(windows))]
-fn renice() {
-    let whole_group = ::libc::PRIO_PGRP;
-    let result = unsafe { ::libc::setpriority(whole_group, 0, 50) };
-    debug_assert_eq!(result, 0)
-}
+// /// Renices the process group.
+// #[cfg(not(windows))]
+// fn renice() {
+//     let whole_group = ::libc::PRIO_PGRP;
+//     let result = unsafe { ::libc::setpriority(whole_group, 0, 50) };
+//     debug_assert_eq!(result, 0)
+// }
 
 /// Entry point.
 fn main() {
-    renice();
+    // renice();
     // Work and report error if any.
     if let Err(errs) = ::hoice::work() {
         let errs = match *errs.kind() {

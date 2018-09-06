@@ -42,23 +42,73 @@ impl ClauseData {
     pub fn new(idx: ClsIdx, pos: bool, args: &VarTerms, lhs_terms: &TermSet) -> Self {
         let conj = term::and(lhs_terms.iter().cloned().collect());
         let args = args.clone();
-        let conj_vars = term::vars(&conj);
+        let mut conj_vars = term::vars(&conj);
 
+        // println!("{} clause:", if pos { "positive" } else { "negative" });
+        // println!("  conj: {}", conj);
+        // print!("  conj_vars:");
+        // for var in &conj_vars {
+        //     print!(" v_{},", var)
+        // }
+        // println!();
+        // println!("  args: (_ {})", args);
+
+        // Final predicate variables that are needed.
         let mut vars = VarSet::new();
+        // When a clause variable is not considered necessary, it is added here as a mapping the
+        // predicate variable it corresponds to.
+        let mut var_map = VarHMap::new();
+
         for (pred_var, arg) in args.index_iter() {
+            // Argument's a variable?
             if let Some(var) = arg.var_idx() {
-                if !conj_vars.contains(&var) {
-                    continue;
+                // Appears in the conjunction?
+                if conj_vars.contains(&var) {
+                    // Then it is important.
+                    let is_new = vars.insert(pred_var);
+                    debug_assert! { is_new }
+                } else if let Some(prev) = var_map.insert(var, pred_var) {
+                    // Does not appear in the conjunction: just inserted in the memory. If
+                    // something was there, then both this pred variable and the one previously in
+                    // the map must be kept.
+                    let is_new = vars.insert(pred_var);
+                    debug_assert! { is_new }
+                    let is_new = vars.insert(prev);
+                    debug_assert! { is_new }
+                    let prev = var_map.remove(&var);
+                    debug_assert! { prev.is_some() }
+                    let is_new = conj_vars.insert(var);
+                    debug_assert! { is_new }
                 }
+            } else {
+                // Argument's not a variable. Go over its variables.
+                for var in term::vars(arg) {
+                    conj_vars.insert(var);
+                    if let Some(pred_var) = var_map.remove(&var) {
+                        let is_new = vars.insert(pred_var);
+                        debug_assert! { is_new }
+                    }
+                }
+                let is_new = vars.insert(pred_var);
+                debug_assert! { is_new }
             }
-            let is_new = vars.insert(pred_var);
-            debug_assert! { is_new }
         }
+
         let vars = if vars.len() == args.len() {
             None
         } else {
             Some(vars)
         };
+
+        // print!("  vars:");
+        // if let Some(vars) = vars.as_ref() {
+        //     for var in vars {
+        //         print!(" v_{},", var)
+        //     }
+        // } else {
+        //     print!(" none")
+        // }
+        // println!();
 
         ClauseData {
             idx,

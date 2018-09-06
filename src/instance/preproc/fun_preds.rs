@@ -867,61 +867,67 @@ fn get_invariants(
 
     let mut invariants = TermSet::new();
 
-    scoped! {
-      let solver = instance.solver() ;
+    {
+        let solver = instance.solver();
 
-      for info in sig {
-        solver.declare_const(& info.idx, info) ?
-      }
-
-      solver.declare_fun( name, sig, typ.get() ) ? ;
-
-      use smt::{ SmtTerm, TermConj} ;
-
-      for (candidate, (cubes, apps)) in candidates {
-        log! { @4 "checking candidate: {}", candidate }
-        let mut invariant = true ;
-
-        for (cube, value, _) in definitions.iter() {
-          if_log! { @5
-            log! { @5 "cube:" }
-            for term in cube {
-              log! { @5 "  {}", term }
-            }
-          }
-          let actlit = solver.get_actlit() ? ;
-          for term in cube {
-            solver.assert_act( & actlit, & SmtTerm::new(term) ) ?
-          }
-          for app in apps.iter() {
-            let term = term::eq( app.clone(), value.clone() ) ;
-            solver.assert_act( & actlit, & SmtTerm::new(& term) ) ?
-          }
-          solver.assert_act_with(
-            & actlit, & TermConj::new( Some(& candidate) ), false
-          ) ? ;
-
-          let sat = solver.check_sat_act( Some(& actlit) ) ? ;
-
-          if sat {
-            invariant = false ;
-            break
-          }
+        for info in sig {
+            solver.declare_const(&info.idx, info)?
         }
 
-        if invariant {
-          log! { @4 "invariant :)" }
-          let is_new = invariants.insert(candidate) ;
-          debug_assert! { is_new }
-        } else {
-          log! { @4 "not invariant :(" }
-          for cube in cubes {
-            definitions[cube].0.insert( candidate.clone() ) ;
-          }
+        solver.declare_fun(name, sig, typ.get())?;
+
+        // use smt::{SmtTerm, TermConj};
+
+        for (candidate, _) in candidates {
+            invariants.insert(candidate);
         }
 
-      }
+        // for (candidate, (cubes, apps)) in candidates {
+        //     log! { @4 "checking candidate: {}", candidate }
+        //     let mut invariant = true;
 
+        //     solver.comment_args(format_args!("checking candidate {}", candidate))?;
+
+        //     for (cube, value, _) in definitions.iter() {
+        //         if_log! { @5
+        //           log! { @5 "cube:" }
+        //           for term in cube {
+        //             log! { @5 "  {}", term }
+        //           }
+        //         }
+        //         let actlit = solver.get_actlit()?;
+        //         solver.comment("asserting cube")?;
+        //         for term in cube {
+        //             solver.assert_act(&actlit, &SmtTerm::new(term))?
+        //         }
+        //         solver.comment("forcing args")?;
+        //         for app in apps.iter() {
+        //             solver.comment_args(format_args!("{} = {}", app, value))?;
+        //             let term = term::eq(app.clone(), value.clone());
+        //             solver.assert_act(&actlit, &SmtTerm::new(&term))?
+        //         }
+        //         solver.comment("forcing branche's return value")?;
+        //         solver.assert_act_with(&actlit, &TermConj::new(Some(&candidate)), false)?;
+
+        //         let sat = solver.check_sat_act(Some(&actlit))?;
+
+        //         if sat {
+        //             invariant = false;
+        //             break;
+        //         }
+        //     }
+
+        //     if invariant {
+        //         log! { @4 "invariant :)" }
+        //         let is_new = invariants.insert(candidate);
+        //         debug_assert! { is_new }
+        //     } else {
+        //         log! { @4 "not invariant :(" }
+        //         for cube in cubes {
+        //             definitions[cube].0.insert(candidate.clone());
+        //         }
+        //     }
+        // }
     }
 
     instance.reset_solver()?;
