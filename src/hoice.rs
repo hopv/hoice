@@ -22,6 +22,7 @@ extern crate ansi_term as ansi;
 extern crate hashconsing;
 extern crate either;
 extern crate isatty;
+extern crate libc;
 extern crate num;
 extern crate rand;
 extern crate rsmt2;

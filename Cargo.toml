@@ -31,6 +31,7 @@ panic = 'unwind'
 bench = [ ]
 
 [dependencies]
+libc = "*"
 lazy_static = "*"
 clap = "*"
 hashconsing = "*"
