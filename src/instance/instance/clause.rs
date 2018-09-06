@@ -189,10 +189,12 @@ impl Clause {
     /// Turns the clause into a negative one.
     #[inline]
     pub fn unset_rhs(&mut self) -> Option<PredApp> {
-        let mut old_rhs = None;
-        ::std::mem::swap(&mut self.rhs, &mut old_rhs);
-        if (old_rhs.is_some() && self.lhs_preds.is_empty()) || old_rhs.is_some() {
+        let old_rhs = ::std::mem::replace(&mut self.rhs, None);
+        if old_rhs.is_some() && self.lhs_preds.is_empty() {
             self.terms_changed = true
+        }
+        if old_rhs.is_some() {
+            self.preds_changed = true
         }
         old_rhs
     }

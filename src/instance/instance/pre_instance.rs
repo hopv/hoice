@@ -841,11 +841,13 @@ impl<'a> PreInstance<'a> {
         self.instance
             .unlink_pred_rhs(pred, &mut self.clauses_to_simplify);
         for clause in &self.clauses_to_simplify {
+            let old_rhs = self.instance.clauses[*clause].unset_rhs();
             debug_assert_eq! {
-              self.instance.clauses[* clause].rhs().map(|(p, _)| p), Some(pred)
+              old_rhs.map(|(p, _)| p), Some(pred)
             }
-            self.instance.clauses[*clause].unset_rhs();
-            debug_assert! { self.instance.clauses[* clause].preds_changed() }
+            debug_assert! {
+                self.instance.clauses[*clause].preds_changed()
+            }
         }
 
         info += self.simplify_clauses()?;
