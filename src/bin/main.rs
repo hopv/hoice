@@ -5,7 +5,12 @@ extern crate libc;
 
 use hoice::common::*;
 
-/// Renices the
+/// Renices the process group.
+#[cfg(windows)]
+fn renice() {}
+
+/// Renices the process group.
+#[cfg(not(windows))]
 fn renice() {
     let whole_group = ::libc::PRIO_PGRP;
     let result = unsafe { ::libc::setpriority(whole_group, 0, 50) };
