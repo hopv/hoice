@@ -36,6 +36,7 @@ lazy_static! {
 
 /// Registers a function declaration.
 pub fn register_dec(fun: RFun) -> Res<()> {
+    println!("registering {}", fun.name);
     if let Ok(mut decs) = fun_decs.write() {
         let prev = decs.insert(fun.name.clone(), fun);
         if let Some(prev) = prev {
@@ -49,14 +50,27 @@ pub fn register_dec(fun: RFun) -> Res<()> {
 
 /// Retrieves a function declaration.
 pub fn retrieve_dec(fun: &str) -> Res<RFun> {
+    println!("retrieving {}", fun);
     if let Ok(mut decs) = fun_decs.write() {
         if let Some(dec) = decs.remove(fun) {
             Ok(dec)
         } else {
-            bail!(
-                "unable to retrieve function declaration for {}",
+            let mut s = format!(
+                "trying to retrieve declaration for unknown function {}\n",
                 conf.bad(fun)
-            )
+            );
+            if decs.is_empty() {
+                s += "no function declaration present"
+            } else {
+                s += "function(s) declared:";
+                for (name, _) in decs.iter() {
+                    s += " ";
+                    s += name;
+                    s += ","
+                }
+            }
+
+            bail!(s)
         }
     } else {
         bail!("unable to access function declarations")
@@ -80,10 +94,22 @@ where
         if let Some(def) = defs.get(fun) {
             f(def)
         } else {
-            bail!(
-                "trying to retrieve declaration for unknown function {}",
+            let mut s = format!(
+                "trying to retrieve declaration for unknown function {}\n",
                 conf.bad(fun)
-            )
+            );
+            if defs.is_empty() {
+                s += "no function declaration present"
+            } else {
+                s += "function(s) declared:";
+                for (name, _) in defs.iter() {
+                    s += " ";
+                    s += name;
+                    s += ","
+                }
+            }
+
+            bail!(s)
         }
     } else {
         bail!("unable to retrieve function declarations")

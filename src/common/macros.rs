@@ -136,6 +136,15 @@ macro_rules! log {
     }
   ) ;
 
+  ( @$flag:tt |=> $($tail:tt)* ) => (
+    log! { > log!(|pref_of| $flag) => $($tail)* }
+  ) ;
+  ( @$flag:tt | $($tail:tt)* ) => (
+    if log!(|cond_of| $flag) {
+      log! { > log!(|pref_of| $flag) => $($tail)* }
+    }
+  ) ;
+
   ( @$flag:tt => $($tail:tt)* ) => (
     log! { log!(|pref_of| $flag) => $($tail)* }
   ) ;
@@ -144,6 +153,19 @@ macro_rules! log {
       log! { log!(|pref_of| $flag) => $($tail)* }
     }
   ) ;
+
+  ( > $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+        println!("{}{}", $pref, format!($str $(, $args)*)) ;
+    )*
+    ()
+  }) ;
+  ( > $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
+    $(
+      println!("; {}", format!($str $(, $args)*))
+    )*
+    ()
+  }) ;
 
   ( $pref:expr => $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     $(
