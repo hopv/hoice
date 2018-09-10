@@ -61,6 +61,25 @@ impl RedStrat for StrictNeg {
               bail!("inconsistent instance state")
             } ;
 
+
+            let clause = clause.rewrite_clause_for_app(
+              pred, args, 0.into()
+            ).chain_err(
+              || "during clause rewriting"
+            )?;
+
+            let (pred, args) = if let Some(
+              (pred, argss)
+            ) = clause.lhs_preds().iter().next() {
+              if let Some(args) = argss.iter().next() {
+                (* pred, args)
+              } else {
+                bail!("inconsistent instance state")
+              }
+            } else {
+              bail!("inconsistent instance state")
+            } ;
+
             match extractor.terms_of_lhs_app(
               false, instance, clause.vars(),
               ( clause.lhs_terms(), clause.lhs_preds() ),
@@ -105,6 +124,12 @@ impl RedStrat for StrictNeg {
 
         for (pred, terms_opt) in partial_defs {
             if let Some(mut terms) = terms_opt {
+                log! { @3 "success ({} term(s))", terms.len() }
+                if_log! { @4
+                    for term in & terms {
+                        log! { @4 |=> "{}", term }
+                    }
+                }
                 if let Some(term) = instance.get_str(pred) {
                     terms.push(term.clone())
                 }

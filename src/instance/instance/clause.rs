@@ -968,6 +968,122 @@ impl Clause {
 
         Ok(())
     }
+
+    /// Rewrites a clause for a specific predicate application.
+    ///
+    /// Only legal if the predicate application actually appears in the clause.
+    ///
+    /// - introduces a fresh variable `v_i` for each formal argument of the predicate
+    /// - replaces the application(s) `(p a_1 a_2 ...)` with `(p v_1 v_2 ...)`
+    /// - replaces all occurences of `a_i` by `v_i` for all `a_i`s
+    /// - if at least one variable appearing in `a_i` still appears in the clause, adds the term
+    ///   `a_i = v_i`
+    pub fn rewrite_clause_for_app(
+        &self,
+        pred: PrdIdx,
+        args: &VarTerms,
+        idx: ClsIdx,
+    ) -> Res<Clause> {
+        let mut clause = new(
+            self.vars.clone(),
+            vec![],
+            None,
+            "rewrite_clause_for_app",
+            idx,
+        );
+
+        // Maps arguments of the application to fresh clause variables.
+        let mut map = TermMap::with_capacity(args.len());
+        // Maps the clause's original variables to the set of arguments they appear in, along with
+        // the corresponding fresh variable.
+        let mut var_map = VarHMap::new();
+
+        for arg in args.iter() {
+            let var = map
+                .entry(arg.clone())
+                .or_insert_with(|| term::var(clause.vars.next_index(), arg.typ()))
+                .clone();
+            let idx = var.var_idx().expect("variable by construction");
+
+            clause
+                .vars
+                .push(VarInfo::new(idx.default_str(), arg.typ(), idx));
+
+            for arg_var in term::vars(arg) {
+                var_map
+                    .entry(arg_var)
+                    .or_insert_with(Vec::new)
+                    .push((arg, idx))
+            }
+        }
+
+        // True if we actually saw the predicate application in question.
+        let mut legal = false;
+        // Variables still appearing in the clause.
+        let mut vars = VarSet::new();
+
+        for term in &self.lhs_terms {
+            let term = term.term_subst(&map);
+            vars.extend(term::vars(&term).into_iter());
+            clause.insert_term(term);
+        }
+
+        for (p, p_argss) in &self.lhs_preds {
+            let p = *p;
+            let prev = clause
+                .lhs_preds
+                .insert(p, VarTermsSet::with_capacity(p_argss.len()));
+            debug_assert! { prev.is_none() }
+            for p_args in p_argss {
+                if p == pred && args == p_args {
+                    legal = true
+                }
+                let mut nu_p_args = VarMap::with_capacity(p_args.len());
+                for arg in p_args.iter() {
+                    let arg = arg.term_subst(&map);
+                    vars.extend(term::vars(&arg).into_iter());
+                    nu_p_args.push(arg)
+                }
+                let nu_p_args = var_to::terms::new(nu_p_args);
+                clause
+                    .lhs_preds
+                    .get_mut(&p)
+                    .expect("was inserted right above")
+                    .insert(nu_p_args);
+            }
+        }
+
+        if let Some((p, p_args)) = self.rhs.as_ref() {
+            let mut nu_p_args = VarMap::with_capacity(p_args.len());
+            for arg in p_args.iter() {
+                let arg = arg.term_subst(&map);
+                vars.extend(term::vars(&arg).into_iter());
+                nu_p_args.push(arg)
+            }
+            let nu_p_args = var_to::terms::new(nu_p_args);
+            clause.rhs = Some((*p, nu_p_args))
+        }
+
+        for info in &mut clause.vars {
+            info.active = false
+        }
+
+        for var in vars {
+            if let Some(equalities) = var_map.remove(&var) {
+                for (arg, idx) in equalities {
+                    let var = term::var(idx, arg.typ());
+                    clause.lhs_terms.insert(term::eq(arg.clone(), var));
+                }
+            }
+            clause.vars[var].active = true
+        }
+
+        if !legal {
+            bail!("clause rewriting for application called on unknown application")
+        } else {
+            Ok(clause)
+        }
+    }
 }
 
 impl ::std::ops::Index<VarIdx> for Clause {

@@ -338,13 +338,13 @@ pub fn one_or_more() -> Res<bool> {
 }
 
 /// Checks whether a datatype is reserved.
-pub fn check_reserved(name: &str) -> Res<()> {
-    if reserved_dtyps.contains(name) {
-        bail!(
-            "attempting to redefine built-in datatype {}",
-            conf.bad(name)
-        )
-    }
+pub fn check_reserved(_name: &str) -> Res<()> {
+    // if reserved_dtyps.contains(name) {
+    //     bail!(
+    //         "attempting to redefine built-in datatype {}",
+    //         conf.bad(name)
+    //     )
+    // }
     Ok(())
 }
 

@@ -319,6 +319,15 @@ impl RTerm {
         }
     }
 
+    /// Returns the kids of a datatype selector.
+    pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
+        if let RTerm::DTypSlc { typ, name, term } = self {
+            Some((typ, name, term))
+        } else {
+            None
+        }
+    }
+
     /// Iterator over over all the leafs of a term.
     pub fn leaf_iter(&self) -> LeafIter {
         LeafIter::of_rterm(self)
@@ -919,6 +928,13 @@ impl RTerm {
         // otherwise.
         let res = zip(
             &self.to_hcons(),
+            |term| {
+                if term.fun_inspect().is_some() {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
             |_| Ok(()),
             |zip_op, _, _: ()| match zip_op {
                 ZipOp::Fun(_) => Err(()),
@@ -931,8 +947,8 @@ impl RTerm {
                 } => Err(()),
                 mut frame => {
                     let nu_term = frame.rgt_args.next().expect(
-                        "illegal call to `partial_op`:
-            empty `rgt_args` (has_fun_app_or_adt)",
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
                     );
                     Ok(ZipDo::Trm { nu_term, frame })
                 }
@@ -950,6 +966,16 @@ impl RTerm {
         // otherwise.
         let res = zip(
             &self.to_hcons(),
+            |term| {
+                if term.fun_inspect().is_some()
+                    || term.dtyp_new_inspect().is_some()
+                    || term.dtyp_slc_inspect().is_some()
+                {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
             |_| Ok(()),
             |zip_op, _, _: ()| match zip_op {
                 ZipOp::Fun(_) | ZipOp::New(_) | ZipOp::Slc(_) => Err(()),
@@ -981,6 +1007,89 @@ impl RTerm {
         res.is_err()
     }
 
+    /// TOP-DOWN term substitution.
+    pub fn term_subst(&self, map: &TermMap<Term>) -> Term {
+        self.top_down_map(|term| map.get(term).cloned())
+    }
+
+    /// TOP-DOWN map over terms.
+    pub fn top_down_map<Fun>(&self, mut f: Fun) -> Term
+    where
+        Fun: for<'a> FnMut(&'a Term) -> Option<Term>,
+    {
+        use self::zip::*;
+        let res: Res<Term> = zip(
+            &self.to_hcons(),
+            |term| Ok(f(term)),
+            |zip_null| match zip_null {
+                ZipNullary::Cst(val) => Ok(cst(val.clone())),
+                ZipNullary::Var(typ, var) => Ok(term::var(var, typ.clone())),
+            },
+            |zip_op, typ, mut acc| {
+                let yielded = match zip_op {
+                    ZipOp::Op(op) => term::app(op, acc),
+                    ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
+
+                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype selector {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_slc(typ.clone(), name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype selector {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype tester {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_tst(name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype tester {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::CArray => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal constant array application to {} arguments",
+                                acc.len() + 1
+                            )
+                        }
+                        term::cst_array(typ.clone(), kid)
+                    } else {
+                        panic!("illegal constant array application to 0 arguments")
+                    },
+                    ZipOp::Fun(name) => term::fun(typ.clone(), name.clone(), acc),
+                };
+
+                Ok(ZipDoTotal::Upp { yielded })
+            },
+            |mut frame| {
+                let nu_term = frame.rgt_args.next().expect(
+                    "illegal call to `partial_op`: \
+                     empty `rgt_args` (has_fun_app_or_adt)",
+                );
+                Ok(ZipDo::Trm { nu_term, frame })
+            },
+        );
+
+        res.expect("top down map can never fail")
+    }
+
     /// Variable substitution.
     ///
     /// The `total` flag causes substitution to fail if a variable that's not in
@@ -997,6 +1106,7 @@ impl RTerm {
 
         let res = zip(
             &self.to_hcons(),
+            |_| Ok(None),
             |zip_null| match zip_null {
                 ZipNullary::Cst(val) => Ok(cst(val.clone())),
                 ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {

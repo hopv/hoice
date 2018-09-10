@@ -25,7 +25,8 @@ impl FunBranch {
         rhs_args: &VarTerms,
         lhs_terms: &TermSet,
         lhs_preds: &PredApps,
-        invars: &mut TermSet,
+        invars: &mut TermMap<Vec<(usize, Term)>>,
+        index: usize,
     ) -> Res<Option<Self>> {
         let fun_args_len = fun_sig.len();
         let (last, mut fresh) = if fun_args_len == rhs_args.len() {
@@ -218,6 +219,21 @@ impl FunBranch {
             };
         }
 
+        let value = if let Some(last) = last.as_ref() {
+            if let Some((res, _)) = rhs_args[*last].subst_total(&subst) {
+                res
+            } else {
+                log! { @3 | "failed to retrieve value for {}", rhs_args[*last] }
+                return Ok(None);
+            }
+        } else if let Some(conj) = value {
+            term::and(conj)
+        } else {
+            term::tru()
+        };
+
+        log! { @4 | "value extraction successful: {}", value }
+
         let mut invar_subst = VarHMap::with_capacity(1);
 
         // Term elligible as candidate invariants are the ones that mention **exactly one**
@@ -238,7 +254,10 @@ impl FunBranch {
                 let (invar, _) = term
                     .subst_total(&invar_subst)
                     .expect("total substitution cannot fail due to previous checks");
-                invars.insert(invar);
+                invars
+                    .entry(invar)
+                    .or_insert_with(Vec::new)
+                    .push((index, term.clone()));
                 false
             } else {
                 true
@@ -254,25 +273,10 @@ impl FunBranch {
                 log! { @4 |=> "    {}", term }
             };
             log! { @4 |=> "  invariants:" };
-            for invar in invars.iter() {
+            for invar in invars.keys() {
                 log! { @4 |=> "    {}", invar }
             };
         }
-
-        let value = if let Some(last) = last.as_ref() {
-            if let Some((res, _)) = rhs_args[*last].subst_total(&subst) {
-                res
-            } else {
-                log! { @3 | "failed to retrieve value for {}", rhs_args[*last] }
-                return Ok(None);
-            }
-        } else if let Some(conj) = value {
-            term::and(conj)
-        } else {
-            term::tru()
-        };
-
-        log! { @4 | "value extraction successful: {}", value }
 
         Ok(Some(FunBranch {
             guard,
@@ -308,6 +312,12 @@ struct FunDef {
     typ: Typ,
     /// Branches of the definition.
     branches: Vec<FunBranch>,
+    /// Candidates invariants.
+    ///
+    /// Maps candidates to the index of the branch they come from, and the term they originate
+    /// from. If a candidate is not an invariant, it will be added back to the corresponding
+    /// branches.
+    candidate_invars: TermMap<Vec<(usize, Term)>>,
     /// Invariants.
     ///
     /// Invariants are all terms ranging over exactly one variable, the variable `v_0`. This
@@ -328,6 +338,7 @@ impl FunDef {
             sig,
             typ,
             branches: Vec::new(),
+            candidate_invars: TermMap::new(),
             invars: TermSet::new(),
         }
     }
@@ -344,12 +355,15 @@ impl FunDef {
             bail!("FunDef::register_clause called with illegal clause")
         };
 
+        let index = self.branches.len();
+
         let res = if let Some(branch) = FunBranch::new(
             (self.pred, &self.name, &self.sig, &self.typ),
             rhs_args,
             clause.lhs_terms(),
             clause.lhs_preds(),
-            &mut self.invars,
+            &mut self.candidate_invars,
+            index,
         )? {
             self.branches.push(branch);
             Some(self)
@@ -364,15 +378,20 @@ impl FunDef {
     ///
     /// Once the invariants are confirmed, all the substitutions defined by `calls` in the branches
     /// are applied to the guard and the result.
-    pub fn check_invariants(&mut self, instance: &mut PreInstance) -> Res<bool> {
+    pub fn check_invariants(&mut self, instance: &mut PreInstance) -> Res<()> {
         macro_rules! solver {
             () => {
                 instance.solver()
             };
         }
 
-        if !self.invars.is_empty() {
-            log! { @3 | "checking {} invariants...", self.invars.len() }
+        if !self.candidate_invars.is_empty() {
+            log! { @3 | "checking {} invariants...", self.candidate_invars.len() }
+            if_log! { @4
+                for invar in self.candidate_invars.keys() {
+                    log! { @4 |=> "{}", invar }
+                }
+            }
             solver!().comment_args(format_args!(
                 "checking candidate invariants for function {}",
                 self.name
@@ -381,15 +400,30 @@ impl FunDef {
 
         let mut subst = VarMap::with_capacity(1);
 
-        for invariant in &self.invars {
+        'check_invariants: for (invariant, backtrack) in self.candidate_invars.drain() {
             solver!().comment_args(format_args!("checking candidate invariant {}", invariant))?;
 
+            macro_rules! backtrack {
+                () => {{
+                    for (index, term) in backtrack {
+                        self.branches[index].guard.insert(term);
+                    }
+                    continue 'check_invariants;
+                }};
+            }
+
             // Check invariant holds for each branch.
-            'all_branches: for branch in &self.branches {
+            'all_branches: for branch_index in 0..self.branches.len() {
+                macro_rules! branch {
+                    () => {
+                        self.branches[branch_index]
+                    };
+                }
+
                 // Target invariant (negated).
                 let neg_objective = {
                     debug_assert! { subst.is_empty() }
-                    subst.push(branch.value.clone());
+                    subst.push(branch!().value.clone());
 
                     let invariant = invariant
                         .subst_total(&subst)
@@ -400,7 +434,7 @@ impl FunDef {
 
                     match invariant.bool() {
                         Some(true) => continue 'all_branches,
-                        Some(false) => return Ok(false),
+                        Some(false) => backtrack!(),
                         None => term::not(invariant),
                     }
                 };
@@ -411,23 +445,23 @@ impl FunDef {
                 }
 
                 // Declare recursive call variables.
-                if !branch.calls.is_empty() {
+                if !branch!().calls.is_empty() {
                     solver!().comment("declaring vars for recursive calls")?;
-                    for (var, _) in &branch.calls {
+                    for (var, _) in &branch!().calls {
                         solver!().declare_const(var, self.typ.get())?
                     }
                 }
 
                 solver!().comment("branch guard")?;
 
-                for term in &branch.guard {
+                for term in &branch!().guard {
                     solver!().assert(&smt::SmtTerm::new(term))?
                 }
 
-                if !branch.calls.is_empty() {
+                if !branch!().calls.is_empty() {
                     solver!().comment("recursion hypotheses")?;
 
-                    for (var, _) in &branch.calls {
+                    for (var, _) in &branch!().calls {
                         debug_assert! { subst.is_empty() }
                         subst.push(term::var(*var, self.typ.clone()));
                         let invariant = invariant
@@ -447,24 +481,33 @@ impl FunDef {
 
                 if sat {
                     log! { @3 | "  not an invariant: {}", invariant }
-                    return Ok(false);
+                    backtrack!()
                 }
 
                 instance.reset_solver()?;
             }
 
             log! { @3 | "  confirmed invariant: {}", invariant }
+            let is_new = self.invars.insert(invariant);
+            debug_assert! { is_new }
         }
 
         for branch in &mut self.branches {
             branch.propagate_calls()
         }
 
-        Ok(true)
+        Ok(())
     }
 
     /// Checks that all branches are exclusive and exhaustive.
     pub fn check_branches(&self, instance: &mut PreInstance) -> Res<bool> {
+        let res = self.inner_check_branches(instance)?;
+        instance.reset_solver()?;
+        Ok(res)
+    }
+
+    /// Checks that all branches are exclusive and exhaustive.
+    fn inner_check_branches(&self, instance: &mut PreInstance) -> Res<bool> {
         macro_rules! solver {
             () => {
                 instance.solver()
@@ -476,6 +519,11 @@ impl FunDef {
         }
 
         solver!().declare_fun(&self.name, &self.sig, self.typ.get())?;
+
+        solver!().comment_args(format_args!(
+            "checking branches for {} are exclusive",
+            self.name
+        ))?;
 
         let mut actlits = Vec::with_capacity(self.branches.len());
 
@@ -505,6 +553,11 @@ impl FunDef {
 
         log! { @3 | "all branches are exclusive, checking they're exhaustive" }
 
+        solver!().comment_args(format_args!(
+            "checking branches for {} are exhaustive",
+            self.name
+        ))?;
+
         for branch in &self.branches {
             let conj = smt::TermConj::new(branch.guard.iter());
             solver!().assert_with(&conj, false)?;
@@ -524,15 +577,12 @@ impl FunDef {
 
     /// Finalizes the function definition.
     pub fn finalize(mut self, instance: &mut PreInstance) -> Res<Option<Fun>> {
-        let okay = self
-            .check_invariants(instance)
+        self.check_invariants(instance)
             .chain_err(|| "while checking the invariants")?;
 
-        if okay {
-            log!{ @3 | "all invariant(s) are fine" }
-        } else {
-            log!{ @3 | "failed to verify invariants" }
-            return Ok(None);
+        let invs = self.invars.len();
+        if invs > 0 {
+            log! { @3 | "discovered {} invariant(s)", invs }
         }
 
         let okay = self
@@ -816,12 +866,12 @@ impl RedStrat for FunPreds {
                     info += red_info;
                     break;
                 } else {
-                    // let res = FunPreds::reduce_pred(instance, pred, true) ? ;
+                    // let res = FunPreds::reduce_pred(instance, pred, true)?;
                     // // pause("to resume fun_preds", & Profiler::new()) ;
                     // if let Some(red_info) = res {
-                    //   new_stuff = true ;
-                    //   info += red_info ;
-                    //   break
+                    //     new_stuff = true;
+                    //     info += red_info;
+                    //     break;
                     // }
                     ()
                 }
@@ -853,15 +903,15 @@ pub fn args_invert(args: &VarTerms, args_len: usize) -> Res<Option<(TermSet, Var
         did_something = false;
 
         for (var, term) in current.drain(0..) {
-            log! { @5 "attempting to invert {} | {}", var, term }
+            log! { @5 | "attempting to invert {} | {}", var, term }
             if_log! { @6
-              log! { @6 "subst:" }
+              log! { @6 |=> "subst:" }
               for (var, term) in & subst {
-                log! { @6 "  {}: {}", var.default_str(), term }
+                log! { @6 |=> "  {}: {}", var.default_str(), term }
               }
-              log! { @6 "cube:" }
+              log! { @6 |=> "cube:" }
               for term in & cube {
-                log! { @6 "  {}", term }
+                log! { @6 |=> "  {}", term }
               }
             }
 

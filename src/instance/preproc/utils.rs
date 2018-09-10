@@ -179,7 +179,7 @@ impl ExtractionCxt {
         Terms: IntoIterator<IntoIter = TermIter, Item = &'a Term>,
         F: Fn(Term) -> Term,
     {
-        log! { @4 "terms_of_terms" }
+        log! { @5 | "terms_of_terms" }
 
         // Finds terms which variables are related to the ones from the predicate
         // applications.
@@ -270,6 +270,8 @@ impl ExtractionCxt {
     ) -> Res<Option<(TermSet, VarSet)>> {
         debug_assert! { self.map.is_empty() }
 
+        log! { @5 | "terms of app to {}", args }
+
         let mut app_vars = VarSet::with_capacity(instance[pred].sig.len());
         let mut terms = TermSet::with_capacity(7);
 
@@ -277,12 +279,15 @@ impl ExtractionCxt {
         let mut postponed = Vec::with_capacity(args.len());
 
         for (index, arg) in args.index_iter() {
+            log! { @6 | "v_{} -> {}", index, arg }
             if let Some(var) = arg.var_idx() {
+                log! { @6 | "  success" }
                 let _ = app_vars.insert(var);
                 if let Some(pre) = self.map.insert(var, term::var(index, arg.typ())) {
                     terms.insert(term::eq(term::var(index, arg.typ()), pre));
                 }
             } else {
+                log! { @6 | "  postponed" }
                 match arg.as_val().to_term() {
                     Some(trm) => {
                         debug_assert_eq! { trm.typ(), arg.typ() }
@@ -294,7 +299,11 @@ impl ExtractionCxt {
             }
         }
 
+        log! { @6 | "postponed" }
+
         for (var, arg) in postponed {
+            log! { @7 "v_{} -> {}", var, arg }
+
             if let Some((term, _)) = arg.subst_total(&self.map) {
                 terms.insert(term::eq(term::var(var, arg.typ()), term));
             } else if let Some((v, inverted)) = arg.invert_var(var, arg.typ()) {
@@ -310,6 +319,7 @@ impl ExtractionCxt {
                 true,
                 |term| term::eq(term::var(var, term.typ()), term),
             )? {
+                log! { @6 | "failed to extract argument v_{}: {}", var, arg }
                 return Ok(None);
             }
         }
@@ -330,7 +340,7 @@ impl ExtractionCxt {
         (lhs_terms, lhs_preds): (&TermSet, &'a PredApps),
         (pred, args): (PrdIdx, &VarTerms),
     ) -> Res<ExtractRes<(TTermSet, VarSet, Option<&'a VarTermsSet>)>> {
-        log!{ @5 "extracting application's terms" }
+        log!{ @5 "terms of lhs part" }
 
         let (terms, mut app_vars) =
             if let Some(res) = self.terms_of_app(var_info, instance, pred, args)? {

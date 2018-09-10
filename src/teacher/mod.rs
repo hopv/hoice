@@ -959,26 +959,21 @@ impl<'a> Teacher<'a> {
             }
         } else {
             log! { @debug "  checksat" }
-            let (sat, actlit) = profile! {
-              self wrap {
+            let sat = profile! {
+                self wrap {
 
-                if self.using_rec_funs {
-                  self.solver.get_actlit().and_then(
-                    |actlit| {
-                      let sat = self.solver.check_sat_act( Some(& actlit) ) ? ;
-                      Ok( (sat, Some(actlit)) )
+                    if self.using_rec_funs {
+                        smt::multi_try_check_sat(& mut self.solver)
+                    } else {
+                        self.solver.check_sat().map_err(
+                            |e| e.into()
+                        )
                     }
-                  )
-                } else {
-                  self.solver.check_sat().map(
-                    |sat| (sat, None)
-                  )
-                }
 
-              } "cexs", "check-sat"
+                } "cexs", "check-sat"
             }?;
 
-            let res = if sat {
+            if sat {
                 log! { @debug "  sat, getting cex" }
                 let bias = if self.instance[clause].is_positive() {
                     Bias::Lft
@@ -998,13 +993,7 @@ impl<'a> Teacher<'a> {
                 Ok(Some((cex, bias)))
             } else {
                 Ok(None)
-            };
-
-            if let Some(actlit) = actlit {
-                self.solver.de_actlit(actlit)?
             }
-
-            res
         }
     }
 

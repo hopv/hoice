@@ -134,6 +134,9 @@ pub struct Assistant {
     using_adts: bool,
     /// Maps predicates to their positive / strict negative clause data.
     clauses: PrdHMap<Vec<ClauseData>>,
+
+    /// True if some recursive functions are defined.
+    using_rec_funs: bool,
 }
 
 impl Assistant {
@@ -146,6 +149,13 @@ impl Assistant {
 
         let clauses = PrdHMap::new();
 
+        let mut using_rec_funs = false;
+
+        fun::iter(|_| {
+            using_rec_funs = true;
+            Ok(())
+        })?;
+
         let mut res = Assistant {
             // core,
             solver,
@@ -153,6 +163,7 @@ impl Assistant {
             _profiler,
             using_adts,
             clauses,
+            using_rec_funs,
         };
 
         res.register_clauses()?;
@@ -386,7 +397,15 @@ impl Assistant {
                 .assert(&ArgValEq::new(args, vals, vars.as_ref()))?;
 
             let sat = profile! {
-                self wrap { self.solver.check_sat() } "smt"
+                self wrap {
+                    if self.using_rec_funs {
+                        smt::multi_try_check_sat(& mut self.solver)
+                    } else {
+                        self.solver.check_sat().map_err(
+                            |e| e.into()
+                        )
+                    }
+                } "smt"
             }?;
 
             solver!(pop);

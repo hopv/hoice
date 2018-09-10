@@ -36,7 +36,6 @@ lazy_static! {
 
 /// Registers a function declaration.
 pub fn register_dec(fun: RFun) -> Res<()> {
-    println!("registering {}", fun.name);
     if let Ok(mut decs) = fun_decs.write() {
         let prev = decs.insert(fun.name.clone(), fun);
         if let Some(prev) = prev {
@@ -50,7 +49,6 @@ pub fn register_dec(fun: RFun) -> Res<()> {
 
 /// Retrieves a function declaration.
 pub fn retrieve_dec(fun: &str) -> Res<RFun> {
-    println!("retrieving {}", fun);
     if let Ok(mut decs) = fun_decs.write() {
         if let Some(dec) = decs.remove(fun) {
             Ok(dec)

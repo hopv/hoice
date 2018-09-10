@@ -60,6 +60,37 @@ pub fn preproc_reset<P>(solver: &mut Solver<P>) -> Res<()> {
     preproc_init(solver)
 }
 
+/// Performs a check-sat.
+///
+/// Tries to check-sat a solver with various strategies. Returns the result of the first tries that
+/// does not return `unknown`.
+///
+/// # First strategy
+///
+/// Declares an actlit, and tries a `check-sat-assuming` with this actlit.
+///
+/// # Second strategy
+///
+/// Check-sat without any actlits.
+pub fn multi_try_check_sat<P>(solver: &mut Solver<P>) -> Res<bool> {
+    if let Some(res) = actlit_check_sat(solver)? {
+        Ok(res)
+    } else {
+        let res = solver.check_sat()?;
+        Ok(res)
+    }
+}
+
+/// Tries to check-sat a solver with an actlit.
+///
+/// Does **not** deactivate the actlit once it's done. This is to allow `get-model` after the
+/// check.
+fn actlit_check_sat<P>(solver: &mut Solver<P>) -> Res<Option<bool>> {
+    let actlit = solver.get_actlit()?;
+    let res = solver.check_sat_act_or_unk(Some(&actlit))?;
+    Ok(res)
+}
+
 /// SMT-prints a term using the default var writer.
 pub struct SmtTerm<'a> {
     /// The term.
@@ -135,11 +166,7 @@ where
     }
 
     /// Checks if this conjunction is unsatisfiable.
-    fn is_unsat<Parser: Copy>(
-        &self,
-        solver: &mut Solver<Parser>,
-        actlit: Option<&Actlit>,
-    ) -> Res<bool> {
+    fn is_unsat<Parser: Copy>(&self, solver: &mut Solver<Parser>) -> Res<bool> {
         if self.terms.len() == 0 {
             return Ok(false);
         }
@@ -151,7 +178,7 @@ where
             }
         }
         solver.assert(self)?;
-        let sat = solver.check_sat_act(actlit)?;
+        let sat = multi_try_check_sat(solver)?;
         Ok(!sat)
     }
 }
@@ -827,18 +854,12 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
             }
         }
 
-        let mut actlit = None;
-
         let res = {
             let conj = SmtConj::new(lhs.iter(), &clause.vars);
 
             if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
-                if conj.has_fun_apps {
-                    actlit = Some(self.get_actlit()?)
-                }
-
                 // Either it is trivial, or falsifiable regardless of the predicates.
-                if conj.is_unsat(self, actlit.as_ref())? {
+                if conj.is_unsat(self)? {
                     Ok(Some(true))
                 } else {
                     Ok(None)
@@ -858,18 +879,10 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
                 if lhs.is_empty() {
                     Ok(Some(false))
                 } else {
-                    if conj.has_fun_apps {
-                        actlit = Some(self.get_actlit()?)
-                    }
-
-                    conj.is_unsat(self, actlit.as_ref()).map(Some)
+                    conj.is_unsat(self).map(Some)
                 }
             }
         };
-
-        if let Some(actlit) = actlit {
-            self.de_actlit(actlit)?
-        }
 
         clause.lhs_terms_checked();
 

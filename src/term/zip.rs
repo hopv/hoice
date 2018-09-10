@@ -152,8 +152,9 @@ impl Accumulator<()> for () {
 }
 
 /// Zip function.
-pub fn zip<E, Acc, Yield, NulF, AppF, Partial>(
+pub fn zip<E, Acc, Yield, DwnF, NulF, AppF, Partial>(
     term: &Term,
+    mut dwn_do: DwnF,
     mut nul_do: NulF,
     mut app_do: AppF,
     mut partial: Partial,
@@ -161,6 +162,8 @@ pub fn zip<E, Acc, Yield, NulF, AppF, Partial>(
 where
     Acc: Accumulator<Yield>,
     Yield: Clone,
+
+    DwnF: for<'a> FnMut(&'a Term) -> Result<Option<Yield>, E>,
 
     NulF: for<'a> FnMut(ZipNullary<'a>) -> Result<Yield, E>,
 
@@ -192,47 +195,99 @@ where
     'inspect_term: loop {
         // stack_print!() ;
 
-        let result = match *term.get() {
-            RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
-                ZipDoTotal::Upp {
-                    yielded: subst[var_idx].clone(),
+        let result = if let Some(yielded) = dwn_do(term)? {
+            ZipDoTotal::Upp { yielded }
+        } else {
+            match *term.get() {
+                RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
+                    ZipDoTotal::Upp {
+                        yielded: subst[var_idx].clone(),
+                    }
+                } else {
+                    ZipDoTotal::Upp {
+                        yielded: nul_do(ZipNullary::Var(typ, var_idx))?,
+                    }
+                },
+
+                RTerm::Cst(ref cst) => ZipDoTotal::Upp {
+                    yielded: nul_do(ZipNullary::Cst(cst))?,
+                },
+
+                RTerm::CArray {
+                    ref typ,
+                    term: ref nu_term,
+                } => {
+                    let frame = ZipFrame {
+                        thing: ZipOp::CArray,
+                        typ,
+                        lft_args: Acc::new_empty(1),
+                        rgt_args: empty.iter(),
+                    };
+                    stack.push((frame, subst.clone()));
+                    term = nu_term;
+
+                    continue 'inspect_term;
                 }
-            } else {
-                ZipDoTotal::Upp {
-                    yielded: nul_do(ZipNullary::Var(typ, var_idx))?,
+
+                RTerm::App {
+                    op,
+                    ref typ,
+                    ref args,
+                } => {
+                    let mut rgt_args = args.iter();
+                    let op = ZipOp::Op(op);
+                    let lft_args = Acc::new_empty(args.len());
+
+                    if let Some(nu_term) = rgt_args.next() {
+                        let frame = ZipFrame {
+                            thing: op,
+                            typ,
+                            lft_args,
+                            rgt_args,
+                        };
+                        stack.push((frame, subst.clone()));
+                        term = nu_term;
+
+                        continue 'inspect_term;
+                    } else {
+                        app_do(op, typ, lft_args)?
+                    }
                 }
-            },
 
-            RTerm::Cst(ref cst) => ZipDoTotal::Upp {
-                yielded: nul_do(ZipNullary::Cst(cst))?,
-            },
+                RTerm::DTypNew {
+                    ref typ,
+                    ref name,
+                    ref args,
+                } => {
+                    let mut rgt_args = args.iter();
+                    let op = ZipOp::New(name);
+                    let lft_args = Acc::new_empty(args.len());
 
-            RTerm::CArray {
-                ref typ,
-                term: ref nu_term,
-            } => {
-                let frame = ZipFrame {
-                    thing: ZipOp::CArray,
-                    typ,
-                    lft_args: Acc::new_empty(1),
-                    rgt_args: empty.iter(),
-                };
-                stack.push((frame, subst.clone()));
-                term = nu_term;
+                    if let Some(nu_term) = rgt_args.next() {
+                        let frame = ZipFrame {
+                            thing: op,
+                            typ,
+                            lft_args,
+                            rgt_args,
+                        };
+                        stack.push((frame, subst.clone()));
+                        term = nu_term;
 
-                continue 'inspect_term;
-            }
+                        continue 'inspect_term;
+                    } else {
+                        app_do(op, typ, lft_args)?
+                    }
+                }
 
-            RTerm::App {
-                op,
-                ref typ,
-                ref args,
-            } => {
-                let mut rgt_args = args.iter();
-                let op = ZipOp::Op(op);
-                let lft_args = Acc::new_empty(args.len());
+                RTerm::DTypSlc {
+                    ref typ,
+                    ref name,
+                    term: ref nu_term,
+                } => {
+                    let mut rgt_args = empty.iter();
+                    let op = ZipOp::Slc(name);
+                    let lft_args = Acc::new_empty(1);
 
-                if let Some(nu_term) = rgt_args.next() {
                     let frame = ZipFrame {
                         thing: op,
                         typ,
@@ -243,21 +298,17 @@ where
                     term = nu_term;
 
                     continue 'inspect_term;
-                } else {
-                    app_do(op, typ, lft_args)?
                 }
-            }
 
-            RTerm::DTypNew {
-                ref typ,
-                ref name,
-                ref args,
-            } => {
-                let mut rgt_args = args.iter();
-                let op = ZipOp::New(name);
-                let lft_args = Acc::new_empty(args.len());
+                RTerm::DTypTst {
+                    ref typ,
+                    ref name,
+                    term: ref nu_term,
+                } => {
+                    let mut rgt_args = empty.iter();
+                    let op = ZipOp::Tst(name);
+                    let lft_args = Acc::new_empty(1);
 
-                if let Some(nu_term) = rgt_args.next() {
                     let frame = ZipFrame {
                         thing: op,
                         typ,
@@ -268,75 +319,31 @@ where
                     term = nu_term;
 
                     continue 'inspect_term;
-                } else {
-                    app_do(op, typ, lft_args)?
                 }
-            }
 
-            RTerm::DTypSlc {
-                ref typ,
-                ref name,
-                term: ref nu_term,
-            } => {
-                let mut rgt_args = empty.iter();
-                let op = ZipOp::Slc(name);
-                let lft_args = Acc::new_empty(1);
+                RTerm::Fun {
+                    ref typ,
+                    ref name,
+                    ref args,
+                } => {
+                    let mut rgt_args = args.iter();
+                    let op = ZipOp::Fun(name);
+                    let lft_args = Acc::new_empty(args.len());
 
-                let frame = ZipFrame {
-                    thing: op,
-                    typ,
-                    lft_args,
-                    rgt_args,
-                };
-                stack.push((frame, subst.clone()));
-                term = nu_term;
+                    if let Some(nu_term) = rgt_args.next() {
+                        let frame = ZipFrame {
+                            thing: op,
+                            typ,
+                            lft_args,
+                            rgt_args,
+                        };
+                        stack.push((frame, subst.clone()));
+                        term = nu_term;
 
-                continue 'inspect_term;
-            }
-
-            RTerm::DTypTst {
-                ref typ,
-                ref name,
-                term: ref nu_term,
-            } => {
-                let mut rgt_args = empty.iter();
-                let op = ZipOp::Tst(name);
-                let lft_args = Acc::new_empty(1);
-
-                let frame = ZipFrame {
-                    thing: op,
-                    typ,
-                    lft_args,
-                    rgt_args,
-                };
-                stack.push((frame, subst.clone()));
-                term = nu_term;
-
-                continue 'inspect_term;
-            }
-
-            RTerm::Fun {
-                ref typ,
-                ref name,
-                ref args,
-            } => {
-                let mut rgt_args = args.iter();
-                let op = ZipOp::Fun(name);
-                let lft_args = Acc::new_empty(args.len());
-
-                if let Some(nu_term) = rgt_args.next() {
-                    let frame = ZipFrame {
-                        thing: op,
-                        typ,
-                        lft_args,
-                        rgt_args,
-                    };
-                    stack.push((frame, subst.clone()));
-                    term = nu_term;
-
-                    continue 'inspect_term;
-                } else {
-                    app_do(op, typ, lft_args)?
+                        continue 'inspect_term;
+                    } else {
+                        app_do(op, typ, lft_args)?
+                    }
                 }
             }
         };

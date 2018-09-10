@@ -28,6 +28,7 @@ pub fn eval<E: Evaluator>(term: &Term, model: &E) -> Res<Val> {
 
     let res = zip(
         term,
+        |_| Ok(None),
         |zip_null| leaf(model, zip_null),
         |op, typ, values| total(op, typ, values, &mut fun_ref_count),
         partial,
