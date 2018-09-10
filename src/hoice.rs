@@ -20,8 +20,8 @@ extern crate clap;
 extern crate ansi_term as ansi;
 #[macro_use]
 extern crate hashconsing;
+extern crate atty;
 extern crate either;
-extern crate isatty;
 extern crate libc;
 extern crate num;
 extern crate rand;

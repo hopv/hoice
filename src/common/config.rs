@@ -1205,7 +1205,7 @@ impl Config {
         }
 
         // Colors.
-        let color = ::isatty::stdout_isatty() && bool_of_matches(&matches, "color");
+        let color = ::atty::is(::atty::Stream::Stdout) && bool_of_matches(&matches, "color");
         let styles = Styles::new(color);
 
         // Output directory.
