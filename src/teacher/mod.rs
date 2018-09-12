@@ -816,6 +816,23 @@ impl<'a> Teacher<'a> {
 
         let instance = self.instance.clone();
 
+        let mut got_unknown = false;
+
+        macro_rules! handle_clause_res {
+            ($e:expr) => {
+                match $e {
+                    Ok(()) => Ok(()),
+                    Err(e) => if e.is_unknown() {
+                        smt::reset(&mut self.solver, &self.instance)?;
+                        got_unknown = true;
+                        Ok(())
+                    } else {
+                        Err(e)
+                    },
+                }
+            };
+        }
+
         // True if we got some positive or negative samples.
         // let mut got_pos_neg_samples = false ;
 
@@ -824,7 +841,7 @@ impl<'a> Teacher<'a> {
           instance.pos_clauses().len()
         }
         for clause in instance.pos_clauses() {
-            self.get_cexs_of_clause(cands, *clause, &mut map, false)?
+            handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, false))?
         }
 
         log! { @verb
@@ -832,7 +849,7 @@ impl<'a> Teacher<'a> {
           instance.strict_neg_clauses().len()
         }
         for clause in instance.strict_neg_clauses() {
-            self.get_cexs_of_clause(cands, *clause, &mut map, false)?
+            handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, false))?
         }
 
         // got_pos_neg_samples = ! map.is_empty() ;
@@ -843,7 +860,7 @@ impl<'a> Teacher<'a> {
               instance.non_strict_neg_clauses().len()
             }
             for clause in instance.non_strict_neg_clauses() {
-                self.get_cexs_of_clause(cands, *clause, &mut map, true)?
+                handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, true))?
             }
         }
 
@@ -854,8 +871,12 @@ impl<'a> Teacher<'a> {
             }
 
             for clause in instance.imp_clauses() {
-                self.get_cexs_of_clause(cands, *clause, &mut map, true)?
+                handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, true))?
             }
+        }
+
+        if map.is_empty() && got_unknown {
+            bail!(ErrorKind::SmtError(::rsmt2::errors::ErrorKind::Unknown))
         }
 
         log! { @debug
@@ -963,7 +984,35 @@ impl<'a> Teacher<'a> {
                 self wrap {
 
                     if self.using_rec_funs {
-                        smt::multi_try_check_sat(& mut self.solver)
+                        let solver = & mut self.solver;
+                        let tru_preds = & self.tru_preds;
+                        let fls_preds = & self.fls_preds;
+                        let instance = & self.instance;
+                        smt::tmo_multi_try_check_sat(
+                            solver,
+                            conf.until_timeout().map(
+                                |time| time / 20
+                            ).unwrap_or_else( || Duration::new(1,0) ),
+                            |solver| {
+                                let clause = smt::NegQClause::new(& instance[clause]);
+                                solver.assert_with(
+                                    & clause,
+                                    (
+                                        tru_preds,
+                                        fls_preds,
+                                        instance.preds(),
+                                    )
+                                )?;
+                                Ok(())
+                            },
+                        )
+                        // if res.as_ref().err().map(
+                        //     |e| e.is_unknown()
+                        // ).unwrap_or(false) {
+                        //     smt::multi_try_check_sat(solver)
+                        // } else {
+                        //     res
+                        // }
                     } else {
                         self.solver.check_sat().map_err(
                             |e| e.into()
@@ -1020,15 +1069,61 @@ impl<'a> Teacher<'a> {
 
         profile!{ self tick "cexs", "prep" }
         clause!().declare(&mut self.solver)?;
-        self.solver.assert_with(
-            clause!(),
-            &(
-                false,
-                &self.tru_preds,
-                &self.fls_preds,
-                self.instance.preds(),
-            ),
-        )?;
+
+        if self.using_rec_funs {
+            log! { @4 | "assert/check-sat lhs terms" }
+            for term in clause!().lhs_terms() {
+                log! { @5 "{}", term }
+                self.solver.assert(&smt::SmtTerm::new(term))?;
+
+                let res = smt::multi_try_check_sat(&mut self.solver);
+                if let Ok(false) = res {
+                    return Ok(vec![]);
+                }
+            }
+
+            log! { @4 | "assert/check-sat lhs preds" }
+            for (pred, argss) in clause!().lhs_preds() {
+                if self.tru_preds.contains(pred) {
+                    continue;
+                }
+
+                for args in argss {
+                    log! { @5 | "({} {})", self.instance[*pred], args }
+                    self.solver.assert_with(
+                        &smt::SmtPredApp::new(*pred, args),
+                        (self.instance.preds(), true),
+                    )?;
+
+                    let res = smt::multi_try_check_sat(&mut self.solver);
+                    if let Ok(false) = res {
+                        return Ok(vec![]);
+                    }
+                }
+            }
+
+            if let Some((pred, args)) = clause!().rhs() {
+                if !self.fls_preds.contains(&pred) {
+                    log! { @4 | "assert/check-sat rhs pred" }
+                    log! { @5 | "(not ({} {}))", self.instance[pred], args }
+                    self.solver.assert_with(
+                        &smt::SmtPredApp::new(pred, args),
+                        (self.instance.preds(), false),
+                    )?
+                }
+            }
+        } else {
+            self.solver.assert_with(
+                clause!(),
+                &(
+                    false,
+                    &self.tru_preds,
+                    &self.fls_preds,
+                    self.instance.preds(),
+                ),
+            )?
+        }
+
         profile!{ self mark "cexs", "prep" }
 
         macro_rules! get_cex {

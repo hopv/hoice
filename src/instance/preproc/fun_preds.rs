@@ -479,12 +479,12 @@ impl FunDef {
 
                 let sat = solver!().check_sat()?;
 
+                instance.reset_solver()?;
+
                 if sat {
                     log! { @3 | "  not an invariant: {}", invariant }
                     backtrack!()
                 }
-
-                instance.reset_solver()?;
             }
 
             log! { @3 | "  confirmed invariant: {}", invariant }
@@ -577,6 +577,29 @@ impl FunDef {
 
     /// Finalizes the function definition.
     pub fn finalize(mut self, instance: &mut PreInstance) -> Res<Option<Fun>> {
+        if self.typ.is_arith() {
+            let (zero, one) = if self.typ.is_int() {
+                (term::int(0), term::int(1))
+            } else {
+                (
+                    term::real((0.into(), 1.into())),
+                    term::real((1.into(), 1.into())),
+                )
+            };
+
+            let term = term::var(0, self.typ.clone());
+
+            let t = term::ge(term.clone(), zero.clone());
+            self.candidate_invars.entry(t).or_insert_with(Vec::new);
+            let t = term::le(term.clone(), zero.clone());
+            self.candidate_invars.entry(t).or_insert_with(Vec::new);
+
+            let t = term::ge(term.clone(), one.clone());
+            self.candidate_invars.entry(t).or_insert_with(Vec::new);
+            let t = term::le(term.clone(), term::u_minus(one.clone()));
+            self.candidate_invars.entry(t).or_insert_with(Vec::new);
+        }
+
         self.check_invariants(instance)
             .chain_err(|| "while checking the invariants")?;
 
@@ -790,10 +813,6 @@ impl RedStrat for FunPreds {
         while new_stuff {
             new_stuff = false;
 
-            if instance.active_pred_count() <= 1 {
-                return Ok(info);
-            }
-
             let mut to_inline: Vec<_> = instance
                 .preds()
                 .iter()
@@ -859,6 +878,10 @@ impl RedStrat for FunPreds {
             }
 
             while let Some(pred) = to_inline.pop() {
+                if instance.active_pred_count() <= 1 {
+                    return Ok(info);
+                }
+
                 let res = FunPreds::reduce_pred(instance, pred, false)?;
                 // pause("to resume fun_preds", & Profiler::new()) ;
                 if let Some(red_info) = res {

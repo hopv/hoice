@@ -996,9 +996,14 @@ impl Clause {
         let mut map = TermMap::with_capacity(args.len());
         // Maps the clause's original variables to the set of arguments they appear in, along with
         // the corresponding fresh variable.
-        let mut var_map = VarHMap::new();
+        // let mut var_map = VarHMap::new();
 
         for arg in args.iter() {
+            // Already a variable?
+            if arg.var_idx().is_some() {
+                continue;
+            }
+
             let var = map
                 .entry(arg.clone())
                 .or_insert_with(|| term::var(clause.vars.next_index(), arg.typ()))
@@ -1009,22 +1014,22 @@ impl Clause {
                 .vars
                 .push(VarInfo::new(idx.default_str(), arg.typ(), idx));
 
-            for arg_var in term::vars(arg) {
-                var_map
-                    .entry(arg_var)
-                    .or_insert_with(Vec::new)
-                    .push((arg, idx))
-            }
+            // for arg_var in term::vars(arg) {
+            //     var_map
+            //         .entry(arg_var)
+            //         .or_insert_with(Vec::new)
+            //         .push((arg, idx))
+            // }
         }
 
         // True if we actually saw the predicate application in question.
         let mut legal = false;
         // Variables still appearing in the clause.
-        let mut vars = VarSet::new();
+        // let mut vars = VarSet::new();
 
         for term in &self.lhs_terms {
             let term = term.term_subst(&map);
-            vars.extend(term::vars(&term).into_iter());
+            // vars.extend(term::vars(&term).into_iter());
             clause.insert_term(term);
         }
 
@@ -1041,7 +1046,7 @@ impl Clause {
                 let mut nu_p_args = VarMap::with_capacity(p_args.len());
                 for arg in p_args.iter() {
                     let arg = arg.term_subst(&map);
-                    vars.extend(term::vars(&arg).into_iter());
+                    // vars.extend(term::vars(&arg).into_iter());
                     nu_p_args.push(arg)
                 }
                 let nu_p_args = var_to::terms::new(nu_p_args);
@@ -1057,26 +1062,30 @@ impl Clause {
             let mut nu_p_args = VarMap::with_capacity(p_args.len());
             for arg in p_args.iter() {
                 let arg = arg.term_subst(&map);
-                vars.extend(term::vars(&arg).into_iter());
+                // vars.extend(term::vars(&arg).into_iter());
                 nu_p_args.push(arg)
             }
             let nu_p_args = var_to::terms::new(nu_p_args);
             clause.rhs = Some((*p, nu_p_args))
         }
 
-        for info in &mut clause.vars {
-            info.active = false
+        // for info in &mut clause.vars {
+        //     info.active = false
+        // }
+
+        for (term, var) in map {
+            clause.insert_term(term::eq(term, var));
         }
 
-        for var in vars {
-            if let Some(equalities) = var_map.remove(&var) {
-                for (arg, idx) in equalities {
-                    let var = term::var(idx, arg.typ());
-                    clause.lhs_terms.insert(term::eq(arg.clone(), var));
-                }
-            }
-            clause.vars[var].active = true
-        }
+        // for var in vars {
+        //     if let Some(equalities) = var_map.remove(&var) {
+        //         for (arg, idx) in equalities {
+        //             let var = term::var(idx, arg.typ());
+        //             clause.lhs_terms.insert(term::eq(arg.clone(), var));
+        //         }
+        //     }
+        //     clause.vars[var].active = true
+        // }
 
         if !legal {
             bail!("clause rewriting for application called on unknown application")

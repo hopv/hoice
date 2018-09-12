@@ -61,6 +61,32 @@ pub fn preproc_reset<P>(solver: &mut Solver<P>) -> Res<()> {
 }
 
 /// Performs a check-sat.
+pub fn tmo_multi_try_check_sat<P, F>(
+    solver: &mut Solver<P>,
+    tmo: ::std::time::Duration,
+    do_stuff: F,
+    // final_unbounded_check: bool,
+) -> Res<bool>
+where
+    F: FnOnce(&mut Solver<P>) -> Res<()>,
+{
+    solver.set_option(":timeout", &format!("{}000", tmo.as_secs()))?;
+    if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+        return Ok(res);
+    }
+    do_stuff(solver)?;
+    // if !final_unbounded_check {
+    // multi_try_check_sat(solver)
+    // } else {
+    // if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+    //     return Ok(res);
+    // }
+    // solver.set_option(":timeout", "1000000000")?;
+    multi_try_check_sat(solver)
+    // }
+}
+
+/// Performs a check-sat.
 ///
 /// Tries to check-sat a solver with various strategies. Returns the result of the first tries that
 /// does not return `unknown`.
@@ -73,11 +99,17 @@ pub fn preproc_reset<P>(solver: &mut Solver<P>) -> Res<()> {
 ///
 /// Check-sat without any actlits.
 pub fn multi_try_check_sat<P>(solver: &mut Solver<P>) -> Res<bool> {
-    if let Some(res) = actlit_check_sat(solver)? {
+    if let Some(res) = solver.check_sat_or_unk()? {
         Ok(res)
     } else {
-        let res = solver.check_sat()?;
-        Ok(res)
+        Ok(actlit_check_sat(solver)?)
+    }
+}
+pub fn multi_try_check_sat_or_unk<P>(solver: &mut Solver<P>) -> Res<Option<bool>> {
+    if let Some(res) = solver.check_sat_or_unk()? {
+        Ok(Some(res))
+    } else {
+        Ok(actlit_check_sat_or_unk(solver)?)
     }
 }
 
@@ -85,7 +117,12 @@ pub fn multi_try_check_sat<P>(solver: &mut Solver<P>) -> Res<bool> {
 ///
 /// Does **not** deactivate the actlit once it's done. This is to allow `get-model` after the
 /// check.
-fn actlit_check_sat<P>(solver: &mut Solver<P>) -> Res<Option<bool>> {
+fn actlit_check_sat<P>(solver: &mut Solver<P>) -> Res<bool> {
+    let actlit = solver.get_actlit()?;
+    let res = solver.check_sat_act(Some(&actlit))?;
+    Ok(res)
+}
+fn actlit_check_sat_or_unk<P>(solver: &mut Solver<P>) -> Res<Option<bool>> {
     let actlit = solver.get_actlit()?;
     let res = solver.check_sat_act_or_unk(Some(&actlit))?;
     Ok(res)
@@ -105,6 +142,92 @@ impl<'a> SmtTerm<'a> {
 impl<'a> Expr2Smt<()> for SmtTerm<'a> {
     fn expr_to_smt2<Writer: Write>(&self, w: &mut Writer, _: ()) -> SmtRes<()> {
         self.term.write(w, |w, var| var.default_write(w))?;
+        Ok(())
+    }
+}
+
+/// SMT-prints a predicate application using the default var writer.
+pub struct SmtPredApp<'a> {
+    /// The predicate.
+    pub pred: PrdIdx,
+    /// Its arguments.
+    pub args: &'a VarTerms,
+}
+impl<'a> SmtPredApp<'a> {
+    /// Constructor.
+    pub fn new(pred: PrdIdx, args: &'a VarTerms) -> Self {
+        SmtPredApp { pred, args }
+    }
+}
+impl<'a, 'b> Expr2Smt<(&'b PrdInfos, bool)> for SmtPredApp<'a> {
+    fn expr_to_smt2<Writer: Write>(
+        &self,
+        w: &mut Writer,
+        (infos, pos): (&'b PrdInfos, bool),
+    ) -> SmtRes<()> {
+        if !pos {
+            write!(w, "(not ")?
+        }
+        if self.args.is_empty() {
+            write!(w, "{}", infos[self.pred])?
+        } else {
+            write!(w, "({}", infos[self.pred])?;
+            for arg in self.args.iter() {
+                write!(w, " ")?;
+                arg.write(w, |w, v| v.default_write(w))?
+            }
+            write!(w, ")")?
+        }
+        if !pos {
+            write!(w, ")")?
+        }
+        Ok(())
+    }
+}
+
+/// Smt-prints a clause negated, with its universal quantifier.
+pub struct NegQClause<'a> {
+    /// The clause.
+    pub clause: &'a Clause,
+}
+impl<'a> NegQClause<'a> {
+    /// Constructor.
+    pub fn new(clause: &'a Clause) -> Self {
+        NegQClause { clause }
+    }
+}
+impl<'a> Expr2Smt<(&'a PrdSet, &'a PrdSet, &'a PrdInfos)> for NegQClause<'a> {
+    fn expr_to_smt2<Writer: Write>(
+        &self,
+        w: &mut Writer,
+        (true_preds, false_preds, others): (&'a PrdSet, &'a PrdSet, &'a PrdInfos),
+    ) -> SmtRes<()> {
+        writeln!(w, "(not")?;
+        self.clause.forall_write(
+            w,
+            |w, var_info| var_info.idx.default_write(w),
+            |w, prd, args| {
+                if true_preds.contains(&prd) {
+                    write!(w, "true")
+                } else if false_preds.contains(&prd) {
+                    write!(w, "false")
+                } else {
+                    let pred = &others[prd].name;
+                    if args.is_empty() {
+                        write!(w, "{}", pred)
+                    } else {
+                        write!(w, "({}", pred)?;
+                        for arg in args.iter() {
+                            write!(w, " ")?;
+                            arg.write(w, |w, var| var.default_write(w))?
+                        }
+                        write!(w, ")")
+                    }
+                }
+            },
+            4,
+        )?;
+        write!(w, "  )")?;
         Ok(())
     }
 }
@@ -710,7 +833,18 @@ impl FullParser {
 
 impl<'a> IdentParser<FPVar, Typ, &'a str> for FullParser {
     fn parse_ident(self, input: &'a str) -> SmtRes<FPVar> {
-        if input.len() >= 2 && &input[0..2] == "v_" {
+        if input.len() >= 2 && &input[0..2] == "v_" && {
+            let mut okay = true;
+            for c in input[2..].chars() {
+                if c.is_whitespace() {
+                    break;
+                } else if !c.is_numeric() {
+                    okay = false;
+                    break;
+                }
+            }
+            okay
+        } {
             match usize::from_str(&input[2..]) {
                 Ok(idx) => Ok(FPVar::Var(idx.into())),
                 Err(e) => bail!("could not retrieve var index from `{}`: {}", input, e),

@@ -759,8 +759,8 @@ impl Instance {
         clauses.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1));
         let mut prev = None;
         for clause in clauses.drain(0..) {
-            log_debug!{
-              "    forgetting {}", self[clause].to_string_info(& self.preds) ?
+            log!{ @6
+              "forgetting {}", self[clause].to_string_info(& self.preds) ?
             }
             if prev == Some(clause) {
                 continue;

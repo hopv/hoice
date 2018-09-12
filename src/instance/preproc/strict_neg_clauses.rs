@@ -48,6 +48,7 @@ impl RedStrat for StrictNeg {
 
           for (clause_idx, clause) in strict_clauses {
             log! { @3 "working on clause #{}", clause_idx }
+            log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
 
             let (pred, args) = if let Some(
               (pred, argss)
@@ -67,6 +68,8 @@ impl RedStrat for StrictNeg {
             ).chain_err(
               || "during clause rewriting"
             )?;
+            log! { @3 "rewriting successful" }
+            log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
 
             let (pred, args) = if let Some(
               (pred, argss)
