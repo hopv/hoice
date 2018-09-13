@@ -119,6 +119,19 @@ impl<'core> IceLearner<'core> {
             synth_sys.push(SynthSys::new(&instance[pred].sig))
         }
 
+        let mut using_rec_funs = false;
+
+        fun::iter(|_| {
+            using_rec_funs = true;
+            Ok(())
+        })?;
+
+        let (gain_pivot, gain_pivot_synth) = if using_rec_funs {
+            (0.9999f64, Some(0.4f64))
+        } else {
+            (conf.ice.gain_pivot, conf.ice.gain_pivot_synth)
+        };
+
         use rand::SeedableRng;
 
         Ok(IceLearner {
@@ -140,8 +153,8 @@ impl<'core> IceLearner<'core> {
             pre_skip_rng: { Rng::from_seed([245; 16]) },
             luby: if mine { None } else { Some(LubyCount::new()) },
             known_quals: TermSet::new(),
-            gain_pivot: conf.ice.gain_pivot,
-            gain_pivot_synth: conf.ice.gain_pivot_synth,
+            gain_pivot,
+            gain_pivot_synth,
             count: 0,
         })
     }

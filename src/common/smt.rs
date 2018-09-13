@@ -65,7 +65,7 @@ pub fn tmo_multi_try_check_sat<P, F>(
     solver: &mut Solver<P>,
     tmo: ::std::time::Duration,
     do_stuff: F,
-    // final_unbounded_check: bool,
+    final_unbounded_check: bool,
 ) -> Res<bool>
 where
     F: FnOnce(&mut Solver<P>) -> Res<()>,
@@ -75,15 +75,15 @@ where
         return Ok(res);
     }
     do_stuff(solver)?;
-    // if !final_unbounded_check {
-    // multi_try_check_sat(solver)
-    // } else {
-    // if let Some(res) = multi_try_check_sat_or_unk(solver)? {
-    //     return Ok(res);
-    // }
-    // solver.set_option(":timeout", "1000000000")?;
-    multi_try_check_sat(solver)
-    // }
+    if !final_unbounded_check {
+        multi_try_check_sat(solver)
+    } else {
+        if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+            return Ok(res);
+        }
+        solver.set_option(":timeout", "1000000000")?;
+        multi_try_check_sat(solver)
+    }
 }
 
 /// Performs a check-sat.

@@ -918,7 +918,7 @@ impl<'a> Teacher<'a> {
                 self.solver.push(1)?
             }
 
-            let cexs = self.get_cex(clause, bias, conf.teacher.max_bias)?;
+            let cexs = self.get_cex(clause, bias, conf.teacher.max_bias, !map.is_empty())?;
 
             if self.restart_on_cex {
                 smt::reset(&mut self.solver, &self.instance)?
@@ -956,6 +956,7 @@ impl<'a> Teacher<'a> {
         &mut self,
         clause: ClsIdx,
         bias: Option<(Actlit, Bias)>,
+        just_try: bool,
     ) -> Res<Option<(Cex, Bias)>> {
         if let Some((actlit, bias)) = bias {
             log! { @debug
@@ -992,7 +993,7 @@ impl<'a> Teacher<'a> {
                             solver,
                             conf.until_timeout().map(
                                 |time| time / 20
-                            ).unwrap_or_else( || Duration::new(1,0) ),
+                            ).unwrap_or_else( || Duration::new(5,0) ),
                             |solver| {
                                 let clause = smt::NegQClause::new(& instance[clause]);
                                 solver.assert_with(
@@ -1005,6 +1006,7 @@ impl<'a> Teacher<'a> {
                                 )?;
                                 Ok(())
                             },
+                            ! just_try
                         )
                         // if res.as_ref().err().map(
                         //     |e| e.is_unknown()
@@ -1047,7 +1049,13 @@ impl<'a> Teacher<'a> {
     }
 
     /// Checks if a clause is falsifiable and returns a model if it is.
-    pub fn get_cex(&mut self, clause_idx: ClsIdx, bias: bool, bias_only: bool) -> Res<Vec<BCex>> {
+    pub fn get_cex(
+        &mut self,
+        clause_idx: ClsIdx,
+        bias: bool,
+        bias_only: bool,
+        just_try: bool,
+    ) -> Res<Vec<BCex>> {
         let mut cexs = vec![];
 
         log! { @debug "working on clause #{}", clause_idx }
@@ -1129,13 +1137,15 @@ impl<'a> Teacher<'a> {
         macro_rules! get_cex {
             () => {
                 // Normal check, no actlit.
-                if let Some(cex) = self.check_sat_cex(clause_idx, None)? {
+                if let Some(cex) = self.check_sat_cex(clause_idx, None, just_try)? {
                     cexs.push(cex)
                 }
             };
 
             ($actlit:expr ; $bias:expr) => {
-                if let Some(cex) = self.check_sat_cex(clause_idx, Some(($actlit, $bias)))? {
+                if let Some(cex) =
+                    self.check_sat_cex(clause_idx, Some(($actlit, $bias)), just_try)?
+                {
                     cexs.push(cex)
                 }
             };
