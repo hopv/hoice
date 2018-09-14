@@ -1083,11 +1083,10 @@ impl<'a> Teacher<'a> {
             for term in clause!().lhs_terms() {
                 log! { @5 "{}", term }
                 self.solver.assert(&smt::SmtTerm::new(term))?;
-
-                let res = smt::multi_try_check_sat(&mut self.solver);
-                if let Ok(false) = res {
-                    return Ok(vec![]);
-                }
+            }
+            let res = smt::multi_try_check_sat(&mut self.solver);
+            if let Ok(false) = res {
+                return Ok(vec![]);
             }
 
             log! { @4 | "assert/check-sat lhs preds" }

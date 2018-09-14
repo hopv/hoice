@@ -47,7 +47,7 @@
 //!
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { ref typ, op: Op::Eql, ref args } => {
+//!   RTerm::App { ref typ, op: Op::Eql, ref args, .. } => {
 //!     assert_eq!( typ, & typ::bool() ) ;
 //!     assert_eq!( args.len(), 2 ) ;
 //!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
@@ -62,6 +62,7 @@ use common::*;
 
 #[macro_use]
 mod op;
+pub mod bindings;
 mod eval;
 mod factory;
 mod leaf_iter;
@@ -70,6 +71,7 @@ mod tterms;
 pub mod typ;
 mod zip;
 
+pub use self::bindings::Bindings;
 pub use self::factory::*;
 pub use self::leaf_iter::LeafIter;
 pub use self::op::*;
@@ -94,6 +96,8 @@ pub enum RTerm {
     ///
     /// The type is the type of **the indices** of the arrays.
     CArray {
+        /// Depth of this term.
+        depth: usize,
         /// Type of **the indices** (not the array).
         typ: Typ,
         /// Default term of the array.
@@ -102,6 +106,8 @@ pub enum RTerm {
 
     /// An operator application.
     App {
+        /// Depth of this term.
+        depth: usize,
         /// Type of the application.
         typ: Typ,
         /// The operator.
@@ -112,6 +118,8 @@ pub enum RTerm {
 
     /// A datatype constructor application.
     DTypNew {
+        /// Depth of this term.
+        depth: usize,
         /// Type of the application.
         typ: Typ,
         /// Name of the constructor.
@@ -122,6 +130,8 @@ pub enum RTerm {
 
     /// A datatype selector application.
     DTypSlc {
+        /// Depth of this term.
+        depth: usize,
         /// Type of the application.
         typ: Typ,
         /// Name of the selector.
@@ -132,6 +142,8 @@ pub enum RTerm {
 
     /// A datatype tester application.
     DTypTst {
+        /// Depth of this term.
+        depth: usize,
         /// Type of the term (always bool).
         typ: Typ,
         /// Name of the tester.
@@ -142,6 +154,8 @@ pub enum RTerm {
 
     /// A function application.
     Fun {
+        /// Depth of this term.
+        depth: usize,
         /// Type of this term.
         typ: Typ,
         /// Function being applied.
@@ -152,6 +166,98 @@ pub enum RTerm {
 }
 
 impl RTerm {
+    /// Constructs a constant array.
+    pub fn new_carray(typ: Typ, term: Term) -> Self {
+        RTerm::CArray {
+            depth: term.depth() + 1,
+            typ,
+            term,
+        }
+    }
+    /// Constructs a datatype selector application.
+    pub fn new_dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypSlc {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
+        }
+    }
+    /// Constructs a datatype tester application.
+    pub fn new_dtyp_tst<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypTst {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
+        }
+    }
+    /// Constructs a function application.
+    pub fn new_fun<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    where
+        S: Into<String>,
+    {
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        let name = name.into();
+        RTerm::Fun {
+            depth,
+            typ,
+            name,
+            args,
+        }
+    }
+    /// Constructs an operator application.
+    pub fn new_app(typ: Typ, op: Op, args: Vec<Term>) -> Self {
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        RTerm::App {
+            depth,
+            typ,
+            op,
+            args,
+        }
+    }
+    /// Constructs a datatype constructor application.
+    pub fn new_dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        RTerm::DTypNew {
+            depth,
+            typ,
+            name,
+            args,
+        }
+    }
+
+    /// Size of a term: number of subterms.
+    pub fn depth(&self) -> usize {
+        match self {
+            RTerm::Var(_, _) | RTerm::Cst(_) => 1,
+            RTerm::CArray { depth, .. }
+            | RTerm::App { depth, .. }
+            | RTerm::DTypNew { depth, .. }
+            | RTerm::DTypSlc { depth, .. }
+            | RTerm::DTypTst { depth, .. }
+            | RTerm::Fun { depth, .. } => *depth,
+        }
+    }
+
     /// The operator and the kids of a term.
     pub fn app_inspect(&self) -> Option<(Op, &Vec<Term>)> {
         if let RTerm::App { op, ref args, .. } = *self {
@@ -312,7 +418,10 @@ impl RTerm {
 
     /// Returns the kids of a datatype constructor.
     pub fn dtyp_new_inspect(&self) -> Option<(&Typ, &str, &[Term])> {
-        if let RTerm::DTypNew { typ, name, args } = self {
+        if let RTerm::DTypNew {
+            typ, name, args, ..
+        } = self
+        {
             Some((typ, name, args))
         } else {
             None
@@ -321,7 +430,10 @@ impl RTerm {
 
     /// Returns the kids of a datatype selector.
     pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
-        if let RTerm::DTypSlc { typ, name, term } = self {
+        if let RTerm::DTypSlc {
+            typ, name, term, ..
+        } = self
+        {
             Some((typ, name, term))
         } else {
             None
@@ -360,7 +472,7 @@ impl RTerm {
     /// Type of the term.
     pub fn typ(&self) -> Typ {
         match self {
-            RTerm::CArray { typ, term } => typ::array(typ.clone(), term.typ()),
+            RTerm::CArray { typ, term, .. } => typ::array(typ.clone(), term.typ()),
 
             RTerm::Cst(val) => val.typ(),
 
@@ -398,18 +510,56 @@ impl RTerm {
         W: Write,
         WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
     {
+        self.write_with(w, write_var, None)
+    }
+
+    /// Write a real term using a special function to write variables.
+    pub fn write_with<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&bindings::Bindings>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        self.write_with_raw(w, write_var, bindings.map(|b| b.bindings()))
+    }
+
+    /// Write a real term using a special function to write variables.
+    fn write_with_raw<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&[TermMap<VarIdx>]>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
         // Stores triplets of
         // - the elements to write,
         // - the prefix string, written before next element
         // - the suffix, written once there's no more elements to write
         let mut stack = vec![(vec![self], "", "")];
 
-        while let Some((mut to_do, sep, end)) = stack.pop() {
+        'work: while let Some((mut to_do, sep, end)) = stack.pop() {
             use self::RTerm::*;
 
             if let Some(this_term) = to_do.pop() {
                 stack.push((to_do, sep, end));
                 write!(w, "{}", sep)?;
+
+                // Is term in the bindings?
+                if let Some(bindings) = bindings {
+                    for map in bindings {
+                        if let Some(var) = map.get(&this_term.to_hcons()) {
+                            Bindings::write_var(w, *var)?;
+                            continue 'work;
+                        }
+                    }
+                }
 
                 match this_term {
                     Var(_, v) => write_var(w, *v)?,
@@ -650,7 +800,9 @@ impl RTerm {
     /// Forces the type of a datatype constructor.
     pub fn force_dtyp(&self, nu_typ: Typ) -> Option<Term> {
         match self {
-            RTerm::DTypNew { typ, name, args } => {
+            RTerm::DTypNew {
+                typ, name, args, ..
+            } => {
                 debug_assert! { nu_typ.is_compatible(typ) }
                 Some(dtyp_new(nu_typ, name.clone(), args.clone()))
             }
@@ -705,7 +857,7 @@ impl RTerm {
 
                 RTerm::App { op, args, .. } => term::app(*op, args.clone()),
 
-                RTerm::CArray { typ, term } => {
+                RTerm::CArray { typ, term, .. } => {
                     let (src, tgt) = typ.array_inspect().unwrap();
                     stack.push(Frame::Arr(src.clone()));
                     nu_typ = tgt.clone();
@@ -713,7 +865,9 @@ impl RTerm {
                     continue 'go_down;
                 }
 
-                RTerm::DTypNew { typ, name, args } => {
+                RTerm::DTypNew {
+                    typ, name, args, ..
+                } => {
                     let mut lft = vec![];
                     let mut next = None;
                     let mut rgt = vec![];
@@ -761,17 +915,23 @@ impl RTerm {
                     }
                 }
 
-                RTerm::DTypSlc { typ, name, term } => {
+                RTerm::DTypSlc {
+                    typ, name, term, ..
+                } => {
                     debug_assert_eq! { typ, & nu_typ }
                     term::dtyp_slc(typ.clone(), name.clone(), term.clone())
                 }
 
-                RTerm::DTypTst { name, term, typ } => {
+                RTerm::DTypTst {
+                    name, term, typ, ..
+                } => {
                     debug_assert_eq! { typ, & nu_typ }
                     term::dtyp_tst(name.clone(), term.clone())
                 }
 
-                RTerm::Fun { typ, name, args } => {
+                RTerm::Fun {
+                    typ, name, args, ..
+                } => {
                     debug_assert_eq! { typ, & nu_typ }
                     term::fun(typ.clone(), name.clone(), args.clone())
                 }

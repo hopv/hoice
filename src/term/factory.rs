@@ -225,7 +225,7 @@ pub fn cst_array(typ: Typ, default: Term) -> Term {
     if let Some(val) = default.val() {
         factory.mk(RTerm::Cst(val::array(typ, val)))
     } else {
-        factory.mk(RTerm::CArray { typ, term: default })
+        factory.mk(RTerm::new_carray(typ, default))
     }
 }
 
@@ -265,7 +265,7 @@ pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
         panic!("illegal function application")
     }
 
-    factory.mk(RTerm::Fun { typ, name, args })
+    factory.mk(RTerm::new_fun(typ, name, args))
 }
 
 /// Creates an operator application.
@@ -690,6 +690,6 @@ fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
         //   print!(" {}", arg)
         // }
         // println!(")") ;
-        NormRes::Term(factory.mk(RTerm::App { typ, op, args }))
+        NormRes::Term(factory.mk(RTerm::new_app(typ, op, args)))
     }
 }

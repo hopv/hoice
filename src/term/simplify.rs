@@ -1788,7 +1788,7 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> RTerm {
         RTerm::Cst(val::dtyp_new(typ, name, vals))
     } else {
         debug_assert!(!args.is_empty());
-        RTerm::DTypNew { typ, name, args }
+        RTerm::new_dtyp_new(typ, name, args)
     }
 }
 
@@ -1817,11 +1817,7 @@ pub fn dtyp_slc(typ: Typ, field: String, term: Term) -> Either<RTerm, Term> {
         }
     }
 
-    Either::Left(RTerm::DTypSlc {
-        typ,
-        name: field,
-        term,
-    })
+    Either::Left(RTerm::new_dtyp_slc(typ, field, term))
 }
 
 /// Simplifies a datatype tester.
@@ -1845,14 +1841,7 @@ pub fn dtyp_tst(constructor: String, term: Term) -> (RTerm, bool) {
         if let Some(args) = dtyp.news.get(&constructor) {
             if args.is_empty() {
                 if let Some(constructor) = dtyp.rec_constructor() {
-                    return (
-                        RTerm::DTypTst {
-                            typ: typ::bool(),
-                            name: constructor.into(),
-                            term,
-                        },
-                        false,
-                    );
+                    return (RTerm::new_dtyp_tst(typ::bool(), constructor, term), false);
                 }
             }
         } else {
@@ -1865,12 +1854,5 @@ pub fn dtyp_tst(constructor: String, term: Term) -> (RTerm, bool) {
         )
     }
 
-    (
-        RTerm::DTypTst {
-            typ: typ::bool(),
-            name: constructor,
-            term,
-        },
-        true,
-    )
+    (RTerm::new_dtyp_tst(typ::bool(), constructor, term), true)
 }

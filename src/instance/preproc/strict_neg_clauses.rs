@@ -41,83 +41,71 @@ impl RedStrat for StrictNeg {
             }};
         }
 
-        scoped! {
-          let (
-            extractor, instance, strict_clauses
-          ) = instance.strict_neg_clauses() ;
+        {
+            let (extractor, instance, strict_clauses) = instance.strict_neg_clauses();
 
-          for (clause_idx, clause) in strict_clauses {
-            log! { @3 "working on clause #{}", clause_idx }
-            log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
+            for (idx, clause) in strict_clauses {
+                log! { @3 "working on clause #{}", idx }
+                log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
 
-            let (pred, args) = if let Some(
-              (pred, argss)
-            ) = clause.lhs_preds().iter().next() {
-              if let Some(args) = argss.iter().next() {
-                (* pred, args)
-              } else {
-                bail!("inconsistent instance state")
-              }
-            } else {
-              bail!("inconsistent instance state")
-            } ;
-
-
-            let clause = clause.rewrite_clause_for_app(
-              pred, args, 0.into()
-            ).chain_err(
-              || "during clause rewriting"
-            )?;
-            log! { @3 "rewriting successful" }
-            log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
-
-            let (pred, args) = if let Some(
-              (pred, argss)
-            ) = clause.lhs_preds().iter().next() {
-              if let Some(args) = argss.iter().next() {
-                (* pred, args)
-              } else {
-                bail!("inconsistent instance state")
-              }
-            } else {
-              bail!("inconsistent instance state")
-            } ;
-
-            match extractor.terms_of_lhs_app(
-              false, instance, clause.vars(),
-              ( clause.lhs_terms(), clause.lhs_preds() ),
-              clause.rhs(), (pred, args)
-            ) ? {
-              ExtractRes::Trivial |
-              ExtractRes::SuccessTrue => clauses_to_rm.push( clause_idx ),
-
-              ExtractRes::SuccessFalse => pdef!(pred => set false),
-
-              ExtractRes::Success( (qvars, pred_app, tterms) ) =>
-              if qvars.is_empty() {
-                if pred_app.is_some()
-                || ! tterms.preds().is_empty() {
-                  bail!("inconsistent instance state")
-                }
-
-                let terms = tterms.terms() ;
-
-                if terms.is_empty() {
-                  pdef!(pred => set false)
+                let (pred, args) = if let Some((pred, argss)) = clause.lhs_preds().iter().next() {
+                    if let Some(args) = argss.iter().next() {
+                        (*pred, args)
+                    } else {
+                        bail!("inconsistent instance state")
+                    }
                 } else {
-                  let term = term::or(
-                    terms.iter().map(
-                      |term| term::not( term.clone() )
-                    ).collect()
-                  ) ;
-                  pdef!(pred => add term)
+                    bail!("inconsistent instance state")
+                };
+
+                let clause = clause
+                    .rewrite_clause_for_app(pred, args, 0.into())
+                    .chain_err(|| "during clause rewriting")?;
+                log! { @3 "rewriting successful" }
+                log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
+
+                let (pred, args) = if let Some((pred, argss)) = clause.lhs_preds().iter().next() {
+                    if let Some(args) = argss.iter().next() {
+                        (*pred, args)
+                    } else {
+                        bail!("inconsistent instance state")
+                    }
+                } else {
+                    bail!("inconsistent instance state")
+                };
+
+                match extractor.terms_of_lhs_app(
+                    false,
+                    instance,
+                    clause.vars(),
+                    (clause.lhs_terms(), clause.lhs_preds()),
+                    clause.rhs(),
+                    (pred, args),
+                )? {
+                    ExtractRes::Trivial | ExtractRes::SuccessTrue => clauses_to_rm.push(idx),
+
+                    ExtractRes::SuccessFalse => pdef!(pred => set false),
+
+                    ExtractRes::Success((qvars, pred_app, tterms)) => if qvars.is_empty() {
+                        if pred_app.is_some() || !tterms.preds().is_empty() {
+                            bail!("inconsistent instance state")
+                        }
+
+                        let terms = tterms.terms();
+
+                        if terms.is_empty() {
+                            pdef!(pred => set false)
+                        } else {
+                            let term = term::or(
+                                terms.iter().map(|term| term::not(term.clone())).collect(),
+                            );
+                            pdef!(pred => add term)
+                        }
+                    },
+
+                    ExtractRes::Failed => (),
                 }
-              },
-
-              ExtractRes::Failed => (),
             }
-
-          }
         }
 
         if !clauses_to_rm.is_empty() {

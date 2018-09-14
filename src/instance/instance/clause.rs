@@ -85,6 +85,32 @@ impl Clause {
         self.shrink_vars()
     }
 
+    /// True if the clause features a function call.
+    pub fn has_fun_apps(&self) -> bool {
+        for term in self.lhs_terms() {
+            if term.has_fun_apps() {
+                return true;
+            }
+        }
+        for (_, argss) in self.lhs_preds() {
+            for args in argss {
+                for arg in args.iter() {
+                    if arg.has_fun_apps() {
+                        return true;
+                    }
+                }
+            }
+        }
+        if let Some((_, args)) = self.rhs() {
+            for arg in args.iter() {
+                if arg.has_fun_apps() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Inserts a top term in the lhs.
     ///
     /// Returns true if it was not there (`is_new`).
@@ -839,7 +865,7 @@ impl Clause {
     where
         W: Write,
         WriteVar: Fn(&mut W, &VarInfo) -> IoRes<()>,
-        WritePrd: Fn(&mut W, PrdIdx, &VarTerms) -> IoRes<()>,
+        WritePrd: Fn(&mut W, PrdIdx, &VarTerms, Option<&term::Bindings>) -> IoRes<()>,
     {
         if info {
             writeln!(
@@ -878,7 +904,7 @@ impl Clause {
     where
         W: Write,
         WriteVar: Fn(&mut W, &VarInfo) -> IoRes<()>,
-        WritePrd: Fn(&mut W, PrdIdx, &VarTerms) -> IoRes<()>,
+        WritePrd: Fn(&mut W, PrdIdx, &VarTerms, Option<&term::Bindings>) -> IoRes<()>,
     {
         write!(
             w,
@@ -916,13 +942,27 @@ impl Clause {
         w: &mut W,
         write_var: WriteVar,
         write_prd: WritePrd,
-        indent: usize,
+        original_indent: usize,
     ) -> IoRes<()>
     where
         W: Write,
         WriteVar: Fn(&mut W, &VarInfo) -> IoRes<()>,
-        WritePrd: Fn(&mut W, PrdIdx, &VarTerms) -> IoRes<()>,
+        WritePrd: Fn(&mut W, PrdIdx, &VarTerms, Option<&term::Bindings>) -> IoRes<()>,
     {
+        let bindings = self.bindings();
+        let bindings = bindings.as_ref();
+
+        let mut indent = original_indent;
+
+        if let Some(bindings) = bindings {
+            indent += 2;
+            bindings.write_opening(
+                w,
+                |w, var| write_var(w, &self[var]),
+                &" ".repeat(original_indent),
+            )?
+        }
+
         write!(
             w,
             "{nil: >indent$}(=>\n{nil: >indent$}  (and\n{nil: >indent$}   ",
@@ -935,7 +975,7 @@ impl Clause {
         } else {
             for term in &self.lhs_terms {
                 write!(w, " ")?;
-                term.write(w, |w, var| write_var(w, &self.vars[var]))?
+                term.write_with(w, |w, var| write_var(w, &self.vars[var]), bindings)?
             }
         }
 
@@ -947,7 +987,7 @@ impl Clause {
             for (pred, argss) in &self.lhs_preds {
                 for args in argss {
                     write!(w, " ")?;
-                    write_prd(w, *pred, args)?
+                    write_prd(w, *pred, args, bindings)?
                 }
             }
         }
@@ -960,11 +1000,15 @@ impl Clause {
         )?;
 
         if let Some((pred, ref args)) = self.rhs {
-            write_prd(w, pred, args)?
+            write_prd(w, pred, args, bindings)?
         } else {
             write!(w, "false")?
         }
         writeln!(w, "\n{nil: >indent$})", nil = "", indent = indent)?;
+
+        if let Some(bindings) = bindings {
+            bindings.write_closing(w, &" ".repeat(original_indent))?
+        }
 
         Ok(())
     }
@@ -1093,6 +1137,16 @@ impl Clause {
             Ok(clause)
         }
     }
+
+    /// Retrieves or constructs the let-bindings for this clause.
+    ///
+    /// Vector is sorted by the depth of the terms in the map. For each map, all terms should have
+    /// the same depth.
+    pub fn bindings(&self) -> Option<term::Bindings> {
+        term::bindings::Builder::new()
+            .scan_clause(&self)
+            .build(self.vars.next_index())
+    }
 }
 
 impl ::std::ops::Index<VarIdx> for Clause {
@@ -1114,6 +1168,13 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
     ) -> SmtRes<()> {
         let (pos, ref true_preds, ref false_preds, ref prd_info) = *info;
 
+        let bindings = self.bindings();
+        let bindings = bindings.as_ref();
+
+        if let Some(bindings) = bindings {
+            bindings.write_opening(writer, VarIdx::write, "")?;
+        }
+
         if !pos {
             write!(writer, "(not ")?
         }
@@ -1124,7 +1185,7 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
 
         for term in &self.lhs_terms {
             write!(writer, " ")?;
-            term.write(writer, |w, var| var.default_write(w))?
+            term.write_with(writer, VarIdx::write, bindings)?
         }
 
         for (pred, argss) in &self.lhs_preds {
@@ -1138,7 +1199,7 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
                     writer.write_all(prd_info[*pred].name.as_bytes())?;
                     for arg in args.iter() {
                         write!(writer, " ")?;
-                        arg.write(writer, |w, var| var.default_write(w))?
+                        arg.write_with(writer, VarIdx::write, bindings)?
                     }
                     write!(writer, ")")?
                 }
@@ -1161,7 +1222,7 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
                 write!(writer, "{}", prd_info[prd].name)?;
                 for arg in args.iter() {
                     write!(writer, " ")?;
-                    arg.write(writer, |w, var| var.default_write(w))?
+                    arg.write_with(writer, VarIdx::write, bindings)?
                 }
                 if !args.is_empty() {
                     write!(writer, ")")?
@@ -1177,6 +1238,10 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
 
         if !pos {
             write!(writer, ")")?
+        }
+
+        if let Some(bindings) = bindings {
+            bindings.write_closing(writer, "")?;
         }
 
         Ok(())

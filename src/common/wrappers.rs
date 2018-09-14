@@ -47,6 +47,14 @@ impl VarIdx {
         self.default_write(&mut s).unwrap();
         ::std::str::from_utf8(&s).unwrap().into()
     }
+
+    /// Default way to write variables: `v_<idx>`.
+    pub fn write<W>(w: &mut W, var: Self) -> ::std::io::Result<()>
+    where
+        W: Write,
+    {
+        var.default_write(w)
+    }
 }
 
 impl Into<VarTerms> for VarMap<::term::Term> {

@@ -206,7 +206,7 @@ impl<'a> Expr2Smt<(&'a PrdSet, &'a PrdSet, &'a PrdInfos)> for NegQClause<'a> {
         self.clause.forall_write(
             w,
             |w, var_info| var_info.idx.default_write(w),
-            |w, prd, args| {
+            |w, prd, args, bindings| {
                 if true_preds.contains(&prd) {
                     write!(w, "true")
                 } else if false_preds.contains(&prd) {
@@ -219,7 +219,7 @@ impl<'a> Expr2Smt<(&'a PrdSet, &'a PrdSet, &'a PrdInfos)> for NegQClause<'a> {
                         write!(w, "({}", pred)?;
                         for arg in args.iter() {
                             write!(w, " ")?;
-                            arg.write(w, |w, var| var.default_write(w))?
+                            arg.write_with(w, |w, var| var.default_write(w), bindings)?
                         }
                         write!(w, ")")
                     }
@@ -248,7 +248,7 @@ impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
         self.clause.forall_write(
             w,
             |w, var_info| var_info.idx.default_write(w),
-            |_, _, _| panic!("illegal side clause: found predicate application(s)"),
+            |_, _, _, _| panic!("illegal side clause: found predicate application(s)"),
             2,
         )?;
         Ok(())
@@ -263,13 +263,19 @@ pub struct SmtConj<'a, Trms> {
     has_fun_apps: bool,
     /// Variable informations.
     infos: &'a VarInfos,
+    /// Let bindings.
+    bindings: Option<&'a term::Bindings>,
 }
 impl<'a, 'b, Trms> SmtConj<'b, Trms>
 where
     Trms: Iterator<Item = &'a Term> + ExactSizeIterator + Clone,
 {
     /// Constructor.
-    pub fn new<IntoIter>(terms: IntoIter, infos: &'b VarInfos) -> Self
+    pub fn new<IntoIter>(
+        terms: IntoIter,
+        infos: &'b VarInfos,
+        bindings: Option<&'b term::Bindings>,
+    ) -> Self
     where
         IntoIter: IntoIterator<IntoIter = Trms, Item = &'a Term>,
     {
@@ -285,6 +291,7 @@ where
             terms,
             has_fun_apps,
             infos,
+            bindings,
         }
     }
 
@@ -301,7 +308,14 @@ where
             }
         }
         solver.assert(self)?;
-        let sat = multi_try_check_sat(solver)?;
+        let sat = tmo_multi_try_check_sat(
+            solver,
+            conf.until_timeout()
+                .map(|time| time / 20)
+                .unwrap_or_else(|| ::std::time::Duration::new(1, 0)),
+            |_| Ok(()),
+            true,
+        )?;
         Ok(!sat)
     }
 }
@@ -335,12 +349,18 @@ where
         if self.terms.len() == 0 {
             write!(w, "true")?
         } else {
+            if let Some(bindings) = self.bindings {
+                bindings.write_opening(w, VarIdx::write, "")?
+            }
             write!(w, "(and")?;
             for term in self.terms.clone() {
                 write!(w, " ")?;
-                term.write(w, |w, var| var.default_write(w))?;
+                term.write_with(w, |w, var| var.default_write(w), self.bindings)?;
             }
-            write!(w, ")")?
+            write!(w, ")")?;
+            if let Some(bindings) = self.bindings {
+                bindings.write_closing(w, "")?
+            }
         }
         write!(w, "{}", suffix)?;
         Ok(())
@@ -989,7 +1009,10 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
         }
 
         let res = {
-            let conj = SmtConj::new(lhs.iter(), &clause.vars);
+            let bindings = term::bindings::Builder::new()
+                .scan_terms(&lhs)
+                .build(clause.vars.next_index());
+            let conj = SmtConj::new(lhs.iter(), &clause.vars, bindings.as_ref());
 
             if clause.rhs().is_none() && clause.lhs_preds().is_empty() {
                 // Either it is trivial, or falsifiable regardless of the predicates.

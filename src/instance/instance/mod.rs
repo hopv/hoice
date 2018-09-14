@@ -1210,7 +1210,7 @@ impl Instance {
             side_clause.write(
                 w,
                 |w, var_info| write!(w, "{}", var_info.name),
-                |_, _, _| panic!("illegal side-clause: found predicate application(s)"),
+                |_, _, _, _| panic!("illegal side-clause: found predicate application(s)"),
                 true,
             )?;
             writeln!(w)?;
@@ -1253,14 +1253,14 @@ impl Instance {
             clause.write(
                 w,
                 |w, var_info| write!(w, "{}", var_info.name),
-                |w, p, args| {
+                |w, p, args, bindings| {
                     if !args.is_empty() {
                         write!(w, "(")?
                     }
                     w.write_all(self[p].name.as_bytes())?;
                     for arg in args.iter() {
                         write!(w, " ")?;
-                        arg.write(w, |w, var| write!(w, "{}", clause.vars[var]))?
+                        arg.write_with(w, |w, var| write!(w, "{}", clause.vars[var]), bindings)?
                     }
                     if !args.is_empty() {
                         write!(w, ")")
@@ -1702,12 +1702,12 @@ impl<'a> PebcakFmt<'a> for Clause {
         self.write(
             w,
             |w, var_info| write!(w, "{}", var_info.name),
-            |w, prd, args| {
+            |w, prd, args, bindings| {
                 write!(w, "(")?;
                 w.write_all(prds[prd].as_bytes())?;
                 for arg in args.iter() {
                     write!(w, " ")?;
-                    arg.write(w, |w, var| write!(w, "{}", self.vars[var]))?
+                    arg.write_with(w, |w, var| write!(w, "{}", self.vars[var]), bindings)?
                 }
                 write!(w, ")")
             },

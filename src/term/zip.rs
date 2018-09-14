@@ -216,6 +216,7 @@ where
                 RTerm::CArray {
                     ref typ,
                     term: ref nu_term,
+                    ..
                 } => {
                     let frame = ZipFrame {
                         thing: ZipOp::CArray,
@@ -233,6 +234,7 @@ where
                     op,
                     ref typ,
                     ref args,
+                    ..
                 } => {
                     let mut rgt_args = args.iter();
                     let op = ZipOp::Op(op);
@@ -258,6 +260,7 @@ where
                     ref typ,
                     ref name,
                     ref args,
+                    ..
                 } => {
                     let mut rgt_args = args.iter();
                     let op = ZipOp::New(name);
@@ -283,6 +286,7 @@ where
                     ref typ,
                     ref name,
                     term: ref nu_term,
+                    ..
                 } => {
                     let mut rgt_args = empty.iter();
                     let op = ZipOp::Slc(name);
@@ -304,6 +308,7 @@ where
                     ref typ,
                     ref name,
                     term: ref nu_term,
+                    ..
                 } => {
                     let mut rgt_args = empty.iter();
                     let op = ZipOp::Tst(name);
@@ -325,6 +330,7 @@ where
                     ref typ,
                     ref name,
                     ref args,
+                    ..
                 } => {
                     let mut rgt_args = args.iter();
                     let op = ZipOp::Fun(name);

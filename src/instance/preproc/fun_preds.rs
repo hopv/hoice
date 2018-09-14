@@ -294,7 +294,7 @@ impl FunBranch {
                 .map(|term| term.subst(&self.calls).0)
                 .collect();
             self.value = self.value.subst(&self.calls).0;
-            self.calls.clear()
+            // self.calls.clear()
         }
     }
 }
@@ -650,12 +650,9 @@ impl FunDef {
         // Build actual definition.
         let mut def = None;
         for branch in self.branches.into_iter().rev() {
+            let cond = term::and(branch.guard.into_iter().collect());
             let mut nu_def = if let Some(def) = def {
-                term::ite(
-                    term::and(branch.guard.into_iter().collect()),
-                    branch.value,
-                    def,
-                )
+                term::ite(cond, branch.value, def)
             } else {
                 branch.value
             };
@@ -817,45 +814,61 @@ impl RedStrat for FunPreds {
                 .preds()
                 .iter()
                 .filter_map(|info| {
-                    let inline = {
-                        let pred = info.idx;
+                    let pred = info.idx;
 
-                        // Predicate is still unknown.
-                        ! instance.is_known(pred)
+                    // for clause in instance.clauses_of(pred).1 {
+                    //     println!(
+                    //         "{}",
+                    //         instance[*clause].to_string_info(instance.preds()).unwrap()
+                    //     );
+                    // }
 
-          // When `pred` appears in the rhs of a clause, the lhs only mentions
-          // `pred`.
-          && instance.clauses_of(pred).1.iter().all(
-            |clause| instance[* clause].lhs_preds().iter().all(
-              |(p, _)| * p == pred
-            )
-          )
-
-          // `pred` appears more than once in a clause where it's not alone.
-          // && instance.clauses_of(pred).0.iter().any(
-          //   |clause| instance[* clause].lhs_preds().get(
-          //     & pred
-          //   ).unwrap().len() > 1
-          //   && (
-          //     instance[* clause].lhs_preds().len() > 1
-          //     || instance[* clause].rhs().map(
-          //       |(p, _)| pred != * p
-          //     ).unwrap_or(false)
-          //   )
-          // )
-
-          // `pred` has only one dtyp argument (ignoring the last argument)
-          && info.sig.len() > 1
-          && info.sig[ 0 .. info.sig.len() - 1 ].iter().fold(
-            0, |acc, typ| if typ.is_dtyp() { acc + 1 } else { acc }
-          ) <= 1
-                    };
-
-                    if inline {
-                        Some(info.idx)
-                    } else {
-                        None
+                    // Predicate is still unknown.
+                    if instance.is_known(pred) {
+                        // println!("  known");
+                        return None;
                     }
+
+                    // When `pred` appears in the rhs of a clause, the lhs only mentions
+                    // `pred`. Also, lhs has no function application.
+                    if !instance.clauses_of(pred).1.iter().all(|clause| {
+                        !instance[*clause].has_fun_apps() && instance[*clause]
+                            .lhs_preds()
+                            .iter()
+                            .all(|(p, _)| *p == pred)
+                    }) {
+                        // println!("  lhs problem");
+                        return None;
+                    }
+
+                    // `pred` appears more than once in a clause where it's not alone.
+                    // && instance.clauses_of(pred).0.iter().any(
+                    //   |clause| instance[* clause].lhs_preds().get(
+                    //     & pred
+                    //   ).unwrap().len() > 1
+                    //   && (
+                    //     instance[* clause].lhs_preds().len() > 1
+                    //     || instance[* clause].rhs().map(
+                    //       |(p, _)| pred != * p
+                    //     ).unwrap_or(false)
+                    //   )
+                    // )
+
+                    // `pred` has only one dtyp argument (ignoring the last argument)
+                    if info.sig.len() <= 1
+                        && info.sig[0..info.sig.len() - 1].iter().fold(0, |acc, typ| {
+                            if typ.is_dtyp() {
+                                acc + 1
+                            } else {
+                                acc
+                            }
+                        }) > 1
+                    {
+                        // println!("  more than one dtyp arg");
+                        return None;
+                    }
+
+                    Some(info.idx)
                 }).collect();
 
             to_inline.sort_by(|p_1, p_2| {
@@ -978,7 +991,9 @@ pub fn map_invert(
 
     while let Some((term, to_invert)) = stack.pop() {
         match to_invert {
-            RTerm::DTypNew { typ, name, args } => {
+            RTerm::DTypNew {
+                typ, name, args, ..
+            } => {
                 let selectors = typ.selectors_of(name)?;
                 debug_assert_eq! { args.len(), selectors.len() }
 
@@ -1008,7 +1023,9 @@ pub fn map_invert(
             }
 
             // Constant array.
-            RTerm::CArray { term: inner, typ } => {
+            RTerm::CArray {
+                term: inner, typ, ..
+            } => {
                 stack.push((
                     // Array is constant, select any value.
                     term::select(term, typ.default_term()),
@@ -1016,7 +1033,7 @@ pub fn map_invert(
                 ))
             }
 
-            RTerm::App { typ, op, args } => {
+            RTerm::App { typ, op, args, .. } => {
                 match op {
                     Op::CMul => if args[0].val().is_some() {
                         let nu_term = if typ.is_int() {
@@ -1145,6 +1162,7 @@ pub fn map_invert(
                 typ,
                 name,
                 term: inner,
+                ..
             } => if let Some((inner, _)) = inner.subst_total(&(&*subst, &nu_subst)) {
                 nu_cube.push(term::eq(
                     term,
@@ -1162,7 +1180,9 @@ pub fn map_invert(
                 return Ok(false);
             },
 
-            RTerm::Fun { typ, name, args } => {
+            RTerm::Fun {
+                typ, name, args, ..
+            } => {
                 let mut nu_args = Vec::with_capacity(args.len());
                 for arg in args {
                     if let Some((arg, _)) = arg.subst_total(&(&*subst, &nu_subst)) {

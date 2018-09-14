@@ -1954,6 +1954,7 @@ impl ClauseSimplifier {
                 clause.deactivate(var)?
             }
         }
+
         // println!("{}", clause.to_string_info(_preds).unwrap()) ;
         Ok(Some(changed))
     }
