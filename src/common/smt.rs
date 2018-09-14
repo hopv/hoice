@@ -259,8 +259,6 @@ impl<'a> Expr2Smt<()> for SmtSideClause<'a> {
 pub struct SmtConj<'a, Trms> {
     /// Conjunction.
     terms: Trms,
-    /// True if the terms have function applications.
-    has_fun_apps: bool,
     /// Variable informations.
     infos: &'a VarInfos,
     /// Let bindings.
@@ -280,16 +278,8 @@ where
         IntoIter: IntoIterator<IntoIter = Trms, Item = &'a Term>,
     {
         let terms = terms.into_iter();
-        let mut has_fun_apps = false;
-        for term in terms.clone() {
-            if term.has_fun_apps() {
-                has_fun_apps = true;
-                break;
-            }
-        }
         SmtConj {
             terms,
-            has_fun_apps,
             infos,
             bindings,
         }
@@ -300,32 +290,34 @@ where
         if self.terms.len() == 0 {
             return Ok(false);
         }
-        if !self.has_fun_apps {
-            for var in self.infos {
-                if var.active {
-                    solver.declare_const(&var.idx, var.typ.get())?
-                }
+        for var in self.infos {
+            if var.active {
+                solver.declare_const(&var.idx, var.typ.get())?
             }
         }
-        solver.assert(self)?;
+
+        solver.assert_with(self, false)?;
         let sat = tmo_multi_try_check_sat(
             solver,
             conf.until_timeout()
                 .map(|time| time / 20)
                 .unwrap_or_else(|| ::std::time::Duration::new(1, 0)),
-            |_| Ok(()),
+            |solver| {
+                solver.assert_with(self, true)?;
+                Ok(())
+            },
             true,
         )?;
         Ok(!sat)
     }
 }
 
-impl<'a, 'b, Trms> Expr2Smt<()> for SmtConj<'b, Trms>
+impl<'a, 'b, Trms> Expr2Smt<bool> for SmtConj<'b, Trms>
 where
     Trms: Iterator<Item = &'a Term> + ExactSizeIterator + Clone,
 {
-    fn expr_to_smt2<Writer: Write>(&self, w: &mut Writer, _: ()) -> SmtRes<()> {
-        let suffix = if self.has_fun_apps {
+    fn expr_to_smt2<Writer: Write>(&self, w: &mut Writer, quantified: bool) -> SmtRes<()> {
+        let suffix = if quantified {
             write!(w, "(exists (")?;
             let mut inactive = 0;
             for var in self.infos {

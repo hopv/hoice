@@ -85,6 +85,32 @@ impl Clause {
         self.shrink_vars()
     }
 
+    /// True if the clause features a recursive function call.
+    pub fn has_rec_fun_apps(&self) -> bool {
+        for term in self.lhs_terms() {
+            if term.has_rec_fun_apps() {
+                return true;
+            }
+        }
+        for (_, argss) in self.lhs_preds() {
+            for args in argss {
+                for arg in args.iter() {
+                    if arg.has_rec_fun_apps() {
+                        return true;
+                    }
+                }
+            }
+        }
+        if let Some((_, args)) = self.rhs() {
+            for arg in args.iter() {
+                if arg.has_rec_fun_apps() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// True if the clause features a function call.
     pub fn has_fun_apps(&self) -> bool {
         for term in self.lhs_terms() {

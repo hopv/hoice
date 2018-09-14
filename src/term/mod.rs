@@ -1089,7 +1089,7 @@ impl RTerm {
         let res = zip(
             &self.to_hcons(),
             |term| {
-                if term.fun_inspect().is_some() {
+                if let Some((_, _)) = term.fun_inspect() {
                     Err(())
                 } else {
                     Ok(None)
@@ -1105,6 +1105,63 @@ impl RTerm {
                     thing: ZipOp::Fun(_),
                     ..
                 } => Err(()),
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// Returns true if the term mentions a recursive function.
+    pub fn has_rec_fun_apps(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if let Some((name, _)) = term.fun_inspect() {
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive()
+                    {
+                        Err(())
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(name)
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(name),
+                    ..
+                }
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
                 mut frame => {
                     let nu_term = frame.rgt_args.next().expect(
                         "illegal call to `partial_op`: \

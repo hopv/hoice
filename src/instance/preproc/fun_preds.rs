@@ -683,7 +683,9 @@ impl FunDef {
     }
 }
 
-pub struct FunPreds;
+pub struct FunPreds {
+    to_inline: Vec<(PrdIdx, bool)>,
+}
 
 impl FunPreds {
     /// Reduces a predicate to a function.
@@ -799,98 +801,119 @@ impl RedStrat for FunPreds {
     }
 
     fn new(_: &Instance) -> Self {
-        FunPreds
+        FunPreds {
+            to_inline: Vec::new(),
+        }
     }
 
     fn apply(&mut self, instance: &mut PreInstance) -> Res<RedInfo> {
         let mut info = RedInfo::new();
-
         let mut new_stuff = true;
 
         while new_stuff {
             new_stuff = false;
+            self.to_inline.clear();
 
-            let mut to_inline: Vec<_> = instance
-                .preds()
-                .iter()
-                .filter_map(|info| {
-                    let pred = info.idx;
+            'all_preds: for info in instance.preds() {
+                let pred = info.idx;
 
-                    // for clause in instance.clauses_of(pred).1 {
-                    //     println!(
-                    //         "{}",
-                    //         instance[*clause].to_string_info(instance.preds()).unwrap()
-                    //     );
-                    // }
+                // println!("{}", instance[pred]);
+                // for clause in instance.clauses_of(pred).1 {
+                //     println!(
+                //         "{}",
+                //         instance[*clause].to_string_info(instance.preds()).unwrap()
+                //     );
+                // }
 
-                    // Predicate is still unknown.
-                    if instance.is_known(pred) {
-                        // println!("  known");
-                        return None;
-                    }
+                // Predicate is still unknown.
+                if instance.is_known(pred) {
+                    // println!("  known");
+                    continue 'all_preds;
+                }
 
-                    // When `pred` appears in the rhs of a clause, the lhs only mentions
-                    // `pred`. Also, lhs has no function application.
-                    if !instance.clauses_of(pred).1.iter().all(|clause| {
-                        !instance[*clause].has_fun_apps() && instance[*clause]
-                            .lhs_preds()
-                            .iter()
-                            .all(|(p, _)| *p == pred)
-                    }) {
-                        // println!("  lhs problem");
-                        return None;
-                    }
-
-                    // `pred` appears more than once in a clause where it's not alone.
-                    // && instance.clauses_of(pred).0.iter().any(
-                    //   |clause| instance[* clause].lhs_preds().get(
-                    //     & pred
-                    //   ).unwrap().len() > 1
-                    //   && (
-                    //     instance[* clause].lhs_preds().len() > 1
-                    //     || instance[* clause].rhs().map(
-                    //       |(p, _)| pred != * p
-                    //     ).unwrap_or(false)
-                    //   )
-                    // )
-
-                    // `pred` has only one dtyp argument (ignoring the last argument)
-                    if info.sig.len() <= 1
-                        && info.sig[0..info.sig.len() - 1].iter().fold(0, |acc, typ| {
-                            if typ.is_dtyp() {
-                                acc + 1
-                            } else {
-                                acc
-                            }
-                        }) > 1
+                // When `pred` appears in the rhs of a clause, the lhs only mentions
+                // `pred`.
+                for clause in instance.clauses_of(pred).1 {
+                    if instance[*clause]
+                        .lhs_preds()
+                        .iter()
+                        .any(|(p, _)| *p != pred)
                     {
-                        // println!("  more than one dtyp arg");
-                        return None;
+                        continue 'all_preds;
+                    }
+                }
+
+                // // `pred` appears more than once in a clause where it's not alone.
+                // let potential_relation = instance.clauses_of(pred).0.iter().any(|clause| {
+                //     instance[*clause].lhs_preds().get(&pred).unwrap().len() > 1
+                //         && (instance[*clause].lhs_preds().len() > 1 || instance[*clause]
+                //             .rhs()
+                //             .map(|(p, _)| pred != *p)
+                //             .unwrap_or(false))
+                //         && instance[*clause].rhs().is_none()
+                // });
+
+                let mut has_fun_apps = false;
+
+                // Clauses where `pred` is in the rhs do not have function calls.
+                // if !potential_relation {
+                for clause in instance.clauses_of(pred).1 {
+                    if instance[*clause].has_fun_apps() {
+                        has_fun_apps = true
+                    }
+                    if instance[*clause].has_fun_apps() {
+                        // println!("  recursive function");
+                        continue 'all_preds;
+                    }
+                }
+                // }
+
+                // `pred` has only one dtyp argument (ignoring the last argument)
+                if info.sig.len() <= 1
+                    || info.sig[0..info.sig.len() - 1]
+                        .iter()
+                        .filter(|typ| typ.is_dtyp())
+                        .count()
+                        > 1
+                {
+                    // println!("  more than one dtyp arg");
+                    continue 'all_preds;
+                }
+
+                self.to_inline.push((pred, has_fun_apps))
+            }
+
+            // Note that we're reverse-sorting because we're going to pop below.
+            self.to_inline
+                .sort_by(|(p_1, has_fun_1), (p_2, has_fun_2)| {
+                    use std::cmp::Ordering::*;
+                    if *has_fun_1 && !*has_fun_2 {
+                        return Less;
+                    } else if *has_fun_2 && !*has_fun_1 {
+                        return Greater;
                     }
 
-                    Some(info.idx)
-                }).collect();
+                    let (sig_1, sig_2) = (&instance[*p_1].sig, &instance[*p_2].sig);
+                    let adt_count_1 =
+                        sig_1
+                            .iter()
+                            .fold(0, |acc, typ| if typ.is_dtyp() { acc + 1 } else { acc });
+                    let adt_count_2 =
+                        sig_2
+                            .iter()
+                            .fold(0, |acc, typ| if typ.is_dtyp() { acc + 1 } else { acc });
 
-            to_inline.sort_by(|p_1, p_2| {
-                let adt_count_1 =
-                    instance[*p_1]
-                        .sig
-                        .iter()
-                        .fold(0, |acc, typ| if typ.is_dtyp() { acc + 1 } else { acc });
-                let adt_count_2 =
-                    instance[*p_2]
-                        .sig
-                        .iter()
-                        .fold(0, |acc, typ| if typ.is_dtyp() { acc + 1 } else { acc });
+                    match adt_count_1.cmp(&adt_count_2).reverse() {
+                        ::std::cmp::Ordering::Equal => sig_1.len().cmp(&sig_2.len()).reverse(),
+                        res => res,
+                    }
+                });
 
-                adt_count_1.cmp(&adt_count_2).reverse()
-            });
-
-            if to_inline.is_empty() {
+            if self.to_inline.is_empty() {
                 return Ok(info);
             }
 
-            while let Some(pred) = to_inline.pop() {
+            while let Some((pred, _)) = self.to_inline.pop() {
                 if instance.active_pred_count() <= 1 {
                     return Ok(info);
                 }
