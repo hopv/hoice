@@ -17,6 +17,48 @@ use instance::{
 /// | `(v > 0)              => (p 7 v')` | `(v_0 = 7)`                 |
 /// | `(v > 0)              => (p v v )` | `(v_0 = v_1) and (v_0 > 0)` |
 /// | `(v > 0) and (v <= 0) => (p 7 v')` | `false` (by check-sat)      |
+///
+/// ```
+/// # use hoice::{ common::{ PrdIdx, PrdHMap }, parse, preproc::{ PreInstance, RedStrat, OneRhs } };
+/// let mut instance = parse::instance("
+///   (declare-fun p_1 ( Int ) Bool)
+///   (assert
+///     (forall ( (n Int) )
+///       (=>
+///         (> n 0)
+///         (p_1 n)
+///       )
+///     )
+///   )
+/// ");
+///
+/// let mut one_rhs = OneRhs::new(& instance);
+/// let mut instance = PreInstance::new(& mut instance).unwrap();
+/// let info = one_rhs.apply(& mut instance).unwrap();
+/// instance.finalize().unwrap();
+/// assert_eq! { info.preds, 1 }
+///
+/// let pred: PrdIdx = 0.into();
+/// assert_eq! { "p_1", & instance[pred].name }
+///
+/// let model = PrdHMap::new();
+/// let model = instance.extend_model(model).unwrap();
+/// let mut s: Vec<u8> = vec![];
+/// instance.write_model(& model, & mut s).unwrap();
+///
+/// assert_eq! {
+///     "\
+/// (model
+///   (define-fun p_1
+///     ( (v_0 Int) ) Bool
+///     (>= v_0 1)
+///   )
+/// )
+/// \
+///     ",
+///     &String::from_utf8_lossy(&s)
+/// }
+/// ```
 pub struct OneRhs;
 
 impl OneRhs {

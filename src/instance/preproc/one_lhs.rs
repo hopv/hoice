@@ -27,6 +27,50 @@ use instance::{
 /// If `lhs` or `(not rhs)` is unsat, then the clause is dropped and `p` is
 /// reduced to `true` since it does not appear as an antecedent anywhere
 /// anymore.
+///
+/// # Examples
+///
+/// ```
+/// # use hoice::{ common::{ PrdIdx, PrdHMap }, parse, preproc::{ PreInstance, RedStrat, OneLhs } };
+/// let mut instance = parse::instance("
+///   (declare-fun p_1 ( Int ) Bool)
+///   (assert
+///     (forall ( (n Int) )
+///       (=>
+///         (p_1 n)
+///         (> n 0)
+///       )
+///     )
+///   )
+/// ");
+///
+/// let mut one_lhs = OneLhs::new(& instance);
+/// let mut instance = PreInstance::new(& mut instance).unwrap();
+/// let info = one_lhs.apply(& mut instance).unwrap();
+/// instance.finalize().unwrap();
+/// assert_eq! { info.preds, 1 }
+///
+/// let pred: PrdIdx = 0.into();
+/// assert_eq! { "p_1", & instance[pred].name }
+///
+/// let model = PrdHMap::new();
+/// let model = instance.extend_model(model).unwrap();
+/// let mut s: Vec<u8> = vec![];
+/// instance.write_model(& model, & mut s).unwrap();
+///
+/// assert_eq! {
+///     "\
+/// (model
+///   (define-fun p_1
+///     ( (v_0 Int) ) Bool
+///     (>= v_0 1)
+///   )
+/// )
+/// \
+///     ",
+///     &String::from_utf8_lossy(&s)
+/// }
+/// ```
 pub struct OneLhs;
 
 impl OneLhs {

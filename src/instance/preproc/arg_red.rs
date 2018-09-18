@@ -10,6 +10,13 @@ use instance::{instance::PreInstance, preproc::RedStrat, Clause};
 ///
 /// [paper]: https://link.springer.com/chapter/10.1007%2F3-540-62718-9_6
 /// (Redundant argument filtering of logic programs)
+///
+/// # Examples
+///
+/// ```rust
+/// // See this file for a non-trivial example.
+/// ::std::fs::OpenOptions::new().read(true).open("rsc/sat/arg_red.smt2").unwrap();
+/// ```
 pub struct ArgRed {
     inner: ArgReductor,
 }

@@ -770,7 +770,7 @@ impl FunDef {
 /// let mut fun_preds = FunPreds::new(& instance);
 /// let mut instance = PreInstance::new(& mut instance).unwrap();
 /// let info = fun_preds.apply(& mut instance).unwrap();
-/// debug_assert_eq! { info.preds, 1 }
+/// debug_assert_eq! { info.preds, 2 } // 2 because `unused` is simplified by propagation
 ///
 /// let pred: PrdIdx = 0.into();
 /// debug_assert_eq! { "len_fun_preds_example", & instance[pred].name }
@@ -891,6 +891,7 @@ impl FunPreds {
             fun_app
         };
 
+        info.preds += 1;
         let mut tterm_set = TTermSet::new();
         tterm_set.insert_term(def);
         info += instance.force_dnf_left(pred, vec![(Quantfed::new(), tterm_set)])?;
