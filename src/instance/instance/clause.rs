@@ -1068,29 +1068,38 @@ impl Clause {
         // the corresponding fresh variable.
         // let mut var_map = VarHMap::new();
 
+        // Maps constants to variables. This map is stored separately because we don't want to
+        // substitute constant terms.
+        let mut cst_map = TermMap::new();
+
+        // New arguments for the application.
+        let mut nu_args = VarMap::with_capacity(args.len());
+
         for arg in args.iter() {
             // Already a variable?
             if arg.var_idx().is_some() {
+                nu_args.push(arg.clone());
                 continue;
             }
 
-            let var = map
-                .entry(arg.clone())
-                .or_insert_with(|| term::var(clause.vars.next_index(), arg.typ()))
-                .clone();
-            let idx = var.var_idx().expect("variable by construction");
+            let idx = clause.vars.next_index();
+
+            let var = if arg.val().is_none() {
+                &mut map
+            } else {
+                &mut cst_map
+            }.entry(arg.clone())
+            .or_insert_with(|| term::var(clause.vars.next_index(), arg.typ()))
+            .clone();
+
+            nu_args.push(var.clone());
 
             clause
                 .vars
                 .push(VarInfo::new(idx.default_str(), arg.typ(), idx));
-
-            // for arg_var in term::vars(arg) {
-            //     var_map
-            //         .entry(arg_var)
-            //         .or_insert_with(Vec::new)
-            //         .push((arg, idx))
-            // }
         }
+
+        let nu_args = var_to::terms::new(nu_args);
 
         // True if we actually saw the predicate application in question.
         let mut legal = false;
@@ -1111,8 +1120,34 @@ impl Clause {
             debug_assert! { prev.is_none() }
             for p_args in p_argss {
                 if p == pred && args == p_args {
-                    legal = true
+                    legal = true;
+                    clause
+                        .lhs_preds
+                        .get_mut(&p)
+                        .expect("was inserted right above")
+                        .insert(nu_args.clone());
+                } else {
+                    let mut nu_p_args = VarMap::with_capacity(p_args.len());
+                    for arg in p_args.iter() {
+                        let arg = arg.term_subst(&map);
+                        // vars.extend(term::vars(&arg).into_iter());
+                        nu_p_args.push(arg)
+                    }
+                    let nu_p_args = var_to::terms::new(nu_p_args);
+                    clause
+                        .lhs_preds
+                        .get_mut(&p)
+                        .expect("was inserted right above")
+                        .insert(nu_p_args);
                 }
+            }
+        }
+
+        if let Some((p, p_args)) = self.rhs.as_ref() {
+            if *p == pred && args == p_args {
+                legal = true;
+                clause.rhs = Some((*p, nu_args))
+            } else {
                 let mut nu_p_args = VarMap::with_capacity(p_args.len());
                 for arg in p_args.iter() {
                     let arg = arg.term_subst(&map);
@@ -1120,30 +1155,15 @@ impl Clause {
                     nu_p_args.push(arg)
                 }
                 let nu_p_args = var_to::terms::new(nu_p_args);
-                clause
-                    .lhs_preds
-                    .get_mut(&p)
-                    .expect("was inserted right above")
-                    .insert(nu_p_args);
+                clause.rhs = Some((*p, nu_p_args))
             }
-        }
-
-        if let Some((p, p_args)) = self.rhs.as_ref() {
-            let mut nu_p_args = VarMap::with_capacity(p_args.len());
-            for arg in p_args.iter() {
-                let arg = arg.term_subst(&map);
-                // vars.extend(term::vars(&arg).into_iter());
-                nu_p_args.push(arg)
-            }
-            let nu_p_args = var_to::terms::new(nu_p_args);
-            clause.rhs = Some((*p, nu_p_args))
         }
 
         // for info in &mut clause.vars {
         //     info.active = false
         // }
 
-        for (term, var) in map {
+        for (term, var) in map.into_iter().chain(cst_map.into_iter()) {
             clause.insert_term(term::eq(term, var));
         }
 

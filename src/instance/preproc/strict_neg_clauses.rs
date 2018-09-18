@@ -58,6 +58,8 @@ impl RedStrat for StrictNeg {
                     bail!("inconsistent instance state")
                 };
 
+                log! { @3 "rewriting clause" }
+
                 let clause = clause
                     .rewrite_clause_for_app(pred, args, 0.into())
                     .chain_err(|| "during clause rewriting")?;

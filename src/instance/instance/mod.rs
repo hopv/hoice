@@ -1221,6 +1221,10 @@ impl Instance {
 
         for (pred_idx, pred) in self.preds.index_iter() {
             if self.pred_terms[pred_idx].is_none() {
+                if let Some(term) = &self.pred_str[pred_idx] {
+                    writeln!(w, "; Strengthening term:")?;
+                    writeln!(w, ";   {}", term)?
+                }
                 write!(w, "({}\n  {}\n  (", keywords::cmd::dec_fun, pred.name)?;
                 for typ in &pred.sig {
                     write!(w, " {}", typ)?

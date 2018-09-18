@@ -1443,7 +1443,10 @@ simpl_fun! {
     let cst_val = if let Some(val) = cst.val() {
       val
     } else {
-      panic!("illegal `cmul` application to {} {}", cst, term)
+      return Some(
+        NormRes::App(typ.clone(), Op::Mul, vec![ NormRes::Term(cst), NormRes::Term(term) ])
+      )
+      // panic!("illegal `cmul` application to {} {}", cst, term)
     } ;
 
     if let Some(val) = term.val() {
