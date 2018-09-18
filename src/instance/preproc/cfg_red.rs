@@ -1097,6 +1097,43 @@ impl Graph {
 }
 
 /// Detects cycles and keeps a minimal set of predicates to infer.
+///
+/// Break the acyclic parts of the "control-flow graph" of the predicates. Writing `p_i, ..., p_k
+/// -> p_n` when there's a clause with applications of `p_i, ..., p_k` in its LHS and `p_n` in its
+/// RHS, say we have
+///
+/// - `true -> p_0`
+/// - `p_0 -> p_1`
+/// - `p_1, p_2 -> p_1`
+/// - `p_3 -> p_2`
+/// - `p_1 -> p_3`
+/// - `p_1 -> false`
+///
+/// Graphically the dependencies between the predicates are
+///
+/// ```bash
+///                       _
+///                      | V
+/// true ---> p_0 -----> p_1 ---> p_3
+///                     / ^        |
+///                    /  |        V
+///           false <-|   |------ p_2
+/// ```
+///
+/// The really `p_0` could be re-written in terms of `p_1`. Likewise for `p_3`. Then, since `p_2`
+/// can be defined using `p_3`, `p_2` can be re-written in terms of `p_1` too.
+///
+/// This technique works by removing nodes in the CFG that break cycle. In particular,
+/// self-referencing predicates like `p_1` above are removed right away. In the example above, this
+/// breaks all the cycle, meaning the remaining predicates can be expressed in terms of the ones
+/// removed.
+///
+/// # Examples
+///
+/// ```rust
+/// // See this file for a non-trivial example.
+/// ::std::fs::OpenOptions::new().read(true).open("rsc/sat/cfg_red.smt2").unwrap();
+/// ```
 pub struct CfgRed {
     /// Internal counter for log files.
     cnt: usize,

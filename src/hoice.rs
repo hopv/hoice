@@ -39,12 +39,13 @@ pub mod var_to;
 
 pub mod check;
 pub mod data;
-pub mod instance;
+mod instance;
 pub mod learning;
 pub mod parse;
 pub mod split;
 pub mod teacher;
 pub mod unsat_core;
+pub use instance::preproc;
 
 use common::*;
 use instance::Instance;

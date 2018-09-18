@@ -17,10 +17,11 @@ mod one_rhs;
 mod strict_neg_clauses;
 mod unroll;
 
-use self::{
+pub use self::{
     arg_red::ArgRed, bias_unroll::BiasedUnroll, cfg_red::CfgRed, fun_preds::FunPreds,
     one_lhs::OneLhs, one_rhs::OneRhs, strict_neg_clauses::StrictNeg, unroll::RUnroll,
 };
+pub use instance::PreInstance;
 
 /// Extension for a predicate.
 ///

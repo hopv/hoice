@@ -394,7 +394,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             line_count += 1;
             if char_pos < line.len() {
                 pref = line[0..char_pos].to_string();
-                token = line[char_pos..(char_pos + 1)].to_string();
+                token = line[char_pos..=char_pos].to_string();
                 suff = line[(char_pos + 1)..line.len()].to_string();
                 break;
             } else if char_pos == line.len() {
@@ -1506,7 +1506,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     /// Parses some arguments `( (<id> <ty>) ... )`.
-    fn args(
+    pub fn args(
         &mut self,
         var_map: &mut VarInfos,
         hash_map: &mut BTreeMap<&'s str, VarIdx>,
@@ -3365,4 +3365,75 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         Ok(res)
     }
+}
+
+/// If input expression is an error, prints it and panics.
+macro_rules! print_err {
+    ($e:expr, $blah:expr) => {
+        match $e {
+            Ok(res) => res,
+            Err(e) => {
+                print_err(&e);
+                panic!("error {}", $blah)
+            }
+        }
+    };
+}
+
+/// Parses some variable information from an SMT 2 string.
+///
+/// The info needs to be in SMT 2 format. For instance: `( (n Int) (r Real) )`. Used for
+/// testing / documentation.
+pub fn var_infos(s: &str) -> VarInfos {
+    let mut var_infos = VarInfos::new();
+    let mut cxt = ParserCxt::new();
+    let mut map = BTreeMap::new();
+
+    print_err!(
+        cxt.parser(s, 0, &Profiler::new())
+            .args(&mut var_infos, &mut map),
+        "while parsing variable information"
+    );
+
+    var_infos
+}
+
+/// Parses a term from an SMT 2 string.
+///
+/// Used for testing / documentation.
+pub fn term(s: &str, var_infos: &VarInfos, instance: &Instance) -> Term {
+    let mut map = BTreeMap::new();
+    for info in var_infos {
+        map.insert(&info.name as &str, info.idx);
+    }
+
+    let mut cxt = ParserCxt::new();
+
+    let term_opt = print_err!(
+        cxt.parser(s, 0, &Profiler::new())
+            .term_opt(var_infos, &map, instance),
+        "while parsing term"
+    );
+
+    if let Some(term) = term_opt {
+        term
+    } else {
+        panic!("failed to parse term from `{}`", s)
+    }
+}
+
+/// Parses an instance from an SMT 2 string.
+///
+/// Stops at the end of the string or at the first non-declaration non-assert non-definition
+/// item. Used for testing / documentation purposes.
+pub fn instance(s: &str) -> Instance {
+    let mut instance = Instance::new();
+    let mut cxt = ParserCxt::new();
+
+    print_err!(
+        cxt.parser(s, 0, &Profiler::new()).parse(&mut instance),
+        "while parsing instance"
+    );
+
+    instance
 }

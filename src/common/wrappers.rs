@@ -9,29 +9,29 @@ use common::{var_to, SmtRes, VarIndexed, VarTerms};
 use term::Term;
 
 wrap_usize!{
-  #[doc = "Predicate indices."]
-  PrdIdx
-  #[doc = "Range over predicates."]
-  range: PrdRange
-  #[doc = "Set of predicates."]
-  set: PrdSet
-  #[doc = "Hash map from predicates to something."]
-  hash map: PrdHMap
-  #[doc = "Total map from predicates to something."]
-  map: PrdMap with iter: PrdMapIter
+    #[doc = "Predicate indices."]
+    PrdIdx
+    #[doc = "Range over predicates."]
+    range: PrdRange
+    #[doc = "Set of predicates."]
+    set: PrdSet
+    #[doc = "Hash map from predicates to something."]
+    hash map: PrdHMap
+    #[doc = "Total map from predicates to something."]
+    map: PrdMap with iter: PrdMapIter
 }
 
 wrap_usize!{
-  #[doc = "Variable indices."]
-  VarIdx
-  #[doc = "Range over variables."]
-  range: VarRange
-  #[doc = "Set of variables."]
-  set: VarSet
-  #[doc = "Hash map from variables to something."]
-  hash map: VarHMap
-  #[doc = "Total map from variables to something."]
-  map: VarMap with iter: VarMapIter
+    #[doc = "Variable indices."]
+    VarIdx
+    #[doc = "Range over variables."]
+    range: VarRange
+    #[doc = "Set of variables."]
+    set: VarSet
+    #[doc = "Hash map from variables to something."]
+    hash map: VarHMap
+    #[doc = "Total map from variables to something."]
+    map: VarMap with iter: VarMapIter
 }
 impl VarIdx {
     /// Default way to write variables: `v_<idx>`.

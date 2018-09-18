@@ -3,9 +3,9 @@
 use common::*;
 
 pub mod info;
+pub mod preproc;
+
 #[cfg_attr(feature = "cargo-clippy", allow(module_inception))]
 mod instance;
-
-pub mod preproc;
 
 pub use self::instance::{Clause, Instance, PreInstance};

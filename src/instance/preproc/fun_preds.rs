@@ -29,7 +29,7 @@ impl FunBranch {
         index: usize,
     ) -> Res<Option<Self>> {
         let fun_args_len = fun_sig.len();
-        let (last, mut fresh) = if fun_args_len == rhs_args.len() {
+        let (last, fresh) = if fun_args_len == rhs_args.len() {
             (None, rhs_args.len().into())
         } else {
             let last: VarIdx = (rhs_args.len() - 1).into();
@@ -56,43 +56,36 @@ impl FunBranch {
             }
         }
 
-        macro_rules! get_fresh {
-            () => {{
-                let res = fresh;
-                fresh.inc();
-                res
-            }};
-        }
-
         debug_assert! { fun_args_len == rhs_args.len() || fun_args_len == rhs_args.len() - 1 }
         debug_assert! { lhs_preds.len() <= 1 }
         debug_assert! {
-            if let Some((p, _)) = lhs_preds.iter().next() {
-                * p == pred
-            } else {
-                true
-            }
+            lhs_preds.iter().next().map(|(p, _)| * p == pred).unwrap_or(true)
         }
 
-        let (mut guard, mut subst) = if let Some(res) = args_invert(rhs_args, fun_args_len)? {
+        let (guard, subst) = if let Some(res) = args_invert(rhs_args, fun_args_len)? {
             res
         } else {
             log! { @3 "failed to invert rhs arguments {}", rhs_args }
             return Ok(None);
         };
 
+        let mut builder = BranchBuilder {
+            args_len: fun_sig.len(),
+            fun_typ,
+            fun_name,
+            last,
+            fresh,
+            guard,
+            subst,
+            calls: VarHMap::new(),
+            value: None,
+            index,
+        };
+
         if_log! { @4
-            log! { @4 |=>
-                "rhs inversion successful" ;
-                "  substitution:"
-            }
-            for (var, term) in subst.iter() {
-                log! { @4 |=> "    v_{} -> {}", var, term }
-            }
-            log! { @4 |=> "  cube:" }
-            for term in guard.iter() {
-                log! { @4 "    {}", term }
-            }
+            log! { @4 |=> "rhs inversion successful" }
+            builder.log_subst();
+            builder.log_guard();
         }
 
         let mut lhs_argss: Vec<_> = lhs_preds
@@ -100,17 +93,163 @@ impl FunBranch {
             .map(|argss| argss.iter().collect())
             .unwrap_or_else(Vec::new);
 
-        let mut nu_args = Vec::with_capacity(fun_args_len);
-        let mut value = None;
+        let okay = builder.work_on_lhs(&mut lhs_argss)?;
+        if !okay {
+            return Ok(None);
+        }
 
-        // Stores the recursive calls.
-        let mut calls = VarHMap::new();
+        if_log! { @4
+            log! { @4 |=> "lhs inversion successful" };
+            builder.log_subst();
+            builder.log_guard();
+            builder.log_calls();
+        }
+
+        for term in lhs_terms {
+            if let Some((term, _)) = term.subst_total(&builder.subst) {
+                builder.guard.insert(term);
+            } else {
+                log! { @3 | "total substitution failed on term {}", term }
+                return Ok(None);
+            }
+        }
+
+        if_log! { @4
+            log! { @4 |=> "lhs terms substitution successful" }
+            builder.log_guard();
+        }
+
+        let value = if let Some(last) = builder.last {
+            if let Some((res, _)) = rhs_args[last].subst_total(&builder.subst) {
+                res
+            } else {
+                log! { @3 | "failed to retrieve value for {}", rhs_args[last] }
+                return Ok(None);
+            }
+        } else if let Some(conj) = ::std::mem::replace(&mut builder.value, None) {
+            term::and(conj)
+        } else {
+            term::tru()
+        };
+
+        log! { @4 | "value extraction successful: {}", value }
+
+        builder.potential_invariants(invars);
+
+        if_log! { @4
+            log! { @4 |=> "potential invariant extraction successful" }
+            builder.log_guard();
+            log! { @4 |=> "  invariants:" };
+            for invar in invars.keys() {
+                log! { @4 |=> "    {}", invar }
+            };
+        }
+
+        Ok(Some(FunBranch {
+            guard: builder.guard,
+            value,
+            calls: builder.calls,
+        }))
+    }
+
+    /// Propagates the substition `calls` to the whole branch.
+    fn propagate_calls(&mut self) {
+        if !self.calls.is_empty() {
+            self.guard = self
+                .guard
+                .iter()
+                .map(|term| term.subst(&self.calls).0)
+                .collect();
+            self.value = self.value.subst(&self.calls).0;
+            // self.calls.clear()
+        }
+    }
+}
+
+/// Helper for branch construction for a function.
+struct BranchBuilder<'a> {
+    /// Number of arguments of the function.
+    args_len: usize,
+    /// Return type of the function.
+    fun_typ: &'a Typ,
+    /// Name of the function.
+    fun_name: &'a str,
+    /// The index of the last variable if we are not working on all the arguments. None otherwise.
+    ///
+    /// If none, then we are reconstructing the predicate itself. Otherwise, we are reconstructing
+    /// the function that yields the last argument of the predicate when it is true.
+    last: Option<VarIdx>,
+    /// Index of the next fresh variable.
+    fresh: VarIdx,
+    /// Substitution from clause variables to the function's variables.
+    subst: VarHMap<Term>,
+    /// Guard of the branch.
+    guard: TermSet,
+    /// Recursive calls appearing in this branch.
+    calls: VarHMap<Term>,
+    /// Value yielded by the branch.
+    value: Option<Vec<Term>>,
+    /// Index of the current branch.
+    index: usize,
+}
+impl<'a> BranchBuilder<'a> {
+    /// Index of the next fresh variable.
+    ///
+    /// Increases the internal counter.
+    fn get_fresh(&mut self) -> VarIdx {
+        let res = self.fresh;
+        self.fresh.inc();
+        res
+    }
+
+    /// Retrieves potential invariants.
+    ///
+    /// A term from the guard of the branch is elligible as a candidate invariant if it mentions
+    /// **exactly one** variable from `builder.calls`.
+    fn potential_invariants(&mut self, invars: &mut TermMap<Vec<(usize, Term)>>) {
+        let mut invar_subst = VarHMap::with_capacity(1);
+        let guard = &mut self.guard;
+        let calls = &mut self.calls;
+        let fun_typ = &self.fun_typ;
+        let index = self.index;
+
+        guard.retain(|term| {
+            let term_vars = term::vars(&term);
+            let mut vars = vec![];
+
+            for var in term_vars {
+                if calls.get(&var).is_some() {
+                    vars.push(var)
+                }
+            }
+
+            if vars.len() == 1 {
+                let var = vars[0];
+                invar_subst.insert(var, term::var(0, (*fun_typ).clone()));
+                let (invar, _) = term
+                    .subst_total(&invar_subst)
+                    .expect("total substitution cannot fail du to previous checks");
+                invars
+                    .entry(invar)
+                    .or_insert_with(Vec::new)
+                    .push((index, term.clone()));
+                false
+            } else {
+                true
+            }
+        })
+    }
+
+    /// Handles the lhs predicate applications.
+    fn work_on_lhs(&mut self, lhs_argss: &mut Vec<&VarTerms>) -> Res<bool> {
+        let mut nu_args = Vec::with_capacity(self.args_len);
+        debug_assert! { self.value.is_none() }
 
         macro_rules! register_call {
             ($call:expr) => {{
                 // Check if we already have a binding for this call.
                 let mut var = None;
-                for (v, trm) in &calls {
+                for (v, trm) in &self.calls {
                     if $call == *trm {
                         // Found a variable for this call.
                         var = Some(*v);
@@ -122,8 +261,8 @@ impl FunBranch {
                     var
                 } else {
                     // Create new binding.
-                    let fresh = get_fresh!();
-                    let prev = calls.insert(fresh, $call);
+                    let fresh = self.get_fresh();
+                    let prev = self.calls.insert(fresh, $call);
                     debug_assert! { prev.is_none() }
                     fresh
                 }
@@ -135,25 +274,25 @@ impl FunBranch {
             let mut failed: Res<_> = Ok(false);
 
             lhs_argss.retain(|args| {
-                for arg in &args[0..fun_args_len] {
-                    if let Some((arg, _)) = arg.subst_total(&subst) {
+                for arg in &args[0..self.args_len] {
+                    if let Some((arg, _)) = arg.subst_total(&self.subst) {
                         nu_args.push(arg)
                     } else {
                         nu_args.clear();
                         return true;
                     }
                 }
-                let nu_args = ::std::mem::replace(&mut nu_args, Vec::with_capacity(fun_args_len));
+                let nu_args = ::std::mem::replace(&mut nu_args, Vec::with_capacity(self.args_len));
 
-                let fun_app = term::fun(fun_typ.clone(), fun_name.into(), nu_args);
+                let fun_app = term::fun(self.fun_typ.clone(), self.fun_name.into(), nu_args);
                 let fun_app_var = register_call!(fun_app);
-                let fun_app = term::var(fun_app_var, fun_typ.clone());
+                let fun_app = term::var(fun_app_var, self.fun_typ.clone());
 
-                let okay = if let Some(last) = last.as_ref() {
+                let okay = if let Some(last) = self.last.as_ref() {
                     let last = *last;
-                    map_invert(&args[last], fun_app, &mut subst, &mut guard)
+                    map_invert(&args[last], fun_app, &mut self.subst, &mut self.guard)
                 } else {
-                    value.get_or_insert_with(Vec::new).push(fun_app);
+                    self.value.get_or_insert_with(Vec::new).push(fun_app);
                     Ok(true)
                 };
 
@@ -174,127 +313,39 @@ impl FunBranch {
 
             if failed? {
                 log! { @3 | "failed" }
-                return Ok(None);
+                return Ok(false);
             } else if lhs_argss.len() == prev_len {
                 // not making progress.
                 log! { @3 | "not making progress on lhs preds" }
-                return Ok(None);
+                return Ok(false);
             }
         }
 
-        if_log! { @4
-            log! { @4 |=>
-                "lhs inversion successful" ;
-                "  substitution:"
-            };
-            for (var, term) in &subst {
-                log! { @4 |=> "    v_{} -> {}", var, term }
-            };
-            log! { @4 |=> "  cube:" };
-            for term in &guard {
-                log! { @4 |=> "    {}", term }
-            };
-            log! { @4 |=> "  recursive calls:" };
-            for (var, term) in & calls {
-                log! { @4 |=> "    v_{} -> {}", var, term }
-            }
-        }
-
-        for term in lhs_terms {
-            if let Some((term, _)) = term.subst_total(&subst) {
-                guard.insert(term);
-            } else {
-                log! { @3 | "total substitution failed on term {}", term }
-                return Ok(None);
-            }
-        }
-
-        if_log! { @4
-            log! { @4 |=>
-                "lhs terms substitution successful";
-                "  cube:"
-            }
-            for term in &guard {
-                log! { @4 |=> "    {}", term }
-            };
-        }
-
-        let value = if let Some(last) = last.as_ref() {
-            if let Some((res, _)) = rhs_args[*last].subst_total(&subst) {
-                res
-            } else {
-                log! { @3 | "failed to retrieve value for {}", rhs_args[*last] }
-                return Ok(None);
-            }
-        } else if let Some(conj) = value {
-            term::and(conj)
-        } else {
-            term::tru()
-        };
-
-        log! { @4 | "value extraction successful: {}", value }
-
-        let mut invar_subst = VarHMap::with_capacity(1);
-
-        // Term elligible as candidate invariants are the ones that mention **exactly one**
-        // variable from `calls`.
-        guard.retain(|term| {
-            let term_vars = term::vars(&term);
-            let mut vars = vec![];
-
-            for var in term_vars {
-                if calls.get(&var).is_some() {
-                    vars.push(var)
-                }
-            }
-
-            if vars.len() == 1 {
-                let var = vars[0];
-                invar_subst.insert(var, term::var(0, fun_typ.clone()));
-                let (invar, _) = term
-                    .subst_total(&invar_subst)
-                    .expect("total substitution cannot fail due to previous checks");
-                invars
-                    .entry(invar)
-                    .or_insert_with(Vec::new)
-                    .push((index, term.clone()));
-                false
-            } else {
-                true
-            }
-        });
-
-        if_log! { @4
-            log! { @4 |=>
-                "potential invariant extraction successful";
-                "  cube:"
-            }
-            for term in &guard {
-                log! { @4 |=> "    {}", term }
-            };
-            log! { @4 |=> "  invariants:" };
-            for invar in invars.keys() {
-                log! { @4 |=> "    {}", invar }
-            };
-        }
-
-        Ok(Some(FunBranch {
-            guard,
-            value,
-            calls,
-        }))
+        Ok(true)
     }
+}
 
-    /// Propagates the substition `calls` to the whole branch.
-    fn propagate_calls(&mut self) {
-        if !self.calls.is_empty() {
-            self.guard = self
-                .guard
-                .iter()
-                .map(|term| term.subst(&self.calls).0)
-                .collect();
-            self.value = self.value.subst(&self.calls).0;
-            // self.calls.clear()
+/// Log functions.
+impl<'a> BranchBuilder<'a> {
+    #[allow(dead_code)]
+    fn log_guard(&self) {
+        log! { @4 |=> "  guard:" }
+        for term in &self.guard {
+            log! { @4 |=> "    {}", term }
+        }
+    }
+    #[allow(dead_code)]
+    fn log_calls(&self) {
+        log! { @4 |=> "  rec calls:" }
+        for (var, term) in &self.calls {
+            log! { @4 |=> "    v_{} -> {}", var, term }
+        }
+    }
+    #[allow(dead_code)]
+    fn log_subst(&self) {
+        log! { @4 |=> "  subst:" }
+        for (var, term) in &self.subst {
+            log! { @4 |=> "    v_{} -> {}", var, term }
         }
     }
 }
@@ -683,6 +734,57 @@ impl FunDef {
     }
 }
 
+/// Function reconstruction from clauses over some predicates.
+///
+/// The technique will attempt to reconstruct predicate `pred` of arity `ar` if
+///
+/// - when it appears in the RHS of aclause, then the only predicate applications in the LHS of
+///   this clause are applications of `pred`, and
+/// - it is not the only undefined predicate left, and
+/// - exactly *one* of its `ar - 1` first arguments is a datatype.
+///
+/// # Examples
+///
+/// ```
+/// # use hoice::{ common::PrdIdx, parse, preproc::{ PreInstance, RedStrat, FunPreds } };
+/// let mut instance = parse::instance("
+///   (declare-fun len_fun_preds_example ( (List Int) Int ) Bool)
+///   (declare-fun unused ( Int ) Bool)
+///   (assert
+///     (forall ( (n Int) )
+///       (len_fun_preds_example nil 0)
+///     )
+///   )
+///   (assert
+///     (forall ( (t (List Int)) (h Int) (n Int) )
+///       (=>
+///         (and
+///           (len_fun_preds_example t n)
+///         )
+///         (len_fun_preds_example (insert h t) (+ n 1))
+///       )
+///     )
+///   )
+/// ");
+///
+/// let mut fun_preds = FunPreds::new(& instance);
+/// let mut instance = PreInstance::new(& mut instance).unwrap();
+/// let info = fun_preds.apply(& mut instance).unwrap();
+/// debug_assert_eq! { info.preds, 1 }
+///
+/// let pred: PrdIdx = 0.into();
+/// debug_assert_eq! { "len_fun_preds_example", & instance[pred].name }
+///
+/// let funs = instance.get_companion_funs(pred).unwrap();
+/// assert_eq!( "len_fun_preds_example_hoice_reserved_fun", &funs[0].name);
+/// assert_eq! {
+///     "(ite \
+///         (not (is-insert v_0)) \
+///         0 \
+///         (+ 1 (len_fun_preds_example_hoice_reserved_fun (tail v_0)))\
+///     )", & format!("{}", funs[0].def)
+/// }
+/// ```
 pub struct FunPreds {
     to_inline: Vec<(PrdIdx, bool)>,
 }
@@ -699,6 +801,7 @@ impl FunPreds {
         let mut to_rm = vec![];
 
         log!(@2 "working on {}", conf.emph(& instance[pred].name));
+        println!("working on {}", conf.emph(&instance[pred].name));
 
         debug_assert! { to_rm.is_empty() }
 
@@ -756,11 +859,13 @@ impl FunPreds {
             to_rm.push(clause);
 
             log! { @3 | "working on clause #{}", clause }
+            println! { "working on clause #{}", clause }
 
             fun_def = if let Some(new) = fun_def.register_clause(&instance[clause])? {
                 new
             } else {
                 log!{ @3 | "clause registration failed" }
+                println!{ "clause registration failed" }
                 abort!()
             };
         }
@@ -786,7 +891,6 @@ impl FunPreds {
             fun_app
         };
 
-        info.preds += 1;
         let mut tterm_set = TTermSet::new();
         tterm_set.insert_term(def);
         info += instance.force_dnf_left(pred, vec![(Quantfed::new(), tterm_set)])?;

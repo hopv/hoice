@@ -121,11 +121,13 @@ pub struct Instance {
     /// Can only be set by `(set-option :produce-proofs true)`.
     proofs: bool,
 }
+
 impl Default for Instance {
     fn default() -> Self {
         Self::new()
     }
 }
+
 impl Instance {
     /// Instance constructor.
     pub fn new() -> Instance {
