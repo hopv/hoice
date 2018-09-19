@@ -271,42 +271,38 @@ pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
 /// Creates an operator application.
 ///
 /// Assumes the application is well-typed, modulo int to real casting.
-///
-/// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
 pub fn app(op: Op, mut args: Vec<Term>) -> Term {
     let typ = expect!(
-    op.type_check(& mut args) => |e|
-      let res: Res<()> = Err(
-        "Fatal internal type checking error, \
-        please notify the developer(s)".into()
-      ) ;
-      match e {
-        term::TypError::Typ {
-          expected, obtained, index
-        } => res.chain_err(
-          || format!(
-            "expected an expression of sort {}, found {} ({})",
-            expected.map(|t| format!("{}", t)).unwrap_or_else(|| "?".into()),
-            args[index], obtained
-          )
-        ).chain_err(
-          || "in this operator application"
-        ).chain_err(
-          || {
-            use std::io::Write ;
-            let buff = & mut Vec::new() ;
-            write!(buff, "({}", op).unwrap() ;
-            for arg in args {
-              write!(buff, " {}[{}]", arg, arg.typ()).unwrap()
-            }
-            write!(buff, ")").unwrap() ;
-            String::from_utf8_lossy(buff).into_owned()
-          }
-        ),
-        term::TypError::Msg(blah) => res.chain_err(|| blah)
-      }.unwrap_err()
-  );
+        op.type_check(& mut args) => |e|
+            let res: Res<()> = Err(
+                "Fatal internal type checking error, \
+                please notify the developer(s)".into()
+            ) ;
+            match e {
+                term::TypError::Typ { expected, obtained, index } => res.chain_err(
+                    || format!(
+                        "expected an expression of sort {}, found {} ({})",
+                        expected.map(|t| format!("{}", t)).unwrap_or_else(|| "?".into()),
+                        args[index], obtained
+                    )
+                ).chain_err(
+                    || "in this operator application"
+                ).chain_err(
+                    || {
+                        use std::io::Write ;
+                        let buff = & mut Vec::new() ;
+                        write!(buff, "({}", op).unwrap() ;
+                        for arg in args {
+                            write!(buff, " {}[{}]", arg, arg.typ()).unwrap()
+                        }
+                        write!(buff, ")").unwrap() ;
+                        String::from_utf8_lossy(buff).into_owned()
+                    }
+                ),
+                term::TypError::Msg(blah) => res.chain_err(|| blah)
+            }.unwrap_err()
+    );
 
     normalize(op, args, typ.clone())
 }
@@ -353,8 +349,6 @@ pub fn dtyp_tst(name: String, term: Term) -> Term {
 ///
 /// Error if the application is ill-typed (int will be cast to real
 /// automatically).
-///
-/// Runs [`normalize`](fn.normalize.html) and returns its result.
 #[inline]
 pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
     let typ = op.type_check(&mut args)?;

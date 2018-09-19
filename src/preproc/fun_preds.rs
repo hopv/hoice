@@ -3,7 +3,9 @@
 //! This preprocessor attempts to reconstruct function definitions from Horn clauses. Functions are
 //! reconstructed as multiple branches of an if-then-else.
 //!
-//! The core of how this works is the [`map_invert`](fn.map_invert.html) function.
+//! The core of how this works is the [`map_invert`] function.
+//!
+//! [`map_invert`]: (fn.map_invert.html) (map_invert function)
 
 use common::*;
 use fun::RFun;
@@ -1051,11 +1053,13 @@ impl RedStrat for FunPreds {
 
 /// Builds a cube and a substitution corresponding to inverting some arguments.
 ///
-/// It is essentially a repeated application of [`map_invert`](fn.map_invert.html) to all
+/// It is essentially a repeated application of [`map_invert`] to all
 /// arguments. It ends when
 ///
 /// - all of the arguments are inversed, or
 /// - a subset of the arguments cannot be inversed at all (the result will be `None` in this case).
+///
+/// [`map_invert`]: fn.map_invert.html (map_invert function)
 pub fn args_invert(args: &VarTerms, args_len: usize) -> Res<Option<(TermSet, VarHMap<Term>)>> {
     let (mut cube, mut subst) = (TermSet::new(), VarHMap::new());
 

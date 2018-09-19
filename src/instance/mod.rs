@@ -23,8 +23,26 @@ pub use self::pre_instance::PreInstance;
 /// Instance mutation should only happen at two points: [parsing] (creation) and [preprocessing].
 /// (A minor exception is model reconstruction.)
 ///
+/// # Finalization
+///
+/// Instance finalization is crucial. A lot of instance functions do not make sense unless the
+/// instance is finalized. This is currently done at the end of preprocessing.
+///
+/// Functions that do not make sense before finalization include:
+///
+/// - [`pos_clauses`](struct.Instance.html#method.strict_neg_clauses)
+/// - [`strict_neg_clauses`](struct.Instance.html#method.strict_neg_clauses)
+/// - [`neg_clauses`](struct.Instance.html#method.neg_clauses)
+/// - [`non_strict_neg_clauses`](struct.Instance.html#method.non_strict_neg_clauses)
+/// - [`imp_clauses`](struct.Instance.html#method.imp_clauses)
+/// - [`model_of`](struct.Instance.html#method.model_of)
+/// - [`extend_model`](struct.Instance.html#method.extend_model)
+/// - [`sorted_forced_terms`](struct.Instance.html#method.sorted_forced_terms)
+/// - [`simplify_pred_defs`](struct.Instance.html#method.simplify_pred_defs)
+///
 /// [parsing]: ../parse/index.html (parse module)
 /// [preprocessing]: ../preproc/index.html (preproc module)
+/// [finalize]: struct.Instance.html#method.finalize
 #[derive(Clone)]
 pub struct Instance {
     /// Predicates.
@@ -87,7 +105,7 @@ pub struct Instance {
     split: Option<ClsIdx>,
 
     /// Define-funs parsed.
-    define_funs: HashMap<String, (VarInfos, ::parse::PTTerms)>,
+    define_funs: BTreeMap<String, (VarInfos, ::parse::PTTerms)>,
 
     /// Maps **original** clause indexes to their optional name.
     old_names: ClsHMap<String>,
@@ -134,7 +152,7 @@ impl Instance {
             imp_clauses: ClsSet::new(),
             is_finalized: false,
             split: None,
-            define_funs: HashMap::new(),
+            define_funs: BTreeMap::new(),
             old_names: ClsHMap::with_capacity(clause_capa),
             print_success: false,
             unsat_cores: false,

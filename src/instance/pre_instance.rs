@@ -30,10 +30,12 @@ macro_rules! check_sat {
 /// Wraps an instance for preprocessing.
 ///
 /// Provides high-level functions to manipulate predicates and clauses. The reason for this wrapper
-/// is that an [`Instance`](../common/struct.Instance.html) should almost never be mutated, except
-/// during creation and preprocessing.
+/// is that an [`Instance`] should almost never be mutated, except during creation and
+/// preprocessing.
 ///
 /// This is why the instance type barely exposes any way to mutate its values.
+///
+/// [`Instance`]: ../common/struct.Instance.html (Instance struct)
 pub struct PreInstance<'a> {
     /// The instance wrapped.
     instance: &'a mut Instance,

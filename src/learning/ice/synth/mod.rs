@@ -23,9 +23,9 @@ pub type TermVals = TermMap<Val>;
 /// of a different theory to this one.
 ///
 /// A synthesizer generates more and more complex candidate qualifiers with
-/// each call to [`increment`][increment].
+/// each call to [`increment`].
 ///
-/// [increment]: #tymethod.increment (increment method)
+/// [`increment`]: #tymethod.increment (increment method)
 pub trait TheoSynth {
     /// Type of values supported by this synthesizer.
     fn typ(&self) -> &Typ;
@@ -36,16 +36,17 @@ pub trait TheoSynth {
     fn restart(&mut self);
     /// Increments the synthesizer.
     fn increment(&mut self);
+
     /// Synthesizes qualifiers.
     fn synth<F>(&mut self, F, &VarVals, &mut TermVals, &Profiler) -> Res<bool>
     where
         F: FnMut(Term) -> Res<bool>;
-    /// Generates some [`TermVal`][term val]s for some other type.
+
+    /// Generates some [`TermVals`] for some other type.
     ///
     /// Adds them to the input term to value map.
     ///
-    /// [term val]: struct.TermVal.html
-    /// (TermVal struct)
+    /// [`TermVals`]: type.TermVals.html (TermVals type)
     fn project(&self, &VarVals, &Typ, &mut TermVals) -> Res<()>;
 }
 

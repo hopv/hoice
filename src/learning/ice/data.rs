@@ -229,10 +229,12 @@ impl CData {
         }
     }
 
-    /// Modified entropy, uses [`EntropyBuilder`](struct.EntropyBuilder.html).
+    /// Modified entropy, uses [`EntropyBuilder`].
     ///
     /// Only takes into account unclassified data when `conf.ice.simple_gain`
     /// is false.
+    ///
+    /// [`EntropyBuilder`]: struct.EntropyBuilder.html (EntropyBuilder struct)
     pub fn entropy(&self, pred: PrdIdx, data: &Data) -> Res<f64> {
         let mut proba = EntropyBuilder::new();
         proba.set_pos_count(self.pos.len());

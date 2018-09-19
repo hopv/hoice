@@ -1,12 +1,16 @@
 //! Reduction strategies.
 //!
-//! All strategies are `struct`s that implement the [`RedStrat`](trait.RedStrat.html) trait. The
-//! [`Reductor`](struct.Reductor.html) then combines them in a cohesive preprocessing run in its
-//! [`run` function](struct.Reductor.html#method.run).
+//! All strategies are `struct`s that implement the [`RedStrat`] trait. The [`Reductor`] then
+//! combines them in a cohesive preprocessing run in its [`run`] function.
 //!
-//! During preprocessing, the [`Instance`](../common/struct.Instance.html) is wrapped into a
-//! [`PreInstance`](struct.PreInstance.html) which provides high-level functions to act on the
-//! predicates and the clauses of the instance.
+//! During preprocessing, the [`Instance`] is wrapped into a [`PreInstance`] which provides
+//! high-level functions to act on the predicates and the clauses of the instance.
+//!
+//! [`RedStrat`]: trait.RedStrat.html (RedStrat trait)
+//! [`Reductor`]: struct.Reductor.html (Reductor struct)
+//! [`run`]: struct.Reductor.html#method.run (Reductor's run function)
+//! [`Instance`]: ../common/struct.Instance.html (Instance struct)
+//! [`PreInstance`]: struct.PreInstance.html (PreInstance struct)
 
 use common::*;
 use instance::*;

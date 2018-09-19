@@ -454,9 +454,7 @@ impl CanBEvaled for Term {
     }
 }
 
-/// Information returned by
-/// [`RedStrat`](../instance/preproc/trait.RedStrat.html)s and
-/// [`SolverRedStrat`](../instance/preproc/trait.SolverRedStrat.html)s.
+/// Information returned by preprocessing techniques.
 #[must_use]
 #[derive(Debug, Default)]
 pub struct RedInfo {

@@ -626,10 +626,6 @@ impl RTerm {
     /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
     ///
     /// So *greater* really means *more generic*.
-    ///
-    /// See [the module's function][atom implies] for more details and examples.
-    ///
-    /// [atom implies]: fn.atom_implies.html (atom_implies module-level function)
     pub fn conj_simpl(&self, other: &Self) -> simplify::SimplRes {
         simplify::conj_simpl(&self, &other)
     }
@@ -664,24 +660,24 @@ impl RTerm {
     /// println!("false") ;
     /// assert!( ! term.is_true() ) ;
     /// let term = term::eq(
-    ///   term::int(7), term::int_var(1)
+    ///     term::int(7), term::int_var(1)
     /// ) ;
     /// println!("7 = v_1") ;
     /// assert!( ! term.is_true() ) ;
     /// let term = term::eq(
-    ///   term::int(9), term::int(9)
+    ///     term::int(9), term::int(9)
     /// ) ;
     /// println!("9 = 9") ;
     /// assert!( term.is_true() ) ;
     /// let term = term::eq(
-    ///   term::int(1), term::int(9)
+    ///     term::int(1), term::int(9)
     /// ) ;
     /// println!("1 = 9") ;
     /// assert!( ! term.is_true() ) ;
     /// let term = term::le(
-    ///   term::app(
-    ///     Op::Add, vec![ term::int(3), term::int(4) ]
-    ///   ), term::int(9)
+    ///     term::app(
+    ///         Op::Add, vec![ term::int(3), term::int(4) ]
+    ///     ), term::int(9)
     /// ) ;
     /// println!("3 + 4 = 9") ;
     /// assert!( term.is_true() ) ;
@@ -708,24 +704,24 @@ impl RTerm {
     /// println!("false") ;
     /// assert!( term.is_false() ) ;
     /// let term = term::eq(
-    ///   term::int(7), term::int_var(1)
+    ///     term::int(7), term::int_var(1)
     /// ) ;
     /// println!("7 = v_1") ;
     /// assert!( ! term.is_false() ) ;
     /// let term = term::eq(
-    ///   term::int(9), term::int(9)
+    ///     term::int(9), term::int(9)
     /// ) ;
     /// println!("9 = 9") ;
     /// assert!( ! term.is_false() ) ;
     /// let term = term::eq(
-    ///   term::int(1), term::int(9)
+    ///     term::int(1), term::int(9)
     /// ) ;
     /// println!("1 = 9") ;
     /// assert!( term.is_false() ) ;
     /// let term = term::le(
-    ///   term::int(9), term::app(
-    ///     Op::Add, vec![ term::int(3), term::int(4) ]
-    ///   )
+    ///     term::int(9), term::app(
+    ///         Op::Add, vec![ term::int(3), term::int(4) ]
+    ///     )
     /// ) ;
     /// println!("9 <= 3 + 4") ;
     /// assert!( term.is_false() ) ;
@@ -1001,10 +997,6 @@ impl RTerm {
     }
 
     /// Term evaluation.
-    ///
-    /// # TODO
-    ///
-    /// - remove recursive call for constant arrays
     pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
         eval::eval(&factory::term(self.clone()), model)
     }
@@ -1553,22 +1545,22 @@ impl RTerm {
     /// let term = term::u_minus( term::int_var(0) ) ;
     /// println!("{}", term) ;
     /// assert_eq!{
-    ///   term.invert( term::int_var(1) ),
-    ///   Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
+    ///     term.invert( term::int_var(1) ),
+    ///     Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
     /// }
     /// let term = term::sub( vec![ term::int_var(0), term::int(7) ] ) ;
     /// println!("{}", term) ;
     /// assert_eq!{
-    ///   term.invert( term::int_var(1) ),
-    ///   Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
+    ///     term.invert( term::int_var(1) ),
+    ///     Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
     /// }
     /// let term = term::add( vec![ term::int(7), term::int_var(0) ] ) ;
     /// println!("{}", term) ;
     /// assert_eq!{
-    ///   term.invert( term::int_var(1) ),
-    ///   Some(
-    ///     (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
-    ///   )
+    ///     term.invert( term::int_var(1) ),
+    ///     Some(
+    ///         (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
+    ///     )
     /// }
     /// ```
     pub fn invert(&self, term: Term) -> Option<(VarIdx, Term)> {

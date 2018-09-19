@@ -59,7 +59,6 @@
 // use hashconsing::* ;
 
 use common::*;
-use instance::Clause;
 
 /// Extracts qualifier-related information from a predicate application.
 fn qual_info_of(

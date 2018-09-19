@@ -12,7 +12,6 @@ use common::{
     *,
 };
 use data::Constraint;
-use instance::Clause;
 
 /// Initial setup for a solver.
 ///
@@ -977,11 +976,11 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, &'a str> for FullParser {
 /// Extends a solver so that it's able to check clause triviality.
 pub trait ClauseTrivialExt {
     /// Checks whether a clause is trivial.
-    fn is_clause_trivial(&mut self, &mut ::instance::Clause) -> Res<Option<bool>>;
+    fn is_clause_trivial(&mut self, &mut Clause) -> Res<Option<bool>>;
 }
 
 impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
-    fn is_clause_trivial(&mut self, clause: &mut ::instance::Clause) -> Res<Option<bool>> {
+    fn is_clause_trivial(&mut self, clause: &mut Clause) -> Res<Option<bool>> {
         let mut lhs: Vec<Term> = Vec::with_capacity(17);
 
         for term in clause.lhs_terms() {

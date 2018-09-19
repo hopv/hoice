@@ -1,7 +1,6 @@
 //! Let bindings module.
 
 use common::*;
-use instance::Clause;
 
 /// Stores let bindings.
 ///

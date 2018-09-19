@@ -13,12 +13,13 @@ pub type Fun = Arc<RFun>;
 
 /// Type of the function factory.
 ///
-/// The usize indicates whether an element of the factory is being borrowed
-/// **unsafely** by [`get_as_ref`](fun/fn.get_as_ref.html). If it is true, then
-/// borrowing the factory mutably is unsafe.
+/// The usize indicates whether an element of the factory is being borrowed **unsafely** by
+/// [`get_as_ref`]. If it is true, then borrowing the factory mutably is unsafe.
 ///
 /// To avoid problems, **always** use the `factory` macro to access the
 /// factory.
+///
+/// [`get_as_ref`]: fn.get_as_ref.html (get_as_ref function)
 type Factory = RwLock<(BTreeMap<String, Fun>, usize)>;
 lazy_static! {
   /// Function factory.
