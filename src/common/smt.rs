@@ -159,11 +159,11 @@ impl<'a> SmtPredApp<'a> {
         SmtPredApp { pred, args }
     }
 }
-impl<'a, 'b> Expr2Smt<(&'b PrdInfos, bool)> for SmtPredApp<'a> {
+impl<'a, 'b> Expr2Smt<(&'b Preds, bool)> for SmtPredApp<'a> {
     fn expr_to_smt2<Writer: Write>(
         &self,
         w: &mut Writer,
-        (infos, pos): (&'b PrdInfos, bool),
+        (infos, pos): (&'b Preds, bool),
     ) -> SmtRes<()> {
         if !pos {
             write!(w, "(not ")?
@@ -196,11 +196,11 @@ impl<'a> NegQClause<'a> {
         NegQClause { clause }
     }
 }
-impl<'a> Expr2Smt<(&'a PrdSet, &'a PrdSet, &'a PrdInfos)> for NegQClause<'a> {
+impl<'a> Expr2Smt<(&'a PrdSet, &'a PrdSet, &'a Preds)> for NegQClause<'a> {
     fn expr_to_smt2<Writer: Write>(
         &self,
         w: &mut Writer,
-        (true_preds, false_preds, others): (&'a PrdSet, &'a PrdSet, &'a PrdInfos),
+        (true_preds, false_preds, others): (&'a PrdSet, &'a PrdSet, &'a Preds),
     ) -> SmtRes<()> {
         writeln!(w, "(not")?;
         self.clause.forall_write(
@@ -758,7 +758,7 @@ impl FullParser {
                     },
 
                     FPVar::Sym(name) => {
-                        use instance::info::VarInfo;
+                        use info::VarInfo;
 
                         let (mut nu_sig, mut var_infos): (
                             VarMap<Typ>,

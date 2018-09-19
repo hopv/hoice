@@ -1,7 +1,7 @@
 //! Argument reduction.
 
 use common::*;
-use instance::{instance::PreInstance, preproc::RedStrat, Clause};
+use preproc::{PreInstance, RedStrat};
 
 /// Argument reduction.
 ///

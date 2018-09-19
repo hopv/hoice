@@ -2,10 +2,7 @@
 //! between predicates.
 
 use common::*;
-use instance::{
-    instance::PreInstance,
-    preproc::{utils, utils::ExtractionCxt, RedStrat},
-};
+use preproc::{utils, utils::ExtractionCxt, PreInstance, RedStrat};
 use var_to::terms::VarTermsSet;
 
 /// Result of a DNF merge.
@@ -337,10 +334,10 @@ impl Graph {
         max: Option<usize>,
     ) -> Res<Option<MergeRes>> {
         log! {
-          @6 "merging for {}, {} substitutions", instance[pred], substs.len()
+            @6 | "merging for {}, {} substitutions", instance[pred], substs.len()
         }
-        let fresh_index = instance.original_sig_of(pred).next_index();
-        log! { @6 "fresh index: {}", fresh_index }
+        let fresh_index = instance[pred].fresh_var_idx();
+        log! { @6 | "fresh index: {}", fresh_index }
 
         let mut result = Vec::with_capacity(lft.len() * rgt.len());
         let mut estimation = 0;
@@ -354,12 +351,12 @@ impl Graph {
             let mut fresh_index = fresh_index;
 
             for (idx, _) in r_qvars {
-                log! { @7 "- rgt qvar {}", idx }
+                log! { @7 | "- rgt qvar {}", idx }
                 if *idx >= fresh_index {
                     fresh_index = (1 + **idx).into()
                 }
             }
-            log! { @7 "first legal index: {}", fresh_index }
+            log! { @7 | "first legal index: {}", fresh_index }
 
             // All combinations of elements of `lft` of len `substs`.
             let mut all_lft_combinations = CombinationIter::new(lft.iter(), substs.len())
@@ -421,7 +418,7 @@ impl Graph {
         // `lft`.
         for ((l_qvars, l_conj), subst) in combination.iter().zip(substs.iter()) {
             conf.check_timeout()?;
-            log! { @7 "working on substitution..." }
+            log! { @7 | "working on substitution..." }
 
             // Fresh map for this substitution.
             qvar_map.clear();
@@ -444,9 +441,9 @@ impl Graph {
             r_conj.reserve(l_conj.terms().len(), l_conj.preds().len());
             // Working on terms.
             for term in l_conj.terms() {
-                log! { @8 "subst on {}", term }
+                log! { @8 | "subst on {}", term }
                 let (term, _) = term.subst(&(&*qvar_map, subst));
-                log! { @8 "-> {}", term }
+                log! { @8 | "-> {}", term }
 
                 let is_false = term::simplify::conj_term_insert(term, r_conj.terms_mut());
 
@@ -487,7 +484,7 @@ impl Graph {
         max: Option<usize>,
         previous: &[(PrdIdx, Dnf)],
     ) -> Res<Option<MergeRes>> {
-        log! { @4 "dnf_of({}, {:?})", instance[pred], max }
+        log! { @4 | "dnf_of({}, {:?})", instance[pred], max }
 
         let forced_inlining = max.is_none();
 
@@ -519,7 +516,7 @@ impl Graph {
             )? {
                 utils::ExtractRes::Success((qvars, mut tterms)) => {
                     log! { @5
-                      "from clause {}", clause.to_string_info(& instance.preds()) ?
+                        "from clause {}", clause.to_string_info(&instance.preds())?
                     }
 
                     if !forced_inlining && !tterms.preds().is_empty() {
@@ -548,8 +545,8 @@ impl Graph {
                     }
 
                     if_log! { @5
-                      log! { @5 "current definition:" }
-                      Self::log_definition(instance, & def)
+                        log! { @5 |=> "current definition:" }
+                        Self::log_definition(instance, & def)
                     }
                 }
                 utils::ExtractRes::SuccessTrue => bail!(
@@ -571,24 +568,24 @@ impl Graph {
     #[cfg(not(feature = "bench"))]
     fn log_definition(_instance: &Instance, _def: DnfRef) {
         for (qvars, tterms) in _def {
-            log! { @5 "and" }
+            log! { @5 |=> "and" }
             if !qvars.is_empty() {
-                log! { @5 "  qvars {{" }
+                log! { @5 |=> "  qvars {{" }
                 for (var, typ) in qvars {
-                    log! { @5 "    {}: {}", var.default_str(), typ }
+                    log! { @5 |=> "    {}: {}", var.default_str(), typ }
                 }
-                log! { @5 "  }}" }
+                log! { @5 |=> "  }}" }
             }
             for term in tterms.terms() {
-                log! { @5 "  {}", term }
+                log! { @5 |=> "  {}", term }
             }
             for (pred, argss) in tterms.preds() {
                 for args in argss {
-                    log! { @5 "  ({} {})", _instance[* pred], args }
+                    log! { @5 |=> "  ({} {})", _instance[* pred], args }
                 }
             }
         }
-        log! { @5 => " " }
+        log! { @5 |=> " " }
     }
 
     /// Handles a conjunction that's part of a definition for a predicate.
@@ -638,21 +635,21 @@ impl Graph {
         tterms: TTermSet,
     ) -> Res<Option<Dnf>> {
         if_log! { @5
-          log! { @5 => "qvars {{" }
-          for (var, typ) in & qvars {
-            log! { @5 => "  {}: {}", var.default_str(), typ }
-          }
-          log! { @5 => "}}" }
-          log! { @5 => "conj {{" }
-          for term in tterms.terms() {
-            log! { @5 => "  {}", term }
-          }
-          for (pred, argss) in tterms.preds() {
-            for args in argss {
-              log! { @5 => "  ({} {})", instance[* pred], args }
+            log! { @5 |=> "qvars {{" }
+            for (var, typ) in & qvars {
+                log! { @5 |=> "  {}: {}", var.default_str(), typ }
             }
-          }
-          log! { @5 => "}}" }
+            log! { @5 |=> "}}" }
+            log! { @5 |=> "conj {{" }
+            for term in tterms.terms() {
+                log! { @5 |=> "  {}", term }
+            }
+            for (pred, argss) in tterms.preds() {
+                for args in argss {
+                    log! { @5 |=> "  ({} {})", instance[* pred], args }
+                }
+            }
+            log! { @5 |=> "}}" }
         }
 
         let mut curr = vec![(qvars, tterms)];
@@ -661,9 +658,9 @@ impl Graph {
             conf.check_timeout()?;
 
             if_log! { @6
-              Self::log_merge_defs(
-                _this_pred, instance, & argss, p_def, & curr
-              )
+                Self::log_merge_defs(
+                    _this_pred, instance, & argss, p_def, & curr
+                )
             }
 
             if let Some(res) = Self::merge(
@@ -699,27 +696,27 @@ impl Graph {
         _p_def: DnfRef,
         _curr: DnfRef,
     ) {
-        log! { @6 => "curr {{" }
+        log! { @6 |=> "curr {{" }
         let mut first = true;
         for &(ref qv, ref tterms) in _curr {
             if first {
                 first = false
             } else {
-                log! { @6 => " " }
+                log! { @6 |=> " " }
             }
             for (var, typ) in qv {
-                log! { @6 => "  {}: {}", var.default_str(), typ }
+                log! { @6 |=> "  {}: {}", var.default_str(), typ }
             }
             for term in tterms.terms() {
-                log! { @6 => "  {}", term }
+                log! { @6 |=> "  {}", term }
             }
             for (pred, _argss) in tterms.preds() {
                 for args in _argss {
-                    log! { @6 => "  ({} {})", _instance[* pred], args }
+                    log! { @6 |=> "  ({} {})", _instance[* pred], args }
                 }
             }
         }
-        log! { @6 => "}}" }
+        log! { @6 |=> "}}" }
         Self::log_merge_defs_sub(_this_pred, _instance, _argss, _p_def)
     }
 
@@ -731,37 +728,37 @@ impl Graph {
         _argss: &VarTermsSet,
         _p_def: DnfRef,
     ) {
-        log! { @6 => "argss for {} {{", _instance[_this_pred] }
+        log! { @6 |=> "argss for {} {{", _instance[_this_pred] }
         for args in _argss {
             let mut pref = "  > ";
             for (var, arg) in args.index_iter() {
-                log! { @6 => "{}{} -> {}", pref, var.default_str(), arg }
+                log! { @6 |=> "{}{} -> {}", pref, var.default_str(), arg }
                 pref = "    "
             }
         }
-        log! { @6 => "}}" }
-        log! { @6 => "defs {{" }
+        log! { @6 |=> "}}" }
+        log! { @6 |=> "defs {{" }
         let mut first = true;
 
         for &(ref qv, ref tterms) in _p_def {
             if first {
                 first = false
             } else {
-                log! { @6 => " " }
+                log! { @6 |=> " " }
             }
             for (var, typ) in qv {
-                log! { @6 => "  {}: {}", var.default_str(), typ }
+                log! { @6 |=> "  {}: {}", var.default_str(), typ }
             }
             for term in tterms.terms() {
-                log! { @6 => "  {}", term }
+                log! { @6 |=> "  {}", term }
             }
             for (pred, _argss) in tterms.preds() {
                 for args in _argss {
-                    log! { @6 => "  ({} {})", _instance[* pred], args }
+                    log! { @6 |=> "  ({} {})", _instance[* pred], args }
                 }
             }
         }
-        log! { @6 => "}}" }
+        log! { @6 |=> "}}" }
     }
 
     /// Constructs all the predicates not in `keep` by inlining the constraints.
@@ -796,12 +793,12 @@ impl Graph {
                 {
                     continue 'find_pred;
                 }
-                log_debug! { "looking at {}", instance[prd] }
+                log! { @3 | "looking at {}", instance[prd] }
                 'check_src: for (src, cnt) in srcs.index_iter() {
                     if *cnt == 0 {
                         continue 'check_src;
                     }
-                    log_debug! { "depends on {}", instance[src] }
+                    log! { @3 | "depends on {}", instance[src] }
                     if !keep.contains(&src) && !res_contains!(&src) {
                         continue 'find_pred;
                     }
@@ -813,11 +810,11 @@ impl Graph {
             let pred = if let Some(p) = pred {
                 p
             } else {
-                log_debug! { "no predicate illeligible for inlining" }
+                log! { @3 | "no predicate illeligible for inlining" }
                 break 'construct;
             };
 
-            log_debug! { "investigating inlining {}", instance[pred] }
+            log! { @3 | "investigating inlining {}", instance[pred] }
 
             macro_rules! keep_and_continue {
                 ($pred:expr) => {
@@ -842,9 +839,9 @@ impl Graph {
                 &res,
             )? {
                 upper_bound += res.estimation;
-                log! { @4
-                  "inlining {} (blow-up estimation: {})",
-                  instance[pred], res.estimation
+                log! { @4 |
+                    "inlining {} (blow-up estimation: {})",
+                    instance[pred], res.estimation
                 }
                 res.def
             } else {
@@ -852,8 +849,8 @@ impl Graph {
             };
 
             if_log! { @4
-              log! { @4 => "definition:" }
-              Self::log_definition(instance, & def)
+                log! { @4 |=> "definition:" }
+                Self::log_definition(instance, & def)
             }
 
             conf.check_timeout()?;
@@ -904,9 +901,9 @@ impl Graph {
                 }
             }
             // println!("blows up") ;
-            log! { @6
-              "inlining for {} blows up: {} > {} (len: {})",
-              instance[pred], estimation, max, len
+            log! { @6 |
+                "inlining for {} blows up: {} > {} (len: {})",
+                instance[pred], estimation, max, len
             }
             return None;
         }
@@ -922,30 +919,30 @@ impl Graph {
         forward: &PrdHMap<PrdSet>,
     ) -> Option<PrdIdx> {
         if_log! { @3
-          log! { @3 => "  looking for a starting point with" }
-          log! { @3 => "  - pos {{" }
+          log! { @3 |=> "  looking for a starting point with" }
+          log! { @3 |=> "  - pos {{" }
           for prd in pos {
-            log! { @3 => "    {}", _instance[* prd] }
+            log! { @3 |=> "    {}", _instance[* prd] }
           }
-          log! { @3 => "  }}" }
-          log! { @3 => "  - forward {{" }
+          log! { @3 |=> "  }}" }
+          log! { @3 |=> "  - forward {{" }
           for (prd, set) in forward {
             let mut s = String::new() ;
             for prd in set {
               s = format!("{} {}", s, _instance[* prd])
             }
-            log! { @3 => "    {} ->{}", _instance[* prd], s }
+            log! { @3 |=> "    {} ->{}", _instance[* prd], s }
           }
-          log! { @3 => " }}" }
+          log! { @3 |=> " }}" }
         }
 
         // Find a starting point.
         if let Some(pred) = pos.iter().next() {
-            log! { @3 "  found one in `pos`" }
+            log! { @3 | "  found one in `pos`" }
             // There was something in `pos`, remove it and move on.
             Some(*pred)
         } else {
-            log! { @3 "  no preds in `pos`, looking in `forward`" }
+            log! { @3 | "  no preds in `pos`, looking in `forward`" }
             // There was nothing in `pos`, select something from `forward`.
             forward.iter().next().map(|(pred, _)| *pred)
         }
@@ -972,11 +969,11 @@ impl Graph {
             let start = if let Some(pred) = start {
                 pred
             } else {
-                log! { @3 "  no starting point found, done" }
+                log! { @3 | "  no starting point found, done" }
                 break 'break_cycles;
             };
 
-            log! { @3 "  starting point is {}, following it", instance[start] }
+            log! { @3 | "  starting point is {}, following it", instance[start] }
 
             // Follow it.
             let weights = Self::follow(instance, start, &forward)?;
@@ -985,9 +982,9 @@ impl Graph {
             }
 
             if let Some(pred) = Self::find_heaviest(instance, &weights)? {
-                log! { @3
-                  "  removing it from everything" ;
-                  "  remembering {}", instance[pred]
+                log! { @3 |
+                    "  removing it from everything" ;
+                    "  remembering {}", instance[pred]
                 }
                 // Remove the representative from everything.
                 Self::forget(pred, &mut pos, &mut forward);
@@ -995,11 +992,11 @@ impl Graph {
                 let is_new = set.insert(pred);
                 debug_assert!(is_new);
 
-                log! { @3 "" }
+                log! { @3 | "" }
             } else {
                 // There's no cycle, forget everything in weight and keep going.
                 for (pred, _weight) in weights {
-                    log! { @3 "  - forgetting {} ({})", instance[pred], _weight }
+                    log! { @3 | "  - forgetting {} ({})", instance[pred], _weight }
                     Self::forget(pred, &mut pos, &mut forward);
                     debug_assert!(_weight < 2)
                 }
@@ -1071,7 +1068,7 @@ impl Graph {
         let mut rep = None;
         for (prd, weight) in weights {
             let (prd, weight) = (*prd, *weight);
-            log! { @3 "    {} -> {}", _instance[prd], weight }
+            log! { @3 | "    {} -> {}", _instance[prd], weight }
             let curr_weight = if let Some(&(_, w)) = rep.as_ref() {
                 w
             } else {
@@ -1083,9 +1080,9 @@ impl Graph {
         }
 
         if let Some((pred, weight)) = rep {
-            log! { @3 "  heaviest is {} ({})", _instance[pred], weight }
+            log! { @3 | "  heaviest is {} ({})", _instance[pred], weight }
             if weight < 2 {
-                log! { @3 "no cycle, forgetting everything" }
+                log! { @3 | "no cycle, forgetting everything" }
                 Ok(None)
             } else {
                 Ok(Some(pred))
@@ -1283,10 +1280,10 @@ impl RedStrat for CfgRed {
 
             self.graph.check(&instance)?;
             if_log! { @verb
-              log! { @verb "inlining {} predicates", pred_defs.len() }
-              for (pred, _) in & pred_defs {
-                log! { @verb "  {}", instance[* pred] }
-              }
+                log! { @verb | "inlining {} predicates", pred_defs.len() }
+                for (pred, _) in & pred_defs {
+                    log! { @verb | "  {}", instance[* pred] }
+                }
             }
 
             if pred_defs.len() == instance.active_pred_count() {

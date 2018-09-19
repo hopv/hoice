@@ -37,11 +37,11 @@ impl Sample {
     }
 }
 impl<'a> PebcakFmt<'a> for Sample {
-    type Info = &'a PrdInfos;
+    type Info = &'a Preds;
     fn pebcak_err(&self) -> ErrorKind {
         "during sample pebcak formatting".into()
     }
-    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, map: &'a PrdInfos) -> IoRes<()> {
+    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, map: &'a Preds) -> IoRes<()> {
         write!(w, "({}", map[self.pred].name)?;
         for arg in self.args.iter() {
             write!(w, " {}", arg)?

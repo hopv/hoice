@@ -105,7 +105,7 @@ impl RVarVals {
 
     /// Constructor from a model.
     pub fn of_model<T>(
-        info: &VarMap<::instance::info::VarInfo>,
+        info: &VarMap<::info::VarInfo>,
         model: Vec<(VarIdx, T, Val)>,
         partial: bool,
     ) -> Res<Self> {

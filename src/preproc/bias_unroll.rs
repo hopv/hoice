@@ -1,9 +1,9 @@
 //! Bias unrolling module.
 
 use common::*;
-use instance::{
-    instance::{Clause, PreInstance},
-    preproc::{utils::ExtractRes, utils::ExtractionCxt, RedStrat},
+use preproc::{
+    utils::{ExtractRes, ExtractionCxt},
+    PreInstance, RedStrat,
 };
 
 type NegDef = (Quantfed, TermSet);
@@ -511,78 +511,72 @@ impl BiasedUnroll {
             }
 
             log! { @4
-              "generating positive clause(s) for {} from {} ({})",
-              instance[pred],
-              instance[rhs_clause].to_string_info( instance.preds() ) ?,
-              estimation
+                "generating positive clause(s) for {} from {} ({})",
+                instance[pred],
+                instance[rhs_clause].to_string_info(instance.preds())?,
+                estimation
             }
 
             let mut nu_clauses = vec![];
 
-            scoped! {
+            {
+                let mut clause = instance[rhs_clause].clone();
 
-              let mut clause = instance[rhs_clause].clone() ;
+                let mut lhs_preds: Vec<_> = clause.drain_lhs_preds().collect();
+                let mut map = Vec::with_capacity(lhs_preds.len());
 
-              let mut lhs_preds: Vec<_> = clause.drain_lhs_preds().collect() ;
-              let mut map = Vec::with_capacity( lhs_preds.len() ) ;
+                for (pred, argss) in &lhs_preds {
+                    let mut arg_map = Vec::with_capacity(argss.len());
 
-              for (pred, argss) in & lhs_preds {
-                let mut arg_map = Vec::with_capacity( argss.len() ) ;
+                    if let Some(defs) = self.pos_defs.get(pred) {
+                        for args in argss {
+                            arg_map.push((args, 0))
+                        }
 
-                if let Some(defs) = self.pos_defs.get(pred) {
-                  for args in argss {
-                    arg_map.push( (args, 0) )
-                  }
-
-                  map.push( (pred, defs, arg_map) )
-                } else {
-                  bail!("no definition for {} (positive, lhs)", instance[* pred])
-                }
-              }
-
-              macro_rules! map_inc {
-                () => ({
-                  let mut done = true ;
-                  'all_apps: for & mut (_, defs, ref mut argss) in & mut map {
-                    for (_, ref mut index) in argss {
-                      * index += 1 ;
-                      if * index < defs.len() {
-                        done = false ;
-                        break 'all_apps
-                      } else {
-                        * index = 0
-                      }
+                        map.push((pred, defs, arg_map))
+                    } else {
+                        bail!("no definition for {} (positive, lhs)", instance[*pred])
                     }
-                  }
-                  done
-                })
-              }
-
-              let mut done = false ;
-              while ! done {
-                let mut clause = clause.clone() ;
-
-                for (_, defs, argss) in & map {
-                  for (args, index) in argss {
-                    self.insert_terms(
-                      & mut clause, args, & defs[* index].0, & defs[* index].1
-                    ) ?
-                  }
                 }
 
-                if let Some(trivial) = instance.is_this_clause_trivial(
-                  & mut clause
-                ) ? {
-                  if ! trivial {
-                    nu_clauses.push(clause)
-                  }
-                } else {
-                  unimplemented!("unsat in biased unrolling")
+                macro_rules! map_inc {
+                    () => {{
+                        let mut done = true;
+                        'all_apps: for &mut (_, defs, ref mut argss) in &mut map {
+                            for (_, ref mut index) in argss {
+                                *index += 1;
+                                if *index < defs.len() {
+                                    done = false;
+                                    break 'all_apps;
+                                } else {
+                                    *index = 0
+                                }
+                            }
+                        }
+                        done
+                    }};
                 }
 
-                done = map_inc!()
-              }
+                let mut done = false;
+                while !done {
+                    let mut clause = clause.clone();
 
+                    for (_, defs, argss) in &map {
+                        for (args, index) in argss {
+                            self.insert_terms(&mut clause, args, &defs[*index].0, &defs[*index].1)?
+                        }
+                    }
+
+                    if let Some(trivial) = instance.is_this_clause_trivial(&mut clause)? {
+                        if !trivial {
+                            nu_clauses.push(clause)
+                        }
+                    } else {
+                        unimplemented!("unsat in biased unrolling")
+                    }
+
+                    done = map_inc!()
+                }
             }
 
             for mut clause in nu_clauses {
@@ -675,13 +669,13 @@ impl BiasedUnroll {
                         let argss_len = argss.len();
                         if active_lhs_pred_app < argss_len {
                             let mut index = 0;
-                            map_inc!(
-                                                    @argss done, defs, argss ; {
-                                                      let iff = index != active_lhs_pred_app ;
-                                                      index += 1 ;
-                                                      iff
-                                                    }
-                                                  )
+                            map_inc! {
+                                @argss done, defs, argss ; {
+                                    let iff = index != active_lhs_pred_app ;
+                                    index += 1 ;
+                                    iff
+                                }
+                            }
                         }
 
                         if done {
@@ -693,6 +687,7 @@ impl BiasedUnroll {
 
                 done
             }};
+
             (@argss $done:ident, $defs:expr, $argss:expr ; $iff:expr) => {
                 for (_, ref mut index) in $argss {
                     if $iff {
@@ -825,9 +820,9 @@ impl BiasedUnroll {
             }
 
             log! { @4
-              "generating negative clause(s) for {} from {}",
-              instance[pred],
-              instance[lhs_clause].to_string_info( instance.preds() ) ?
+                "generating negative clause(s) for {} from {}",
+                instance[pred],
+                instance[lhs_clause].to_string_info( instance.preds() ) ?
             }
 
             let mut nu_clauses = vec![];
@@ -836,8 +831,8 @@ impl BiasedUnroll {
 
             for mut clause in nu_clauses {
                 log! { @6
-                  "new clause: {}",
-                  clause.to_string_info( instance.preds() ) ?
+                    "new clause: {}",
+                    clause.to_string_info( instance.preds() ) ?
                 }
 
                 clause.from_unrolling = true;
@@ -857,7 +852,7 @@ impl BiasedUnroll {
 
         for pred in self.not_in_neg_clauses.clone() {
             log! { @4
-              "trying to generate negative clauses for {}", instance[pred]
+                "trying to generate negative clauses for {}", instance[pred]
             }
             // self.print(instance) ;
 
@@ -887,11 +882,11 @@ impl BiasedUnroll {
                         let is_new = neg.insert(pred);
                         debug_assert! { is_new }
                     }
-                    log! { @4 "-> success" }
+                    log! { @4 | "-> success" }
 
-                    log! { @verb
-                      "generated {} negative clauses for {}",
-                      this_info.clauses_added, conf.emph(& instance[pred].name)
+                    log! { @verb |
+                        "generated {} negative clauses for {}",
+                        this_info.clauses_added, conf.emph(& instance[pred].name)
                     }
 
                     info += this_info;
@@ -902,10 +897,10 @@ impl BiasedUnroll {
                     } else {
                         bail!("inconsistent BiasedUnroll state")
                     }
-                    log! { @4 "-> failure" }
+                    log! { @4 | "-> failure" }
                 }
             } else {
-                log! { @4 "-> nothing new, skipping" }
+                log! { @4 | "-> nothing new, skipping" }
             }
         }
 
@@ -916,8 +911,8 @@ impl BiasedUnroll {
         let mut info = RedInfo::new();
 
         for pred in self.not_in_pos_clauses.clone() {
-            log! { @4
-              "trying to generate positive clauses for {}", instance[pred]
+            log! { @4 |
+                "trying to generate positive clauses for {}", instance[pred]
             }
             // self.print(instance) ;
 
@@ -947,11 +942,11 @@ impl BiasedUnroll {
                         let is_new = pos.insert(pred);
                         debug_assert! { is_new }
                     }
-                    log! { @4 "-> success" }
+                    log! { @4 | "-> success" }
 
-                    log! { @verb
-                      "generated {} positive clauses for {}",
-                      this_info.clauses_added, conf.emph(& instance[pred].name)
+                    log! { @verb |
+                        "generated {} positive clauses for {}",
+                        this_info.clauses_added, conf.emph(& instance[pred].name)
                     }
 
                     info += this_info;
@@ -962,10 +957,10 @@ impl BiasedUnroll {
                     } else {
                         bail!("inconsistent BiasedUnroll state")
                     }
-                    log! { @4 "-> failure" }
+                    log! { @4 | "-> failure" }
                 }
             } else {
-                log! { @4 "-> nothing new, skipping" }
+                log! { @4 | "-> nothing new, skipping" }
             }
         }
 

@@ -1,13 +1,9 @@
 //! Bias unrolling module.
 
 use common::*;
-use instance::{
-    instance::PreInstance,
-    preproc::{
-        utils::{ExtractRes, ExtractionCxt},
-        RedStrat,
-    },
-    Clause,
+use preproc::{
+    utils::{ExtractRes, ExtractionCxt},
+    PreInstance, RedStrat,
 };
 
 // /// Unrolls positive constraints once.
@@ -173,30 +169,27 @@ impl RUnroll {
                 debug_assert! { apps.is_none() }
                 let (terms, pred_apps) = ts.destroy();
                 if_log! { @3
-                  let mut s = format!(
-                    "from {}\n",
-                    clause.to_string_info(
-                      instance.preds()
-                    ) ?
-                  ) ;
-                  s.push_str("terms {\n") ;
+                    let mut s = format!(
+                        "from {}\n", clause.to_string_info(instance.preds()).unwrap()
+                    ) ;
+                    s.push_str("terms {\n") ;
 
-                  for term in & terms {
-                    s.push_str( & format!("  {}\n", term) )
-                  }
-                  s.push_str("}\npred apps {{") ;
-
-                  for (pred, argss) in & pred_apps {
-                    for args in argss {
-                      s.push_str( & format!("  ({}", instance[* pred]) ) ;
-                      for arg in args.iter() {
-                        s.push_str( & format!(" {}", arg) )
-                      }
-                      s.push_str(")\n")
+                    for term in & terms {
+                        s.push_str( & format!("  {}\n", term) )
                     }
-                  }
-                  s.push_str(")") ;
-                  log! { @3 "{}", s }
+                    s.push_str("}\npred apps {{") ;
+
+                    for (pred, argss) in & pred_apps {
+                        for args in argss {
+                            s.push_str( & format!("  ({}", instance[* pred]) ) ;
+                            for arg in args.iter() {
+                                s.push_str( & format!(" {}", arg) )
+                            }
+                            s.push_str(")\n")
+                        }
+                    }
+                    s.push_str(")") ;
+                    log! { @3 "{}", s }
                 }
                 debug_assert! { pred_apps.is_empty() }
                 insert!(pred, Quant::exists(q), terms)

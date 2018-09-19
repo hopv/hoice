@@ -1,7 +1,7 @@
 //! Contains the clause structure for encapsulation.
 
 use common::*;
-use instance::info::VarInfo;
+use info::VarInfo;
 use var_to::terms::VarTermsSet;
 
 /// Creates a clause.
@@ -1202,7 +1202,7 @@ impl ::std::ops::Index<VarIdx> for Clause {
     }
 }
 
-impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clause {
+impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a Preds)> for Clause {
     /// Writes the clause in SMT-LIB format.
     ///
     /// The boolean flag in the info specifies whether the clause should be
@@ -1210,7 +1210,7 @@ impl<'a, 'b> Expr2Smt<&'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos)> for Clau
     fn expr_to_smt2<Writer: Write>(
         &self,
         writer: &mut Writer,
-        info: &'b (bool, &'a PrdSet, &'a PrdSet, &'a PrdInfos),
+        info: &'b (bool, &'a PrdSet, &'a PrdSet, &'a Preds),
     ) -> SmtRes<()> {
         let (pos, ref true_preds, ref false_preds, ref prd_info) = *info;
 

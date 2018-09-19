@@ -1,10 +1,7 @@
 //! One lhs module.
 
 use common::*;
-use instance::{
-    instance::PreInstance,
-    preproc::{utils::ExtractRes, RedStrat},
-};
+use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 
 /// Tries to reduce predicates that appear as an antecedent in exactly one
 /// clause.
@@ -176,12 +173,10 @@ impl OneLhs {
         };
 
         log! { @4
-          "from {}",
-          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+            "from {}",
+            instance.clauses()[clause].to_string_info(instance.preds())?
         }
-        log! { @2
-          "unfolding {}", conf.emph(& instance[pred].name)
-        }
+        log! { @2 | "unfolding {}", conf.emph(& instance[pred].name) }
 
         use self::ExtractRes::*;
         let info = match extraction_res {

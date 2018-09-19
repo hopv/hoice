@@ -2,36 +2,26 @@
 //!
 //! # Terms
 //!
-//! The factory is a `static_ref` for easy creation. The `R`eal term structure
-//! is [`RTerm`](enum.RTerm.html) which is hashconsed into
-//! [`Term`](type.Term.html). The factory
-//! ([`HashConsign`](https://crates.io/crates/hashconsing)) is not directly
-//! accessible. Terms are created *via* the functions in this module, such as
-//! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
+//! The factory is a `static_ref` for easy creation. The `R`eal term structure is [`RTerm`] which
+//! is hashconsed into [`Term`]. The factory ([`HashConsign`]) is not directly accessible. Terms
+//! are created *via* the functions in this module, such as [`var`], [`int`], [`app`], *etc.* Terms
+//! are simplified (when possible) at creation. In particular, the order of the arguments can
+//! change, double negations will be simplified, *etc.*
 //!
-//! Terms are not typed at all. A predicate application is **not** a term, only
-//! operator applications are.
-//!
-//! Terms are simplified (when possible) at creation. In particular, the order
-//! of the arguments can change, double negations will be simplified, *etc.*
-//! See [`normalize`](fn.normalize.html) for more details.
+//! A predicate application is **not** a term, only operator applications are.
 //!
 //! # Top-level terms
 //!
-//! A [`TTerm`](enum.tterm.html) is either a term or a predicate application to
-//! some terms. Top-level terms are not hashconsed as they are shallow.
+//! A [`TTerm`] is either a term or a predicate application to some terms. Top-level terms are not
+//! hashconsed as they are shallow.
 //!
 //! # Variables
 //!
-//! A variable is a `usize` wrapped in a zero-cost
-//! [`VarIdx`](../common/struct.VarIdx.html) for safety. It has no semantics at
+//! A variable is a `usize` wrapped in a zero-cost [`VarIdx`] for safety. It has no semantics at
 //! all by itself. Variables are given meaning by
 //!
-//! - the `sig` field of a [`PrdInfo`](../instance/info/struct.PrdInfo.html),
-//!   which gives them types;
-//! - the [`VarInfo`s](../instance/info/struct.VarInfo.html) stored in a
-//!   [`Clause`](../instance/struct.Clause.html), which give them a name and a
-//!   type.
+//! - the `sig` field of a [`Pred`], which gives them types;
+//! - the [`VarInfo`]s stored in a [`Clause`], which give them a name and a type.
 //!
 //! # Examples
 //!
@@ -39,22 +29,34 @@
 //! # use hoice::term ;
 //! # use hoice::term::{ Op, RTerm, typ } ;
 //! let some_term = term::eq(
-//!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
-//!   )
+//!     term::int(11), term::app(
+//!         Op::Mul, vec![ term::int_var(5), term::int(2) ]
+//!     )
 //! ) ;
 //! # println!("{}", some_term) ;
 //!
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { ref typ, op: Op::Eql, ref args, .. } => {
-//!     assert_eq!( typ, & typ::bool() ) ;
-//!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
-//!   },
-//!   _ => panic!("not an equality"),
+//!     RTerm::App { ref typ, op: Op::Eql, ref args, .. } => {
+//!         assert_eq!( typ, & typ::bool() ) ;
+//!         assert_eq!( args.len(), 2 ) ;
+//!         assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
+//!     },
+//!     _ => panic!("not an equality"),
 //! }
 //! ```
+//!
+//! [`RTerm`]: enum.RTerm.html (RTerm enum)
+//! [`Term`]: type.Term.html (Term type)
+//! [`HashConsign`]: https://crates.io/crates/hashconsing (hashconsing crate)
+//! [`var`]: fn.var.html (var creation function)
+//! [`int`]: fn.int.html (int creation function)
+//! [`app`]: fn.app.html (app creation function)
+//! [`TTerm`]: enum.tterm.html (top term enum)
+//! [`VarIdx`]: ../common/struct.VarIdx.html (variable index struct)
+//! [`Clause`]: ../common/struct.Clause.html (Clause struct)
+//! [`VarInfo`]: ../info/struct.VarInfo.html (VarInfo struct)
+//! [`Pred`]: ../info/struct.Pred.html (Pred struct)
 
 use hashconsing::*;
 
@@ -1676,15 +1678,11 @@ impl_fmt!{
   }
 }
 impl<'a> PebcakFmt<'a> for RTerm {
-    type Info = &'a VarMap<::instance::info::VarInfo>;
+    type Info = &'a VarMap<::info::VarInfo>;
     fn pebcak_err(&self) -> ErrorKind {
         "during term pebcak formatting".into()
     }
-    fn pebcak_io_fmt<W: Write>(
-        &self,
-        w: &mut W,
-        vars: &'a VarMap<::instance::info::VarInfo>,
-    ) -> IoRes<()> {
+    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, vars: &'a VarMap<::info::VarInfo>) -> IoRes<()> {
         self.write(w, |w, var| w.write_all(vars[var].as_bytes()))
     }
 }

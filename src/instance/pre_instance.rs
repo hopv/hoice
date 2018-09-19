@@ -1,11 +1,10 @@
-//! A pre-instance wraps an instance and provides functionalities used by the
-//! pre-processing.
+//! A pre-instance wraps an instance for preprocessing.
 
 use common::{
     smt::{ClauseTrivialExt, SmtImpl},
     *,
 };
-use instance::{preproc::utils::ExtractionCxt, Clause};
+use preproc::utils::ExtractionCxt;
 
 /// Performs a checksat.
 macro_rules! check_sat {
@@ -28,7 +27,13 @@ macro_rules! check_sat {
     }};
 }
 
-/// Wraps an instance for pre-processing.
+/// Wraps an instance for preprocessing.
+///
+/// Provides high-level functions to manipulate predicates and clauses. The reason for this wrapper
+/// is that an [`Instance`](../common/struct.Instance.html) should almost never be mutated, except
+/// during creation and preprocessing.
+///
+/// This is why the instance type barely exposes any way to mutate its values.
 pub struct PreInstance<'a> {
     /// The instance wrapped.
     instance: &'a mut Instance,
@@ -687,11 +692,9 @@ impl<'a> PreInstance<'a> {
         if let Some(res) = res? {
             Ok(res)
         } else {
-            log_debug!{
-              "unsat because of {}",
-              self.instance[clause_idx].to_string_info(
-                self.instance.preds()
-              ) ?
+            log!{ @3
+                "unsat because of {}",
+                self.instance[clause_idx].to_string_info(self.instance.preds()).unwrap()
             }
             bail!(ErrorKind::UnsatFrom(clause_idx))
         }
@@ -980,17 +983,15 @@ impl<'a> PreInstance<'a> {
         debug_assert! { self.clauses_to_simplify.is_empty() }
         self.instance
             .unlink_pred_lhs(pred, &mut self.clauses_to_simplify);
-        log! { @4
+        log! { @4 |
           "updating lhs clauses ({})", self.clauses_to_simplify.len()
         }
 
         for clause in &self.clauses_to_simplify {
             let clause = *clause;
             log! { @4
-              "- working on lhs of clause {}",
-              self.instance[clause].to_string_info(
-                self.instance.preds()
-              ).unwrap()
+                "- working on lhs of clause {}",
+                self.instance[clause].to_string_info(self.instance.preds()).unwrap()
             }
 
             let argss = if let Some(argss) = self.instance.clauses[clause].drop_lhs_pred(pred) {
@@ -1063,10 +1064,7 @@ impl<'a> PreInstance<'a> {
     /// # Used by
     ///
     /// - sub instance generation, when splitting on one clause
-    pub fn extend_pred_left(
-        &mut self,
-        preds: &PrdHMap<::instance::preproc::PredExtension>,
-    ) -> Res<RedInfo> {
+    pub fn extend_pred_left(&mut self, preds: &PrdHMap<::preproc::PredExtension>) -> Res<RedInfo> {
         self.check("before `extend_pred_left`")?;
 
         // let mut tterm_set = TTermSet::new() ;
@@ -1097,11 +1095,9 @@ impl<'a> PreInstance<'a> {
                 continue 'clause_iter;
             }
 
-            log! { @4
-              "- working on lhs of clause {}",
-              self[clause].to_string_info(
-                self.preds()
-              ).unwrap()
+            log! { @4 |
+                "- working on lhs of clause {}",
+                self[clause].to_string_info(self.preds()).unwrap()
             }
 
             for (pred, &(ref terms, ref quantified)) in preds {
@@ -1175,9 +1171,9 @@ impl<'a> PreInstance<'a> {
 
         self.check("before `force_dnf_left`")?;
 
-        log! { @6
-          "force_dnf_left {} ({} defs)", self[pred], def.len() ;
-          "unlinking rhs"
+        log! { @6 |
+            "force_dnf_left {} ({} defs)", self[pred], def.len() ;
+            "unlinking rhs"
         }
 
         // Make sure there's no rhs clause for `pred`.
@@ -1191,7 +1187,7 @@ impl<'a> PreInstance<'a> {
             )
         }
 
-        log! { @6 "unlinking lhs" }
+        log! { @6 | "unlinking lhs" }
 
         // Update lhs clauses.
         debug_assert! { self.clauses_to_simplify.is_empty() }
@@ -1206,7 +1202,7 @@ impl<'a> PreInstance<'a> {
         for clause in self.clauses_to_simplify.drain(0..) {
             info.clauses_rmed += 1;
 
-            log! { @7 "working on #{}", clause }
+            log! { @7 | "working on #{}", clause }
 
             let pred_argss: Vec<VarTerms> =
                 if let Some(argss) = self.instance.clauses[clause].drop_lhs_pred(pred) {
@@ -1215,7 +1211,7 @@ impl<'a> PreInstance<'a> {
                     bail!("inconsistent instance state")
                 };
 
-            log! { @7 "  {} applications", pred_argss.len() }
+            log! { @7 | "  {} applications", pred_argss.len() }
 
             // This is why we rev-sorted:
             let clause = self.instance.forget_clause(clause)?;
@@ -1354,8 +1350,8 @@ impl<'a> PreInstance<'a> {
 
         let quant = Quant::forall(qvars);
 
-        log_debug! {
-          "force pred right on {}...", conf.emph(& self.instance[pred].name)
+        log! { @debug |
+            "force pred right on {}...", conf.emph(& self.instance[pred].name)
         }
 
         // Update rhs clauses.
@@ -1365,11 +1361,9 @@ impl<'a> PreInstance<'a> {
 
         'clause_iter: for clause in &self.clauses_to_simplify {
             let clause = *clause;
-            log! { @4 "working on clause #{}", clause }
+            log! { @4 | "working on clause #{}", clause }
             log! { @4
-              "{}", self.instance[clause].to_string_info(
-                self.instance.preds()
-              ).unwrap()
+                "{}", self.instance[clause].to_string_info(self.instance.preds()).unwrap()
             }
 
             let rhs = self.instance.clauses[clause].unset_rhs();
@@ -1396,7 +1390,7 @@ impl<'a> PreInstance<'a> {
                     }
                     // No `else`, clause's rhs is already `None`.
 
-                    log! { @5 "generating new lhs pred apps" }
+                    log! { @5 | "generating new lhs pred apps" }
 
                     // New lhs predicate applications.
                     for (pred, argss) in negated.preds() {
@@ -1414,7 +1408,7 @@ impl<'a> PreInstance<'a> {
                         }
                     }
 
-                    log! { @5 "generating new lhs terms" }
+                    log! { @5 | "generating new lhs terms" }
 
                     // New lhs terms.
                     for term in negated.terms() {
@@ -1469,10 +1463,10 @@ impl<'a> PreInstance<'a> {
         let mut to_add = Vec::with_capacity(17);
         let fls = term::fls();
 
-        log_debug! {
-          "{} appears in {} clause's lhs",
-          conf.emph(& self[pred].name),
-          self.instance.pred_to_clauses[pred].0.len()
+        log! { @debug |
+            "{} appears in {} clause's lhs",
+            conf.emph(& self[pred].name),
+            self.instance.pred_to_clauses[pred].0.len()
         }
 
         for clause in &self.instance.pred_to_clauses[pred].0 {
@@ -1507,9 +1501,9 @@ impl<'a> PreInstance<'a> {
                     }
                 }
 
-                log! { @4
-                  "pre-simplification {}",
-                  nu_clause.to_string_info(& self.preds).unwrap()
+                log! { @4 |
+                    "pre-simplification {}",
+                    nu_clause.to_string_info(& self.preds).unwrap()
                 }
 
                 self.simplifier
@@ -1517,8 +1511,8 @@ impl<'a> PreInstance<'a> {
 
                 if !nu_clause.lhs_terms().contains(&fls) {
                     log! { @4
-                      "staging clause {}",
-                      nu_clause.to_string_info(& self.preds).unwrap()
+                        "staging clause {}",
+                        nu_clause.to_string_info(& self.preds).unwrap()
                     }
                     // nu_clause.from_unrolling = true ;
                     to_add.push(nu_clause)
@@ -1526,7 +1520,7 @@ impl<'a> PreInstance<'a> {
             }
         }
 
-        log_debug! { "adding {} clauses", to_add.len() }
+        log! { @debug "adding {} clauses", to_add.len() }
 
         for mut clause in to_add {
             if let Some(index) = self.instance.push_clause(clause)? {
@@ -1602,8 +1596,7 @@ impl<'a> PreInstance<'a> {
 
         for mut clause in to_add {
             log! { @4
-              "adding clause {}",
-              clause.to_string_info(& self.preds).unwrap()
+                "adding clause {}", clause.to_string_info(& self.preds).unwrap()
             }
             if let Some(index) = self.instance.push_clause(clause)? {
                 let mut simplinfo = self.simplify_clause(index)?;
@@ -1641,9 +1634,8 @@ impl<'a> PreInstance<'a> {
             }};
         }
 
-        log! { @4
-          "working on {} ({}/{})",
-          self[pred], to_keep.len(), self[pred].sig.len()
+        log! { @4 |
+            "working on {} ({}/{})", self[pred], to_keep.len(), self[pred].sig.len()
         }
 
         let mut rmed = 0;
@@ -1654,7 +1646,7 @@ impl<'a> PreInstance<'a> {
             if to_keep.contains(&var) {
                 // Re-route current **new** var to the original variable `var` is
                 // pointing to.
-                var_map.push(self.old_preds[pred].1[var]);
+                var_map.push(self[pred].original_sig_map()[var]);
                 nu_sig.push(typ.clone())
             } else {
                 rmed += 1
@@ -1662,9 +1654,7 @@ impl<'a> PreInstance<'a> {
         }
 
         // Update `preds` with the new signature.
-        self.instance.preds[pred].sig = nu_sig;
-        // Update `old_preds`'s map.
-        self.instance.old_preds[pred].1 = var_map;
+        self.instance.preds[pred].set_sig(nu_sig, var_map);
 
         // Propagate removal to clauses.
         let (ref lhs, ref rhs) = self.instance.pred_to_clauses[pred];
@@ -1697,21 +1687,21 @@ impl<'a> PreInstance<'a> {
     ///
     /// Simplifies before returning.
     ///
-    /// Removes useless arguments in the clauses. Updates `old_preds`,
-    /// `pred_terms`.
+    /// Removes useless arguments in the clauses. Updates the signature of the predicates in the
+    /// instance.
     pub fn rm_args(&mut self, to_keep: PrdHMap<VarSet>) -> Res<RedInfo> {
-        if_debug! {
-          log_debug! { "  rm_args ({})", to_keep.len() }
-          log_debug! { "  to keep {{" }
-          for (pred, vars) in to_keep.iter() {
-            let mut s = String::new() ;
-            for var in vars {
-              s.push_str(" ") ;
-              s.push_str( & var.default_str() )
+        if_log! { @debug
+            log! { @debug | "  rm_args ({})", to_keep.len() }
+            log! { @debug | "  to keep {{" }
+            for (pred, vars) in to_keep.iter() {
+                let mut s = String::new() ;
+                for var in vars {
+                    s.push_str(" ") ;
+                    s.push_str( & var.default_str() )
+                }
+                log! { @debug | "    {}:{}", self[* pred], s }
             }
-            log_debug! { "    {}:{}", self[* pred], s }
-          }
-          log_debug! { "  }}" }
+            log! { @debug | "  }}" }
         }
 
         self.check("rm_args")?;
@@ -1730,9 +1720,9 @@ impl<'a> PreInstance<'a> {
         // Remove args from applications in clauses.
         for (pred, to_keep) in to_keep {
             debug_assert!(to_keep.len() <= self[pred].sig.len());
-            log! { @4 "- {}", self[pred] }
+            log! { @4 | "- {}", self[pred] }
             if to_keep.len() == self[pred].sig.len() {
-                log! { @4 "skipping" }
+                log! { @4 | "skipping" }
                 continue;
             }
 
@@ -1786,7 +1776,7 @@ impl<'a> PreInstance<'a> {
         self.instance.finalize()?;
         for pred in self.instance.sorted_forced_terms() {
             let pred = *pred;
-            log! { @4 "definining {}", self[pred] }
+            log! { @4 | "definining {}", self[pred] }
 
             let sig: Vec<_> = self.instance[pred]
                 .sig
@@ -1895,20 +1885,13 @@ impl ClauseSimplifier {
     ///
     /// Returns `None` iff the clause is trivial, otherwise returns `true` is
     /// something changed.
-    pub fn clause_propagate_bool(
-        &mut self,
-        clause: &mut Clause,
-        _preds: &PrdInfos,
-    ) -> Res<Option<bool>> {
+    pub fn clause_propagate_bool(&mut self, clause: &mut Clause) -> Res<Option<bool>> {
         debug_assert! { self.terms_to_add.is_empty() }
         debug_assert! { self.subst.is_empty() }
         debug_assert! { self.var_set.is_empty() }
 
         let mut trivial = false;
         let mut changed = false;
-
-        // println!("") ;
-        // println!("{}", clause.to_string_info(_preds).unwrap()) ;
 
         // Propagate all top-level (negated) boolean variables.
         for term in clause.lhs_terms() {
@@ -1955,7 +1938,6 @@ impl ClauseSimplifier {
             }
         }
 
-        // println!("{}", clause.to_string_info(_preds).unwrap()) ;
         Ok(Some(changed))
     }
 
@@ -1966,7 +1948,7 @@ impl ClauseSimplifier {
     fn work_on_eq(&mut self, clause: &mut Clause, eq: &Term) -> Res<bool> {
         macro_rules! skip {
             () => {{
-                log! { @5 "skipping" }
+                log! { @5 | "skipping" }
                 return Ok(true);
             }};
         }
@@ -2032,7 +2014,7 @@ impl ClauseSimplifier {
                     skip!()
                 };
 
-                log! { @5 "{} -> {}", eq, nu_term }
+                log! { @5 | "{} -> {}", eq, nu_term }
 
                 clause.insert_term(nu_term);
             }
@@ -2042,20 +2024,20 @@ impl ClauseSimplifier {
     }
 
     /// Propagates equalities in a clause.
-    pub fn clause_propagate(&mut self, clause: &mut Clause, _preds: &PrdInfos) -> Res<()> {
+    pub fn clause_propagate(&mut self, clause: &mut Clause, _preds: &Preds) -> Res<()> {
         debug_assert! { self.terms_to_add.is_empty() }
         debug_assert! { self.subst.is_empty() }
         debug_assert! { self.var_set.is_empty() }
 
         let mut eq = None;
 
-        log! { @6 "working on {}", clause.to_string_info( _preds ).unwrap() }
+        log! { @6 "working on\n{}", clause.to_string_info( _preds ).unwrap() }
 
         let mut changed = false;
 
         macro_rules! bool_prop {
             () => {
-                match self.clause_propagate_bool(clause, _preds)? {
+                match self.clause_propagate_bool(clause)? {
                     // Clause is trivial.
                     None => return Ok(()),
                     Some(true) => changed = true,
@@ -2075,7 +2057,7 @@ impl ClauseSimplifier {
             }
 
             if let Some(eq) = ::std::mem::replace(&mut eq, None) {
-                log! { @4 "{}", eq }
+                log! { @4 | "{}", eq }
 
                 let was_there = clause.rm_term(&eq);
                 debug_assert! { was_there }
@@ -2091,7 +2073,7 @@ impl ClauseSimplifier {
                         clause.insert_term(term);
                     }
                     changed = clause.subst(&self.subst) || changed;
-                    log! { @5 "yielding {}", clause.to_string_info( _preds ).unwrap() }
+                    log! { @5 | "yielding {}", clause.to_string_info( _preds ).unwrap() }
                     for (var, _) in self.subst.drain() {
                         clause.deactivate(var)?
                     }

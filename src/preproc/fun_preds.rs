@@ -2,10 +2,13 @@
 //!
 //! This preprocessor attempts to reconstruct function definitions from Horn clauses. Functions are
 //! reconstructed as multiple branches of an if-then-else.
+//!
+//! The core of how this works is the [`map_invert`](fn.map_invert.html) function.
 
 use common::*;
 use fun::RFun;
-use instance::{info::VarInfo, instance::PreInstance, preproc::RedStrat, Clause};
+use info::VarInfo;
+use preproc::{Clause, PreInstance, RedStrat};
 
 /// A branch in the definition of a function.
 #[derive(Clone, Debug)]
@@ -1047,6 +1050,12 @@ impl RedStrat for FunPreds {
 }
 
 /// Builds a cube and a substitution corresponding to inverting some arguments.
+///
+/// It is essentially a repeated application of [`map_invert`](fn.map_invert.html) to all
+/// arguments. It ends when
+///
+/// - all of the arguments are inversed, or
+/// - a subset of the arguments cannot be inversed at all (the result will be `None` in this case).
 pub fn args_invert(args: &VarTerms, args_len: usize) -> Res<Option<(TermSet, VarHMap<Term>)>> {
     let (mut cube, mut subst) = (TermSet::new(), VarHMap::new());
 
@@ -1103,7 +1112,47 @@ pub fn args_invert(args: &VarTerms, args_len: usize) -> Res<Option<(TermSet, Var
 
 /// Inverts a term to complete a substitution and a cube.
 ///
-/// Returns false if the invertion failed.
+/// Returns false if the invertion failed. In this case, `subst` and `cube` are the same as before
+/// the call.
+///
+/// Otherwise, the cube is augmented with the constraints regarding `term` coming from `to_invert`
+/// (see the example). The substitution is augmented with a map from one of the variables in
+/// `to_invert` to a term built around `term`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::{ common::*, preproc::fun_preds::map_invert };
+/// let v_0 = term::var(0, typ::int());
+/// let (mut subst, mut cube) = (VarHMap::new(), TermSet::new());
+///
+/// // First term cannot be inverted as is.
+/// let t_1 = term::add( vec![term::var(2, typ::int()), term::var(3, typ::int())] );
+/// // Second one is.
+/// let t_2 = term::cmul(7, term::var(3, typ::int()));
+///
+/// // This fails, an addition of two variables cannot be inverted unless one of them appears in
+/// // the substitution.
+/// let okay = map_invert(& t_1, v_0.clone(), & mut subst, & mut cube).unwrap();
+/// assert! { !okay }
+/// assert! { subst.is_empty() }
+/// assert! {  cube.is_empty() }
+///
+/// let okay = map_invert(& t_2, v_0.clone(), & mut subst, & mut cube).unwrap();
+/// assert! { okay }
+/// let v_7_mod_7 = term::eq(
+///     term::modulo(v_0.clone(), term::cst( val::int(7) )), term::cst( val::int(0) )
+/// );
+/// assert! { cube.contains(&v_7_mod_7) }
+/// let v_0_div_7 = term::idiv( vec![v_0.clone(), term::cst( val::int(7) )] );
+/// assert_eq! { & v_0_div_7, subst.get(& 3.into()).unwrap() }
+///
+/// // Now we have a substitution for `v_3`, so now inverting `t_1` works.
+/// let okay = map_invert(& t_1, v_0.clone(), & mut subst, & mut cube).unwrap();
+/// assert! { okay }
+/// let v_0_sub_v_0_div_7 = term::sub( vec![v_0.clone(), v_0_div_7.clone()] );
+/// assert_eq! { & v_0_sub_v_0_div_7, subst.get(& 2.into()).unwrap() }
+/// ```
 pub fn map_invert(
     to_invert: &Term,
     term: Term,
@@ -1112,27 +1161,17 @@ pub fn map_invert(
 ) -> Res<bool> {
     debug_assert_eq! { to_invert.typ(), term.typ() }
 
-    let mut nu_cube = vec![];
-    let mut nu_subst = VarHMap::<Term>::new();
+    // These are the new terms to insert in `cube` and the new map from variables to terms that we
+    // need to add. We do not mutate `subst` nor `cube` directly because the invertion process
+    // might fail, in which case the caller will move on.
+    let (mut nu_cube, mut nu_subst) = (vec![], VarHMap::<Term>::new());
 
+    // Stack of pairs composed of two terms. The second one is the term to invert, and the first
+    // one is the pivot.
     let mut stack = vec![(term, to_invert.get())];
 
     while let Some((term, to_invert)) = stack.pop() {
         match to_invert {
-            RTerm::DTypNew {
-                typ, name, args, ..
-            } => {
-                let selectors = typ.selectors_of(name)?;
-                debug_assert_eq! { args.len(), selectors.len() }
-
-                // `term` must be a specific variant: `name`
-                nu_cube.push(term::dtyp_tst(name.clone(), term.clone()));
-
-                for (arg, (slc, _)) in args.iter().zip(selectors.iter()) {
-                    stack.push((term::dtyp_slc(arg.typ(), slc.clone(), term.clone()), arg))
-                }
-            }
-
             RTerm::Cst(val) => {
                 nu_cube.push(term::eq(term, term::val(val.clone())));
                 continue;
@@ -1163,109 +1202,39 @@ pub fn map_invert(
 
             RTerm::App { typ, op, args, .. } => {
                 match op {
-                    Op::CMul => if args[0].val().is_some() {
-                        let nu_term = if typ.is_int() {
-                            // Current term modulo `val` is zero.
-                            nu_cube.push(term::eq(
-                                term::modulo(term.clone(), args[0].clone()),
-                                term::int(0),
-                            ));
-                            term::idiv(vec![term, args[0].clone()])
-                        } else if typ.is_real() {
-                            term::div(vec![term, args[0].clone()])
-                        } else {
-                            bail!("unexpected multiplication over type {}", typ)
-                        };
-                        stack.push((nu_term, args[1].get()));
+                    Op::CMul => {
+                        cmul_invert(to_invert, term, typ, args, &mut nu_cube, &mut stack)?;
                         continue;
-                    } else {
-                        bail!("illegal CMul term {}", to_invert)
-                    },
+                    }
 
                     Op::Add => {
-                        let mut subtraction = vec![term];
-                        let mut not_substed = None;
-
-                        for arg in args {
-                            if let Some((term, _)) = arg.subst_total(&(&*subst, &nu_subst)) {
-                                subtraction.push(term)
-                            } else if not_substed.is_some() {
-                                return Ok(false);
-                            } else {
-                                not_substed = Some(arg.get())
-                            }
-                        }
-
-                        let nu_term = term::sub(subtraction);
-
-                        if let Some(nu_to_invert) = not_substed {
-                            stack.push((nu_term, nu_to_invert))
-                        } else {
-                            nu_cube.push(term::eq(
-                                nu_term,
-                                if typ.is_int() {
-                                    term::int_zero()
-                                } else if typ.is_real() {
-                                    term::real_zero()
-                                } else {
-                                    bail!("unexpected addition over type {}", typ)
-                                },
-                            ));
+                        let okay = add_invert(
+                            term,
+                            typ,
+                            args,
+                            &mut nu_cube,
+                            &mut stack,
+                            subst,
+                            &nu_subst,
+                        )?;
+                        if !okay {
+                            return Ok(false);
                         }
                         continue;
                     }
 
                     Op::Sub => {
-                        let mut sub = None;
-                        let mut add = vec![term];
-                        let mut not_substed = None;
-
-                        let mut first = true;
-                        for arg in args {
-                            if let Some((term, _)) = arg.subst_total(&(&*subst, &nu_subst)) {
-                                if first {
-                                    debug_assert! { sub.is_none() }
-                                    sub = Some(term)
-                                } else {
-                                    add.push(term)
-                                }
-                            } else if not_substed.is_some() {
-                                return Ok(false);
-                            } else {
-                                // Careful of the polarity here vvvvv
-                                not_substed = Some((arg.get(), first))
-                            }
-
-                            first = false
-                        }
-
-                        let nu_term = term::add(add);
-                        let nu_term = if let Some(sub) = sub {
-                            term::sub(vec![nu_term, sub])
-                        } else {
-                            nu_term
-                        };
-
-                        if let Some((nu_to_invert, positive)) = not_substed {
-                            stack.push((
-                                if positive {
-                                    nu_term
-                                } else {
-                                    term::u_minus(nu_term)
-                                },
-                                nu_to_invert,
-                            ))
-                        } else {
-                            nu_cube.push(term::eq(
-                                nu_term,
-                                if typ.is_int() {
-                                    term::int_zero()
-                                } else if typ.is_real() {
-                                    term::real_zero()
-                                } else {
-                                    bail!("unexpected addition over type {}", typ)
-                                },
-                            ));
+                        let okay = sub_invert(
+                            term,
+                            typ,
+                            args,
+                            &mut nu_cube,
+                            &mut stack,
+                            subst,
+                            &nu_subst,
+                        )?;
+                        if !okay {
+                            return Ok(false);
                         }
 
                         continue;
@@ -1286,44 +1255,38 @@ pub fn map_invert(
                 nu_cube.push(term::eq(term, term::app(*op, nu_args)))
             }
 
+            RTerm::DTypNew {
+                typ, name, args, ..
+            } => dtyp_new_invert(&term, typ, name, args, &mut nu_cube, &mut stack)?,
+
             RTerm::DTypSlc {
                 typ,
                 name,
                 term: inner,
                 ..
-            } => if let Some((inner, _)) = inner.subst_total(&(&*subst, &nu_subst)) {
-                nu_cube.push(term::eq(
-                    term,
-                    term::dtyp_slc(typ.clone(), name.clone(), inner),
-                ))
-            } else {
-                return Ok(false);
-            },
+            } => {
+                let okay = dtyp_slc_invert(term, typ, name, inner, &mut nu_cube, subst, &nu_subst);
+                if !okay {
+                    return Ok(false);
+                }
+            }
 
             RTerm::DTypTst {
                 name, term: inner, ..
-            } => if let Some((inner, _)) = inner.subst_total(&(&*subst, &nu_subst)) {
-                nu_cube.push(term::eq(term, term::dtyp_tst(name.clone(), inner)))
-            } else {
-                return Ok(false);
-            },
+            } => {
+                let okay = dtyp_tst_invert(term, name, inner, &mut nu_cube, subst, &nu_subst);
+                if !okay {
+                    return Ok(false);
+                }
+            }
 
             RTerm::Fun {
                 typ, name, args, ..
             } => {
-                let mut nu_args = Vec::with_capacity(args.len());
-                for arg in args {
-                    if let Some((arg, _)) = arg.subst_total(&(&*subst, &nu_subst)) {
-                        nu_args.push(arg)
-                    } else {
-                        return Ok(false);
-                    }
+                let okay = fun_invert(term, typ, name, args, &mut nu_cube, subst, &nu_subst);
+                if !okay {
+                    return Ok(false);
                 }
-
-                nu_cube.push(term::eq(
-                    term,
-                    term::fun(typ.clone(), name.clone(), nu_args),
-                ))
             }
         }
     }
@@ -1339,6 +1302,231 @@ pub fn map_invert(
     Ok(true)
 }
 
+/// Inverts a datatype constructor.
+fn dtyp_new_invert<'a>(
+    term: &Term,
+    typ: &Typ,
+    name: &str,
+    args: &'a [Term],
+    cube: &mut Vec<Term>,
+    stack: &mut Vec<(Term, &'a RTerm)>,
+) -> Res<()> {
+    let selectors = typ.selectors_of(name)?;
+    debug_assert_eq! { args.len(), selectors.len() }
+
+    cube.push(term::dtyp_tst(name.into(), term.clone()));
+
+    for (arg, (slc, _)) in args.iter().zip(selectors.iter()) {
+        stack.push((
+            term::dtyp_slc(arg.typ(), slc.clone(), term.clone()),
+            arg.get(),
+        ))
+    }
+
+    Ok(())
+}
+
+/// Inverts a cmul application.
+fn cmul_invert<'a>(
+    to_invert: &RTerm,
+    term: Term,
+    typ: &Typ,
+    args: &'a [Term],
+    cube: &mut Vec<Term>,
+    stack: &mut Vec<(Term, &'a RTerm)>,
+) -> Res<()> {
+    if args[0].val().is_some() {
+        let nu_term = if typ.is_int() {
+            // Current term modulo `args[0].val()` is zero.
+            cube.push(term::eq(
+                term::modulo(term.clone(), args[0].clone()),
+                term::int(0),
+            ));
+            term::idiv(vec![term, args[0].clone()])
+        } else if typ.is_real() {
+            term::div(vec![term, args[0].clone()])
+        } else {
+            bail!("unexpected multiplication over type {}", typ)
+        };
+        stack.push((nu_term, args[1].get()));
+    } else {
+        bail!("illegal CMul term {}", to_invert)
+    }
+
+    Ok(())
+}
+
+/// Inverts an addition.
+fn add_invert<'a>(
+    term: Term,
+    typ: &Typ,
+    args: &'a [Term],
+    cube: &mut Vec<Term>,
+    stack: &mut Vec<(Term, &'a RTerm)>,
+    subst: &VarHMap<Term>,
+    nu_subst: &VarHMap<Term>,
+) -> Res<bool> {
+    let mut subtraction = vec![term];
+    let mut not_substed = None;
+
+    for arg in args {
+        if let Some((term, _)) = arg.subst_total(&(subst, nu_subst)) {
+            subtraction.push(term)
+        } else if not_substed.is_some() {
+            return Ok(false);
+        } else {
+            not_substed = Some(arg.get())
+        }
+    }
+
+    let nu_term = term::sub(subtraction);
+
+    if let Some(nu_to_invert) = not_substed {
+        stack.push((nu_term, nu_to_invert))
+    } else {
+        cube.push(term::eq(
+            nu_term,
+            if typ.is_int() {
+                term::int_zero()
+            } else if typ.is_real() {
+                term::real_zero()
+            } else {
+                bail!("unexpected addition over type {}", typ)
+            },
+        ))
+    }
+
+    Ok(true)
+}
+
+/// Inverts a subtraction.
+fn sub_invert<'a>(
+    term: Term,
+    typ: &Typ,
+    args: &'a [Term],
+    cube: &mut Vec<Term>,
+    stack: &mut Vec<(Term, &'a RTerm)>,
+    subst: &VarHMap<Term>,
+    nu_subst: &VarHMap<Term>,
+) -> Res<bool> {
+    let mut sub = None;
+    let mut add = vec![term];
+    let mut not_substed = None;
+
+    let mut first = true;
+    for arg in args {
+        if let Some((term, _)) = arg.subst_total(&(subst, nu_subst)) {
+            if first {
+                debug_assert! { sub.is_none() }
+                sub = Some(term)
+            } else {
+                add.push(term)
+            }
+        } else if not_substed.is_some() {
+            return Ok(false);
+        } else {
+            // Careful of the polarity here.
+            not_substed = Some((arg.get(), first))
+        }
+
+        first = false
+    }
+
+    let nu_term = term::add(add);
+    let nu_term = if let Some(sub) = sub {
+        term::sub(vec![nu_term, sub])
+    } else {
+        nu_term
+    };
+
+    if let Some((nu_to_invert, positive)) = not_substed {
+        stack.push((
+            if positive {
+                nu_term
+            } else {
+                term::u_minus(nu_term)
+            },
+            nu_to_invert,
+        ))
+    } else {
+        cube.push(term::eq(
+            nu_term,
+            if typ.is_int() {
+                term::int_zero()
+            } else if typ.is_real() {
+                term::real_zero()
+            } else {
+                bail!("unexpected addition over type {}", typ)
+            },
+        ))
+    }
+
+    Ok(true)
+}
+
+/// Inverts a datatype selector.
+fn dtyp_slc_invert<'a>(
+    term: Term,
+    typ: &Typ,
+    name: &str,
+    inner: &'a Term,
+    cube: &mut Vec<Term>,
+    subst: &VarHMap<Term>,
+    nu_subst: &VarHMap<Term>,
+) -> bool {
+    if let Some((inner, _)) = inner.subst_total(&(subst, nu_subst)) {
+        cube.push(term::eq(
+            term,
+            term::dtyp_slc(typ.clone(), name.into(), inner),
+        ));
+        true
+    } else {
+        false
+    }
+}
+
+/// Inverts a datatype tester.
+fn dtyp_tst_invert<'a>(
+    term: Term,
+    name: &str,
+    inner: &'a Term,
+    cube: &mut Vec<Term>,
+    subst: &VarHMap<Term>,
+    nu_subst: &VarHMap<Term>,
+) -> bool {
+    if let Some((inner, _)) = inner.subst_total(&(subst, nu_subst)) {
+        cube.push(term::eq(term, term::dtyp_tst(name.into(), inner)));
+        true
+    } else {
+        false
+    }
+}
+
+/// Inverts a function application.
+fn fun_invert<'a>(
+    term: Term,
+    typ: &Typ,
+    name: &str,
+    args: &'a [Term],
+    cube: &mut Vec<Term>,
+    subst: &VarHMap<Term>,
+    nu_subst: &VarHMap<Term>,
+) -> bool {
+    let mut nu_args = Vec::with_capacity(args.len());
+    for arg in args {
+        if let Some((arg, _)) = arg.subst_total(&(subst, nu_subst)) {
+            nu_args.push(arg)
+        } else {
+            return false;
+        }
+    }
+
+    cube.push(term::eq(term, term::fun(typ.clone(), name.into(), nu_args)));
+
+    true
+}
+
+/// Creates a fresh (hopefully) function name for a predicate.
 fn make_fun_name(other_name: &str) -> Res<String> {
     let split: Vec<_> = other_name.split('|').collect();
     let str = match split.len() {

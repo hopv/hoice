@@ -40,7 +40,7 @@ pub use var_to;
 pub use var_to::{vals::SubsumeExt, VarTerms, VarVals};
 
 pub use common::consts::keywords;
-pub use instance::Instance;
+pub use instance::{Clause, Instance};
 
 mod wrappers;
 
@@ -238,10 +238,10 @@ impl PredAppsExt for PredApps {
     }
 }
 
-/// Predicate informations.
-pub type PrdInfos = PrdMap<::instance::info::PrdInfo>;
-/// Variable informations.
-pub type VarInfos = VarMap<::instance::info::VarInfo>;
+/// Predicate information.
+pub type Preds = PrdMap<::info::Pred>;
+/// Variable information.
+pub type VarInfos = VarMap<::info::VarInfo>;
 
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap<Option<Term>>;
@@ -355,7 +355,7 @@ pub trait Signature {
     /// Length of the signature.
     fn len(&self) -> usize;
 }
-impl Signature for VarMap<::instance::info::VarInfo> {
+impl Signature for VarMap<::info::VarInfo> {
     fn len(&self) -> usize {
         VarMap::len(self)
     }

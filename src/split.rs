@@ -335,7 +335,7 @@ fn preproc(
       instance[clause].rhs().is_none()
     }
 
-    let instance = ::instance::preproc::work_on_split(instance, clause, prev_clauses, profiler)?;
+    let instance = ::preproc::work_on_split(instance, clause, prev_clauses, profiler)?;
 
     if let Some(maybe_model) = instance.is_trivial_model()? {
         Ok(Either::Right(maybe_model))

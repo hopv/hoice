@@ -29,8 +29,8 @@ pub fn start_class(
     profiler: &Profiler,
 ) -> Res<TeachRes> {
     log! { @debug
-      "starting the learning process" ;
-      "  launching solver kid..."
+        "starting the learning process" ;
+        "  launching solver kid..."
     }
     let mut teacher = Teacher::new(instance, profiler, partial_model)?;
 
@@ -47,13 +47,12 @@ pub fn start_class(
                 let core = teacher.unsat_core();
                 Ok(TeachRes::Unsat(core))
             }
-            _ => {
-                if let Err(tmo) = conf.check_timeout() {
-                    Err(tmo)
-                } else {
-                    Err(e)
-                }
-            }
+
+            _ => if let Err(tmo) = conf.check_timeout() {
+                Err(tmo)
+            } else {
+                Err(e)
+            },
         },
     };
 
@@ -836,17 +835,17 @@ impl<'a> Teacher<'a> {
         // True if we got some positive or negative samples.
         // let mut got_pos_neg_samples = false ;
 
-        log! { @verb
-          "looking for counterexamples in positive clauses ({})...",
-          instance.pos_clauses().len()
+        log! { @verb |
+            "looking for counterexamples in positive clauses ({})...",
+            instance.pos_clauses().len()
         }
         for clause in instance.pos_clauses() {
             handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, false))?
         }
 
-        log! { @verb
-          "looking for counterexamples in strict negative clauses ({})...",
-          instance.strict_neg_clauses().len()
+        log! { @verb |
+            "looking for counterexamples in strict negative clauses ({})...",
+            instance.strict_neg_clauses().len()
         }
         for clause in instance.strict_neg_clauses() {
             handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, false))?
@@ -855,9 +854,9 @@ impl<'a> Teacher<'a> {
         // got_pos_neg_samples = ! map.is_empty() ;
 
         if map.is_empty() || !conf.teacher.max_bias {
-            log! { @verb
-              "looking for counterexamples in non-strict negative clauses ({})...",
-              instance.non_strict_neg_clauses().len()
+            log! { @verb |
+                "looking for counterexamples in non-strict negative clauses ({})...",
+                instance.non_strict_neg_clauses().len()
             }
             for clause in instance.non_strict_neg_clauses() {
                 handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, true))?
@@ -865,9 +864,9 @@ impl<'a> Teacher<'a> {
         }
 
         if map.is_empty() || !conf.teacher.max_bias {
-            log_verb! {
-              "looking for counterexamples in implication clauses ({})...",
-              instance.imp_clauses().len()
+            log! { @verb |
+                "looking for counterexamples in implication clauses ({})...",
+                instance.imp_clauses().len()
             }
 
             for clause in instance.imp_clauses() {
@@ -880,9 +879,7 @@ impl<'a> Teacher<'a> {
         }
 
         log! { @debug
-          "extracted {} cexs", map.iter().fold(
-            0, |acc, (_, cexs)| acc + cexs.len()
-          )
+            "extracted {} cexs", map.iter().fold(0, |acc, (_, cexs)| acc + cexs.len())
         }
 
         // if got_pos_neg_samples && conf.teacher.max_bias {
@@ -960,7 +957,7 @@ impl<'a> Teacher<'a> {
     ) -> Res<Option<(Cex, Bias)>> {
         if let Some((actlit, bias)) = bias {
             log! { @debug
-              "  checksat with bias {}", bias.to_string(& self.instance)
+                "  checksat with bias {}", bias.to_string(& self.instance)
             }
             self.solver.comment(&format!(
                 "checksat with bias {}",
@@ -1058,7 +1055,7 @@ impl<'a> Teacher<'a> {
     ) -> Res<Vec<BCex>> {
         let mut cexs = vec![];
 
-        log! { @debug "working on clause #{}", clause_idx }
+        log! { @debug | "working on clause #{}", clause_idx }
 
         // Macro to avoid borrowing `self.instance`.
         macro_rules! clause {
@@ -1071,7 +1068,7 @@ impl<'a> Teacher<'a> {
             self.solver.comment_args(format_args!(
                 "\n\nClause # {}: {}",
                 clause_idx,
-                clause!().to_string_info(&self.instance.preds()).unwrap()
+                clause!().to_string_info(self.instance.preds()).unwrap()
             ))?
         }
 
@@ -1081,7 +1078,7 @@ impl<'a> Teacher<'a> {
         if self.using_rec_funs {
             log! { @4 | "assert/check-sat lhs terms" }
             for term in clause!().lhs_terms() {
-                log! { @5 "{}", term }
+                log! { @5 | "{}", term }
                 self.solver.assert(&smt::SmtTerm::new(term))?;
             }
             let res = smt::multi_try_check_sat(&mut self.solver);
@@ -1157,7 +1154,7 @@ impl<'a> Teacher<'a> {
 
             // Don't try bias examples if instance is unsat.
             if unbiased_cex.is_some() && !self.using_rec_funs {
-                log! { @3 "generating bias actlits" }
+                log! { @3 | "generating bias actlits" }
                 let biased = profile! {
                   self wrap {
                     self.bias.apply(
@@ -1167,7 +1164,7 @@ impl<'a> Teacher<'a> {
                     )
                   } "cexs", "bias generation"
                 }?;
-                log! { @3 "working on {} biased checks", biased.len() }
+                log! { @3 | "working on {} biased checks", biased.len() }
                 for (actlit, bias) in biased {
                     get_cex! { actlit ; bias }
                 }

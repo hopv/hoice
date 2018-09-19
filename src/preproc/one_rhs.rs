@@ -1,10 +1,7 @@
 //! One rhs module.
 
 use common::*;
-use instance::{
-    instance::PreInstance,
-    preproc::{utils::ExtractRes, RedStrat},
-};
+use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 
 /// Works on predicates that appear in only one rhs.
 ///
@@ -133,26 +130,24 @@ impl OneRhs {
         };
 
         log! { @4
-          "from {}",
-          instance.clauses()[clause].to_string_info( instance.preds() ) ?
+            "from {}",
+            instance.clauses()[clause].to_string_info(instance.preds()).unwrap()
         }
-        log! { @2
-          "unfolding {}", conf.emph(& instance[pred].name)
-        }
+        log! { @2 | "unfolding {}", conf.emph(& instance[pred].name) }
 
         use self::ExtractRes::*;
         let info = match extraction_res {
             Trivial => {
-                log! { @ 4 "=> trivial" }
+                log! { @ 4 | "=> trivial" }
                 instance.force_false(pred)?
             }
 
             SuccessTrue => {
-                log! { @ 4 "=> true" }
+                log! { @ 4 | "=> true" }
                 instance.force_true(pred)?
             }
             SuccessFalse => {
-                log! { @ 4 "=> false" }
+                log! { @ 4 | "=> false" }
                 instance.force_false(pred)?
             }
 

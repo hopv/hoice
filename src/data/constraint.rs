@@ -361,11 +361,11 @@ impl Constraint {
 }
 
 impl<'a> PebcakFmt<'a> for Constraint {
-    type Info = &'a PrdInfos;
+    type Info = &'a Preds;
     fn pebcak_err(&self) -> ErrorKind {
         "during constraint pebcak formatting".into()
     }
-    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, map: &'a PrdInfos) -> IoRes<()> {
+    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, map: &'a Preds) -> IoRes<()> {
         if let Some(ref lhs) = self.lhs {
             if lhs.is_empty() {
                 write!(w, "true ")?

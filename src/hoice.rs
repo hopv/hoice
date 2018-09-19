@@ -27,25 +27,24 @@ extern crate num;
 extern crate rand;
 extern crate rsmt2;
 
-pub mod errors;
 #[macro_use]
 pub mod common;
-
-pub mod dtyp;
-pub mod fun;
-pub mod term;
-pub mod val;
-pub mod var_to;
-
 pub mod check;
 pub mod data;
+pub mod dtyp;
+pub mod errors;
+pub mod fun;
+pub mod info;
 mod instance;
 pub mod learning;
 pub mod parse;
+pub mod preproc;
 pub mod split;
 pub mod teacher;
+pub mod term;
 pub mod unsat_core;
-pub use instance::preproc;
+pub mod val;
+pub mod var_to;
 
 use common::*;
 use instance::Instance;
@@ -169,7 +168,7 @@ pub fn read_and_work<R: ::std::io::Read>(
                 let preproc_profiler = Profiler::new();
                 match profile! {
                   |profiler| wrap {
-                    instance::preproc::work(& mut instance, & preproc_profiler)
+                    preproc::work(& mut instance, & preproc_profiler)
                   } "top preproc"
                 } {
                     Ok(()) => (),

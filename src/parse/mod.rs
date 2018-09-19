@@ -1,7 +1,7 @@
 //! SMT-LIB 2 horn clause problem parser.
 
 use common::*;
-use instance::{info::VarInfo, *};
+use info::VarInfo;
 
 mod ptterms;
 pub use self::ptterms::*;

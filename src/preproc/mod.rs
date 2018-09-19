@@ -1,21 +1,26 @@
 //! Reduction strategies.
 //!
-//! The strategies are attached `struct`s so that they can be put in a vector
-//! using single dispatch. That way, they can be combined however we want.
+//! All strategies are `struct`s that implement the [`RedStrat`](trait.RedStrat.html) trait. The
+//! [`Reductor`](struct.Reductor.html) then combines them in a cohesive preprocessing run in its
+//! [`run` function](struct.Reductor.html#method.run).
+//!
+//! During preprocessing, the [`Instance`](../common/struct.Instance.html) is wrapped into a
+//! [`PreInstance`](struct.PreInstance.html) which provides high-level functions to act on the
+//! predicates and the clauses of the instance.
 
 use common::*;
 use instance::*;
 
 pub mod utils;
 
-mod arg_red;
-mod bias_unroll;
-mod cfg_red;
-mod fun_preds;
-mod one_lhs;
-mod one_rhs;
-mod strict_neg_clauses;
-mod unroll;
+pub mod arg_red;
+pub mod bias_unroll;
+pub mod cfg_red;
+pub mod fun_preds;
+pub mod one_lhs;
+pub mod one_rhs;
+pub mod strict_neg_clauses;
+pub mod unroll;
 
 pub use self::{
     arg_red::ArgRed, bias_unroll::BiasedUnroll, cfg_red::CfgRed, fun_preds::FunPreds,
@@ -30,9 +35,8 @@ pub type PredExtension = (TermSet, Vec<(Quantfed, Term)>);
 
 /// Runs pre-processing.
 ///
-/// The boolean indicates wether a first pass of simplification runs on the
-/// whole system before the rest. Should be true for top-level preproc, and
-/// false for subsystems.
+/// The boolean indicates wether a first pass of simplification runs on the whole system before the
+/// rest. Should be true for top-level preproc, and false for subsystems.
 ///
 /// Finalizes the instance.
 pub fn work(instance: &mut Instance, profiler: &Profiler) -> Res<()> {
@@ -195,17 +199,17 @@ pub fn work_on_split(
                   clause.to_string_info( instance.preds() ) ?
                 }
 
-                use instance::preproc::utils::ExtractRes;
+                use preproc::utils::ExtractRes;
 
-                match profile!(
-          |profiler| wrap {
-            pre_instance.extraction().0.terms_of_lhs_app(
-              true, & instance, & clause.vars,
-              ( clause.lhs_terms(), clause.lhs_preds() ),
-              None, (pred, args)
-            )
-          } "strengthening", "extraction"
-        )? {
+                match profile! {
+                    |profiler| wrap {
+                        pre_instance.extraction().0.terms_of_lhs_app(
+                            true, & instance, & clause.vars,
+                            ( clause.lhs_terms(), clause.lhs_preds() ),
+                            None, (pred, args)
+                        )
+                    } "strengthening", "extraction"
+                }? {
                     ExtractRes::Trivial => bail!("trivial clause during work_on_split"),
                     ExtractRes::Failed => bail!("extraction failure during work_on_split"),
                     ExtractRes::SuccessTrue => bail!("extracted true during work_on_split"),

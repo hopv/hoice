@@ -1,10 +1,7 @@
 //! Works on strict negative clause.
 
 use common::*;
-use instance::{
-    instance::PreInstance,
-    preproc::{utils::ExtractRes, RedStrat},
-};
+use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 
 /// Works on strict negative clause.
 ///
@@ -82,7 +79,7 @@ impl StrictNeg {
         let (extractor, instance, strict_clauses) = instance.strict_neg_clauses();
 
         for (idx, clause) in strict_clauses {
-            log! { @3 "working on clause #{}", idx }
+            log! { @3 | "working on clause #{}", idx }
             log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
 
             let (pred, args) = if let Some((pred, argss)) = clause.lhs_preds().iter().next() {
@@ -100,7 +97,7 @@ impl StrictNeg {
             let clause = clause
                 .rewrite_clause_for_app(pred, args, 0.into())
                 .chain_err(|| "during clause rewriting")?;
-            log! { @3 "rewriting successful" }
+            log! { @3 | "rewriting successful" }
             log! { @5 "{}", clause.to_string_info(instance.preds()).unwrap() }
 
             let (pred, args) = if let Some((pred, argss)) = clause.lhs_preds().iter().next() {

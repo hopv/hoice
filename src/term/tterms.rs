@@ -1401,21 +1401,11 @@ impl TTerms {
     }
 }
 
-impl<'a, 'b>
-    Expr2Smt<&'b (
-        &'a PrdSet,
-        &'a PrdSet,
-        &'a PrdMap<::instance::info::PrdInfo>,
-    )> for TTerms
-{
+impl<'a, 'b> Expr2Smt<&'b (&'a PrdSet, &'a PrdSet, &'a Preds)> for TTerms {
     fn expr_to_smt2<Writer: Write>(
         &self,
         w: &mut Writer,
-        info: &'b (
-            &'a PrdSet,
-            &'a PrdSet,
-            &'a PrdMap<::instance::info::PrdInfo>,
-        ),
+        info: &'b (&'a PrdSet, &'a PrdSet, &'a Preds),
     ) -> SmtRes<()> {
         let (true_preds, false_preds, pred_info) = *info;
         self.write_smt2(w, |w, pred, args| {
@@ -1424,9 +1414,9 @@ impl<'a, 'b>
             } else if false_preds.contains(&pred) {
                 write!(w, "false")
             } else if args.is_empty() {
-                write!(w, "{}", pred_info[pred])
+                write!(w, "{}", pred_info[pred].name)
             } else {
-                write!(w, "({}", pred_info[pred])?;
+                write!(w, "({}", pred_info[pred].name)?;
                 for arg in args.iter() {
                     write!(w, " ")?;
                     arg.write(w, |w, var| var.default_write(w))?

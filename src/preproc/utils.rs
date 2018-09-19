@@ -419,7 +419,7 @@ impl ExtractionCxt {
         }
 
         // Index of the first quantified variable: fresh for `pred`'s variables.
-        self.fresh = instance.original_sig_of(pred).next_index();
+        self.fresh = instance[pred].fresh_var_idx();
         self.map.clear();
         self.quantifiers = quantifiers;
 
@@ -502,7 +502,7 @@ impl ExtractionCxt {
         }
 
         // Index of the first quantified variable: fresh for `pred`'s variables.
-        self.fresh = instance.original_sig_of(pred).next_index();
+        self.fresh = instance[pred].fresh_var_idx();
         self.map.clear();
         self.quantifiers = quantifiers;
 
