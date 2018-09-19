@@ -115,7 +115,7 @@ impl Graph {
       ] ;"
         )?;
         for (prd, info) in instance.preds().index_iter() {
-            if instance.forced_terms_of(prd).is_none() {
+            if !instance[prd].is_defined() {
                 if hi_lite.contains(&prd) {
                     writeln!(
                         w,
@@ -787,10 +787,7 @@ impl Graph {
             // `keep`.
             let mut pred = None;
             'find_pred: for (prd, srcs) in self.bakward.index_iter() {
-                if keep.contains(&prd)
-                    || instance.forced_terms_of(prd).is_some()
-                    || res_contains!(&prd)
-                {
+                if keep.contains(&prd) || instance[prd].is_defined() || res_contains!(&prd) {
                     continue 'find_pred;
                 }
                 log! { @3 | "looking at {}", instance[prd] }
@@ -1152,7 +1149,7 @@ impl CfgRed {
         let mut info = RedInfo::new();
 
         for (pred, def) in pred_defs {
-            if instance.is_known(pred) {
+            if instance[pred].is_defined() {
                 continue;
             }
 

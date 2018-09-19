@@ -359,7 +359,7 @@ impl<'core> IceLearner<'core> {
             self.predicates.clear();
 
             for pred in self.instance.pred_indices() {
-                if self.instance.is_known(pred) || self.candidate[pred].is_some() {
+                if self.instance[pred].is_defined() || self.candidate[pred].is_some() {
                     continue;
                 }
 

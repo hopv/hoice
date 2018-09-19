@@ -72,15 +72,19 @@ pub struct Pred {
     ///
     /// We should always have `self.original_sig.len() == self.original_sig_map.len()`.
     original_sig_map: VarMap<VarIdx>,
+    /// Same as `original_sig_map` but maps to the term corresponding to the old variable index.
+    ///
+    /// Populated by finalize.
+    original_sig_term_map: Option<VarMap<Term>>,
     /// Definition, if any. Set by preprocessing.
-    pub tterm: Option<TTerms>,
+    def: Option<TTerms>,
     /// Strengthener, if any. Currently, this comes from strict negative clauses. It means the
     /// predicate has to be false when this term is false. So, given a candidate `cand` for this
     /// predicate, the candidate should be strengthened to `cand /\ strength`.
-    pub strength: Option<Term>,
+    strength: Option<Term>,
     /// Companion functions. Function that were created specifically for this predicate, and must
     /// be given to the user before giving the definition for this predicate.
-    pub funs: Vec<Fun>,
+    funs: Vec<Fun>,
 }
 
 impl Pred {
@@ -94,7 +98,8 @@ impl Pred {
             sig,
             original_sig,
             original_sig_map,
-            tterm: None,
+            original_sig_term_map: None,
+            def: None,
             strength: None,
             funs: vec![],
         }
@@ -107,6 +112,48 @@ impl Pred {
     /// Map from variables of the **current** signature to the original one.
     pub fn original_sig_map(&self) -> &VarMap<VarIdx> {
         &self.original_sig_map
+    }
+
+    /// Maps variables of the current signature to the term for the variables of the original
+    /// signature.
+    ///
+    /// This function is only legal to call after [`finalize`] has been called.
+    ///
+    /// [`finalize`]: struct.Pred.html#method.finalize (finalize function)
+    pub fn original_sig_term_map(&self) -> Res<&VarMap<Term>> {
+        if let Some(map) = &self.original_sig_term_map {
+            Ok(map)
+        } else {
+            bail!(
+                "illegal call to {} before finalization on {}",
+                conf.bad(&"original_sig_term_map"),
+                conf.sad(&self.name)
+            )
+        }
+    }
+
+    /// Definition for this predicate, if any.
+    pub fn def(&self) -> Option<&TTerms> {
+        self.def.as_ref()
+    }
+    /// True if the predicate has a definition.
+    ///
+    /// Equivalent to `self.def().is_some()`.
+    pub fn is_defined(&self) -> bool {
+        self.def().is_some()
+    }
+
+    /// Strengthener: the predicate must be false when this term is false.
+    pub fn strength(&self) -> Option<&Term> {
+        self.strength.as_ref()
+    }
+
+    /// Companion functions.
+    ///
+    /// Function that were created specifically for this predicate, and must be given to the user
+    /// before giving the definition for this predicate.
+    pub fn funs(&self) -> &[Fun] {
+        &self.funs
     }
 
     /// A variable that does not appear in the **original** signature of the predicate.
@@ -133,25 +180,126 @@ impl Pred {
         })
     }
 
+    /// Sets the predicate's definition.
+    ///
+    /// Only legal if the predicate has no definition.
+    pub fn set_def(&mut self, def: TTerms) -> Res<()> {
+        let prev = ::std::mem::replace(&mut self.def, Some(def));
+        if prev.is_some() {
+            bail!(
+                "trying to set the definition for {} twice",
+                conf.bad(&self.name)
+            )
+        } else {
+            Ok(())
+        }
+    }
+    /// Removes the predicate's definition.
+    pub fn unset_def(&mut self) -> Option<TTerms> {
+        ::std::mem::replace(&mut self.def, None)
+    }
+
+    /// Sets the strengthener for this predicate.
+    ///
+    /// Only legal if the predicate has not strengthener.
+    pub fn set_strength(&mut self, strength: Term) -> Res<()> {
+        let prev = ::std::mem::replace(&mut self.strength, Some(strength));
+        if prev.is_some() {
+            bail!(
+                "trying to set the strengthener for {} twice",
+                conf.bad(&self.name)
+            )
+        } else {
+            Ok(())
+        }
+    }
+    /// Removes the predicate's strengthener.
+    pub fn unset_strength(&mut self) -> Option<Term> {
+        ::std::mem::replace(&mut self.strength, None)
+    }
+
+    /// Adds a companion function.
+    pub fn add_fun(&mut self, fun: Fun) {
+        self.funs.push(fun)
+    }
+
+    /// Finalizes the predicate information.
+    ///
+    /// After finalization, calls to [`original_sig_term_map`] will always succeed.
+    ///
+    /// Fails if this is the second time `finalize` is called.
+    ///
+    /// [`original_sig_term_map`]: struct.Pred.html#method.original_sig_term_map
+    /// (original_sig_term_map function)
+    pub fn finalize(&mut self) -> Res<()> {
+        if self.original_sig_term_map.is_some() {
+            bail!(
+                "cannot finalize information for {} more than once",
+                conf.bad(&self.name)
+            )
+        }
+
+        let sig_term_map: VarMap<_> = self
+            .original_sig_map
+            .iter()
+            .map(|old_var| term::var(*old_var, self.original_sig[*old_var].clone()))
+            .collect();
+        self.original_sig_term_map = Some(sig_term_map);
+
+        Ok(())
+    }
+
     /// Checks its invariant hold. Inactive in release.
     #[cfg(debug_assertions)]
     pub fn check(&self) -> Res<()> {
         if self.sig.len() != self.original_sig_map.len() {
             bail!(
-                "signature and map to original signature differ in length for {}",
-                self
+                "signature and sig map to original signature differ in length for {}",
+                conf.bad(&self.name)
             )
         }
-        if !self
-            .original_sig_map
-            .index_iter()
-            .all(|(src, tgt)| self.sig[src] == self.original_sig[*tgt])
-        {
-            bail!(
-                "signature and map to original signature do not type check for {}",
-                self
-            )
+        for (src, tgt) in self.original_sig_map.index_iter() {
+            if self.sig[src] != self.original_sig[*tgt] {
+                bail!(
+                    "signature and sig map to original signature do not type check on \
+                     {} -> {} for {}",
+                    src.default_str(),
+                    tgt.default_str(),
+                    conf.bad(&self.name)
+                )
+            }
         }
+
+        if let Some(map) = &self.original_sig_term_map {
+            if self.sig.len() != map.len() {
+                bail!(
+                    "signature and term map to original signature differ in length for {}",
+                    conf.bad(&self.name)
+                )
+            }
+
+            for (src, tgt) in map.index_iter() {
+                if let Some(tgt) = tgt.var_idx() {
+                    if self.sig[src] != self.original_sig[tgt] {
+                        bail!(
+                            "signature and term map to original signature do not type check on \
+                             {} -> {} for {}",
+                            src.default_str(),
+                            tgt.default_str(),
+                            conf.bad(&self.name)
+                        )
+                    }
+                } else {
+                    bail!(
+                        "illegal term for {}: maps {} to non-variable term {}",
+                        conf.bad(&self.name),
+                        src.default_str(),
+                        tgt
+                    )
+                }
+            }
+        }
+
         Ok(())
     }
     /// Checks its invariant hold. Inactive in release.

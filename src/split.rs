@@ -119,7 +119,7 @@ pub fn run_on(
 /// Adds a model for a subinstance to a partial model.
 pub fn add_submodel(instance: &Arc<Instance>, model: &mut ConjCandidates, submodel: Model) {
     for (pred, tterms) in submodel {
-        if !instance.is_known(pred) {
+        if !instance[pred].is_defined() {
             let conj = model.entry(pred).or_insert_with(|| vec![]);
             match tterms.bool() {
                 Some(true) => continue,

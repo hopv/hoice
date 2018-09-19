@@ -468,7 +468,7 @@ impl NuQuals {
 
         if mine {
             'all_preds: for pred_info in instance.preds() {
-                if instance.is_known(pred_info.idx) {
+                if instance[pred_info.idx].is_defined() {
                     continue 'all_preds;
                 }
 

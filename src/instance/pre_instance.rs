@@ -107,6 +107,26 @@ impl<'a> PreInstance<'a> {
         Ok(())
     }
 
+    /// Sets the strengthener for a predicate.
+    ///
+    /// A strengthener is a term such that the predicate should be false at least when this term is
+    /// false.
+    pub fn set_strength(&mut self, pred: PrdIdx, strengthener: Term) -> Res<()> {
+        self.instance.preds[pred].set_strength(strengthener)
+    }
+    /// Unsets the strengthener for a predicate.
+    pub fn unset_strength(&mut self, pred: PrdIdx) -> Option<Term> {
+        self.instance.preds[pred].unset_strength()
+    }
+
+    /// Adds a companion function for a predicate.
+    ///
+    /// Function that were created specifically for this predicate, and must be given to the user
+    /// before giving the definition for this predicate.
+    pub fn add_companion_fun(&mut self, pred: PrdIdx, fun: Fun) {
+        self.instance.preds[pred].add_fun(fun)
+    }
+
     /// Checks whether a clause alone forces the definition of a predicate.
     /// - forces to true all predicates appearing in `terms => (p vars)` where
     ///   `vars` are all distinct and don't appear in `terms`
@@ -188,7 +208,7 @@ impl<'a> PreInstance<'a> {
             fixed_point = true;
 
             'all_preds: for pred in PrdRange::zero_to(self.instance.preds.len()) {
-                if self.instance.is_known(pred) {
+                if self.instance[pred].is_defined() {
                     continue 'all_preds;
                 }
 
@@ -237,7 +257,7 @@ impl<'a> PreInstance<'a> {
             }
 
             for (pred, positive) in force {
-                if !self.is_known(pred) {
+                if !self[pred].is_defined() {
                     fixed_point = false;
                     info.preds += 1;
                     if positive {
@@ -754,8 +774,8 @@ impl<'a> PreInstance<'a> {
                     .map(|(quantfed, conj)| (Quant::exists(quantfed), conj))
                     .collect(),
             );
-            debug_assert! { self.instance.pred_terms[pred].is_none() }
-            self.instance.pred_terms[pred] = Some(def)
+            debug_assert! { !self.instance[pred].is_defined() }
+            self.instance.preds[pred].set_def(def)?
         }
 
         // Drop all clauses.
@@ -779,7 +799,7 @@ impl<'a> PreInstance<'a> {
         log_debug! { "  checking pred defs" }
 
         for (pred, _) in self.preds().index_iter() {
-            if !self.is_known(pred) {
+            if !self[pred].is_defined() {
                 bail!(format!(
                     "error in `force_all_preds`, no definition for {}",
                     self[pred]
@@ -799,7 +819,7 @@ impl<'a> PreInstance<'a> {
     /// Does not impact `pred_to_clauses`.
     fn force_pred(&mut self, pred: PrdIdx, tterms: TTerms) -> Res<()> {
         log! { @5 "forcing {}", conf.emph(& self.instance[pred].name) }
-        if self.instance.pred_terms[pred].as_ref().is_some() {
+        if self.instance[pred].is_defined() {
             let mut s: Vec<u8> = Vec::new();
             tterms
                 .write_smt2(&mut s, |w, pred, args| {
@@ -815,7 +835,7 @@ impl<'a> PreInstance<'a> {
                 String::from_utf8_lossy(&s)
             )
         } else {
-            self.instance.pred_terms[pred] = Some(tterms)
+            self.instance.preds[pred].set_def(tterms)?
         }
         Ok(())
     }
@@ -1453,11 +1473,10 @@ impl<'a> PreInstance<'a> {
     ///
     /// Simplifies before returning.
     ///
-    /// For each clause `(pred args) /\ lhs => rhs`, adds `terms /\ lhs => rhs`
-    /// for terms in `pred_terms[p]`.
+    /// For each clause `(pred args) /\ lhs => rhs`, adds `terms /\ lhs => rhs` for terms in
+    /// `terms[p]`.
     ///
-    /// Only unrolls negative clauses where `(pred args)` is not the only
-    /// application.
+    /// Only unrolls negative clauses where `(pred args)` is not the only application.
     pub fn unroll(&mut self, pred: PrdIdx, terms: &[(Option<Quant>, TTermSet)]) -> Res<RedInfo> {
         let mut info = RedInfo::new();
         let mut to_add = Vec::with_capacity(17);
@@ -1543,8 +1562,8 @@ impl<'a> PreInstance<'a> {
     ///
     /// Simplifies before returning.
     ///
-    /// For each clause `lhs => (pred args)`, adds `(not terms) /\ lhs => false`
-    /// for terms in `pred_terms[p]`.
+    /// For each clause `lhs => (pred args)`, adds `(not terms) /\ lhs => false` for terms in
+    /// `terms[p]`.
     ///
     /// Only unrolls clauses which have at least one lhs predicate application.
     pub fn reverse_unroll(
@@ -1709,9 +1728,10 @@ impl<'a> PreInstance<'a> {
         let mut info = RedInfo::new();
 
         // Remove args from forced predicates.
-        for tterms_opt in &mut self.instance.pred_terms {
-            if let Some(tterms) = tterms_opt.as_mut() {
-                tterms.remove_vars(&to_keep)
+        for pred in &mut self.instance.preds {
+            if let Some(mut tterms) = pred.unset_def() {
+                tterms.remove_vars(&to_keep);
+                pred.set_def(tterms)?
             }
         }
 
@@ -1774,17 +1794,17 @@ impl<'a> PreInstance<'a> {
 
         let set = PrdSet::new();
         self.instance.finalize()?;
-        for pred in self.instance.sorted_forced_terms() {
-            let pred = *pred;
+        for pred_info in self.instance.preds() {
+            let pred = pred_info.idx;
             log! { @4 | "definining {}", self[pred] }
 
-            let sig: Vec<_> = self.instance[pred]
+            let sig: Vec<_> = pred_info
                 .sig
                 .index_iter()
                 .map(|(var, typ)| (var.default_str(), typ.get()))
                 .collect();
 
-            if let Some(ref def) = self.instance.pred_terms[pred] {
+            if let Some(ref def) = pred_info.def() {
                 self.solver.define_fun_with(
                     &self.instance[pred].name,
                     &sig,
@@ -1795,7 +1815,7 @@ impl<'a> PreInstance<'a> {
             } else {
                 bail!(
                     "can't check predicate definitions, predicate {} is not defined",
-                    self.instance.preds[pred]
+                    conf.bad(&pred_info.name)
                 )
             }
         }

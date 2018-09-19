@@ -778,7 +778,7 @@ impl FunDef {
 /// let pred: PrdIdx = 0.into();
 /// debug_assert_eq! { "len_fun_preds_example", & instance[pred].name }
 ///
-/// let funs = instance.get_companion_funs(pred).unwrap();
+/// let funs = instance[pred].funs();
 /// assert_eq!( "len_fun_preds_example_hoice_reserved_fun", &funs[0].name);
 /// assert_eq! {
 ///     "(ite \
@@ -934,7 +934,7 @@ impl RedStrat for FunPreds {
                 // }
 
                 // Predicate is still unknown.
-                if instance.is_known(pred) {
+                if instance[pred].is_defined() {
                     // println!("  known");
                     continue 'all_preds;
                 }

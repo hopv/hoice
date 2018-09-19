@@ -30,27 +30,10 @@ pub struct Instance {
     /// Predicates.
     preds: Preds,
 
-    /// Maps new variables to the new ones.
-    ///
-    /// Only available after finalize.
-    old_var_maps: PrdMap<VarMap<Term>>,
-    /// Predicates for which a suitable term has been found.
-    pred_terms: PrdMap<Option<TTerms>>,
-
     /// Predicates defined in `pred_terms`, sorted by predicate dependencies.
     ///
     /// Populated by the `finalize` function.
     sorted_pred_terms: Vec<PrdIdx>,
-
-    /// Strengthener for predicates.
-    pred_str: PrdMap<Option<Term>>,
-
-    /// Companion function for predicates.
-    ///
-    /// A companion function is a function that was created internally
-    /// specifically for a predicate. Meaning it needs to be given to the user
-    /// when printing the model.
-    companion_funs: PrdHMap<Vec<Fun>>,
 
     /// Side-clauses.
     ///
@@ -137,11 +120,7 @@ impl Instance {
         Instance {
             preds: Preds::with_capacity(pred_capa),
 
-            old_var_maps: PrdMap::with_capacity(pred_capa),
-            pred_terms: PrdMap::with_capacity(pred_capa),
             sorted_pred_terms: Vec::with_capacity(pred_capa),
-            pred_str: PrdMap::with_capacity(pred_capa),
-            companion_funs: PrdHMap::new(),
 
             side_clauses: Vec::with_capacity(7),
             clauses: ClsMap::with_capacity(clause_capa),
@@ -177,11 +156,7 @@ impl Instance {
         Instance {
             preds: self.preds.clone(),
 
-            old_var_maps: PrdMap::with_capacity(self.preds.len()),
-            pred_terms: self.pred_terms.clone(),
             sorted_pred_terms: Vec::with_capacity(self.preds.len()),
-            pred_str: vec![None; self.preds.len()].into(),
-            companion_funs: self.companion_funs.clone(),
 
             side_clauses: self.side_clauses.clone(),
             clauses: self.clauses.clone(),
@@ -237,7 +212,7 @@ impl Instance {
     pub fn active_pred_count(&self) -> usize {
         let mut count = 0;
         for pred in self.pred_indices() {
-            if !self.is_known(pred) {
+            if !self[pred].is_defined() {
                 count += 1
             }
         }
@@ -249,8 +224,8 @@ impl Instance {
         if self.is_unsat {
             return true;
         }
-        for def in &self.pred_terms {
-            if def.is_none() {
+        for pred in &self.preds {
+            if pred.def().is_none() {
                 return false;
             }
         }
@@ -289,12 +264,6 @@ impl Instance {
         self.is_unsat = true
     }
 
-    /// True if a predicate is forced to something.
-    #[inline]
-    pub fn is_known(&self, pred: PrdIdx) -> bool {
-        self.pred_terms[pred].is_some()
-    }
-
     /// Adds a define fun.
     pub fn add_define_fun<S: Into<String>>(
         &mut self,
@@ -314,24 +283,18 @@ impl Instance {
     ///
     /// The model is sorted in topological order.
     pub fn model_of(&self, candidates: Candidates) -> Res<Model> {
-        use std::iter::Extend;
-
         let mut model = Model::with_capacity(self.preds.len());
-        model.extend(
-            candidates
-                .into_index_iter()
-                .filter_map(|(pred, tterms_opt)| {
-                    tterms_opt.map(|term| {
-                        let (term, _) = term.subst(&self.old_var_maps[pred]);
-                        (pred, TTerms::of_term(None, term))
-                    })
-                }),
-        );
+        for (pred, tterms_opt) in candidates.into_index_iter() {
+            if let Some(term) = tterms_opt {
+                let (term, _) = term.subst(self[pred].original_sig_term_map()?);
+                model.push((pred, TTerms::of_term(None, term)))
+            }
+        }
 
         for pred in &self.sorted_pred_terms {
             let pred = *pred;
-            if let Some(ref tterms) = self.pred_terms[pred] {
-                model.push((pred, tterms.subst(&self.old_var_maps[pred])))
+            if let Some(tterms) = self[pred].def() {
+                model.push((pred, tterms.subst(self[pred].original_sig_term_map()?)))
             } else {
                 bail!("inconsistency in sorted forced predicates")
             }
@@ -383,8 +346,8 @@ impl Instance {
 
         for pred in &self.sorted_pred_terms {
             let pred = *pred;
-            if let Some(ref tterms) = self.pred_terms[pred] {
-                let tterms = tterms.subst(&self.old_var_maps[pred]);
+            if let Some(tterms) = self[pred].def() {
+                let tterms = tterms.subst(self[pred].original_sig_term_map()?);
                 model.push(vec![(pred, vec![tterms])])
             } else {
                 bail!("inconsistency in sorted forced predicates")
@@ -397,7 +360,7 @@ impl Instance {
     fn is_trivial(&self) -> Option<bool> {
         if self.is_unsat {
             Some(false)
-        } else if self.pred_terms.iter().all(|term| term.is_some()) {
+        } else if self.preds.iter().all(|pred| pred.is_defined()) {
             Some(true)
         } else {
             None
@@ -482,7 +445,6 @@ impl Instance {
 
         self.sorted_pred_terms.clear();
         self.preds.shrink_to_fit();
-        self.pred_terms.shrink_to_fit();
         self.clauses.shrink_to_fit();
 
         let mut tmp: Vec<(PrdIdx, PrdSet)> = Vec::with_capacity(self.preds.len());
@@ -517,7 +479,7 @@ impl Instance {
         let mut known_preds = PrdSet::with_capacity(self.preds.len());
 
         for pred in self.pred_indices() {
-            if let Some(ref tterms) = self.pred_terms[pred] {
+            if let Some(tterms) = self[pred].def() {
                 tmp.push((pred, tterms.preds()))
             } else {
                 known_preds.insert(pred);
@@ -543,12 +505,8 @@ impl Instance {
             }
         }
 
-        for pred in &self.preds {
-            let mut map = VarMap::with_capacity(pred.sig.len());
-            for (var, typ) in pred.sig.index_iter() {
-                map.push(term::var(pred.original_sig_map()[var], typ.clone()))
-            }
-            self.old_var_maps.push(map)
+        for pred in &mut self.preds {
+            pred.finalize()?
         }
 
         self.sorted_pred_terms.shrink_to_fit();
@@ -556,15 +514,10 @@ impl Instance {
         Ok(())
     }
 
-    /// Returns the term we already know works for a predicate, if any.
-    pub fn forced_terms_of(&self, pred: PrdIdx) -> Option<&TTerms> {
-        self.pred_terms[pred].as_ref()
-    }
-
     /// If the input predicate is forced to a constant boolean, returns its
     /// value.
     pub fn bool_value_of(&self, pred: PrdIdx) -> Option<bool> {
-        self.forced_terms_of(pred).and_then(|terms| terms.bool())
+        self[pred].def().and_then(|terms| terms.bool())
     }
 
     /// Forced predicates in topological order.
@@ -681,35 +634,9 @@ impl Instance {
 
         self.preds.push(Pred::new(name, idx, sig));
 
-        self.pred_terms.push(None);
-        self.pred_str.push(None);
-
         self.pred_to_clauses
             .push((ClsSet::with_capacity(17), ClsSet::with_capacity(17)));
         idx
-    }
-
-    /// Sets the strengthener for a predicate.
-    pub fn set_str(&mut self, pred: PrdIdx, term: Term) -> Option<Term> {
-        ::std::mem::replace(&mut self.pred_str[pred], Some(term))
-    }
-
-    /// Retrieves the strengthener for a predicate if any.
-    pub fn get_str(&self, pred: PrdIdx) -> Option<&Term> {
-        self.pred_str[pred].as_ref()
-    }
-
-    /// Adds a companion function for a predicate.
-    pub fn add_companion_fun(&mut self, pred: PrdIdx, fun: Fun) {
-        self.companion_funs
-            .entry(pred)
-            .or_insert_with(Vec::new)
-            .push(fun)
-    }
-
-    /// Retrieves the companion functions for a predicate.
-    pub fn get_companion_funs(&self, pred: PrdIdx) -> Option<&Vec<Fun>> {
-        self.companion_funs.get(&pred)
     }
 
     /// Removes and returns the indices of the clauses `pred` appears in the lhs
@@ -777,7 +704,7 @@ impl Instance {
         for pred in self.clauses[clause].lhs_preds().keys() {
             let pred = *pred;
             let was_there = self.pred_to_clauses[pred].0.remove(&clause);
-            debug_assert!(was_there || self.is_known(pred))
+            debug_assert!(was_there || self[pred].is_defined())
         }
         if let Some((pred, _)) = self.clauses[clause].rhs() {
             self.pred_to_clauses[pred].1.remove(&clause);
@@ -1006,7 +933,7 @@ impl Instance {
                 .map(|(pred, _)| *pred)
                 .chain(clause.rhs().into_iter().map(|(pred, _)| pred))
             {
-                if let Some(tterms) = self.forced_terms_of(pred) {
+                if let Some(tterms) = self[pred].def() {
                     bail! {
                       "predicate {} is forced{} but appears in a clause: {}",
                       conf.bad( & self[pred].name ),
@@ -1069,7 +996,7 @@ impl Instance {
         for (cls_idx, clause) in self.clauses.index_iter() {
             for (pred, _) in clause.lhs_preds() {
                 let pred = *pred;
-                if self.is_known(pred) {
+                if self[pred].is_defined() {
                     bail!(
                         "predicate {} is forced but appears in lhs of clause {}",
                         self[pred],
@@ -1089,7 +1016,7 @@ impl Instance {
                 }
             }
             if let Some((pred, _)) = clause.rhs() {
-                if self.is_known(pred) {
+                if self[pred].is_defined() {
                     bail!(
                         "predicate {} is forced but appears in rhs of clause {}",
                         self[pred],
@@ -1202,8 +1129,8 @@ impl Instance {
         writeln!(w)?;
 
         for (pred_idx, pred) in self.preds.index_iter() {
-            if self.pred_terms[pred_idx].is_none() {
-                if let Some(term) = &self.pred_str[pred_idx] {
+            if !self[pred_idx].is_defined() {
+                if let Some(term) = self[pred_idx].strength() {
                     writeln!(w, "; Strengthening term:")?;
                     writeln!(w, ";   {}", term)?
                 }
@@ -1272,7 +1199,7 @@ impl Instance {
         let mut old_model = Vec::with_capacity(model.len());
         ::std::mem::swap(&mut old_model, model);
         for (pred, def) in old_model {
-            let simplified = def.simplify_pred_apps(&model, &self.pred_terms);
+            let simplified = def.simplify_pred_apps(&model, &self.preds);
             model.push((pred, simplified))
         }
 
@@ -1280,14 +1207,16 @@ impl Instance {
             self.finalize()?
         }
 
-        let mut old_tterms: PrdMap<Option<TTerms>> = vec![None; self.pred_terms.len()].into();
-        ::std::mem::swap(&mut old_tterms, &mut self.pred_terms);
+        let mut old_tterms: PrdMap<_> =
+            self.preds.iter_mut().map(|pred| pred.unset_def()).collect();
+
         for pred in &self.sorted_pred_terms {
+            let pred = *pred;
             let mut curr_def = None;
-            ::std::mem::swap(&mut curr_def, &mut old_tterms[*pred]);
+            ::std::mem::swap(&mut curr_def, &mut old_tterms[pred]);
             if let Some(def) = curr_def {
-                let simplified = def.simplify_pred_apps(&model, &self.pred_terms);
-                self.pred_terms[*pred] = Some(simplified)
+                let simplified = def.simplify_pred_apps(&model, &self.preds);
+                self.preds[pred].set_def(simplified)?
             }
         }
         Ok(())
@@ -1714,7 +1643,7 @@ impl<'a> PebcakFmt<'a> for Instance {
         dtyp::write_constructor_map(w, "; ")?;
 
         for pred in &self.preds {
-            if pred.tterm.is_none() {
+            if !pred.is_defined() {
                 write!(w, "({}\n  {}\n  (", keywords::cmd::dec_fun, pred.name)?;
                 for typ in &pred.sig {
                     write!(w, " {}", typ)?
@@ -1739,9 +1668,9 @@ impl<'a> PebcakFmt<'a> for Instance {
             // Either there's no forced predicate, or we are printing before
             // finalizing.
             for (pred, tterms) in self
-                .pred_terms
-                .index_iter()
-                .filter_map(|(pred, tterms_opt)| tterms_opt.as_ref().map(|tt| (pred, tt)))
+                .preds
+                .iter()
+                .filter_map(|pred| pred.def().map(|tt| (pred.idx, tt)))
             {
                 write!(w, "({} {}\n  (", keywords::cmd::def_fun, self[pred])?;
                 for (var, typ) in self[pred].sig.index_iter() {
@@ -1755,11 +1684,12 @@ impl<'a> PebcakFmt<'a> for Instance {
             }
         } else {
             for pred in &self.sorted_pred_terms {
-                write!(w, "({} {}\n  (", keywords::cmd::def_fun, self[*pred])?;
-                for (var, typ) in self[*pred].sig.index_iter() {
+                let pred = *pred;
+                write!(w, "({} {}\n  (", keywords::cmd::def_fun, self[pred])?;
+                for (var, typ) in self[pred].sig.index_iter() {
                     write!(w, " (v_{} {})", var, typ)?
                 }
-                let tterms = self.pred_terms[*pred].as_ref().unwrap();
+                let tterms = self[pred].def().unwrap();
                 write!(w, " ) Bool\n  ")?;
                 tterms
                     .expr_to_smt2(w, &(&empty_prd_set, &empty_prd_set, &self.preds))

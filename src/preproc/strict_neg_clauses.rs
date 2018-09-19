@@ -34,7 +34,7 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 /// let pred: PrdIdx = 0.into();
 /// debug_assert_eq! { "pred", & instance[pred].name }
 ///
-/// let strengthening = instance.get_str(pred).unwrap();
+/// let strengthening = instance[pred].strength().unwrap();
 /// debug_assert_eq! {
 ///     "(or \
 ///         (>= (* (- 1) v_0) 0) \
@@ -176,7 +176,7 @@ impl RedStrat for StrictNeg {
                         log! { @4 |=> "{}", term }
                     }
                 }
-                if let Some(term) = instance.get_str(pred) {
+                if let Some(term) = instance.unset_strength(pred) {
                     terms.push(term.clone())
                 }
                 let conj = term::and(terms);
@@ -187,7 +187,7 @@ impl RedStrat for StrictNeg {
                         info += instance.force_false(pred)?
                     }
                     None => {
-                        instance.set_str(pred, conj);
+                        instance.set_strength(pred, conj)?;
                     }
                 }
             } else {

@@ -1153,10 +1153,10 @@ impl TTerms {
     }
 
     /// Simplifies some top terms given some definitions for the predicates.
-    pub fn simplify_pred_apps(self, model: ModelRef, pred_terms: &PrdMap<Option<TTerms>>) -> Self {
+    pub fn simplify_pred_apps(self, model: ModelRef, preds: &Preds) -> Self {
         macro_rules! if_defined {
             ($pred:ident then |$def:ident| $stuff:expr) => {
-                if let Some($def) = pred_terms[*$pred].as_ref() {
+                if let Some($def) = preds[*$pred].def() {
                     $stuff
                 } else {
                     for (ref idx, ref $def) in model {
@@ -1177,11 +1177,11 @@ impl TTerms {
 
                 for pred in tterms.preds.keys() {
                     if_defined! {
-                      pred then |def| match def.bool() {
-                        Some(true) => { to_rm.insert(* pred) ; () },
-                        Some(false) => return TTerms::fls(),
-                        None => (),
-                      }
+                        pred then |def| match def.bool() {
+                            Some(true) => { to_rm.insert(* pred) ; () },
+                            Some(false) => return TTerms::fls(),
+                            None => (),
+                        }
                     }
                 }
 
@@ -1241,7 +1241,7 @@ impl TTerms {
                 let mut nu_disj = Vec::with_capacity(disj.len());
 
                 for (quant, tterms) in disj {
-                    match (TTerms::Conj { quant, tterms }).simplify_pred_apps(model, pred_terms) {
+                    match (TTerms::Conj { quant, tterms }).simplify_pred_apps(model, preds) {
                         TTerms::True => return TTerms::tru(),
                         TTerms::False => (),
 

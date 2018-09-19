@@ -591,7 +591,7 @@ pub fn register_stats(instance: &Instance, _profiler: &Profiler, count: usize) -
         "pred count original" => add {
           let mut count = 0 ;
           for pred in instance.pred_indices() {
-            if ! instance.is_known(pred) {
+            if ! instance[pred].is_defined() {
               count += 1
             }
           }
@@ -603,7 +603,7 @@ pub fn register_stats(instance: &Instance, _profiler: &Profiler, count: usize) -
         "arg count original" => add {
           let mut args = 0 ;
           for info in instance.preds() {
-            if ! instance.is_known(info.idx) {
+            if ! instance[info.idx].is_defined() {
               args += info.sig.len()
             }
           }
@@ -687,7 +687,7 @@ pub fn register_final_stats(instance: &Instance, _profiler: &Profiler) -> Res<()
         "pred count    final" => add {
           let mut count = 0 ;
           for pred in instance.pred_indices() {
-            if ! instance.is_known(pred) {
+            if ! instance[pred].is_defined() {
               count += 1
             }
           }
@@ -700,7 +700,7 @@ pub fn register_final_stats(instance: &Instance, _profiler: &Profiler) -> Res<()
         "arg count    final" => add {
           let mut args = 0 ;
           for info in instance.preds() {
-            if ! instance.is_known(info.idx) {
+            if ! instance[info.idx].is_defined() {
               args += info.sig.len()
             }
           }

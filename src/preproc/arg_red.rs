@@ -67,7 +67,7 @@ impl ArgReductor {
     fn print(&mut self, instance: &Instance) {
         println!("keep {{");
         for (pred, vars) in self.keep.index_iter() {
-            if instance.is_known(pred) {
+            if instance[pred].is_defined() {
                 continue;
             }
             print!("  {}:", instance[pred]);
@@ -229,7 +229,7 @@ impl ArgReductor {
 
         let mut res = PrdHMap::new();
         for (pred, vars) in ::std::mem::replace(&mut self.keep, PrdMap::new()).into_index_iter() {
-            if !instance.is_known(pred) {
+            if !instance[pred].is_defined() {
                 let mut prev = res.insert(pred, vars);
                 debug_assert! { prev.is_none() }
             }

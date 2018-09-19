@@ -260,7 +260,7 @@ impl<'a> Teacher<'a> {
     fn model_of_candidates(&self, mut cands: Candidates) -> Candidates {
         for (pred, cand) in cands.index_iter_mut() {
             if let Some(cand) = cand.as_mut() {
-                if let Some(other) = self.instance.get_str(pred) {
+                if let Some(other) = self.instance[pred].strength() {
                     *cand = term::and(vec![cand.clone(), other.clone()])
                 }
             }
@@ -273,7 +273,7 @@ impl<'a> Teacher<'a> {
         for (pred, cand) in cands.index_iter_mut() {
             if let Some(cand) = cand.as_mut() {
                 let mut others = None;
-                if let Some(other) = self.instance.get_str(pred) {
+                if let Some(other) = self.instance[pred].strength() {
                     others.get_or_insert_with(Vec::new).push(other.clone())
                 }
                 if let Some(other) = self.partial_model.get(&pred) {
@@ -700,7 +700,7 @@ impl<'a> Teacher<'a> {
 
         let mut cands = PrdMap::with_capacity(self.instance.preds().len());
         for pred in self.instance.pred_indices() {
-            if self.instance.forced_terms_of(pred).is_some() {
+            if self.instance[pred].is_defined() {
                 cands.push(None)
 
             // } else if let Some(dnf) = partial_candidate.get(& pred) {

@@ -176,7 +176,7 @@ impl RedStrat for OneRhs {
         let mut red_info = RedInfo::new();
 
         'all_preds: for pred in instance.pred_indices() {
-            if instance.is_known(pred) || instance.clauses_of(pred).1.len() > 1 {
+            if instance[pred].is_defined() || instance.clauses_of(pred).1.len() > 1 {
                 continue 'all_preds;
             }
 
@@ -205,7 +205,7 @@ impl RedStrat for OneRhs {
                 red_info.preds += 1;
                 red_info += info;
                 instance.check("after unfolding (one_rhs)")?;
-                debug_assert! { instance.is_known(pred) }
+                debug_assert! { instance[pred].is_defined() }
             } else {
                 log! { @4 "failed to unfold {}", instance[pred] }
             }

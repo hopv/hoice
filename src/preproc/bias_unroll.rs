@@ -165,7 +165,7 @@ impl BiasedUnroll {
         self.max_new_clauses = ::std::cmp::min(10, instance.clauses().len() / 20);
 
         for (pred, _) in instance.preds().index_iter() {
-            if instance.is_known(pred) {
+            if instance[pred].is_defined() {
                 continue;
             }
             let (lhs_clauses, rhs_clauses) = instance.clauses_of(pred);
