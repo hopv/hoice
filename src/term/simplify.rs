@@ -441,7 +441,13 @@ where
     int_conj_simpl(lhs, rhs)
 }
 
+/// Result of deconstructing a sum.
+///
+/// This is used in `int_deconstruct` below to deconstruct additions to compare relation over
+/// arithmetic terms as a sum of non-constant terms (lhs), an operator and a constant (rhs). The
+/// goal is to do without cloning anything.
 struct Deconstructed<'a> {
+    /// Terms of the sum.
     trms: Vec<&'a Term>,
 }
 
@@ -459,7 +465,9 @@ impl<'a> From<Vec<&'a Term>> for Deconstructed<'a> {
         Deconstructed { trms }
     }
 }
+
 impl<'a> Deconstructed<'a> {
+    /// Turns a deconstructed sum in a term.
     fn into_term(self) -> Term {
         if self.trms.len() == 1 {
             self.trms[0].clone()
@@ -469,6 +477,7 @@ impl<'a> Deconstructed<'a> {
             res
         }
     }
+    /// True if the two deconstructed sum are the same.
     fn equal(&self, other: &Self) -> bool {
         if self.trms.len() == other.trms.len() {
             for (t_1, t_2) in self.trms.iter().zip(other.trms.iter()) {
@@ -481,12 +490,12 @@ impl<'a> Deconstructed<'a> {
             false
         }
     }
-
+    /// True if the two deconstructed terms add to zero.
     fn is_opposite(&self, other: &Self) -> bool {
         if self.trms.len() == other.trms.len() {
-            for (t_1, t_2) in self.trms.iter().zip(other.trms.iter()) {
+            for t_1 in &self.trms {
                 let t_1 = &term::u_minus((*t_1).clone());
-                if t_1 != *t_2 {
+                if other.trms.iter().all(|t| *t != t_1) {
                     return false;
                 }
             }
