@@ -78,7 +78,7 @@ impl AdtSynth {
                 .eval(&input)
                 .chain_err(|| format!("while evaluating ({} {})", fun.name, val))?;
 
-            let term = term::fun(typ.clone(), fun.name.clone(), vec![var.clone()]);
+            let term = term::fun(fun.name.clone(), vec![var.clone()]);
 
             let prev = map.insert(term, val);
             debug_assert! { prev.is_none() }
@@ -208,10 +208,7 @@ impl AdtSynth {
                         .eval(input)
                         .chain_err(|| format!("while evaluating ({} {})", fun.name, val))?;
 
-                    extended.push((
-                        term::fun(self.typ.clone(), fun.name.clone(), vec![var.clone()]),
-                        val,
-                    ))
+                    extended.push((term::fun(fun.name.clone(), vec![var.clone()]), val))
                 }
 
                 extended.push((var, val.clone()));

@@ -289,7 +289,7 @@ impl CexBias {
             // Otherwise we can just generate a negative constraint that's more
             // constrained.
             log! { @4 "partial bias right" }
-            profile! { |_profiler| "bias: partial right " => add 1 }
+            profile! { |_profiler| "bias: partial right" => add 1 }
             Bias::Non
         };
 

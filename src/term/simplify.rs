@@ -1,4 +1,8 @@
 //! Term simplification.
+//!
+//! # TODO
+//!
+//! - a lot of collection cloning could be avoided in this module
 
 pub use std::cmp::Ordering;
 use std::ops::Deref;
@@ -49,6 +53,16 @@ impl SimplRes {
     #[inline]
     pub fn is_none(&self) -> bool {
         !self.is_some()
+    }
+}
+
+impl_fmt! {
+    SimplRes(self, fmt) {
+        match self {
+            SimplRes::None => write!(fmt, "none"),
+            SimplRes::Cmp(ord) => write!(fmt, "{:?}", ord),
+            SimplRes::Yields(trm) => write!(fmt, "yields({})", trm),
+        }
     }
 }
 
@@ -149,7 +163,7 @@ pub fn conj_term_insert(term: Term, set: &mut TermSet) -> bool {
 }
 
 /// Simplifies a conjunction.
-pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
+fn conj_vec_simpl(terms: &mut Vec<Term>) {
     let mut res = Vec::with_capacity(terms.len());
 
     'add_terms: while let Some(term) = terms.pop() {
@@ -215,21 +229,21 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// # println!("   {}", lhs) ;
 /// let rhs = term::ge( term::int_var(0), term::int(3) ) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Equal) }
+/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Equal) }
 ///
 /// # println!("   {}", lhs) ;
 /// let rhs = term::ge( term::int_var(0), term::int(7) ) ;
 /// # println!("<= {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Less) }
+/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Less) }
 ///
 /// # println!("   {}", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
-/// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Greater) }
+/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Greater) }
 ///
 /// let lhs = term::gt( term::int_var(0), term::int(7) ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
+/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
 ///
 // / let lhs = term::le( term::int_var(0), term::int(7) ) ;
 // / # println!("   {}", lhs) ;
@@ -240,7 +254,7 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// let lhs = term::le( term::int_var(1), term::int(7) ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+/// assert_eq! { conj_simpl(& lhs, & rhs), None }
 ///
 /// let lhs = term::le( term::int_var(1), term::int(7) ) ;
 /// let rhs = term::or(
@@ -248,11 +262,11 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
+/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
 ///
 /// # println!("   {}", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
-/// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
+/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
 ///
 /// let lhs = term::gt( term::real_var(1), term::real_zero() ) ;
 /// let rhs = term::ge(
@@ -260,11 +274,11 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
+/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
 ///
 /// # println!("   {}", rhs) ;
 /// # println!("=> {}\n\n", lhs) ;
-/// debug_assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
+/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
 ///
 /// let lhs = term::or(
 ///   vec![
@@ -276,7 +290,7 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+/// assert_eq! { conj_simpl(& lhs, & rhs), None }
 ///
 /// let lhs = term::or(
 ///   vec![
@@ -288,7 +302,7 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+/// assert_eq! { conj_simpl(& lhs, & rhs), None }
 ///
 /// let rhs = term::or(
 ///   vec![
@@ -300,7 +314,7 @@ pub fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// ) ;
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), None }
+/// assert_eq! { conj_simpl(& lhs, & rhs), None }
 /// ```
 pub fn conj_simpl<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
 where
@@ -310,7 +324,6 @@ where
     if conf.term_simpl == 0 {
         return SimplRes::None;
     }
-
     let res = conj_simpl_2(lhs, rhs);
 
     if res.is_some() {
@@ -379,13 +392,10 @@ where
         }
     }
 
-    match res {
-        SimplRes::Yields(_) if conf.term_simpl <= 1 => SimplRes::None,
-        res => res,
-    }
+    res
 }
 
-pub fn conj_simpl_2<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
+fn conj_simpl_2<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
 where
     T1: Deref<Target = RTerm>,
     T2: Deref<Target = RTerm>,
@@ -396,7 +406,7 @@ where
         let mut greater_count = 0;
         let mut yields = vec![];
         for lhs in args {
-            match int_conj_simpl(lhs, rhs, true) {
+            match int_conj_simpl(lhs, rhs) {
                 SimplRes::Cmp(Equal) | SimplRes::Cmp(Less) => return SimplRes::Cmp(Less),
                 SimplRes::Cmp(Greater) => greater_count += 1,
 
@@ -413,7 +423,7 @@ where
         let mut less_count = 0;
         let mut yields = vec![];
         for rhs in args {
-            match int_conj_simpl(lhs, rhs, true) {
+            match int_conj_simpl(lhs, rhs) {
                 SimplRes::Cmp(Equal) | SimplRes::Cmp(Greater) => return SimplRes::Cmp(Greater),
                 SimplRes::Cmp(Less) => less_count += 1,
 
@@ -428,10 +438,115 @@ where
         }
     }
 
-    int_conj_simpl(lhs, rhs, true)
+    int_conj_simpl(lhs, rhs)
 }
 
-fn int_conj_simpl<T1, T2>(lhs: &T1, rhs: &T2, conj: bool) -> SimplRes
+struct Deconstructed<'a> {
+    trms: Vec<&'a Term>,
+}
+
+impl<'a> From<&'a Term> for Deconstructed<'a> {
+    fn from(trm: &'a Term) -> Deconstructed<'a> {
+        Deconstructed { trms: vec![trm] }
+    }
+}
+impl<'a> From<Vec<&'a Term>> for Deconstructed<'a> {
+    fn from(mut trms: Vec<&'a Term>) -> Deconstructed<'a> {
+        if trms.is_empty() {
+            panic!("trying to create an empty deconstructed term")
+        }
+        trms.sort_unstable();
+        Deconstructed { trms }
+    }
+}
+impl<'a> Deconstructed<'a> {
+    fn into_term(self) -> Term {
+        if self.trms.len() == 1 {
+            self.trms[0].clone()
+        } else {
+            let res = term::add(self.trms.into_iter().cloned().collect());
+            println!("created {}", res);
+            res
+        }
+    }
+    fn equal(&self, other: &Self) -> bool {
+        if self.trms.len() == other.trms.len() {
+            for (t_1, t_2) in self.trms.iter().zip(other.trms.iter()) {
+                if t_1 != t_2 {
+                    return false;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_opposite(&self, other: &Self) -> bool {
+        if self.trms.len() == other.trms.len() {
+            for (t_1, t_2) in self.trms.iter().zip(other.trms.iter()) {
+                let t_1 = &term::u_minus((*t_1).clone());
+                if t_1 != *t_2 {
+                    return false;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Deconstructs a relation between arithmetic subterms.
+fn int_deconstruct<T>(term: &T) -> Option<(Op, Deconstructed, Val)>
+where
+    T: Deref<Target = RTerm>,
+{
+    if let Some((op, args)) = term.deref().app_inspect() {
+        if args.len() != 2 && !args[0].typ().is_arith() {
+            return None;
+        }
+
+        let mut val = if let Some(val) = args[1].val() {
+            val
+        } else {
+            return None;
+        };
+
+        if let Some(subargs) = args[0].add_inspect() {
+            let mut sum = Vec::with_capacity(subargs.len());
+
+            for arg in subargs {
+                if let Some(v) = arg.val() {
+                    val = val
+                        .add(&v.minus().expect("type inconsistency"))
+                        .expect("type inconsistency")
+                } else {
+                    sum.push(arg)
+                }
+            }
+
+            let res: Deconstructed = if sum.len() == 1 {
+                sum.pop().expect("sum has length 1").into()
+            } else if subargs.len() == sum.len() {
+                (&args[0]).into()
+            } else if sum.is_empty() {
+                // This should be unreachable.
+                return None;
+            } else {
+                sum.into()
+            };
+
+            Some((op, res, val))
+        } else {
+            Some((op, (&args[0]).into(), val))
+        }
+    } else {
+        None
+    }
+}
+
+fn int_conj_simpl<T1, T2>(lhs_term: &T1, rhs_term: &T2) -> SimplRes
 where
     T1: Deref<Target = RTerm>,
     T2: Deref<Target = RTerm>,
@@ -448,7 +563,7 @@ where
         };
     }
 
-    let (lhs, rhs) = (lhs.deref(), rhs.deref());
+    let (lhs, rhs) = (lhs_term.deref(), rhs_term.deref());
 
     // A term implies itself.
     if lhs == rhs {
@@ -468,37 +583,25 @@ where
         (None, None) => (),
     }
 
-    // Only legal atoms are `vars >= cst` and `vars > cst`.
-    let (lhs_op, lhs_vars, lhs_cst) = if let Some((op, args)) = lhs.app_inspect() {
-        if !args[0].typ().is_arith() {
-            return SimplRes::None;
-        }
-        (
-            op,
-            &args[0],
-            args[1]
-                .val()
-                .expect("error during value unwrapping in term simplification (lhs)"),
-        )
-    } else {
-        return SimplRes::None;
-    };
-    let (rhs_op, rhs_vars, rhs_cst) = if let Some((op, args)) = rhs.app_inspect() {
-        if !args[0].typ().is_arith() {
-            return SimplRes::None;
-        }
-        (
-            op,
-            &args[0],
-            args[1]
-                .val()
-                .expect("error during value unwrapping in term simplification (rhs)"),
-        )
+    let (lhs_op, lhs_trm, lhs_cst) = if let Some(res) = int_deconstruct(lhs_term) {
+        res
     } else {
         return SimplRes::None;
     };
 
-    if lhs_vars == rhs_vars {
+    let (rhs_op, rhs_trm, rhs_cst) = if let Some(res) = int_deconstruct(rhs_term) {
+        res
+    } else {
+        return SimplRes::None;
+    };
+
+    // println!();
+    // println!("lhs:");
+    // println!("  {} {} {}", lhs_trm.to_string(), lhs_op, lhs_cst);
+    // println!("rhs:");
+    // println!("  {} {} {}", rhs_trm.to_string(), rhs_op, rhs_cst);
+
+    if lhs_trm.equal(&rhs_trm) {
         match (lhs_op, rhs_op) {
             (Op::Gt, Op::Gt) | (Op::Ge, Op::Ge) => {
                 return SimplRes::Cmp(
@@ -524,9 +627,7 @@ where
 
             (Op::Eql, Op::Ge) | (Op::Eql, Op::Gt) => match lhs_cst.get().compare(&rhs_cst) {
                 Some(Less) => return SimplRes::Yields(term::fls()),
-                Some(Equal) if rhs_op == Op::Gt => if conj {
-                    return SimplRes::Yields(term::fls());
-                },
+                Some(Equal) if rhs_op == Op::Gt => return SimplRes::Yields(term::fls()),
                 Some(Equal) | Some(Greater) => return SimplRes::Cmp(Greater),
                 None => unreachable!(),
             },
@@ -551,18 +652,14 @@ where
         && lhs_cst == rhs_cst
             .minus()
             .expect("error during rhs inversion in term simplification")
-        && rhs_vars == &term::u_minus(lhs_vars.clone())
+        && lhs_trm.is_opposite(&rhs_trm)
     {
-        if conj {
-            return SimplRes::Yields(term::eq(
-                lhs_vars.clone(),
-                lhs_cst
-                    .to_term()
-                    .expect("error during lhs cst to term conversion in term simplification"),
-            ));
-        } else {
-            return SimplRes::Yields(term::tru());
-        }
+        return SimplRes::Yields(term::eq(
+            lhs_trm.into_term(),
+            lhs_cst
+                .to_term()
+                .expect("error during lhs cst to term conversion in term simplification"),
+        ));
     }
 
     SimplRes::None
@@ -778,7 +875,7 @@ simpl_fun! {
         if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
           if dtyp_args.is_empty() {
             args[0] = term::dtyp_tst(
-              constructor.into(), eq_args[1].clone()
+              constructor, eq_args[1].clone()
             )
           }
         }
@@ -786,7 +883,7 @@ simpl_fun! {
         if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
           if dtyp_args.is_empty() {
             args[0] = term::dtyp_tst(
-              constructor.into(), eq_args[0].clone()
+              constructor, eq_args[0].clone()
             )
           }
         }
@@ -843,7 +940,6 @@ simpl_fun! {
           args.push(term)
         }
         args.swap_remove(cnt) ;
-        args.sort_unstable() ;
         args.dedup() ;
         cnt = 0
       } else {
@@ -852,7 +948,7 @@ simpl_fun! {
     }
 
     // if conf.term_simpl >= 3 {
-      conj_vec_simpl(args) ;
+    conj_vec_simpl(args) ;
     // }
 
     if args.is_empty() {
@@ -1708,7 +1804,11 @@ simpl_fun! {
 }
 
 /// Tries to create a constant datatype constructor.
-fn cst_dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Either<Val, (Typ, String, Vec<Term>)> {
+fn cst_dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Either<Val, (Typ, String, Vec<Term>)>
+where
+    S: Into<String>,
+{
+    let name = name.into();
     if args.is_empty() {
         return Either::Left(val::dtyp_new(typ, name, vec![]));
     }
@@ -1734,7 +1834,10 @@ fn cst_dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Either<Val, (Typ, St
 }
 
 /// Simplifies a datatype constructor.
-pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> RTerm {
+pub fn dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> RTerm
+where
+    S: Into<String>,
+{
     let (typ, name, mut args) = match cst_dtyp_new(typ, name, args) {
         Either::Left(val) => return RTerm::Cst(val),
         Either::Right(stuff) => stuff,
@@ -1796,7 +1899,11 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> RTerm {
 }
 
 /// Simplifies a datatype selector.
-pub fn dtyp_slc(typ: Typ, field: String, term: Term) -> Either<RTerm, Term> {
+pub fn dtyp_slc<S>(typ: Typ, field: S, term: Term) -> Either<RTerm, Term>
+where
+    S: Into<String>,
+{
+    let field = field.into();
     if let Some(val) = term.val() {
         if let Some(res) = val.dtyp_slc(&field) {
             return Either::Left(RTerm::Cst(res));
@@ -1827,7 +1934,11 @@ pub fn dtyp_slc(typ: Typ, field: String, term: Term) -> Either<RTerm, Term> {
 ///
 /// The boolean flag returned indicates the polarity of the result. That is, if
 /// it is `false` then the term should be negated.
-pub fn dtyp_tst(constructor: String, term: Term) -> (RTerm, bool) {
+pub fn dtyp_tst<S>(constructor: S, term: Term) -> (RTerm, bool)
+where
+    S: Into<String>,
+{
+    let constructor = constructor.into();
     if let Some(val) = term.val() {
         if let val::RVal::DTypNew { name, .. } = val.get() {
             return (RTerm::Cst(val::bool(&constructor == name)), true);

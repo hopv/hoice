@@ -18,16 +18,13 @@
 //! # Variables
 //!
 //! A variable is a `usize` wrapped in a zero-cost [`VarIdx`] for safety. It has no semantics at
-//! all by itself. Variables are given meaning by
-//!
-//! - the `sig` field of a [`Pred`], which gives them types;
-//! - the [`VarInfo`]s stored in a [`Clause`], which give them a name and a type.
+//! all by itself. Variables are given meaning by the `sig` field of a [`Pred`] or the [`VarInfo`]s
+//! stored in a [`Clause`].
 //!
 //! # Examples
 //!
 //! ```rust
-//! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm, typ } ;
+//! # use hoice::{ term, term::{ Op, RTerm, typ } } ;
 //! let some_term = term::eq(
 //!     term::int(11), term::app(
 //!         Op::Mul, vec![ term::int_var(5), term::int(2) ]
@@ -86,17 +83,25 @@ mod test;
 /// Hash consed term.
 pub type Term = HConsed<RTerm>;
 
-/// A real term.
+/// A real term, before hashconsing.
+///
+/// See the [module level documentation] for more details.
+///
+/// [module level documentation]: ../term/index.html (term module)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {
     /// A clause variable.
     Var(Typ, VarIdx),
+
     /// A constant.
     Cst(Val),
 
-    /// A **constant** array.
+    /// A constant array.
     ///
     /// The type is the type of **the indices** of the arrays.
+    ///
+    /// A constant array is not (necessarily) a (constant) value. It is an array which maps all
+    /// indices to the same term.
     CArray {
         /// Depth of this term.
         depth: usize,
@@ -167,43 +172,23 @@ pub enum RTerm {
     },
 }
 
+/// Constructors.
 impl RTerm {
-    /// Constructs a constant array.
-    pub fn new_carray(typ: Typ, term: Term) -> Self {
-        RTerm::CArray {
-            depth: term.depth() + 1,
+    /// Constructs an operator application.
+    fn new_app(typ: Typ, op: Op, args: Vec<Term>) -> Self {
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        RTerm::App {
+            depth,
             typ,
-            term,
+            op,
+            args,
         }
     }
-    /// Constructs a datatype selector application.
-    pub fn new_dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Self
-    where
-        S: Into<String>,
-    {
-        let name = name.into();
-        RTerm::DTypSlc {
-            depth: term.depth() + 1,
-            typ,
-            name,
-            term,
-        }
-    }
-    /// Constructs a datatype tester application.
-    pub fn new_dtyp_tst<S>(typ: Typ, name: S, term: Term) -> Self
-    where
-        S: Into<String>,
-    {
-        let name = name.into();
-        RTerm::DTypTst {
-            depth: term.depth() + 1,
-            typ,
-            name,
-            term,
-        }
-    }
+
     /// Constructs a function application.
-    pub fn new_fun<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    fn new_fun<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
     where
         S: Into<String>,
     {
@@ -218,20 +203,48 @@ impl RTerm {
             args,
         }
     }
-    /// Constructs an operator application.
-    pub fn new_app(typ: Typ, op: Op, args: Vec<Term>) -> Self {
-        let depth = args
-            .iter()
-            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
-        RTerm::App {
-            depth,
+
+    /// Constructs a constant array.
+    ///
+    ///
+    fn new_carray(typ: Typ, term: Term) -> Self {
+        RTerm::CArray {
+            depth: term.depth() + 1,
             typ,
-            op,
-            args,
+            term,
         }
     }
+
+    /// Constructs a datatype selector application.
+    fn new_dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypSlc {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
+        }
+    }
+
+    /// Constructs a datatype tester application.
+    fn new_dtyp_tst<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypTst {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
+        }
+    }
+
     /// Constructs a datatype constructor application.
-    pub fn new_dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    fn new_dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
     where
         S: Into<String>,
     {
@@ -246,8 +259,24 @@ impl RTerm {
             args,
         }
     }
+}
 
+/// Accessors and testers.
+impl RTerm {
     /// Size of a term: number of subterms.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(0) ),
+    ///         term::int_var(1)
+    ///     ]), term::int(7)
+    /// );
+    /// assert_eq! { term.depth(), 4 }
+    /// ```
     pub fn depth(&self) -> usize {
         match self {
             RTerm::Var(_, _) | RTerm::Cst(_) => 1,
@@ -260,218 +289,26 @@ impl RTerm {
         }
     }
 
-    /// The operator and the kids of a term.
-    pub fn app_inspect(&self) -> Option<(Op, &Vec<Term>)> {
-        if let RTerm::App { op, ref args, .. } = *self {
-            Some((op, args))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of an ite.
-    pub fn ite_inspect(&self) -> Option<(&Term, &Term, &Term)> {
-        if let RTerm::App {
-            op: Op::Ite,
-            ref args,
-            ..
-        } = *self
-        {
-            debug_assert_eq! { args.len(), 3 }
-            Some((&args[0], &args[1], &args[2]))
-        } else {
-            None
-        }
-    }
-
-    /// Inspects a function application.
-    pub fn fun_inspect(&self) -> Option<(&String, &Vec<Term>)> {
-        if let RTerm::Fun {
-            ref name, ref args, ..
-        } = *self
-        {
-            Some((name, args))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kid of a negation.
-    pub fn neg_inspect(&self) -> Option<&Term> {
-        if let RTerm::App {
-            op: Op::Not,
-            ref args,
-            ..
-        } = *self
-        {
-            debug_assert_eq! { args.len(), 1 }
-            Some(&args[0])
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of conjunctions.
-    pub fn conj_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::And,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-    /// Returns the kids of disjunctions.
-    pub fn disj_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::Or,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-    /// Returns the kids of equalities.
-    pub fn eq_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::Eql,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of additions.
-    pub fn add_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::Add,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-    /// Returns the kids of subtractions.
-    pub fn sub_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::Sub,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-    /// Returns the kids of multiplications.
-    pub fn mul_inspect(&self) -> Option<&Vec<Term>> {
-        if let RTerm::App {
-            op: Op::Mul,
-            ref args,
-            ..
-        } = *self
-        {
-            Some(args)
-        } else {
-            None
-        }
-    }
-    /// Returns the kids of a constant multiplication.
-    pub fn cmul_inspect(&self) -> Option<(Val, &Term)> {
-        if let RTerm::App {
-            op: Op::CMul,
-            ref args,
-            ..
-        } = *self
-        {
-            if args.len() == 2 {
-                if let Some(val) = args[0].val() {
-                    return Some((val, &args[1]));
-                }
-            }
-            panic!("illegal c_mul application: {}", self)
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of a datatype tester.
-    pub fn dtyp_tst_inspect(&self) -> Option<(&str, &Term)> {
-        if let RTerm::DTypTst { name, term, .. } = self {
-            Some((name, term))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of a datatype constructor.
-    pub fn dtyp_new_inspect(&self) -> Option<(&Typ, &str, &[Term])> {
-        if let RTerm::DTypNew {
-            typ, name, args, ..
-        } = self
-        {
-            Some((typ, name, args))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the kids of a datatype selector.
-    pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
-        if let RTerm::DTypSlc {
-            typ, name, term, ..
-        } = self
-        {
-            Some((typ, name, term))
-        } else {
-            None
-        }
-    }
-
-    /// Iterator over over all the leafs of a term.
-    pub fn leaf_iter(&self) -> LeafIter {
-        LeafIter::of_rterm(self)
-    }
-
-    /// Iterates over all the subterms of a term, including itself.
-    pub fn iter<F>(&self, mut f: F)
-    where
-        F: FnMut(&RTerm),
-    {
-        use RTerm::*;
-        let mut stack = vec![self];
-
-        while let Some(term) = stack.pop() {
-            f(term);
-            match term {
-                App { args, .. } | DTypNew { args, .. } | Fun { args, .. } => {
-                    stack.extend(args.iter().map(|term| term.get()))
-                }
-
-                CArray { term, .. } | DTypSlc { term, .. } | DTypTst { term, .. } => {
-                    stack.push(term.get())
-                }
-
-                Var(_, _) | Cst(_) => (),
-            }
-        }
-    }
-
     /// Type of the term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let sum = term::add(vec![
+    ///     term::cmul( 2, term::int_var(0) ),
+    ///     term::int_var(1)
+    /// ]);
+    /// assert! { sum.typ().is_int() }
+    ///
+    /// let to_real = term::to_real(sum);
+    /// assert! { to_real.typ().is_real() }
+    ///
+    /// let term = term::eq(
+    ///     to_real, term::real_of_float(7.0)
+    /// );
+    /// assert! { term.typ().is_bool() }
+    /// ```
     pub fn typ(&self) -> Typ {
         match self {
             RTerm::CArray { typ, term, .. } => typ::array(typ.clone(), term.typ()),
@@ -487,7 +324,37 @@ impl RTerm {
         }
     }
 
+    /// Returns the variable index if the term is a variable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let v_1 = term::int_var(1);
+    /// assert_eq! { v_1.var_idx(), Some(1.into()) }
+    ///
+    /// let mul = term::cmul( 2, v_1 );
+    /// assert_eq! { mul.var_idx(), None }
+    /// ```
+    pub fn var_idx(&self) -> Option<VarIdx> {
+        match *self {
+            RTerm::Var(_, i) => Some(i),
+            _ => None,
+        }
+    }
+
     /// True if the term is zero (integer or real).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert! { ! one.is_zero() }
+    ///
+    /// let sum = term::add( vec![one.clone(), term::u_minus(one)] );
+    /// assert! { sum.is_zero() }
+    /// ```
     pub fn is_zero(&self) -> bool {
         match (self.int(), self.real()) {
             (Some(i), _) => i.is_zero(),
@@ -497,6 +364,17 @@ impl RTerm {
     }
 
     /// True if the term is one (integer or real).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert! { one.is_one() }
+    ///
+    /// let sum = term::add( vec![one.clone(), term::u_minus(one)] );
+    /// assert! { ! sum.is_one() }
+    /// ```
     pub fn is_one(&self) -> bool {
         use num::One;
         match (self.int(), self.real()) {
@@ -506,117 +384,7 @@ impl RTerm {
         }
     }
 
-    /// Write a real term using a special function to write variables.
-    pub fn write<W, WriteVar>(&self, w: &mut W, write_var: WriteVar) -> IoRes<()>
-    where
-        W: Write,
-        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
-    {
-        self.write_with(w, write_var, None)
-    }
-
-    /// Write a real term using a special function to write variables.
-    pub fn write_with<W, WriteVar>(
-        &self,
-        w: &mut W,
-        write_var: WriteVar,
-        bindings: Option<&bindings::Bindings>,
-    ) -> IoRes<()>
-    where
-        W: Write,
-        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
-    {
-        self.write_with_raw(w, write_var, bindings.map(|b| b.bindings()))
-    }
-
-    /// Write a real term using a special function to write variables.
-    fn write_with_raw<W, WriteVar>(
-        &self,
-        w: &mut W,
-        write_var: WriteVar,
-        bindings: Option<&[TermMap<VarIdx>]>,
-    ) -> IoRes<()>
-    where
-        W: Write,
-        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
-    {
-        // Stores triplets of
-        // - the elements to write,
-        // - the prefix string, written before next element
-        // - the suffix, written once there's no more elements to write
-        let mut stack = vec![(vec![self], "", "")];
-
-        'work: while let Some((mut to_do, sep, end)) = stack.pop() {
-            use self::RTerm::*;
-
-            if let Some(this_term) = to_do.pop() {
-                stack.push((to_do, sep, end));
-                write!(w, "{}", sep)?;
-
-                // Is term in the bindings?
-                if let Some(bindings) = bindings {
-                    for map in bindings {
-                        if let Some(var) = map.get(&this_term.to_hcons()) {
-                            Bindings::write_var(w, *var)?;
-                            continue 'work;
-                        }
-                    }
-                }
-
-                match this_term {
-                    Var(_, v) => write_var(w, *v)?,
-
-                    Cst(val) => write!(w, "{}", val)?,
-
-                    CArray { term, .. } => {
-                        write!(
-                            w,
-                            "(({} {} {})",
-                            keywords::op::as_,
-                            keywords::op::const_,
-                            this_term.typ()
-                        )?;
-                        stack.push((vec![term], " ", ")"))
-                    }
-
-                    App { op, args, .. } => {
-                        write!(w, "({}", op)?;
-                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
-                    }
-
-                    DTypSlc { name, term, .. } => {
-                        write!(w, "({}", name)?;
-                        stack.push((vec![term], " ", ")"))
-                    }
-
-                    DTypTst { name, term, .. } => {
-                        write!(w, "({}-{}", keywords::op::is_, name)?;
-                        stack.push((vec![term], " ", ")"))
-                    }
-
-                    DTypNew { name, args, .. } => if args.is_empty() {
-                        write!(w, "{}", name)?
-                    } else {
-                        write!(w, "({}", name)?;
-                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
-                    },
-
-                    Fun { name, args, .. } => if args.is_empty() {
-                        write!(w, "{}", name)?
-                    } else {
-                        write!(w, "({}", name)?;
-                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
-                    },
-                }
-            } else {
-                w.write_all(end.as_bytes())?
-            }
-        }
-
-        Ok(())
-    }
-
-    /// True if atom `self` implies atom `other` syntactically.
+    /// Compares two terms as a conjunction.
     ///
     /// Returns
     ///
@@ -625,24 +393,45 @@ impl RTerm {
     /// - `Some(Less)` if `lhs <= rhs`,
     /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
     ///
-    /// So *greater* really means *more generic*.
-    pub fn conj_simpl(&self, other: &Self) -> simplify::SimplRes {
+    /// So *greater* really means *stronger*.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::cmp::Ordering::*;
+    /// use hoice::{ term, term::simplify::SimplRes::* };
+    /// let eq = &term::eq( term::int_var(0), term::int(7) );
+    /// let ge = &term::ge( term::int_var(0), term::int(7) );
+    /// let gt = &term::gt( term::int_var(0), term::int(7) );
+    /// let ge_2 = &term::ge( term::int(7), term::int_var(0) );
+    ///
+    /// # println!("{} cmp {}", eq, eq);
+    /// assert_eq! { eq.conj_cmp(eq), Cmp(Equal  ) }
+    /// # println!("{} cmp {}", eq, ge);
+    /// assert_eq! { eq.conj_cmp(ge), Cmp(Greater) }
+    /// # println!("{} cmp {}", ge, eq);
+    /// assert_eq! { ge.conj_cmp(eq), Cmp(Less   ) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", eq, gt);
+    /// assert_eq! { eq.conj_cmp(gt), Yields(term::fls()) }
+    /// # println!("{} cmp {}", gt, eq);
+    /// assert_eq! { gt.conj_cmp(eq), Yields(term::fls()) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", gt, ge);
+    /// assert_eq! { gt.conj_cmp(ge), Cmp(Greater) }
+    /// # println!("{} cmp {}", ge, gt);
+    /// assert_eq! { ge.conj_cmp(gt), Cmp(Less   ) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", ge, ge_2);
+    /// assert_eq! { ge.conj_cmp(ge_2), Yields(eq.clone()) }
+    /// # println!("{} cmp {}", ge_2, ge);
+    /// assert_eq! { ge_2.conj_cmp(ge), Yields(eq.clone()) }
+    /// ```
+    pub fn conj_cmp(&self, other: &Self) -> simplify::SimplRes {
         simplify::conj_simpl(&self, &other)
-    }
-
-    /// Term evaluation (int).
-    pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
-        self.eval(model)?.to_int()
-    }
-
-    /// Term evaluation (real).
-    pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
-        self.eval(model)?.to_real()
-    }
-
-    /// Term evaluation (bool).
-    pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
-        self.eval(model)?.to_bool()
     }
 
     /// True if the term has no variables and evaluates to true.
@@ -650,9 +439,7 @@ impl RTerm {
     /// # Examples
     ///
     /// ```rust
-    /// use hoice::term ;
-    /// use hoice::term::Op ;
-    ///
+    /// # use hoice::{ term, term::Op };
     /// let term = term::tru() ;
     /// println!("true") ;
     /// assert!( term.is_true() ) ;
@@ -694,9 +481,7 @@ impl RTerm {
     /// # Examples
     ///
     /// ```rust
-    /// use hoice::term ;
-    /// use hoice::term::Op ;
-    ///
+    /// # use hoice::{term, term::Op};
     /// let term = term::tru() ;
     /// println!("true") ;
     /// assert!( ! term.is_false() ) ;
@@ -732,50 +517,27 @@ impl RTerm {
             _ => false,
         }
     }
-    /// Boolean a constant boolean term evaluates to.
-    pub fn bool(&self) -> Option<bool> {
-        match self.bool_eval(&()) {
-            Ok(Some(b)) => Some(b),
-            _ => None,
-        }
-    }
-
-    /// Evaluates a term with an empty model.
-    pub fn as_val(&self) -> Val {
-        if let Ok(res) = self.eval(&()) {
-            res
-        } else {
-            val::none(self.typ().clone())
-        }
-    }
-
-    /// Integer a constant integer term evaluates to.
-    pub fn int(&self) -> Option<Int> {
-        if self.typ() != typ::int() {
-            return None;
-        }
-        match self.int_eval(&()) {
-            Ok(Some(i)) => Some(i),
-            _ => None,
-        }
-    }
-    /// Integer a constant integer term evaluates to.
-    pub fn real(&self) -> Option<Rat> {
-        match self.real_eval(&()) {
-            Ok(Some(r)) => Some(r),
-            _ => None,
-        }
-    }
-
-    /// Turns a constant term in a `Val`.
-    pub fn val(&self) -> Option<Val> {
-        match *self {
-            RTerm::Cst(ref val) => Some(val.clone()),
-            _ => None,
-        }
-    }
 
     /// Returns a constant arithmetic version of the term if any.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let sum = term::add(vec![
+    ///     term::cmul( 2, term::int(0) ),
+    ///     term::int(1)
+    /// ]);
+    /// assert_eq! { sum.arith(), Some(term::int(1)) }
+    ///
+    /// let to_real = term::to_real(sum);
+    /// assert_eq! { to_real.arith(), Some(term::real_of_float(1.0)) }
+    ///
+    /// let term = term::eq(
+    ///     to_real, term::real_of_float(7.0)
+    /// );
+    /// assert_eq! { term.arith(), None }
+    /// ```
     pub fn arith(&self) -> Option<Term> {
         if let Some(i) = self.int() {
             Some(term::int(i))
@@ -786,13 +548,306 @@ impl RTerm {
         }
     }
 
-    /// The kids of this term, if any.
-    pub fn kids(&self) -> Option<&[Term]> {
-        if let RTerm::App { ref args, .. } = *self {
-            Some(args)
-        } else {
-            None
+    /// If the term's an integer constant, returns the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert_eq! { one.int_val(), Some(& 1.into()) }
+    ///
+    /// let sum = term::add(vec![term::int_var(0), one]);
+    /// assert_eq! { sum.int_val(), None }
+    ///
+    /// let one = term::real_of_float(1.0);
+    /// assert_eq! { one.int_val(), None }
+    /// ```
+    pub fn int_val(&self) -> Option<&Int> {
+        if let RTerm::Cst(val) = self {
+            if let val::RVal::I(i) = val.get() {
+                return Some(i);
+            }
         }
+        None
+    }
+
+    /// If the term's a rational constant, returns the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, common::Rat };
+    /// let one = term::real_of_float(1.0);
+    /// assert_eq! { one.real_val(), Some(&Rat::new(1.into(),1.into())) }
+    ///
+    /// let sum = term::add(vec![term::real_var(0), one]);
+    /// assert_eq! { sum.real_val(), None }
+    ///
+    /// let one = term::int(1);
+    /// assert_eq! { one.real_val(), None }
+    /// ```
+    pub fn real_val(&self) -> Option<&Rat> {
+        if let RTerm::Cst(val) = self {
+            if let val::RVal::R(r) = val.get() {
+                return Some(r);
+            }
+        }
+        None
+    }
+
+    /// Return true if the term mentions at least one variable from `vars`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let mut vars = VarSet::new();
+    /// vars.insert(7.into());
+    /// vars.insert(5.into());
+    /// vars.insert(3.into());
+    ///
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(0) ),
+    ///         term::int_var(6),
+    ///     ]),
+    ///     term::int(0)
+    /// );
+    /// assert! { !term.mentions_one_of(&vars) }
+    ///
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(7) ),
+    ///         term::int_var(6),
+    ///     ]),
+    ///     term::int(0)
+    /// );
+    /// assert! { term.mentions_one_of(&vars) }
+    /// ```
+    pub fn mentions_one_of(&self, vars: &VarSet) -> bool {
+        for var_or_cst in self.leaf_iter() {
+            if let Either::Left((_, var_idx)) = var_or_cst {
+                if vars.contains(&var_idx) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns true if the term mentions a function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun };
+    /// fun::test::create_length_fun();
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let t_1 = term::ge(
+    ///     term::fun(
+    ///         fun::test::length_fun_name(),
+    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { t_1.has_fun_apps() }
+    ///
+    /// let t_2 = term::ge(
+    ///     term::int_var(7),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_2.has_fun_apps() }
+    /// ```
+    pub fn has_fun_apps(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if let Some((_, _)) = term.fun_inspect() {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(_) => Err(()),
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(_),
+                    ..
+                } => Err(()),
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// Returns true if the term mentions a recursive function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun, parse };
+    /// fun::test::create_length_fun();
+    /// // Adding a non-recursive function.
+    /// parse::fun_dtyp("\
+    ///     (define-fun get_head ( (lst (List Int)) ) Int
+    ///         (head lst)
+    ///     )
+    /// ");
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let t_1 = term::ge(
+    ///     term::fun(
+    ///         fun::test::length_fun_name(),
+    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { t_1.has_rec_fun_apps() }
+    ///
+    /// let t_2 = term::ge(
+    ///     term::fun(
+    ///         "get_head",
+    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_2.has_rec_fun_apps() }
+    ///
+    /// let t_3 = term::ge(
+    ///     term::int_var(7),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_3.has_rec_fun_apps() }
+    /// ```
+    pub fn has_rec_fun_apps(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if let Some((name, _)) = term.fun_inspect() {
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive()
+                    {
+                        Err(())
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(name)
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(name),
+                    ..
+                }
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// Returns true if the term mentions a function or an ADT.
+    pub fn has_fun_app_or_adt(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if term.fun_inspect().is_some()
+                    || term.dtyp_new_inspect().is_some()
+                    || term.dtyp_slc_inspect().is_some()
+                {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(_) | ZipOp::New(_) | ZipOp::Slc(_) => Err(()),
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(_),
+                    ..
+                }
+                | ZipFrame {
+                    thing: ZipOp::New(_),
+                    ..
+                }
+                | ZipFrame {
+                    thing: ZipOp::Slc(_),
+                    ..
+                } => Err(()),
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`:
+            empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+}
+
+/// Term modifiers.
+impl RTerm {
+    /// Turns a real term in a hashconsed one.
+    #[inline]
+    pub fn to_hcons(&self) -> Term {
+        term(self.clone())
     }
 
     /// Forces the type of a datatype constructor.
@@ -931,7 +986,7 @@ impl RTerm {
                     typ, name, args, ..
                 } => {
                     debug_assert_eq! { typ, & nu_typ }
-                    term::fun(typ.clone(), name.clone(), args.clone())
+                    term::fun(name.clone(), args.clone())
                 }
             };
 
@@ -972,87 +1027,6 @@ impl RTerm {
         }
     }
 
-    /// Checks whether the term is a relation.
-    pub fn is_relation(&self) -> bool {
-        match *self {
-            RTerm::App { op: Op::Eql, .. }
-            | RTerm::App { op: Op::Gt, .. }
-            | RTerm::App { op: Op::Ge, .. }
-            | RTerm::App { op: Op::Lt, .. }
-            | RTerm::App { op: Op::Le, .. } => true,
-            RTerm::App {
-                op: Op::Not,
-                ref args,
-                ..
-            } => args[0].is_relation(),
-            _ => false,
-        }
-    }
-    /// Checks whether a term is an equality.
-    pub fn is_eq(&self) -> bool {
-        match *self {
-            RTerm::App { op: Op::Eql, .. } => true,
-            _ => false,
-        }
-    }
-
-    /// Term evaluation.
-    pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
-        eval::eval(&factory::term(self.clone()), model)
-    }
-
-    /// If the term's an integer constant, returns the value.
-    pub fn int_val(&self) -> Option<&Int> {
-        if let RTerm::Cst(val) = self {
-            if let val::RVal::I(i) = val.get() {
-                return Some(i);
-            }
-        }
-        None
-    }
-    /// If the term's a rational constant, returns the value.
-    pub fn real_val(&self) -> Option<&Rat> {
-        if let RTerm::Cst(val) = self {
-            if let val::RVal::R(r) = val.get() {
-                return Some(r);
-            }
-        }
-        None
-    }
-
-    /// The highest variable index appearing in the term.
-    pub fn highest_var(&self) -> Option<VarIdx> {
-        let mut max = None;
-
-        for var_or_cst in self.leaf_iter() {
-            if let Either::Left((_, var_idx)) = var_or_cst {
-                max = Some(::std::cmp::max(var_idx, max.unwrap_or_else(|| 0.into())))
-            }
-        }
-
-        max
-    }
-
-    /// Returns the variable index if the term is a variable.
-    pub fn var_idx(&self) -> Option<VarIdx> {
-        match *self {
-            RTerm::Var(_, i) => Some(i),
-            _ => None,
-        }
-    }
-
-    /// Return true if the term mentions at least one variable from `vars`.
-    pub fn mentions_one_of(&self, vars: &VarSet) -> bool {
-        for var_or_cst in self.leaf_iter() {
-            if let Either::Left((_, var_idx)) = var_or_cst {
-                if vars.contains(&var_idx) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// If the term is a negation, returns what's below the negation.
     pub fn rm_neg(&self) -> Option<Term> {
         match *self {
@@ -1067,155 +1041,321 @@ impl RTerm {
             _ => None,
         }
     }
+}
 
-    /// Turns a real term in a hashconsed one.
-    #[inline]
-    pub fn to_hcons(&self) -> Term {
-        term(self.clone())
+/// Variant deconstructors.
+impl RTerm {
+    /// The operator and the kids of a term.
+    pub fn app_inspect(&self) -> Option<(Op, &Vec<Term>)> {
+        if let RTerm::App { op, ref args, .. } = *self {
+            Some((op, args))
+        } else {
+            None
+        }
     }
 
-    /// Returns true if the term mentions a function.
-    pub fn has_fun_apps(&self) -> bool {
-        use self::zip::*;
-
-        // Will be `Ok(())` if there's no function application, and `Err(())`
-        // otherwise.
-        let res = zip(
-            &self.to_hcons(),
-            |term| {
-                if let Some((_, _)) = term.fun_inspect() {
-                    Err(())
-                } else {
-                    Ok(None)
-                }
-            },
-            |_| Ok(()),
-            |zip_op, _, _: ()| match zip_op {
-                ZipOp::Fun(_) => Err(()),
-                _ => Ok(ZipDoTotal::Upp { yielded: () }),
-            },
-            |frame| match frame {
-                ZipFrame {
-                    thing: ZipOp::Fun(_),
-                    ..
-                } => Err(()),
-                mut frame => {
-                    let nu_term = frame.rgt_args.next().expect(
-                        "illegal call to `partial_op`: \
-                         empty `rgt_args` (has_fun_app_or_adt)",
-                    );
-                    Ok(ZipDo::Trm { nu_term, frame })
-                }
-            },
-        );
-
-        res.is_err()
+    /// Returns the kids of an ite.
+    pub fn ite_inspect(&self) -> Option<(&Term, &Term, &Term)> {
+        if let RTerm::App {
+            op: Op::Ite,
+            ref args,
+            ..
+        } = *self
+        {
+            debug_assert_eq! { args.len(), 3 }
+            Some((&args[0], &args[1], &args[2]))
+        } else {
+            None
+        }
     }
 
-    /// Returns true if the term mentions a recursive function.
-    pub fn has_rec_fun_apps(&self) -> bool {
-        use self::zip::*;
-
-        // Will be `Ok(())` if there's no function application, and `Err(())`
-        // otherwise.
-        let res = zip(
-            &self.to_hcons(),
-            |term| {
-                if let Some((name, _)) = term.fun_inspect() {
-                    if fun::get(name)
-                        .expect("inconsistent function application: unknown function")
-                        .is_recursive()
-                    {
-                        Err(())
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(None)
-                }
-            },
-            |_| Ok(()),
-            |zip_op, _, _: ()| match zip_op {
-                ZipOp::Fun(name)
-                    if fun::get(name)
-                        .expect("inconsistent function application: unknown function")
-                        .is_recursive() =>
-                {
-                    Err(())
-                }
-                _ => Ok(ZipDoTotal::Upp { yielded: () }),
-            },
-            |frame| match frame {
-                ZipFrame {
-                    thing: ZipOp::Fun(name),
-                    ..
-                }
-                    if fun::get(name)
-                        .expect("inconsistent function application: unknown function")
-                        .is_recursive() =>
-                {
-                    Err(())
-                }
-                mut frame => {
-                    let nu_term = frame.rgt_args.next().expect(
-                        "illegal call to `partial_op`: \
-                         empty `rgt_args` (has_fun_app_or_adt)",
-                    );
-                    Ok(ZipDo::Trm { nu_term, frame })
-                }
-            },
-        );
-
-        res.is_err()
+    /// Inspects a function application.
+    pub fn fun_inspect(&self) -> Option<(&String, &Vec<Term>)> {
+        if let RTerm::Fun {
+            ref name, ref args, ..
+        } = *self
+        {
+            Some((name, args))
+        } else {
+            None
+        }
     }
 
-    /// Returns true if the term mentions a function or an ADT.
-    pub fn has_fun_app_or_adt(&self) -> bool {
-        use self::zip::*;
+    /// Returns the kid of a negation.
+    pub fn neg_inspect(&self) -> Option<&Term> {
+        if let RTerm::App {
+            op: Op::Not,
+            ref args,
+            ..
+        } = *self
+        {
+            debug_assert_eq! { args.len(), 1 }
+            Some(&args[0])
+        } else {
+            None
+        }
+    }
 
-        // Will be `Ok(())` if there's no function application, and `Err(())`
-        // otherwise.
-        let res = zip(
-            &self.to_hcons(),
-            |term| {
-                if term.fun_inspect().is_some()
-                    || term.dtyp_new_inspect().is_some()
-                    || term.dtyp_slc_inspect().is_some()
-                {
-                    Err(())
-                } else {
-                    Ok(None)
-                }
-            },
-            |_| Ok(()),
-            |zip_op, _, _: ()| match zip_op {
-                ZipOp::Fun(_) | ZipOp::New(_) | ZipOp::Slc(_) => Err(()),
-                _ => Ok(ZipDoTotal::Upp { yielded: () }),
-            },
-            |frame| match frame {
-                ZipFrame {
-                    thing: ZipOp::Fun(_),
-                    ..
-                }
-                | ZipFrame {
-                    thing: ZipOp::New(_),
-                    ..
-                }
-                | ZipFrame {
-                    thing: ZipOp::Slc(_),
-                    ..
-                } => Err(()),
-                mut frame => {
-                    let nu_term = frame.rgt_args.next().expect(
-                        "illegal call to `partial_op`:
-            empty `rgt_args` (has_fun_app_or_adt)",
-                    );
-                    Ok(ZipDo::Trm { nu_term, frame })
-                }
-            },
-        );
+    /// Returns the kids of conjunctions.
+    pub fn conj_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::And,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
 
-        res.is_err()
+    /// Returns the kids of disjunctions.
+    pub fn disj_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Or,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of equalities.
+    pub fn eq_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Eql,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of additions.
+    pub fn add_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Add,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of subtractions.
+    pub fn sub_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Sub,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of multiplications.
+    pub fn mul_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Mul,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a constant multiplication.
+    pub fn cmul_inspect(&self) -> Option<(Val, &Term)> {
+        if let RTerm::App {
+            op: Op::CMul,
+            ref args,
+            ..
+        } = *self
+        {
+            if args.len() == 2 {
+                if let Some(val) = args[0].val() {
+                    return Some((val, &args[1]));
+                }
+            }
+            panic!("illegal c_mul application: {}", self)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype tester.
+    pub fn dtyp_tst_inspect(&self) -> Option<(&str, &Term)> {
+        if let RTerm::DTypTst { name, term, .. } = self {
+            Some((name, term))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype constructor.
+    pub fn dtyp_new_inspect(&self) -> Option<(&Typ, &str, &[Term])> {
+        if let RTerm::DTypNew {
+            typ, name, args, ..
+        } = self
+        {
+            Some((typ, name, args))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype selector.
+    pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
+        if let RTerm::DTypSlc {
+            typ, name, term, ..
+        } = self
+        {
+            Some((typ, name, term))
+        } else {
+            None
+        }
+    }
+}
+
+/// Fold/map/zip functions.
+impl RTerm {
+    /// Iterator over over all the leafs of a term.
+    pub fn leaf_iter(&self) -> LeafIter {
+        LeafIter::of_rterm(self)
+    }
+
+    /// Iterates over all the subterms of a term, including itself.
+    pub fn iter<F>(&self, mut f: F)
+    where
+        F: FnMut(&RTerm),
+    {
+        use RTerm::*;
+        let mut stack = vec![self];
+
+        while let Some(term) = stack.pop() {
+            f(term);
+            match term {
+                App { args, .. } | DTypNew { args, .. } | Fun { args, .. } => {
+                    stack.extend(args.iter().map(|term| term.get()))
+                }
+
+                CArray { term, .. } | DTypSlc { term, .. } | DTypTst { term, .. } => {
+                    stack.push(term.get())
+                }
+
+                Var(_, _) | Cst(_) => (),
+            }
+        }
+    }
+
+    /// Term evaluation (int).
+    pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
+        self.eval(model)?.to_int()
+    }
+
+    /// Term evaluation (real).
+    pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
+        self.eval(model)?.to_real()
+    }
+
+    /// Term evaluation (bool).
+    pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
+        self.eval(model)?.to_bool()
+    }
+
+    /// Boolean a constant boolean term evaluates to.
+    pub fn bool(&self) -> Option<bool> {
+        match self.bool_eval(&()) {
+            Ok(Some(b)) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Evaluates a term with an empty model.
+    pub fn as_val(&self) -> Val {
+        if let Ok(res) = self.eval(&()) {
+            res
+        } else {
+            val::none(self.typ().clone())
+        }
+    }
+
+    /// Integer value the term evaluates to.
+    pub fn int(&self) -> Option<Int> {
+        if self.typ() != typ::int() {
+            return None;
+        }
+        match self.int_eval(&()) {
+            Ok(Some(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Real value the term evaluates to.
+    pub fn real(&self) -> Option<Rat> {
+        match self.real_eval(&()) {
+            Ok(Some(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Turns a constant term in a `Val`.
+    pub fn val(&self) -> Option<Val> {
+        match *self {
+            RTerm::Cst(ref val) => Some(val.clone()),
+            _ => None,
+        }
+    }
+
+    /// The kids of this term, if any.
+    pub fn kids(&self) -> Option<&[Term]> {
+        if let RTerm::App { ref args, .. } = *self {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Checks whether a term is an equality.
+    pub fn is_eq(&self) -> bool {
+        match *self {
+            RTerm::App { op: Op::Eql, .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Term evaluation.
+    pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
+        eval::eval(&factory::term(self.clone()), model)
+    }
+
+    /// The highest variable index appearing in the term.
+    pub fn highest_var(&self) -> Option<VarIdx> {
+        let mut max = None;
+
+        for var_or_cst in self.leaf_iter() {
+            if let Either::Left((_, var_idx)) = var_or_cst {
+                max = Some(::std::cmp::max(var_idx, max.unwrap_or_else(|| 0.into())))
+            }
+        }
+
+        max
     }
 
     /// TOP-DOWN term substitution.
@@ -1284,7 +1424,7 @@ impl RTerm {
                     } else {
                         panic!("illegal constant array application to 0 arguments")
                     },
-                    ZipOp::Fun(name) => term::fun(typ.clone(), name.clone(), acc),
+                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
                 };
 
                 Ok(ZipDoTotal::Upp { yielded })
@@ -1378,7 +1518,7 @@ impl RTerm {
                     } else {
                         panic!("illegal constant array application to 0 arguments")
                     },
-                    ZipOp::Fun(name) => term::fun(typ.clone(), name.clone(), acc),
+                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
                 };
 
                 Ok(ZipDoTotal::Upp { yielded })
@@ -1443,14 +1583,13 @@ impl RTerm {
     /// # Examples
     ///
     /// ```rust
-    /// use hoice::term ;
-    ///
+    /// # use hoice::term ;
     /// let bv0 = term::bool_var(0) ;
     /// let bv1 = term::bool_var(1) ;
     /// let bv2 = term::bool_var(2) ;
     /// let rhs = term::or(vec![bv1, bv2]) ;
     /// let term = term::eq(bv0, rhs.clone()) ;
-    /// debug_assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
+    /// assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
     /// ```
     pub fn as_subst(&self) -> Option<(VarIdx, Term)> {
         if let Some(kids) = self.eq_inspect() {
@@ -1540,8 +1679,7 @@ impl RTerm {
     /// # Examples
     ///
     /// ```rust
-    /// use hoice::term ;
-    ///
+    /// # use hoice::term ;
     /// let term = term::u_minus( term::int_var(0) ) ;
     /// println!("{}", term) ;
     /// assert_eq!{
@@ -1654,6 +1792,119 @@ impl RTerm {
                 | RTerm::DTypTst { .. } => return None,
             }
         }
+    }
+}
+
+/// Term writing.
+impl RTerm {
+    /// Write a real term using a special function to write variables.
+    pub fn write<W, WriteVar>(&self, w: &mut W, write_var: WriteVar) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        self.write_with(w, write_var, None)
+    }
+
+    /// Write a real term using a special function to write variables.
+    pub fn write_with<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&bindings::Bindings>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        self.write_with_raw(w, write_var, bindings.map(|b| b.bindings()))
+    }
+
+    /// Write a real term using a special function to write variables.
+    fn write_with_raw<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&[TermMap<VarIdx>]>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        // Stores triplets of
+        // - the elements to write,
+        // - the prefix string, written before next element
+        // - the suffix, written once there's no more elements to write
+        let mut stack = vec![(vec![self], "", "")];
+
+        'work: while let Some((mut to_do, sep, end)) = stack.pop() {
+            use self::RTerm::*;
+
+            if let Some(this_term) = to_do.pop() {
+                stack.push((to_do, sep, end));
+                write!(w, "{}", sep)?;
+
+                // Is term in the bindings?
+                if let Some(bindings) = bindings {
+                    for map in bindings {
+                        if let Some(var) = map.get(&this_term.to_hcons()) {
+                            Bindings::write_var(w, *var)?;
+                            continue 'work;
+                        }
+                    }
+                }
+
+                match this_term {
+                    Var(_, v) => write_var(w, *v)?,
+
+                    Cst(val) => write!(w, "{}", val)?,
+
+                    CArray { term, .. } => {
+                        write!(
+                            w,
+                            "(({} {} {})",
+                            keywords::op::as_,
+                            keywords::op::const_,
+                            this_term.typ()
+                        )?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    App { op, args, .. } => {
+                        write!(w, "({}", op)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    }
+
+                    DTypSlc { name, term, .. } => {
+                        write!(w, "({}", name)?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    DTypTst { name, term, .. } => {
+                        write!(w, "({}-{}", keywords::op::is_, name)?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    DTypNew { name, args, .. } => if args.is_empty() {
+                        write!(w, "{}", name)?
+                    } else {
+                        write!(w, "({}", name)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    },
+
+                    Fun { name, args, .. } => if args.is_empty() {
+                        write!(w, "{}", name)?
+                    } else {
+                        write!(w, "({}", name)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    },
+                }
+            } else {
+                w.write_all(end.as_bytes())?
+            }
+        }
+
+        Ok(())
     }
 }
 

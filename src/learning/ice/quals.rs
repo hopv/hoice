@@ -617,7 +617,6 @@ impl NuQuals {
                                 if fun.typ.is_bool() {
                                     quals.insert(
                                         term::fun(
-                                            fun.typ.clone(),
                                             fun.name.clone(),
                                             vec![term::var(var, typ.clone())],
                                         ),

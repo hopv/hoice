@@ -18,7 +18,11 @@ pub struct VarInfo {
 }
 impl VarInfo {
     /// Constructor.
-    pub fn new(name: String, typ: Typ, idx: VarIdx) -> Self {
+    pub fn new<S>(name: S, typ: Typ, idx: VarIdx) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
         VarInfo {
             name,
             typ,

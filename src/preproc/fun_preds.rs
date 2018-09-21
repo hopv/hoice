@@ -289,7 +289,7 @@ impl<'a> BranchBuilder<'a> {
                 }
                 let nu_args = ::std::mem::replace(&mut nu_args, Vec::with_capacity(self.args_len));
 
-                let fun_app = term::fun(self.fun_typ.clone(), self.fun_name.into(), nu_args);
+                let fun_app = term::fun(self.fun_name, nu_args);
                 let fun_app_var = register_call!(fun_app);
                 let fun_app = term::var(fun_app_var, self.fun_typ.clone());
 
@@ -685,7 +685,6 @@ impl FunDef {
         let mut invs = Vec::with_capacity(self.invars.len());
         if !self.invars.is_empty() {
             let subst: VarMap<_> = vec![term::fun(
-                self.typ,
                 self.name.clone(),
                 self.sig
                     .into_iter()
@@ -775,10 +774,10 @@ impl FunDef {
 /// let mut fun_preds = FunPreds::new(& instance);
 /// let mut instance = PreInstance::new(& mut instance).unwrap();
 /// let info = fun_preds.apply(& mut instance).unwrap();
-/// debug_assert_eq! { info.preds, 2 } // 2 because `unused` is simplified by propagation
+/// assert_eq! { info.preds, 2 } // 2 because `unused` is simplified by propagation
 ///
 /// let pred: PrdIdx = 0.into();
-/// debug_assert_eq! { "len_fun_preds_example", & instance[pred].name }
+/// assert_eq! { "len_fun_preds_example", & instance[pred].name }
 ///
 /// let funs = instance[pred].funs();
 /// assert_eq!( "len_fun_preds_example_hoice_reserved_fun", &funs[0].name);
@@ -806,7 +805,6 @@ impl FunPreds {
         let mut to_rm = vec![];
 
         log!(@2 "working on {}", conf.emph(& instance[pred].name));
-        println!("working on {}", conf.emph(&instance[pred].name));
 
         debug_assert! { to_rm.is_empty() }
 
@@ -864,13 +862,11 @@ impl FunPreds {
             to_rm.push(clause);
 
             log! { @3 | "working on clause #{}", clause }
-            println! { "working on clause #{}", clause }
 
             fun_def = if let Some(new) = fun_def.register_clause(&instance[clause])? {
                 new
             } else {
                 log!{ @3 | "clause registration failed" }
-                println!{ "clause registration failed" }
                 abort!()
             };
         }
@@ -888,7 +884,7 @@ impl FunPreds {
         for (var, typ) in instance[pred].sig.index_iter().take(args_len) {
             args.push(term::var(var, typ.clone()))
         }
-        let fun_app = term::fun(fun.typ.clone(), fun.name.clone(), args);
+        let fun_app = term::fun(fun.name.clone(), args);
 
         let def = if let Some(last) = last.as_ref() {
             term::eq(term::var(*last, fun.typ.clone()), fun_app)
@@ -1284,10 +1280,8 @@ pub fn map_invert(
                 }
             }
 
-            RTerm::Fun {
-                typ, name, args, ..
-            } => {
-                let okay = fun_invert(term, typ, name, args, &mut nu_cube, subst, &nu_subst);
+            RTerm::Fun { name, args, .. } => {
+                let okay = fun_invert(term, name, args, &mut nu_cube, subst, &nu_subst);
                 if !okay {
                     return Ok(false);
                 }
@@ -1318,7 +1312,7 @@ fn dtyp_new_invert<'a>(
     let selectors = typ.selectors_of(name)?;
     debug_assert_eq! { args.len(), selectors.len() }
 
-    cube.push(term::dtyp_tst(name.into(), term.clone()));
+    cube.push(term::dtyp_tst(name, term.clone()));
 
     for (arg, (slc, _)) in args.iter().zip(selectors.iter()) {
         stack.push((
@@ -1479,10 +1473,7 @@ fn dtyp_slc_invert<'a>(
     nu_subst: &VarHMap<Term>,
 ) -> bool {
     if let Some((inner, _)) = inner.subst_total(&(subst, nu_subst)) {
-        cube.push(term::eq(
-            term,
-            term::dtyp_slc(typ.clone(), name.into(), inner),
-        ));
+        cube.push(term::eq(term, term::dtyp_slc(typ.clone(), name, inner)));
         true
     } else {
         false
@@ -1499,7 +1490,7 @@ fn dtyp_tst_invert<'a>(
     nu_subst: &VarHMap<Term>,
 ) -> bool {
     if let Some((inner, _)) = inner.subst_total(&(subst, nu_subst)) {
-        cube.push(term::eq(term, term::dtyp_tst(name.into(), inner)));
+        cube.push(term::eq(term, term::dtyp_tst(name, inner)));
         true
     } else {
         false
@@ -1509,7 +1500,6 @@ fn dtyp_tst_invert<'a>(
 /// Inverts a function application.
 fn fun_invert<'a>(
     term: Term,
-    typ: &Typ,
     name: &str,
     args: &'a [Term],
     cube: &mut Vec<Term>,
@@ -1525,7 +1515,7 @@ fn fun_invert<'a>(
         }
     }
 
-    cube.push(term::eq(term, term::fun(typ.clone(), name.into(), nu_args)));
+    cube.push(term::eq(term, term::fun(name, nu_args)));
 
     true
 }

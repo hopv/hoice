@@ -29,13 +29,13 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 /// let mut strict_neg = StrictNeg::new(& instance);
 /// let mut instance = PreInstance::new(& mut instance).unwrap();
 /// let info = strict_neg.apply(& mut instance).unwrap();
-/// debug_assert! { ! info.non_zero() }
+/// assert! { ! info.non_zero() }
 ///
 /// let pred: PrdIdx = 0.into();
-/// debug_assert_eq! { "pred", & instance[pred].name }
+/// assert_eq! { "pred", & instance[pred].name }
 ///
 /// let strengthening = instance[pred].strength().unwrap();
-/// debug_assert_eq! {
+/// assert_eq! {
 ///     "(or \
 ///         (>= (* (- 1) v_0) 0) \
 ///         (>= (+ v_3 (* (- 1) v_0)) 0) \

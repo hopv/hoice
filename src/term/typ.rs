@@ -44,7 +44,7 @@ pub type Typ = HConsed<RTyp>;
 ///
 /// ```rust
 /// use hoice::term::typ::* ;
-/// debug_assert_eq! {
+/// assert_eq! {
 ///   format!("{}", array(int(), array(int(), int()))),
 ///   "(Array Int (Array Int Int))"
 /// }
@@ -194,7 +194,7 @@ impl RTyp {
     ///
     /// let t_1 = typ::array( typ::int(), typ::unk() ) ;
     /// let t_2 = typ::array( typ::unk(), typ::real() ) ;
-    /// debug_assert! { t_1.is_compatible(& t_2) }
+    /// assert! { t_1.is_compatible(& t_2) }
     /// ```
     pub fn is_compatible(&self, other: &Typ) -> bool {
         if self == other.get() {

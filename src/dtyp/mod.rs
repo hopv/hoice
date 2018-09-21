@@ -1,4 +1,9 @@
 //! Datatypes.
+//!
+//! In test mode, the `List` datatype is automatically added, as well as a few functions (see the
+//! [`fun`] module). This is so that dtyp-related doc/lib tests have something to work with.
+//!
+//! [`fun`]: ../fun/index.html (fun module)
 
 use common::*;
 
@@ -305,27 +310,36 @@ pub type CArgs = Vec<(String, PartialTyp)>;
 /// Type of the datatype factory.
 type Factory = RwLock<BTreeMap<String, DTyp>>;
 lazy_static! {
-  /// Datatype factory.
-  static ref factory: Factory = RwLock::new(
-    BTreeMap::new()
-  ) ;
+    /// Datatype factory.
+    static ref factory: Factory = RwLock::new(
+        BTreeMap::new()
+    ) ;
 
-  /// Set of reserved datatypes.
-  static ref reserved_dtyps: BTreeSet<& 'static str> = {
-    let mut set = BTreeSet::new() ;
-    set.insert("List") ;
-    set
-  } ;
+    /// Set of reserved datatypes.
+    static ref reserved_dtyps: BTreeSet<& 'static str> = {
+        let mut set = BTreeSet::new() ;
+        set.insert("List") ;
+        set
+    } ;
 
-  /// Map from constructors to datatypes.
-  static ref constructor_map: Factory = RwLock::new(
-    BTreeMap::new()
-  ) ;
+    /// Map from constructors to datatypes.
+    static ref constructor_map: Factory = RwLock::new(
+        BTreeMap::new()
+    ) ;
 
-  /// Set of selectors.
-  static ref selector_set: RwLock<BTreeSet<String>> = RwLock::new(
-    BTreeSet::new()
-  ) ;
+    /// Set of selectors.
+    static ref selector_set: RwLock<BTreeSet<String>> = RwLock::new(
+        BTreeSet::new()
+    ) ;
+}
+
+/// Creates the list datatype.
+///
+/// Only available in test mode.
+#[test]
+pub fn create_list_dtyp() {
+    let _ = mk(RDTyp::list());
+    ()
 }
 
 /// True if there is at least one datatype declared.

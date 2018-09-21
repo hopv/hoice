@@ -26,23 +26,42 @@ pub use self::pre_instance::PreInstance;
 /// # Finalization
 ///
 /// Instance finalization is crucial. A lot of instance functions do not make sense unless the
-/// instance is finalized. This is currently done at the end of preprocessing.
+/// instance is finalized. This is currently done at the end of preprocessing with the [`finalize`]
+/// function.
 ///
 /// Functions that do not make sense before finalization include:
 ///
-/// - [`pos_clauses`](struct.Instance.html#method.strict_neg_clauses)
-/// - [`strict_neg_clauses`](struct.Instance.html#method.strict_neg_clauses)
-/// - [`neg_clauses`](struct.Instance.html#method.neg_clauses)
-/// - [`non_strict_neg_clauses`](struct.Instance.html#method.non_strict_neg_clauses)
-/// - [`imp_clauses`](struct.Instance.html#method.imp_clauses)
-/// - [`model_of`](struct.Instance.html#method.model_of)
-/// - [`extend_model`](struct.Instance.html#method.extend_model)
-/// - [`sorted_forced_terms`](struct.Instance.html#method.sorted_forced_terms)
-/// - [`simplify_pred_defs`](struct.Instance.html#method.simplify_pred_defs)
+/// - [`pos_clauses`]
+/// - [`strict_neg_clauses`]
+/// - [`neg_clauses`]
+/// - [`non_strict_neg_clauses`]
+/// - [`imp_clauses`]
+/// - [`model_of`]
+/// - [`extend_model`]
+/// - [`sorted_forced_terms`]
+/// - [`simplify_pred_defs`]
 ///
 /// [parsing]: ../parse/index.html (parse module)
 /// [preprocessing]: ../preproc/index.html (preproc module)
-/// [finalize]: struct.Instance.html#method.finalize
+/// [`finalize`]: struct.Instance.html#method.finalize
+/// [`pos_clauses`]: struct.Instance.html#method.strict_neg_clauses
+/// (Instance's pos_clauses function)
+/// [`strict_neg_clauses`]: struct.Instance.html#method.strict_neg_clauses
+/// (strict_neg_clauses function)
+/// [`neg_clauses`]: struct.Instance.html#method.neg_clauses
+/// (neg_clauses function)
+/// [`non_strict_neg_clauses`]: struct.Instance.html#method.non_strict_neg_clauses
+/// (non_strict_neg_clauses function)
+/// [`imp_clauses`]: struct.Instance.html#method.imp_clauses
+/// (imp_clauses function)
+/// [`model_of`]: struct.Instance.html#method.model_of
+/// (model_of function)
+/// [`extend_model`]: struct.Instance.html#method.extend_model
+/// (extend_model function)
+/// [`sorted_forced_terms`]: struct.Instance.html#method.sorted_forced_terms
+/// (sorted_forced_terms function)
+/// [`simplify_pred_defs`]: struct.Instance.html#method.simplify_pred_defs
+/// (simplify_pred_defs function)
 #[derive(Clone)]
 pub struct Instance {
     /// Predicates.

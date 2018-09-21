@@ -9,7 +9,7 @@ pub use self::ptterms::*;
 use consts::keywords;
 
 /// Result yielded by the parser.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parsed {
     /// Check-sat.
     CheckSat,
@@ -27,6 +27,11 @@ pub enum Parsed {
     Reset,
     /// End of file.
     Eof,
+}
+impl_fmt! {
+    Parsed(self, fmt) {
+        write!(fmt, "{:?}", self)
+    }
 }
 
 lazy_static! {
@@ -1143,7 +1148,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 })?;
 
                 let idx = args.next_index();
-                args.push(VarInfo::new(arg_name.into(), sort, idx));
+                args.push(VarInfo::new(arg_name, sort, idx));
 
                 if arg_map.insert(arg_name, idx).is_some() {
                     bail!(self.error(
@@ -1530,7 +1535,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     format!("found two quantifier variables named `{}`", conf.bad(ident))
                 ))
             }
-            var_map.push(VarInfo::new(ident.into(), sort, idx))
+            var_map.push(VarInfo::new(ident, sort, idx))
         }
         self.tag(")")?;
         var_map.shrink_to_fit();
@@ -2070,10 +2075,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ) -> Res<(Term, Pos)> {
         use errors::TypError;
 
-        let res = if let Some((var_infos, typ)) = self.functions.get(&name as &str) {
+        let res = if let Some((var_infos, _)) = self.functions.get(&name as &str) {
             // Function application for one of the functions we are currently parsing
             // the definition of? (i.e. the function is not registered yet)
-            fun::type_apply(name, var_infos, typ, args)
+            fun::type_apply(name, var_infos, args)
         } else {
             // Function should already exist.
             fun::apply(name, args)
@@ -3436,4 +3441,15 @@ pub fn instance(s: &str) -> Instance {
     );
 
     instance
+}
+
+/// Parses some functions/datatypes.
+pub fn fun_dtyp(s: &str) {
+    let mut dummy = Instance::new();
+    let mut cxt = ParserCxt::new();
+
+    print_err!(
+        cxt.parser(s, 0, &Profiler::new()).parse(&mut dummy),
+        "while parsing function / datatypes"
+    );
 }

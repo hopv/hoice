@@ -422,30 +422,33 @@ impl Clause {
             prune_things = false;
             mem! { check empty }
 
-            scoped! {
-              let mut terms = self.lhs_terms.iter() ;
-              while let Some(term) = terms.next() {
-                for t in terms.clone() {
-                  match t.conj_simpl(term) {
-                    // `t` is more generic, `term` is redundant, keep `t`.
-                    Cmp(Equal) | Cmp(Greater) => {
-                      mem!( rmv term.clone() ) ;
-                    },
-                    // `term` is more generic, discard `t`.
-                    Cmp(Less) => {
-                      mem!( rmv t.clone() ) ;
-                    },
-                    // No relation.
-                    None => (),
-                    // The conjunction of the two terms yields a new one.
-                    Yields(nu_term) => {
-                      mem!( rmv t.clone() ) ;
-                      mem!( rmv term.clone() ) ;
-                      mem!( add nu_term ) ;
-                    },
-                  }
+            {
+                let mut terms = self.lhs_terms.iter();
+                while let Some(term) = terms.next() {
+                    for t in terms.clone() {
+                        match t.conj_cmp(term) {
+                            // No relation.
+                            None => (),
+
+                            // `t` is stronger, `term` is redundant, keep `t`.
+                            Cmp(Equal) | Cmp(Greater) => {
+                                mem!( rmv term.clone() );
+                            }
+
+                            // `term` is stronger, discard `t`.
+                            Cmp(Less) => {
+                                mem!( rmv t.clone() );
+                            }
+
+                            // The conjunction of the two terms yields a new one.
+                            Yields(nu_term) => {
+                                mem!( rmv t.clone() );
+                                mem!( rmv term.clone() );
+                                mem!( add nu_term );
+                            }
+                        }
+                    }
                 }
-              }
             }
 
             pruned = pruned || !mem!(rmv empty) || !mem!(add empty);
@@ -643,7 +646,7 @@ impl Clause {
         while keep_checking {
             keep_checking = false;
 
-            set.retain(|t| match t.conj_simpl(&term) {
+            set.retain(|t| match t.conj_cmp(&term) {
                 // `t` is more generic, `term` is redundant, keep `t`.
                 Cmp(Equal) | Cmp(Greater) => {
                     redundant = true;
@@ -760,7 +763,7 @@ impl Clause {
 
           while let Some(term) = terms.next() {
             for t in terms.clone() {
-              if term.conj_simpl(t).is_some() {
+              if term.conj_cmp(t).is_some() {
                 bail!(
                   "redundant atoms in clause:\n  {}\n  {}\n{}",
                   term, t, conf.bad(blah)

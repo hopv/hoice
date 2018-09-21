@@ -245,12 +245,14 @@ pub fn select(array: Term, idx: Term) -> Term {
 /// # Panics
 ///
 /// - if the function does not exist
-/// - if the type does not make sense
 /// - if the arguments are illegal
 #[inline]
-pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
-    if let Err(e) = fun::dec_do(&name, |fun| {
-        debug_assert_eq! { typ, fun.typ }
+pub fn fun<S>(name: S, mut args: Vec<Term>) -> Term
+where
+    S: Into<String>,
+{
+    let name = name.into();
+    match fun::dec_do(&name, |fun| {
         if args.len() != fun.sig.len() {
             panic!("illegal application of function {}", conf.bad(&name))
         }
@@ -259,13 +261,14 @@ pub fn fun(typ: Typ, name: String, mut args: Vec<Term>) -> Term {
                 *arg = nu_arg
             }
         }
-        Ok(())
+        Ok(fun.typ.clone())
     }) {
-        print_err(&e);
-        panic!("illegal function application")
+        Ok(typ) => factory.mk(RTerm::new_fun(typ, name, args)),
+        Err(e) => {
+            print_err(&e);
+            panic!("illegal function application")
+        }
     }
-
-    factory.mk(RTerm::new_fun(typ, name, args))
 }
 
 /// Creates an operator application.
@@ -313,8 +316,11 @@ pub fn val(val: Val) -> Term {
 }
 
 /// Creates a datatype constructor.
-pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
-    let rterm = term::simplify::dtyp_new(typ, name, args);
+pub fn dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Term
+where
+    S: Into<String>,
+{
+    let rterm = term::simplify::dtyp_new(typ, name.into(), args);
     factory.mk(rterm)
 }
 
@@ -323,8 +329,11 @@ pub fn dtyp_new(typ: Typ, name: String, args: Vec<Term>) -> Term {
 /// # TODO
 ///
 /// - treat constants better
-pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
-    match term::simplify::dtyp_slc(typ, name, term) {
+pub fn dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Term
+where
+    S: Into<String>,
+{
+    match term::simplify::dtyp_slc(typ, name.into(), term) {
         Either::Left(rterm) => factory.mk(rterm),
         Either::Right(term) => term,
     }
@@ -335,8 +344,11 @@ pub fn dtyp_slc(typ: Typ, name: String, term: Term) -> Term {
 /// # TODO
 ///
 /// - treat constants better
-pub fn dtyp_tst(name: String, term: Term) -> Term {
-    let (rterm, positive) = term::simplify::dtyp_tst(name, term);
+pub fn dtyp_tst<S>(name: S, term: Term) -> Term
+where
+    S: Into<String>,
+{
+    let (rterm, positive) = term::simplify::dtyp_tst(name.into(), term);
     let res = factory.mk(rterm);
     if !positive {
         not(res)

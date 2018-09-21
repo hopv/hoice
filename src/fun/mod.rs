@@ -1,5 +1,8 @@
 //! Hash consed functions.
 //!
+//! In test mode, the `List` datatype is automatically added, as well as a few functions (see the
+//! [`fun`] module). This is so that dtyp-related doc/lib tests have something to work with.
+//!
 //! # TODO
 //!
 //! Move this in the instance to avoid the unsafe code to borrow definitions.
@@ -22,17 +25,53 @@ pub type Fun = Arc<RFun>;
 /// [`get_as_ref`]: fn.get_as_ref.html (get_as_ref function)
 type Factory = RwLock<(BTreeMap<String, Fun>, usize)>;
 lazy_static! {
-  /// Function factory.
-  static ref factory: Factory = RwLock::new(
-    ( BTreeMap::new(), 0 )
-  ) ;
+    /// Function factory.
+    static ref factory: Factory = RwLock::new(
+        ( BTreeMap::new(), 0 )
+    ) ;
+
+    /// Stores function declarations before obtaining the actual definition.
+    static ref fun_decs: RwLock< BTreeMap<String, RFun> > = RwLock::new(
+        BTreeMap::new()
+    ) ;
 }
 
-lazy_static! {
-  /// Stores function declarations before obtaining the actual definition.
-  static ref fun_decs: RwLock< BTreeMap<String, RFun> > = RwLock::new(
-    BTreeMap::new()
-  ) ;
+/// Test-related stuff for functions.
+pub mod test {
+
+    /// Name of the length function over `(List Int)` (test mode only).
+    pub fn length_fun_name() -> &'static str {
+        "length"
+    }
+
+    /// Creates the list datatype and a length function over `(List Int)` this should only be used
+    /// in (doc) tests.
+    pub fn create_length_fun() {
+        use super::*;
+        let name = length_fun_name();
+        if get(name).is_some() {
+            return ();
+        }
+
+        ::parse::fun_dtyp(&format!(
+            "\
+            (define-funs-rec
+              (
+                ({name} ( (l (List Int)) ) Int)
+              )
+              (
+                (ite
+                  (= l nil)
+                  0
+                  (+ 1 ({name} (tail l)))
+                )
+              )
+            )
+            (exit)
+        ",
+            name = name
+        ))
+    }
 }
 
 /// Registers a function declaration.
@@ -369,7 +408,6 @@ pub fn get(name: &str) -> Option<Fun> {
 pub fn type_apply(
     name: String,
     var_info: &VarInfos,
-    out: &Typ,
     args: Vec<Term>,
 ) -> Result<Term, ::errors::TypError> {
     if args.len() != var_info.len() {
@@ -391,7 +429,7 @@ pub fn type_apply(
         }
     }
 
-    Ok(term::fun(out.clone(), name, args))
+    Ok(term::fun(name, args))
 }
 
 /// Creates a function application.
@@ -407,7 +445,7 @@ pub fn apply(name: String, args: Vec<Term>) -> Result<Term, ::errors::TypError> 
         )));
     };
 
-    type_apply(name, &def.sig, &def.typ, args)
+    type_apply(name, &def.sig, args)
 }
 
 /// Real structure for functions.

@@ -86,15 +86,15 @@ fn finalize(res: Res<()>, instance: &mut Instance, _profiler: &Profiler) -> Res<
 
     profile! {
       |_profiler|
-      "positive          clauses" => add instance.pos_clauses().len()
+      "clauses |        positive" => add instance.pos_clauses().len()
     }
     profile! {
       |_profiler|
-      "negative          clauses" => add instance.neg_clauses().len()
+      "clauses |        negative" => add instance.neg_clauses().len()
     }
     profile! {
       |_profiler|
-      "negative (strict) clauses" => add instance.strict_neg_clauses().len()
+      "clauses | strict-negative" => add instance.strict_neg_clauses().len()
     }
 
     match res {
