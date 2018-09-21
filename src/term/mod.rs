@@ -1046,6 +1046,17 @@ impl RTerm {
 /// Variant deconstructors.
 impl RTerm {
     /// The operator and the kids of a term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::modulo( term::int_var(0), term::int(7) );
+    ///
+    /// let (op, args) = t.app_inspect().unwrap();
+    /// assert_eq! { op, Op::Mod }
+    /// assert_eq! { args, &vec![ term::int_var(0), term::int(7) ] }
+    /// ```
     pub fn app_inspect(&self) -> Option<(Op, &Vec<Term>)> {
         if let RTerm::App { op, ref args, .. } = *self {
             Some((op, args))
@@ -1055,6 +1066,18 @@ impl RTerm {
     }
 
     /// Returns the kids of an ite.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ite( term::bool_var(3), term::int_var(0), term::int(7) );
+    ///
+    /// let (cnd, thn, els) = t.ite_inspect().unwrap();
+    /// assert_eq! { cnd, &term::bool_var(3) }
+    /// assert_eq! { thn, &term::int_var(0) }
+    /// assert_eq! { els, &term::int(7) }
+    /// ```
     pub fn ite_inspect(&self) -> Option<(&Term, &Term, &Term)> {
         if let RTerm::App {
             op: Op::Ite,
@@ -1070,6 +1093,21 @@ impl RTerm {
     }
 
     /// Inspects a function application.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun };
+    /// fun::test::create_length_fun();
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let nil = term::dtyp_new(list.clone(), "nil", vec![]);
+    /// let t = term::fun( fun::test::length_fun_name(), vec![ nil.clone() ] );
+    ///
+    /// let (name, args) = t.fun_inspect().unwrap();
+    /// assert_eq! { name, fun::test::length_fun_name() }
+    /// assert_eq! { args, & vec![ nil ] }
+    /// ```
     pub fn fun_inspect(&self) -> Option<(&String, &Vec<Term>)> {
         if let RTerm::Fun {
             ref name, ref args, ..
@@ -1082,6 +1120,16 @@ impl RTerm {
     }
 
     /// Returns the kid of a negation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::not(term::bool_var(3));
+    ///
+    /// let kid = t.neg_inspect().unwrap();
+    /// assert_eq! { kid, &term::bool_var(3) }
+    /// ```
     pub fn neg_inspect(&self) -> Option<&Term> {
         if let RTerm::App {
             op: Op::Not,
@@ -1097,6 +1145,18 @@ impl RTerm {
     }
 
     /// Returns the kids of conjunctions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let not_v_3 = term::not(term::bool_var(3));
+    /// let ge = term::ge( term::int_var(0), term::int(17) );
+    /// let t = term::and(vec![ not_v_3.clone(), ge.clone() ]);
+    ///
+    /// let kids = t.conj_inspect().unwrap();
+    /// assert_eq! { kids, &vec![not_v_3, ge] }
+    /// ```
     pub fn conj_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::And,
@@ -1111,6 +1171,18 @@ impl RTerm {
     }
 
     /// Returns the kids of disjunctions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let not_v_3 = term::not(term::bool_var(3));
+    /// let ge = term::ge( term::int_var(0), term::int(17) );
+    /// let t = term::or(vec![ not_v_3.clone(), ge.clone() ]);
+    ///
+    /// let kids = t.disj_inspect().unwrap();
+    /// assert_eq! { kids, &vec![not_v_3, ge] }
+    /// ```
     pub fn disj_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Or,
@@ -1125,6 +1197,28 @@ impl RTerm {
     }
 
     /// Returns the kids of equalities.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::eq( term::int_var(0), term::int(0) );
+    ///
+    /// let kids = t.eq_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int(0) ] }
+    ///
+    /// // Kids will change in general. For instance:
+    /// let t = term::eq( term::int_var(0), term::int(17) );
+    ///
+    /// let kids = t.eq_inspect().unwrap();
+    /// assert_ne! { kids, &vec![ term::int_var(0), term::int(17) ] }
+    /// assert_eq! {
+    ///     kids, &vec![
+    ///         term::add(vec![term::int_var(0), term::u_minus(term::int(17))]),
+    ///         term::int(0)
+    ///     ]
+    /// }
+    /// ```
     pub fn eq_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Eql,
@@ -1139,6 +1233,23 @@ impl RTerm {
     }
 
     /// Returns the kids of additions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(17)] );
+    ///
+    /// let kids = t.add_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int(17) ] }
+    ///
+    /// // Be careful that the order might change.
+    /// let t = term::add( vec![term::int_var(3), term::int_var(0)] );
+    ///
+    /// let kids = t.add_inspect().unwrap();
+    /// assert_ne! { kids, &vec![ term::int_var(3), term::int_var(0) ] }
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int_var(3) ] }
+    /// ```
     pub fn add_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Add,
@@ -1153,7 +1264,10 @@ impl RTerm {
     }
 
     /// Returns the kids of subtractions.
-    pub fn sub_inspect(&self) -> Option<&Vec<Term>> {
+    ///
+    /// Unused currently, subtraction are rewritten as addition with unary minuses.
+    #[allow(dead_code)]
+    fn sub_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Sub,
             ref args,
@@ -1167,6 +1281,28 @@ impl RTerm {
     }
 
     /// Returns the kids of multiplications.
+    ///
+    /// Deconstructs *only* multiplications in the sense of [`Op::Mul`], *not to be confused* with
+    /// [`Op::CMul`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::mul( vec![term::int_var(0), term::int_var(2)] );
+    ///
+    /// let kids = t.mul_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int_var(2) ] }
+    ///
+    /// // Careful of `Op::CMul`.
+    /// let t = term::mul( vec![term::int(3), term::int_var(0)] );
+    ///
+    /// assert! { t.mul_inspect().is_none() }
+    /// assert! { t.cmul_inspect().is_some() }
+    /// ```
+    ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
     pub fn mul_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Mul,
@@ -1181,6 +1317,29 @@ impl RTerm {
     }
 
     /// Returns the kids of a constant multiplication.
+    ///
+    /// Deconstructs *only* multiplications in the sense of [`Op::CMul`], *not to be confused* with
+    /// [`Op::Mul`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::mul( vec![term::int(3), term::int_var(0)] );
+    ///
+    /// let (val, kid) = t.cmul_inspect().unwrap();
+    /// assert_eq! { val, val::int(3) }
+    /// assert_eq! { kid, &term::int_var(0) }
+    ///
+    /// let t = term::cmul( 7, t.clone() );
+    ///
+    /// let (val, kid) = t.cmul_inspect().unwrap();
+    /// assert_eq! { val, val::int(7 * 3) }
+    /// assert_eq! { kid, &term::int_var(0) }
+    /// ```
+    ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
     pub fn cmul_inspect(&self) -> Option<(Val, &Term)> {
         if let RTerm::App {
             op: Op::CMul,
@@ -1200,6 +1359,29 @@ impl RTerm {
     }
 
     /// Returns the kids of a datatype tester.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let t = term::dtyp_tst("insert", term::var(0, list.clone()));
+    ///
+    /// # println!("{}", t);
+    /// let (constructor, term) = t.dtyp_tst_inspect().unwrap();
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { term, &term::var(0, list.clone()) }
+    ///
+    /// // Careful of unary tester rewriting.
+    /// let t = term::dtyp_tst("nil", term::var(0, list.clone()));
+    /// # println!("{}", t);
+    /// assert! { t.dtyp_tst_inspect().is_none() }
+    ///
+    /// let negated = t.neg_inspect().unwrap();
+    /// let (constructor, term) = negated.dtyp_tst_inspect().unwrap();
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { term, &term::var(0, list) }
+    /// ```
     pub fn dtyp_tst_inspect(&self) -> Option<(&str, &Term)> {
         if let RTerm::DTypTst { name, term, .. } = self {
             Some((name, term))
@@ -1209,6 +1391,23 @@ impl RTerm {
     }
 
     /// Returns the kids of a datatype constructor.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let nil = term::dtyp_new(list.clone(), "nil", vec![]);
+    /// let only_v_0 = term::dtyp_new(
+    ///     list.clone(), "insert", vec![ term::int_var(0), nil.clone()]
+    /// );
+    ///
+    /// # println!("{}", only_v_0);
+    /// let (typ, constructor, kids) = only_v_0.dtyp_new_inspect().unwrap();
+    /// assert_eq! { typ, & list }
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { kids, &[term::int_var(0), nil] }
+    /// ```
     pub fn dtyp_new_inspect(&self) -> Option<(&Typ, &str, &[Term])> {
         if let RTerm::DTypNew {
             typ, name, args, ..
@@ -1221,6 +1420,18 @@ impl RTerm {
     }
 
     /// Returns the kids of a datatype selector.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let only_v_0 = term::dtyp_slc(list.clone(), "tail", term::int_var(0));
+    ///
+    /// # println!("{}", only_v_0);
+    /// let (typ, constructor, kids) = only_v_0.dtyp_slc_inspect().unwrap();
+    /// assert_eq! { typ, & list }
+    /// assert_eq! { constructor, "tail" }
+    /// assert_eq! { kids, &term::int_var(0) }
+    /// ```
     pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
         if let RTerm::DTypSlc {
             typ, name, term, ..
