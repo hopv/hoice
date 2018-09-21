@@ -305,7 +305,7 @@ impl RTerm {
     /// assert! { to_real.typ().is_real() }
     ///
     /// let term = term::eq(
-    ///     to_real, term::real_of_float(7.0)
+    ///     to_real, term::real_of(7.0)
     /// );
     /// assert! { term.typ().is_bool() }
     /// ```
@@ -531,10 +531,10 @@ impl RTerm {
     /// assert_eq! { sum.arith(), Some(term::int(1)) }
     ///
     /// let to_real = term::to_real(sum);
-    /// assert_eq! { to_real.arith(), Some(term::real_of_float(1.0)) }
+    /// assert_eq! { to_real.arith(), Some(term::real_of(1.0)) }
     ///
     /// let term = term::eq(
-    ///     to_real, term::real_of_float(7.0)
+    ///     to_real, term::real_of(7.0)
     /// );
     /// assert_eq! { term.arith(), None }
     /// ```
@@ -560,7 +560,7 @@ impl RTerm {
     /// let sum = term::add(vec![term::int_var(0), one]);
     /// assert_eq! { sum.int_val(), None }
     ///
-    /// let one = term::real_of_float(1.0);
+    /// let one = term::real_of(1.0);
     /// assert_eq! { one.int_val(), None }
     /// ```
     pub fn int_val(&self) -> Option<&Int> {
@@ -578,7 +578,7 @@ impl RTerm {
     ///
     /// ```rust
     /// use hoice::{ term, common::Rat };
-    /// let one = term::real_of_float(1.0);
+    /// let one = term::real_of(1.0);
     /// assert_eq! { one.real_val(), Some(&Rat::new(1.into(),1.into())) }
     ///
     /// let sum = term::add(vec![term::real_var(0), one]);
@@ -839,6 +839,45 @@ impl RTerm {
         );
 
         res.is_err()
+    }
+
+    /// The kids of this term, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let kids = vec![term::int_var(0), term::int(2)];
+    /// let t = term::add( kids.clone() );
+    /// # println!("{}", t);
+    /// assert_eq! { t.kids(), Some(&kids as &[Term]) }
+    /// ```
+    pub fn kids(&self) -> Option<&[Term]> {
+        if let RTerm::App { ref args, .. } = *self {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Checks whether a term is an equality.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert! { ! t.is_eq() }
+    /// let t = term::eq( t, term::int(42) );
+    /// # println!("{}", t);
+    /// assert! { t.is_eq() }
+    /// ```
+    pub fn is_eq(&self) -> bool {
+        match *self {
+            RTerm::App { op: Op::Eql, .. } => true,
+            _ => false,
+        }
     }
 }
 
@@ -1447,11 +1486,62 @@ impl RTerm {
 /// Fold/map/zip functions.
 impl RTerm {
     /// Iterator over over all the leafs of a term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let sum = term::add(vec![
+    ///     term::int_var(0),
+    ///     term::cmul(2, term::int_var(1))
+    /// ]);
+    /// let t = term::ge(sum, term::int(0));
+    /// # println!("{}", t);
+    ///
+    /// let int = typ::int();
+    /// let (zero, two) = (val::int(0), val::int(2));
+    /// let mut leaves: Vec<Either<(&Typ, VarIdx), &Val>> = vec![
+    ///     Either::Left((&int, 0.into())), // v_0: Int |
+    ///     Either::Right(& two),           // 2        |- LHS of the `<=`
+    ///     Either::Left((&int, 1.into())), // v_1: Int |
+    ///     Either::Right(& zero),          // 0, RHS of the `<=`
+    /// ];
+    /// leaves.reverse(); // <- We're going to pop below, hence the reversal.
+    /// for leaf in t.leaf_iter() {
+    ///     assert_eq! { Some(leaf), leaves.pop() }
+    /// }
+    /// ```
     pub fn leaf_iter(&self) -> LeafIter {
         LeafIter::of_rterm(self)
     }
 
     /// Iterates over all the subterms of a term, including itself.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let v_0 = term::int_var(0);
+    /// let v_1 = term::int_var(1);
+    /// let two = term::int(2);
+    /// let two_v_1 = term::mul(vec![ two.clone(), v_1.clone() ]);
+    /// let sum = term::add(vec![ v_0.clone(), two_v_1.clone() ]);
+    /// let zero = term::int(0);
+    /// let t = term::ge(sum.clone(), zero.clone());
+    /// # println!("{}", t);
+    /// let mut all: TermSet = vec![
+    ///     v_0, v_1, two, two_v_1, sum, zero, t.clone()
+    /// ].into_iter().collect();
+    ///
+    /// t.iter(
+    ///     |term| {
+    ///         let term = term.to_hcons();
+    ///         let was_there = all.remove(&term);
+    ///         assert! { was_there }
+    ///     }
+    /// );
+    /// assert! { all.is_empty() }
+    /// ```
     pub fn iter<F>(&self, mut f: F)
     where
         F: FnMut(&RTerm),
@@ -1475,22 +1565,22 @@ impl RTerm {
         }
     }
 
-    /// Term evaluation (int).
-    pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
-        self.eval(model)?.to_int()
-    }
-
-    /// Term evaluation (real).
-    pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
-        self.eval(model)?.to_real()
-    }
-
-    /// Term evaluation (bool).
-    pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
-        self.eval(model)?.to_bool()
-    }
-
     /// Boolean a constant boolean term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge( term::int_var(0), term::int_var(0) );
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), Some(true) }
+    /// let t = term::not(t);
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), Some(false) }
+    /// let t = term::ge( term::int_var(0), term::int(2) );
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), None }
+    /// ```
     pub fn bool(&self) -> Option<bool> {
         match self.bool_eval(&()) {
             Ok(Some(b)) => Some(b),
@@ -1498,16 +1588,19 @@ impl RTerm {
         }
     }
 
-    /// Evaluates a term with an empty model.
-    pub fn as_val(&self) -> Val {
-        if let Ok(res) = self.eval(&()) {
-            res
-        } else {
-            val::none(self.typ().clone())
-        }
-    }
-
     /// Integer value the term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.int(), None }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.int(), Some(7.into()) }
+    /// ```
     pub fn int(&self) -> Option<Int> {
         if self.typ() != typ::int() {
             return None;
@@ -1519,6 +1612,18 @@ impl RTerm {
     }
 
     /// Real value the term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::real_var(0), term::real_of(2.)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.real(), None }
+    /// let t = term::add( vec![term::real_of(5.), term::real_of(2.)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.real(), Some(rat_of_float(7.).into()) }
+    /// ```
     pub fn real(&self) -> Option<Rat> {
         match self.real_eval(&()) {
             Ok(Some(r)) => Some(r),
@@ -1526,7 +1631,40 @@ impl RTerm {
         }
     }
 
+    /// Evaluates a term with an empty model.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.as_val(), val::none(typ::int()) }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.as_val(), val::int(7) }
+    /// ```
+    pub fn as_val(&self) -> Val {
+        if let Ok(res) = self.eval(&()) {
+            res
+        } else {
+            val::none(self.typ().clone())
+        }
+    }
+
     /// Turns a constant term in a `Val`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.val(), None }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.val(), Some(val::int(7)) }
+    /// ```
     pub fn val(&self) -> Option<Val> {
         match *self {
             RTerm::Cst(ref val) => Some(val.clone()),
@@ -1534,29 +1672,19 @@ impl RTerm {
         }
     }
 
-    /// The kids of this term, if any.
-    pub fn kids(&self) -> Option<&[Term]> {
-        if let RTerm::App { ref args, .. } = *self {
-            Some(args)
-        } else {
-            None
-        }
-    }
-
-    /// Checks whether a term is an equality.
-    pub fn is_eq(&self) -> bool {
-        match *self {
-            RTerm::App { op: Op::Eql, .. } => true,
-            _ => false,
-        }
-    }
-
-    /// Term evaluation.
-    pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
-        eval::eval(&factory::term(self.clone()), model)
-    }
-
     /// The highest variable index appearing in the term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge(
+    ///     term::add( vec![term::real_var(0), term::real_var(2), term::real_of(17.)] ),
+    ///     term::real_var(666)
+    /// );
+    /// # println!("{}", t);
+    /// assert_eq! { t.highest_var(), Some(666.into()) }
+    /// ```
     pub fn highest_var(&self) -> Option<VarIdx> {
         let mut max = None;
 
@@ -1570,11 +1698,77 @@ impl RTerm {
     }
 
     /// TOP-DOWN term substitution.
+    ///
+    /// Applies the term map provided to all matching terms while going down in the term. When it
+    /// replaces a subterm with `trm` from `map`, this function will not go down `trm`.
+    ///
+    /// This is used by let-[`bindings`] in clauses for concise printing.
+    ///
+    /// This function is equivalent to [`self.top_down_map(|t| map.get(t).cloned())`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::int(3)
+    /// );
+    /// # println!("{}", t);
+    /// let map: TermMap<Term> = vec![
+    ///     (        three_v_0, term::int_var(7)  ),
+    ///     // This mapping won't be used, as the mapping above will trigger first.
+    ///     ( term::int_var(0), term::int_var(8)  ),
+    ///     // Likewise, this mapping will only trigger in the LHS of the `>=`, not in the
+    ///     // multiplication since the first binding will replace it.
+    ///     (     term::int(3), term::int_var(9)  ),
+    ///     // This last one will not be used at all since the function does not go down new terms.
+    ///     ( term::int_var(7), term::int_var(42) ),
+    /// ].into_iter().collect();
+    ///
+    /// assert_eq! { &format!("{}", t.term_subst(&map)), "(>= (+ v_2 v_7 (* (- 1) v_9)) 0)" }
+    /// ```
+    ///
+    /// [`bindings`]: bindings/index.html (bindings module)
+    /// [`self.top_down_map(|t| map.get(t).cloned())`]: #method.top_down_map
+    /// (top_down_map function over RTerm)
     pub fn term_subst(&self, map: &TermMap<Term>) -> Term {
         self.top_down_map(|term| map.get(term).cloned())
     }
 
     /// TOP-DOWN map over terms.
+    ///
+    /// Applies the term map provided (as a function) to all matching terms while going down in the
+    /// term. When it replaces a subterm with `trm` from `map`, this function will not go down
+    /// `trm`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::int(3)
+    /// );
+    /// # println!("{}", t);
+    /// let map: TermMap<Term> = vec![
+    ///     (        three_v_0, term::int_var(7)  ),
+    ///     // This mapping won't be used, as the mapping above will trigger first.
+    ///     ( term::int_var(0), term::int_var(8)  ),
+    ///     // Likewise, this mapping will only trigger in the LHS of the `>=`, not in the
+    ///     // multiplication since the first binding will replace it.
+    ///     (     term::int(3), term::int_var(9)  ),
+    ///     // This last one will not be used at all since the function does not go down new terms.
+    ///     ( term::int_var(7), term::int_var(42) ),
+    /// ].into_iter().collect();
+    ///
+    /// assert_eq! {
+    ///     &format!("{}", t.top_down_map(|t| map.get(t).cloned())),
+    ///     "(>= (+ v_2 v_7 (* (- 1) v_9)) 0)"
+    /// }
+    /// ```
     pub fn top_down_map<Fun>(&self, mut f: Fun) -> Term
     where
         Fun: for<'a> FnMut(&'a Term) -> Option<Term>,
@@ -2003,6 +2197,119 @@ impl RTerm {
                 | RTerm::DTypTst { .. } => return None,
             }
         }
+    }
+}
+
+/// Term evaluation.
+impl RTerm {
+    /// Term evaluation.
+    ///
+    /// Fails when the model given does not type-check with respect to the model provided.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int_var(2), term::int(17)] );
+    /// let values: VarMap<_> = vec![
+    ///     val::int(7), // v_0
+    ///     val::int(0), // v_1 (not used in `t`)
+    ///     val::int(2), // v_2
+    /// ].into();
+    /// assert_eq! { t.eval(&values).unwrap(), val::int(7 + 2 + 17) }
+    ///
+    /// let ill_typed: VarMap<_> = vec![
+    ///     val::int(7),      // v_0
+    ///     val::int(0),      // v_1 (not used in `t`)
+    ///     val::bool(false), // v_2 ILL-TYPED
+    /// ].into();
+    /// assert! { t.eval(&ill_typed).is_err() }
+    /// ```
+    pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
+        eval::eval(&factory::term(self.clone()), model)
+    }
+
+    /// Term evaluation (int).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Int`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_int())`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int_var(2), term::int(17)] );
+    /// let values: VarMap<_> = vec![
+    ///     val::int(7), // v_0
+    ///     val::int(0), // v_1 (not used in `t`)
+    ///     val::int(2), // v_2
+    /// ].into();
+    /// assert_eq! { t.int_eval(&values).unwrap(), Some( (7 + 2 + 17).into() ) }
+    /// ```
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
+        self.eval(model)?.to_int()
+    }
+
+    /// Term evaluation (real).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Real`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_real())`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add(
+    ///     vec![term::real_var(0), term::real_var(2), term::real_of(17.)]
+    /// );
+    /// let values: VarMap<_> = vec![
+    ///     val::real_of(7.), // v_0
+    ///     val::real_of(0.), // v_1 (not used in `t`)
+    ///     val::real_of(2.), // v_2
+    /// ].into();
+    /// assert_eq! { t.real_eval(&values).unwrap(), Some( rat_of_float(7. + 2. + 17.).into() ) }
+    /// ```
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
+        self.eval(model)?.to_real()
+    }
+
+    /// Term evaluation (bool).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Bool`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_bool())`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge(
+    ///     term::add( vec![term::real_var(0), term::real_var(2), term::real_of(17.)] ),
+    ///     term::real_of(42.)
+    /// );
+    /// let values: VarMap<_> = vec![
+    ///     val::real_of(7.), // v_0
+    ///     val::real_of(0.), // v_1 (not used in `t`)
+    ///     val::real_of(2.), // v_2
+    /// ].into();
+    /// assert_eq! { t.bool_eval(&values).unwrap(), Some( false.into() ) }
+    /// ```
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
+        self.eval(model)?.to_bool()
     }
 }
 

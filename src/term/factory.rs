@@ -149,7 +149,7 @@ pub fn real<R: Into<Rat>>(r: R) -> Term {
 }
 /// Creates a real constant from a float.
 #[inline]
-pub fn real_of_float(f: f64) -> Term {
+pub fn real_of(f: f64) -> Term {
     real(rat_of_float(f))
 }
 /// Creates the constant `0`.

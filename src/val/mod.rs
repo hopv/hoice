@@ -123,6 +123,11 @@ pub fn int<I: Into<Int>>(i: I) -> Val {
 pub fn real<R: Into<Rat>>(r: R) -> Val {
     mk(RVal::R(r.into()))
 }
+/// Creates a real value from a float.
+pub fn real_of(f: f64) -> Val {
+    real(rat_of_float(f))
+}
+
 /// Creates a non-value for a type.
 pub fn none(typ: Typ) -> Val {
     mk(RVal::N(typ))
