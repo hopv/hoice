@@ -46,6 +46,26 @@ fn scan_vars(t: &Term) -> VarSet {
 }
 
 /// Variables appearing in a term (cached).
+///
+/// This function is not directly defined for `RTerm`s because it only makes sense on hashconsed
+/// `Term`s.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let term = term::ge(
+///     term::add(vec![
+///         term::int_var(7),
+///         term::cmul(7, term::int_var(3)),
+///         term::mul( vec![term::int_var(2), term::int_var(5)] )
+///     ]), term::int(0)
+/// );
+/// let expected: VarSet = vec![
+///     7.into(), 3.into(), 2.into(), 5.into()
+/// ].into_iter().collect();
+/// assert_eq! { term::vars(&term), expected }
+/// ```
 #[inline]
 pub fn vars(t: &Term) -> VarSet {
     if let Some(vars) = var_cache
@@ -63,7 +83,11 @@ pub fn vars(t: &Term) -> VarSet {
         .clone()
 }
 
-/// Map over the variables appearing in a term (cached).
+/// Iterator over the variables appearing in a term (cached).
+///
+/// Each variable is visited only once.
+///
+/// Pretty much equivalent to `term::vars(t).into_iter().map(f)`.
 #[inline]
 pub fn map_vars<F>(t: &Term, mut f: F)
 where
@@ -92,37 +116,113 @@ where
     ()
 }
 
-/// Creates a term.
+/// Creates a term from a non-hconsed `RTerm`.
+///
+/// This function is not really meant to be used outside of the term module, although it cannot do
+/// anything bad.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let kid_1 = term::add(vec![term::int_var(0), term::cmul(7, term::int_var(1))]);
+/// let kid_2 = term::int(42);
+/// let t = term::ge( kid_1, kid_2 );
+///
+/// let rterm = t.get().clone();
+/// let other = term::term(rterm);
+///
+/// assert_eq! { other, t }
+/// assert_eq! { other.uid(), t.uid() }
+/// assert_eq! { other.get(), t.get() }
+/// ```
 #[inline]
 pub fn term(t: RTerm) -> Term {
     factory.mk(t)
 }
 
 /// Creates a variable.
+///
+/// See also [`int_var`], [`real_var`] and [`bool_var`].
+///
+/// [`int_var`]: fn.int_var.html (int_var term creation function)
+/// [`real_var`]: fn.real_var.html (real_var term creation function)
+/// [`bool_var`]: fn.bool_var.html (bool_var term creation function)
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::var(3, typ::bool());
+/// assert_eq! { t.var_idx(), Some(3.into()) }
+/// assert_eq! { t.typ(), typ::bool() }
+/// assert_eq! { t.get(), & RTerm::Var(typ::bool(), 3.into()) }
+/// ```
 #[inline]
 pub fn var<V: Into<VarIdx>>(v: V, typ: Typ) -> Term {
     factory.mk(RTerm::Var(typ, v.into()))
 }
 
 /// Creates an integer variable.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::int_var(3);
+/// assert_eq! { t.var_idx(), Some(3.into()) }
+/// assert_eq! { t.typ(), typ::int() }
+/// assert_eq! { t.get(), & RTerm::Var(typ::int(), 3.into()) }
+/// ```
 #[inline]
 pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
     factory.mk(RTerm::Var(typ::int(), v.into()))
 }
 
 /// Creates a real variable.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::real_var(3);
+/// assert_eq! { t.var_idx(), Some(3.into()) }
+/// assert_eq! { t.typ(), typ::real() }
+/// assert_eq! { t.get(), & RTerm::Var(typ::real(), 3.into()) }
+/// ```
 #[inline]
 pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
     factory.mk(RTerm::Var(typ::real(), v.into()))
 }
 
 /// Creates a boolean variable.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::bool_var(3);
+/// assert_eq! { t.var_idx(), Some(3.into()) }
+/// assert_eq! { t.typ(), typ::bool() }
+/// assert_eq! { t.get(), & RTerm::Var(typ::bool(), 3.into()) }
+/// ```
 #[inline]
 pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
     factory.mk(RTerm::Var(typ::bool(), v.into()))
 }
 
 /// Creates a constant.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let val = val::int(42);
+/// let t = term::cst(val.clone());
+/// assert_eq! { t.val(), Some(val.clone()) }
+/// assert_eq! { t.typ(), typ::int() }
+/// assert_eq! { t.get(), & RTerm::Cst(val) }
+/// ```
 #[inline]
 pub fn cst<V: Into<Val>>(val: V) -> Term {
     let val = val.into();
@@ -136,82 +236,343 @@ pub fn cst<V: Into<Val>>(val: V) -> Term {
 }
 
 /// Creates an integer constant.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let val = val::int(42);
+/// let t = term::int(42);
+/// assert_eq! { t.val(), Some(val.clone()) }
+/// assert_eq! { t.typ(), typ::int() }
+/// assert_eq! { t.get(), & RTerm::Cst(val) }
+/// ```
 #[inline]
 pub fn int<I: Into<Int>>(i: I) -> Term {
     let i = i.into();
     factory.mk(RTerm::Cst(val::int(i)))
 }
 /// Creates a real constant.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let val = val::real_of(42.);
+/// let t = term::real(Rat::new(42.into(), 1.into()));
+/// assert_eq! { t.val(), Some(val.clone()) }
+/// assert_eq! { t.typ(), typ::real() }
+/// assert_eq! { t.get(), & RTerm::Cst(val) }
+/// ```
 #[inline]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
     let r = r.into();
     factory.mk(RTerm::Cst(val::real(r)))
 }
 /// Creates a real constant from a float.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let val = val::real_of(42.);
+/// let t = term::real_of(42.);
+/// assert_eq! { t.val(), Some(val.clone()) }
+/// assert_eq! { t.typ(), typ::real() }
+/// assert_eq! { t.get(), & RTerm::Cst(val) }
+/// ```
 #[inline]
 pub fn real_of(f: f64) -> Term {
     real(rat_of_float(f))
 }
-/// Creates the constant `0`.
+
+/// Creates the integer constant `0`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::int_zero();
+/// assert_eq! { t.get(), & RTerm::Cst(val::int(0)) }
+/// ```
 #[inline]
 pub fn int_zero() -> Term {
     int(Int::zero())
 }
-/// Creates the constant `1`.
+/// Creates the integer constant `1`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::int_one();
+/// assert_eq! { t.get(), & RTerm::Cst(val::int(1)) }
+/// ```
 #[inline]
 pub fn int_one() -> Term {
     int(Int::one())
 }
-/// Creates the constant `0`.
+
+/// Creates the real constant `0`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::real_zero();
+/// assert_eq! { t.get(), & RTerm::Cst(val::real_of(0.)) }
+/// ```
 #[inline]
 pub fn real_zero() -> Term {
     real(Rat::zero())
 }
-/// Creates the constant `1`.
+/// Creates the real constant `1`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::real_one();
+/// assert_eq! { t.get(), & RTerm::Cst(val::real_of(1.)) }
+/// ```
 #[inline]
 pub fn real_one() -> Term {
     real(Rat::one())
 }
 
 /// Creates a boolean.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::bool(true);
+/// assert_eq! { t.typ(), typ::bool() }
+/// assert_eq! { t.get(), & RTerm::Cst(val::bool(true)) }
+/// ```
 #[inline]
 pub fn bool(b: bool) -> Term {
     factory.mk(RTerm::Cst(val::bool(b)))
 }
 /// Creates the constant `true`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::tru();
+/// assert_eq! { t.get(), & RTerm::Cst(val::bool(true)) }
+/// ```
 #[inline]
 pub fn tru() -> Term {
     bool(true)
 }
 /// Creates the constant `false`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::fls();
+/// assert_eq! { t.get(), & RTerm::Cst(val::bool(false)) }
+/// ```
 #[inline]
 pub fn fls() -> Term {
     bool(false)
 }
 
 /// If-then-else.
+///
+/// # Examples
+///
+/// General case:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::ite(
+///     term::bool_var(0),
+///     term::int_var(7),
+///     term::int(17),
+/// );
+/// assert_eq! {
+///     &format!("{}", t), "(ite v_0 v_7 17)"
+/// }
+/// ```
+///
+/// ## Simplifications
+///
+/// Guard is trivial:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::ite(
+///     term::fls(),
+///     term::int_var(7),
+///     term::int(17),
+/// );
+/// assert_eq! { &format!("{}", t), "17" }
+/// ```
+///
+/// Both branches are equal:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::ite(
+///     term::fls(),
+///     term::int_var(7),
+///     term::int_var(7),
+/// );
+/// assert_eq! { &format!("{}", t), "v_7" }
+/// ```
 #[inline]
 pub fn ite(c: Term, t: Term, e: Term) -> Term {
     app(Op::Ite, vec![c, t, e])
 }
 
 /// Implication.
+///
+/// Implications `A => B` are rewritten as `(not A) or B`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::implies(
+///     term::bool_var(0),
+///     term::or( vec![term::bool_var(7), term::bool_var(3)] )
+/// );
+/// assert_eq! { &format!("{}", t), "(or v_3 (not v_0) v_7)" }
+/// ```
 #[inline]
 pub fn implies(lhs: Term, rhs: Term) -> Term {
     app(Op::Impl, vec![lhs, rhs])
 }
 
 /// Negates a term.
+///
+/// Negations are pushed down as much as possible.
+///
+/// # Examples
+///
+/// General case:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::not(term::bool_var(0));
+/// assert_eq! { &format!("{}", t), "(not v_0)" }
+/// ```
+///
+/// ## Simplifications
+///
+/// Double negations:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::not(term::not(term::bool_var(0)));
+/// assert_eq! { &format!("{}", t), "v_0" }
+/// ```
+///
+/// Negations are pushed down:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::not(
+///     term::or(vec![ term::bool_var(0), term::not(term::bool_var(1)) ])
+/// );
+/// assert_eq! { &format!("{}", t), "(and v_1 (not v_0))" }
+/// let t = term::not(
+///     term::and(vec![ term::bool_var(0), term::not(term::bool_var(1)) ])
+/// );
+/// assert_eq! { &format!("{}", t), "(or v_1 (not v_0))" }
+/// ```
 #[inline]
 pub fn not(term: Term) -> Term {
     app(Op::Not, vec![term])
 }
+
 /// Disjunction.
+///
+/// # Examples
+///
+/// General case:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::or(vec![ term::bool_var(0), term::bool_var(1) ]);
+/// assert_eq! { &format!("{}", t), "(or v_0 v_1)" }
+/// ```
+///
+/// ## Simplifications
+///
+/// Nullary applications:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::or(vec![]);
+/// assert_eq! { &format!("{}", t), "false" }
+/// ```
+///
+/// Unary applications:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::or(vec![term::bool_var(0)]);
+/// assert_eq! { &format!("{}", t), "v_0" }
+/// ```
+///
+// / Trivial disjunctions:
+// /
+// / ```rust
+// / # use hoice::common::*;
+// / let t = term::or(vec![
+// /     term::bool_var(1), term::bool_var(0), term::not(term::bool_var(1))
+// / ]);
+// / assert_eq! { &format!("{}", t), "true" }
+// / ```
 #[inline]
 pub fn or(terms: Vec<Term>) -> Term {
     app(Op::Or, terms)
 }
+
 /// Conjunction.
+///
+/// # Examples
+///
+/// General case:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::and(vec![ term::bool_var(0), term::bool_var(1) ]);
+/// assert_eq! { &format!("{}", t), "(and v_0 v_1)" }
+/// ```
+///
+/// ## Simplifications
+///
+/// Nullary applications:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::and(vec![]);
+/// assert_eq! { &format!("{}", t), "true" }
+/// ```
+///
+/// Unary applications:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::and(vec![term::bool_var(0)]);
+/// assert_eq! { &format!("{}", t), "v_0" }
+/// ```
+///
+/// Trivial conjunctions:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::and(vec![
+///     term::bool_var(1), term::bool_var(0), term::not(term::bool_var(1))
+/// ]);
+/// assert_eq! { &format!("{}", t), "false" }
+/// ```
 #[inline]
 pub fn and(terms: Vec<Term>) -> Term {
     app(Op::And, terms)

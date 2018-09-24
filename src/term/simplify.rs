@@ -402,6 +402,19 @@ where
 {
     use std::cmp::Ordering::*;
 
+    // A term is equal to itself.
+    if lhs.deref() == rhs.deref() {
+        return SimplRes::Cmp(Equal);
+    }
+
+    // A term and its negation yield false.
+    if let Some(sub_lhs) = lhs.neg_inspect() {
+        if sub_lhs.get() == rhs.deref() { return SimplRes::Yields(term::fls()) }
+    }
+    if let Some(sub_rhs) = rhs.neg_inspect() {
+        if sub_rhs.get() == lhs.deref() { return SimplRes::Yields(term::fls()) }
+    }
+
     if let Some(args) = lhs.disj_inspect() {
         let mut greater_count = 0;
         let mut yields = vec![];
@@ -472,9 +485,7 @@ impl<'a> Deconstructed<'a> {
         if self.trms.len() == 1 {
             self.trms[0].clone()
         } else {
-            let res = term::add(self.trms.into_iter().cloned().collect());
-            println!("created {}", res);
-            res
+            term::add(self.trms.into_iter().cloned().collect())
         }
     }
     /// True if the two deconstructed sum are the same.
@@ -574,7 +585,7 @@ where
 
     let (lhs, rhs) = (lhs_term.deref(), rhs_term.deref());
 
-    // A term implies itself.
+    // A term is equal to itself.
     if lhs == rhs {
         return SimplRes::Cmp(Equal);
     }
