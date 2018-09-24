@@ -21,6 +21,18 @@
 //! all by itself. Variables are given meaning by the `sig` field of a [`Pred`] or the [`VarInfo`]s
 //! stored in a [`Clause`].
 //!
+//! [`RTerm`]: enum.RTerm.html (RTerm enum)
+//! [`Term`]: type.Term.html (Term type)
+//! [`HashConsign`]: https://crates.io/crates/hashconsing (hashconsing crate)
+//! [`var`]: fn.var.html (var creation function)
+//! [`int`]: fn.int.html (int creation function)
+//! [`app`]: fn.app.html (app creation function)
+//! [`TTerm`]: enum.tterm.html (top term enum)
+//! [`VarIdx`]: ../common/struct.VarIdx.html (variable index struct)
+//! [`Clause`]: ../common/struct.Clause.html (Clause struct)
+//! [`VarInfo`]: ../info/struct.VarInfo.html (VarInfo struct)
+//! [`Pred`]: ../info/struct.Pred.html (Pred struct)
+//!
 //! # Examples
 //!
 //! ```rust
@@ -42,18 +54,6 @@
 //!     _ => panic!("not an equality"),
 //! }
 //! ```
-//!
-//! [`RTerm`]: enum.RTerm.html (RTerm enum)
-//! [`Term`]: type.Term.html (Term type)
-//! [`HashConsign`]: https://crates.io/crates/hashconsing (hashconsing crate)
-//! [`var`]: fn.var.html (var creation function)
-//! [`int`]: fn.int.html (int creation function)
-//! [`app`]: fn.app.html (app creation function)
-//! [`TTerm`]: enum.tterm.html (top term enum)
-//! [`VarIdx`]: ../common/struct.VarIdx.html (variable index struct)
-//! [`Clause`]: ../common/struct.Clause.html (Clause struct)
-//! [`VarInfo`]: ../info/struct.VarInfo.html (VarInfo struct)
-//! [`Pred`]: ../info/struct.Pred.html (Pred struct)
 
 use hashconsing::*;
 
@@ -1324,6 +1324,9 @@ impl RTerm {
     /// Deconstructs *only* multiplications in the sense of [`Op::Mul`], *not to be confused* with
     /// [`Op::CMul`].
     ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1339,9 +1342,6 @@ impl RTerm {
     /// assert! { t.mul_inspect().is_none() }
     /// assert! { t.cmul_inspect().is_some() }
     /// ```
-    ///
-    /// [`Op::Mul`]: enum.Op.html#variant.Mul
-    /// [`Op::CMul`]: enum.Op.html#variant.CMul
     pub fn mul_inspect(&self) -> Option<&Vec<Term>> {
         if let RTerm::App {
             op: Op::Mul,
@@ -1360,6 +1360,9 @@ impl RTerm {
     /// Deconstructs *only* multiplications in the sense of [`Op::CMul`], *not to be confused* with
     /// [`Op::Mul`].
     ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1376,9 +1379,6 @@ impl RTerm {
     /// assert_eq! { val, val::int(7 * 3) }
     /// assert_eq! { kid, &term::int_var(0) }
     /// ```
-    ///
-    /// [`Op::Mul`]: enum.Op.html#variant.Mul
-    /// [`Op::CMul`]: enum.Op.html#variant.CMul
     pub fn cmul_inspect(&self) -> Option<(Val, &Term)> {
         if let RTerm::App {
             op: Op::CMul,
@@ -1480,6 +1480,261 @@ impl RTerm {
         } else {
             None
         }
+    }
+}
+
+/// Variable substitution.
+///
+/// All substitution functions take a mapping from variables to terms in the form of a
+/// [`VarIndexed`].
+///
+/// The central variable substitution function is [`subst_custom`]. It applies a substitution and
+/// takes a flag indicating whether the substitution should be considered total or not. The
+/// difference is crucial: when applying a substitution to a term coming from the body of a clause
+/// to form a term for a predicate definition, the substitution should **always** be total.
+/// Otherwise clauses variables will end up in the predicate's definition which makes no sense and
+/// is dangerous. Conversely, substitution from  a predicate term to a clause term should always be
+/// total.
+///
+/// As such, makes sure that you use [`subst_total`] whenever you're doing clause-to-predicate or
+/// predicate-to-clause conversions. Otherwise, [`subst`] performs partial variable substitution,
+/// which can never fail. Last, [`subst_fp`] iterates until the fixed-point of a substitution.
+///
+/// [`VarIndexed`]: ../common/trait.VarIndexed.html (VarIndexed trait)
+/// [`subst_custom`]: enum.RTerm.html#method.subst_custom (subst_custom function for RTerm)
+/// [`subst_total`]: enum.RTerm.html#method.subst_total (subst_total function for RTerm)
+/// [`subst_fp`]: enum.RTerm.html#method.subst_fp (subst_fp function for RTerm)
+/// [`subst`]: enum.RTerm.html#method.subst (subst function for RTerm)
+impl RTerm {
+    /// Variable substitution.
+    ///
+    /// The `total` flag causes substitution to fail if a variable that's not in `map`. The boolean
+    /// returned is true if at least one substitution occurred. The map itself is given as a
+    /// [`VarIndexed`].
+    ///
+    /// [`VarIndexed`]: ../common/trait.VarIndexed.html (VarIndexed trait)
+    ///
+    /// # Examples
+    ///
+    /// Total substitution.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->
+    ///     term::add( vec![term::int_var(7), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    ///     // v_2 ->
+    ///     term::int_var(9),
+    /// ].into_iter().collect();
+    ///
+    /// // Asking for total substitution ~~~~~~~~~~~~~~vvvv
+    /// let (res, at_least_one) = t.subst_custom(&map, true).unwrap();
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= (+ v_9 (* 3 v_7) (* (- 3) v_8)) (- 6))"
+    /// }
+    /// ```
+    ///
+    /// Partial substitution.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// // Map does not mention `v_2`.
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->
+    ///     term::add( vec![term::int_var(7), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    /// ].into_iter().collect();
+    ///
+    /// // Asking for total substitution ~~~vvvv
+    /// let res =      t.subst_custom(&map, true);
+    /// // Total substitution failed.
+    /// assert! { res.is_none() }
+    ///
+    /// // Asking for partial substitution ~vvvvv
+    /// let res =      t.subst_custom(&map, false);
+    /// // Success.
+    /// let (res, at_least_one) = res.unwrap();
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= (+ v_2 (* 3 v_7) (* (- 3) v_8)) (- 6))"
+    /// } // `v_2` is still here ~~~~~~~~^^^
+    /// ```
+    pub fn subst_custom<Map: VarIndexed<Term>>(
+        &self,
+        map: &Map,
+        total: bool,
+    ) -> Option<(Term, bool)> {
+        use self::zip::*;
+        let mut changed = false;
+
+        let res = zip(
+            &self.to_hcons(),
+            |_| Ok(None),
+            |zip_null| match zip_null {
+                ZipNullary::Cst(val) => Ok(cst(val.clone())),
+                ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {
+                    debug_assert_eq! { typ, & term.typ() }
+                    changed = true;
+                    Ok(term)
+                } else if total {
+                    Err(())
+                } else {
+                    Ok(term::var(var, typ.clone()))
+                },
+            },
+            |zip_op, typ, mut acc| {
+                let yielded = match zip_op {
+                    ZipOp::Op(op) => term::app(op, acc),
+                    ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
+
+                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype selector {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_slc(typ.clone(), name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype selector {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype tester {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_tst(name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype tester {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::CArray => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal constant array application to {} arguments",
+                                acc.len() + 1
+                            )
+                        }
+                        term::cst_array(typ.clone(), kid)
+                    } else {
+                        panic!("illegal constant array application to 0 arguments")
+                    },
+                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
+                };
+
+                Ok(ZipDoTotal::Upp { yielded })
+            },
+            |mut frame| {
+                let nu_term = frame
+                    .rgt_args
+                    .next()
+                    .expect("illegal call to `partial_op`: empty `rgt_args` (subst_custom)");
+                Ok(ZipDo::Trm { nu_term, frame })
+            },
+        );
+
+        if let Ok(term) = res {
+            Some((term, changed))
+        } else {
+            None
+        }
+    }
+
+    /// Variable substitution.
+    ///
+    /// Returns the new term and a boolean indicating whether any substitution occurred. Used for
+    /// substitutions in the same clause / predicate scope.
+    ///
+    /// Equivalent to `self.subst_custom(map, false).unwrap()`. For examples see [`subst_custom`].
+    ///
+    /// [`subst_custom`]: #method.subst_custom (subst_custom function for RTerm)
+    #[inline]
+    pub fn subst<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
+        self.subst_custom(map, false)
+            .expect("partial substitution can't fail")
+    }
+
+    /// Fixed-point (partial) variable substitution.
+    ///
+    /// Applies `term = term.subst(map)`, starting with `self`, until the substitution does not
+    /// change the term anymore. Returns the new term and a boolean indicating whether any
+    /// substitution occurred.
+    ///
+    /// This function will loop forever if no fixed-point exists (the map is circular).
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->             vvvvvvvvvv~~~ v_0 maps to a term mentioning v_1
+    ///     term::add( vec![term::int_var(1), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    ///     // v_2 ->
+    ///     term::int_var(1), // v_2 maps to v_1
+    /// ].into_iter().collect();
+    ///
+    /// let (res, at_least_one) = t.subst_fp(&map);
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= v_8 (- 6))"
+    /// }
+    /// ```
+    ///
+    /// [`subst`]: #method.subst (subst function for RTerm)
+    pub fn subst_fp<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
+        let (mut term, changed) = self.subst(map);
+        let mut fp = !changed;
+        while !fp {
+            let (new_term, changed) = term.subst(map);
+            term = new_term;
+            fp = !changed
+        }
+        (term, changed)
+    }
+
+    /// Total variable substitution.
+    ///
+    /// Returns the new term and a boolean indicating whether any substitution occurred. Used for
+    /// substitutions between different same clause / predicate scopes.
+    ///
+    /// Equivalent to `self.subst_custom(map, true)`. For examples see [`subst_custom`].
+    ///
+    /// [`subst_custom`]: #method.subst_custom (subst_custom function for RTerm)
+    pub fn subst_total<Map: VarIndexed<Term>>(&self, map: &Map) -> Option<(Term, bool)> {
+        self.subst_custom(map, true)
     }
 }
 
@@ -1706,6 +1961,10 @@ impl RTerm {
     ///
     /// This function is equivalent to [`self.top_down_map(|t| map.get(t).cloned())`].
     ///
+    /// [`bindings`]: bindings/index.html (bindings module)
+    /// [`self.top_down_map(|t| map.get(t).cloned())`]: #method.top_down_map
+    /// (top_down_map function over RTerm)
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -1729,10 +1988,6 @@ impl RTerm {
     ///
     /// assert_eq! { &format!("{}", t.term_subst(&map)), "(>= (+ v_2 v_7 (* (- 1) v_9)) 0)" }
     /// ```
-    ///
-    /// [`bindings`]: bindings/index.html (bindings module)
-    /// [`self.top_down_map(|t| map.get(t).cloned())`]: #method.top_down_map
-    /// (top_down_map function over RTerm)
     pub fn term_subst(&self, map: &TermMap<Term>) -> Term {
         self.top_down_map(|term| map.get(term).cloned())
     }
@@ -1844,141 +2099,6 @@ impl RTerm {
         );
 
         res.expect("top down map can never fail")
-    }
-
-    /// Variable substitution.
-    ///
-    /// The `total` flag causes substitution to fail if a variable that's not in
-    /// `map`.
-    ///
-    /// The boolean returned is true if at least on substitution occured.
-    pub fn subst_custom<Map: VarIndexed<Term>>(
-        &self,
-        map: &Map,
-        total: bool,
-    ) -> Option<(Term, bool)> {
-        use self::zip::*;
-        let mut changed = false;
-
-        let res = zip(
-            &self.to_hcons(),
-            |_| Ok(None),
-            |zip_null| match zip_null {
-                ZipNullary::Cst(val) => Ok(cst(val.clone())),
-                ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {
-                    debug_assert_eq! { typ, & term.typ() }
-                    changed = true;
-                    Ok(term)
-                } else if total {
-                    Err(())
-                } else {
-                    Ok(term::var(var, typ.clone()))
-                },
-            },
-            |zip_op, typ, mut acc| {
-                let yielded = match zip_op {
-                    ZipOp::Op(op) => term::app(op, acc),
-                    ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
-
-                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
-                            panic!(
-                                "illegal application of datatype selector {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
-                            )
-                        }
-                        term::dtyp_slc(typ.clone(), name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype selector {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
-
-                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
-                            panic!(
-                                "illegal application of datatype tester {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
-                            )
-                        }
-                        term::dtyp_tst(name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype tester {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
-
-                    ZipOp::CArray => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
-                            panic!(
-                                "illegal constant array application to {} arguments",
-                                acc.len() + 1
-                            )
-                        }
-                        term::cst_array(typ.clone(), kid)
-                    } else {
-                        panic!("illegal constant array application to 0 arguments")
-                    },
-                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
-                };
-
-                Ok(ZipDoTotal::Upp { yielded })
-            },
-            |mut frame| {
-                let nu_term = frame
-                    .rgt_args
-                    .next()
-                    .expect("illegal call to `partial_op`: empty `rgt_args` (subst_custom)");
-                Ok(ZipDo::Trm { nu_term, frame })
-            },
-        );
-
-        if let Ok(term) = res {
-            Some((term, changed))
-        } else {
-            None
-        }
-    }
-
-    /// Variable substitution.
-    ///
-    /// Returns the new term and a boolean indicating whether any substitution
-    /// occured.
-    ///
-    /// Used for substitutions in the same clause / predicate scope.
-    #[inline]
-    pub fn subst<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
-        self.subst_custom(map, false)
-            .expect("total substitution can't fail")
-    }
-
-    /// Fixed-point (partial) variable substitution.
-    ///
-    /// Returns the new term and a boolean indicating whether any substitution
-    /// occured.
-    pub fn subst_fp<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
-        let (mut term, mut changed) = self.subst(map);
-        while changed {
-            let (new_term, new_changed) = term.subst(map);
-            term = new_term;
-            changed = new_changed
-        }
-        (term, changed)
-    }
-
-    /// Total variable substition, returns `None` if there was a variable in the
-    /// term that was not in the map.
-    ///
-    /// Returns the new term and a boolean indicating whether any substitution
-    /// occsured.
-    ///
-    /// Used for substitutions between different same clause / predicate scopes.
-    pub fn subst_total<Map: VarIndexed<Term>>(&self, map: &Map) -> Option<(Term, bool)> {
-        self.subst_custom(map, true)
     }
 
     /// Tries to turn a term into a substitution.
@@ -2237,6 +2357,8 @@ impl RTerm {
     ///
     /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_int())`.
     ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -2249,8 +2371,7 @@ impl RTerm {
     /// ].into();
     /// assert_eq! { t.int_eval(&values).unwrap(), Some( (7 + 2 + 17).into() ) }
     /// ```
-    ///
-    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    #[inline]
     pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
         self.eval(model)?.to_int()
     }
@@ -2262,6 +2383,8 @@ impl RTerm {
     /// non-value.
     ///
     /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_real())`.
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
     ///
     /// # Examples
     ///
@@ -2277,8 +2400,7 @@ impl RTerm {
     /// ].into();
     /// assert_eq! { t.real_eval(&values).unwrap(), Some( rat_of_float(7. + 2. + 17.).into() ) }
     /// ```
-    ///
-    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    #[inline]
     pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
         self.eval(model)?.to_real()
     }
@@ -2290,6 +2412,8 @@ impl RTerm {
     /// non-value.
     ///
     /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_bool())`.
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
     ///
     /// # Examples
     ///
@@ -2306,8 +2430,7 @@ impl RTerm {
     /// ].into();
     /// assert_eq! { t.bool_eval(&values).unwrap(), Some( false.into() ) }
     /// ```
-    ///
-    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    #[inline]
     pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
         self.eval(model)?.to_bool()
     }
@@ -2315,7 +2438,7 @@ impl RTerm {
 
 /// Term writing.
 impl RTerm {
-    /// Write a real term using a special function to write variables.
+    /// Writes a term in a writer.
     pub fn write<W, WriteVar>(&self, w: &mut W, write_var: WriteVar) -> IoRes<()>
     where
         W: Write,
@@ -2324,7 +2447,10 @@ impl RTerm {
         self.write_with(w, write_var, None)
     }
 
-    /// Write a real term using a special function to write variables.
+    /// Writes a term in a writer using optional bindings.
+    ///
+    /// Also takes some optional bindings. This is used when printing the body of a clause to apply
+    /// let-binding factoring on the fly, while printing to the solver.
     pub fn write_with<W, WriteVar>(
         &self,
         w: &mut W,
@@ -2338,7 +2464,9 @@ impl RTerm {
         self.write_with_raw(w, write_var, bindings.map(|b| b.bindings()))
     }
 
-    /// Write a real term using a special function to write variables.
+    /// Write a term in a writer.
+    ///
+    /// Factors code for `write` and `write_with` by taking optional bindings.
     fn write_with_raw<W, WriteVar>(
         &self,
         w: &mut W,
