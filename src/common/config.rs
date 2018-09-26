@@ -785,7 +785,7 @@ impl IceConf {
                      (between 0 and 100)",
                 ).validator(int_validator)
                 .value_name("int")
-                .default_value("7")
+                .default_value("20")
                 .takes_value(true)
                 .number_of_values(1)
                 .hidden(true)
@@ -798,7 +798,7 @@ impl IceConf {
                      (inactive if > 100)",
                 ).validator(int_validator)
                 .value_name("int")
-                .default_value("1")
+                .default_value("10")
                 .takes_value(true)
                 .number_of_values(1)
                 .hidden(true)
