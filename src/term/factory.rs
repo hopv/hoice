@@ -635,7 +635,19 @@ pub fn and(terms: Vec<Term>) -> Term {
 
 /// Constant array.
 ///
+/// A constant array is not necessarily a value. It is an array which maps all indices to the same
+/// (non-necessarily constant) term.
+///
 /// The type is the type of **the indices** of the array.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let arr = term::cst_array(typ::int(), term::int_var(3));
+/// assert! { arr.val().is_none() }
+/// assert_eq! { &format!("{}", arr), "((as const (Array Int Int)) v_3)" }
+/// ```
 #[inline]
 pub fn cst_array(typ: Typ, default: Term) -> Term {
     if let Some(val) = default.val() {
@@ -645,12 +657,41 @@ pub fn cst_array(typ: Typ, default: Term) -> Term {
     }
 }
 
-/// Store operation in an array.
+/// Store operation in arrays.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let arr = term::cst_array(typ::int(), term::int_var(3));
+/// let arr = term::store(arr, term::int(7), term::int(0));
+/// assert_eq! { &format!("{}", arr), "(store ((as const (Array Int Int)) v_3) 7 0)" }
+/// ```
 #[inline]
 pub fn store(array: Term, idx: Term, val: Term) -> Term {
     app(Op::Store, vec![array, idx, val])
 }
-/// Select operation for an array.
+
+/// Select operation for arrays.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let arr = term::cst_array(typ::int(), term::int_var(2));
+/// let arr = term::store(arr, term::int(7), term::int(0));
+/// let select_2 = term::select(arr.clone(), term::int(2));
+/// assert_eq! {
+///     &format!("{}", select_2), "(select (store ((as const (Array Int Int)) v_2) 7 0) 2)"
+/// }
+/// let select_7 = term::select(arr.clone(), term::int(7));
+/// assert_eq! {
+///     &format!("{}", select_7), "(select (store ((as const (Array Int Int)) v_2) 7 0) 7)"
+/// }
+/// let model: VarMap<_> = vec![ val::int(17), val::int(17), val::int(13) ].into();
+/// assert_eq! { select_2.eval(&model).unwrap(), val::int(13) }
+/// assert_eq! { select_7.eval(&model).unwrap(), val::int(0) }
+/// ```
 #[inline]
 pub fn select(array: Term, idx: Term) -> Term {
     app(Op::Select, vec![array, idx])
@@ -662,24 +703,96 @@ pub fn select(array: Term, idx: Term) -> Term {
 ///
 /// - if the function does not exist
 /// - if the arguments are illegal
+///
+/// # Examples
+///
+/// ```rust
+/// use hoice::{ term, term::typ, dtyp, fun };
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let _ = term::fun(
+///     fun::test::length_fun_name(),
+///     vec![ term::dtyp_new(list.clone(), "nil", vec![]) ],
+/// );
+/// ```
+///
+/// Constant arguments:
+///
+/// ```rust
+/// use hoice::{ term, term::typ, dtyp, fun, val };
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let cst = term::fun(
+///     fun::test::length_fun_name(),
+///     vec![term::dtyp_new(
+///         list.clone(), "insert", vec![term::int(7), term::dtyp_new(list.clone(), "nil", vec![])]
+///     )],
+/// );
+/// assert_eq! { cst.val().unwrap(), val::int(1) }
+/// ```
+///
+/// Ill-typed application (panic):
+///
+/// ```rust,should_panic
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+///
+/// let _ = term::fun( // This panics.
+///     fun::test::length_fun_name(), vec![ term::int(7) ],
+/// );
+/// ```
+///
+/// Function does not exist (panic):
+///
+/// ```rust,should_panic
+/// # use hoice::common::*;
+/// let _ = term::fun( // This panics.
+///     "unknown_function", vec![ term::int_var(0) ]
+/// );
+/// ```
 #[inline]
 pub fn fun<S>(name: S, mut args: Vec<Term>) -> Term
 where
     S: Into<String>,
 {
     let name = name.into();
+    let mut all_args_constant = true;
     match fun::dec_do(&name, |fun| {
         if args.len() != fun.sig.len() {
-            panic!("illegal application of function {}", conf.bad(&name))
+            panic!(
+                "illegal application of function {} to {} arguments, expected {}",
+                conf.bad(&name), args.len(), fun.sig.len()
+            )
         }
         for (info, arg) in fun.sig.iter().zip(args.iter_mut()) {
+            if arg.val().is_none() {
+                all_args_constant = false
+            }
             if let Some(nu_arg) = arg.force_dtyp(info.typ.clone()) {
                 *arg = nu_arg
+            } else if info.typ != arg.typ() {
+                panic!(
+                    "ill-typed application of function {}, {} does not have type {}",
+                    conf.bad(&name), arg, info.typ
+                )
             }
         }
         Ok(fun.typ.clone())
     }) {
-        Ok(typ) => factory.mk(RTerm::new_fun(typ, name, args)),
+        Ok(typ) => {
+            let term = factory.mk(RTerm::new_fun(typ, name, args));
+            if all_args_constant {
+                if let Ok(val) = term.eval(&()) {
+                    cst(val)
+                } else {
+                    term
+                }
+            } else {
+                term
+            }
+        },
         Err(e) => {
             print_err(&e);
             panic!("illegal function application")
@@ -689,7 +802,7 @@ where
 
 /// Creates an operator application.
 ///
-/// Assumes the application is well-typed, modulo int to real casting.
+/// This is the function all operator application functions end up calling.
 #[inline]
 pub fn app(op: Op, mut args: Vec<Term>) -> Term {
     let typ = expect!(
@@ -732,6 +845,36 @@ pub fn val(val: Val) -> Term {
 }
 
 /// Creates a datatype constructor.
+///
+/// # Examples
+///
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::dtyp_new(
+///     list.clone(),
+///     "insert",
+///     vec![ term::int(7), term::var(0, list) ],
+/// );
+/// assert_eq! { &format!("{}", t), "(insert 7 v_0)" }
+/// ```
+///
+/// Constant term:
+///
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::dtyp_new(
+///     list.clone(),
+///     "insert",
+///     vec![ term::int(7), term::dtyp_new(list, "nil", vec![]) ],
+/// ); // This term is actually a constant.
+/// assert_eq! { &format!("{}", t.val().unwrap()), "(insert 7 (as nil (List Int)))" }
+/// ```
 pub fn dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Term
 where
     S: Into<String>,
@@ -742,9 +885,37 @@ where
 
 /// Creates a new datatype selector.
 ///
-/// # TODO
+/// # Examples
 ///
-/// - treat constants better
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::dtyp_new(
+///     list.clone(),
+///     "insert",
+///     vec![ term::int(7), term::var(0, list) ],
+/// );
+/// assert_eq! { &format!("{}", t), "(insert 7 v_0)" }
+/// ```
+///
+/// Constant term:
+///
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::dtyp_new(
+///     list.clone(),
+///     "insert",
+///     vec![ term::int(7), term::dtyp_new(list, "nil", vec![]) ],
+/// ); // This term is actually a constant.
+/// assert_eq! { &format!("{}", t.val().unwrap()), "(insert 7 (as nil (List Int)))" }
+/// let t = term::dtyp_slc( typ::int(), "head", t );
+/// assert_eq! { t.val().unwrap(), val::int(7) }
+/// ```
 pub fn dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Term
 where
     S: Into<String>,
@@ -757,9 +928,37 @@ where
 
 /// Creates a new datatype tester.
 ///
-/// # TODO
+/// # Examples
 ///
-/// - treat constants better
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::var(0, list);
+/// let t = term::dtyp_tst("insert", t);
+/// assert_eq! { &format!("{}", t), "(is-insert v_0)" }
+/// ```
+///
+/// Evaluation on non-constant term:
+///
+/// ```rust
+/// use hoice::common::*;
+/// fun::test::create_length_fun();
+/// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+///
+/// let t = term::dtyp_new(
+///     list.clone(),
+///     "insert",
+///     vec![ term::int(7), term::var(0, list) ],
+/// );
+/// let is_nil = term::dtyp_tst("nil", t.clone());
+/// # println!("is_nil: {}", is_nil);
+/// assert_eq! { is_nil.val().unwrap(), val::bool(false) }
+/// let is_insert = term::dtyp_tst("insert", t);
+/// # println!("is_insert: {}", is_insert);
+/// assert_eq! { is_insert.val().unwrap(), val::bool(true) }
+/// ```
 pub fn dtyp_tst<S>(name: S, term: Term) -> Term
 where
     S: Into<String>,
@@ -775,8 +974,7 @@ where
 
 /// Creates an operator application.
 ///
-/// Error if the application is ill-typed (int will be cast to real
-/// automatically).
+/// Error if the application is ill-typed (int will be cast to real automatically).
 #[inline]
 pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
     let typ = op.type_check(&mut args)?;

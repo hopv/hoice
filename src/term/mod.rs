@@ -648,7 +648,7 @@ impl RTerm {
     /// let t_1 = term::ge(
     ///     term::fun(
     ///         fun::test::length_fun_name(),
-    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///         vec![ term::var(0, list.clone()) ]
     ///     ),
     ///     term::int(0)
     /// );
@@ -714,8 +714,7 @@ impl RTerm {
     ///
     /// let t_1 = term::ge(
     ///     term::fun(
-    ///         fun::test::length_fun_name(),
-    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///         fun::test::length_fun_name(), vec![ term::var(0, list.clone()) ]
     ///     ),
     ///     term::int(0)
     /// );
@@ -723,8 +722,7 @@ impl RTerm {
     ///
     /// let t_2 = term::ge(
     ///     term::fun(
-    ///         "get_head",
-    ///         vec![ term::dtyp_new(list.clone(), "nil", vec![]) ]
+    ///         "get_head", vec![ term::var(0, list.clone()) ]
     ///     ),
     ///     term::int(0)
     /// );
@@ -1140,12 +1138,11 @@ impl RTerm {
     /// fun::test::create_length_fun();
     /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
     ///
-    /// let nil = term::dtyp_new(list.clone(), "nil", vec![]);
-    /// let t = term::fun( fun::test::length_fun_name(), vec![ nil.clone() ] );
+    /// let t = term::fun( fun::test::length_fun_name(), vec![ term::var(0, list.clone()) ] );
     ///
     /// let (name, args) = t.fun_inspect().unwrap();
     /// assert_eq! { name, fun::test::length_fun_name() }
-    /// assert_eq! { args, & vec![ nil ] }
+    /// assert_eq! { args, & vec![ term::var(0, list) ] }
     /// ```
     pub fn fun_inspect(&self) -> Option<(&String, &Vec<Term>)> {
         if let RTerm::Fun {
