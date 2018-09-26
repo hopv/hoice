@@ -682,6 +682,20 @@ impl Data {
     ) -> Res<bool> {
         let rhs = match rhs {
             Some((pred, sample)) => if lhs.is_empty() {
+                let add_as_neg = if let Some(str) = self.instance[pred].strength() {
+                    // If the strengthening term of the predicate evaluates to false on a positive
+                    // sample, this thing's unsat.
+                    if let Some(value) = str.bool_eval(&sample)? {
+                        ! value
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if add_as_neg {
+                    self.add_raw_neg(clause, pred, sample.clone());
+                }
                 // Positive sample.
                 let new = self.add_raw_pos(clause, pred, sample);
                 return Ok(new);

@@ -559,15 +559,10 @@ impl<'a> Teacher<'a> {
             Ok(true) => {
                 // New data.
                 for (index, &mut (_, _, ref mut changed)) in self.learners.index_iter_mut() {
-                    *changed = index != idx
+                    *changed = *changed || index != idx
                 }
             }
-            Ok(false) => if self.learners[idx].2 {
-                // Something has changed since the last candidate of this learner.
-                // The fact that the current candidate generated no new data is not
-                // a problem.
-                ()
-            } else {
+            Ok(false) => if self.learners.len() == 1 {
                 bail! {
                   "translation of cexs to data for {} generated no new data",
                   conf.emph( & self.learners[idx].1 )

@@ -217,7 +217,10 @@ where
                   "{}", res ;
                   " "
                 }
-                print_err(& "simplification failure".into())
+                print_err(&format!(
+                    "{} simplification failure", if conj { "conjunction" } else { "disjunction" }
+                ).into());
+                panic!("internal error")
             }
 
             solver
@@ -530,19 +533,19 @@ fn disj_of_conj_and_term<T>(conj: & [Term], rhs: &T) -> SimplRes
 where T: Deref<Target = RTerm> {
     use std::cmp::Ordering::*;
 
-    let mut lesser_count = 0;
+    let mut greater_count = 0;
     let mut yields = vec![];
     for lhs in conj {
         match bin_simpl(lhs, rhs, false) {
-            SimplRes::Cmp(Equal) | SimplRes::Cmp(Greater) => return SimplRes::gt(),
-            SimplRes::Cmp(Less) => lesser_count += 1,
+            SimplRes::Cmp(Equal) | SimplRes::Cmp(Less) => return SimplRes::lt(),
+            SimplRes::Cmp(Greater) => greater_count += 1,
             SimplRes::Yields(term) => yields.push(term),
             SimplRes::None => (),
         }
     }
     if yields.len() == conj.len() {
         SimplRes::Yields(term::and(yields))
-    } else if lesser_count == conj.len() {
+    } else if greater_count == conj.len() {
         SimplRes::lt()
     } else {
         SimplRes::None
