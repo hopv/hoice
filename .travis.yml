@@ -18,8 +18,6 @@ env:
   global:
   - RUSTFLAGS="-C link-dead-code"
 
-cache: cargo
-
 addons:
   apt:
     packages:
