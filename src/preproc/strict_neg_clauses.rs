@@ -10,7 +10,7 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 /// # Examples
 ///
 /// ```
-/// # use hoice::{ common::PrdIdx, parse, preproc::{ PreInstance, RedStrat, StrictNeg } };
+/// # use hoice::{ common::*, parse, preproc::{ PreInstance, RedStrat, StrictNeg } };
 /// let mut instance = parse::instance("
 ///   (declare-fun pred ( Int Int Int Int ) Bool)
 ///   (assert
@@ -35,14 +35,20 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 /// assert_eq! { "pred", & instance[pred].name }
 ///
 /// let strengthening = instance[pred].strength().unwrap();
-/// assert_eq! {
-///     "(or \
-///         (>= (* (- 1) v_0) 0) \
-///         (>= (+ v_3 (* (- 1) v_0)) 0) \
-///         (not (= (+ (- 1) (* (- 1) v_2)) 0)) \
-///         (not (= v_1 0))\
-///     )", & format!("{}", strengthening)
-/// }
+/// let expected = "(or \
+///     (>= (* (- 1) v_0) 0) \
+///     (not (= v_1 0)) \
+///     (>= (+ (* (- 1) v_0) v_3) 0) \
+///     (not (= (+ (- 1) (* (- 1) v_2)) 0))\
+/// )";
+/// let info: VarMap<_> = vec![
+///     ::hoice::info::VarInfo::new("v_0", typ::int(), 0.into()),
+///     ::hoice::info::VarInfo::new("v_1", typ::int(), 1.into()),
+///     ::hoice::info::VarInfo::new("v_2", typ::int(), 2.into()),
+///     ::hoice::info::VarInfo::new("v_3", typ::int(), 3.into()),
+/// ].into_iter().collect();
+/// let expected = &::hoice::parse::term(expected, &info, &instance);
+/// assert_eq! { expected, strengthening }
 /// ```
 pub struct StrictNeg {
     /// Stores partial definitions for the predicates.

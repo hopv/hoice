@@ -770,7 +770,7 @@ impl<'a> PreInstance<'a> {
 
         // Force predicates.
         for (pred, def) in defs {
-            log! { @4 "  forcing {}", self[pred] }
+            log! { @4 "  forcing (1) {}", self[pred] }
             let def = TTerms::dnf(
                 def.into_iter()
                     .map(|(quantfed, conj)| (Quant::exists(quantfed), conj))
@@ -820,7 +820,7 @@ impl<'a> PreInstance<'a> {
     ///
     /// Does not impact `pred_to_clauses`.
     fn force_pred(&mut self, pred: PrdIdx, tterms: TTerms) -> Res<()> {
-        log! { @5 "forcing {}", conf.emph(& self.instance[pred].name) }
+        log! { @5 "forcing (2) {}", conf.emph(& self.instance[pred].name) }
         if self.instance[pred].is_defined() {
             let mut s: Vec<u8> = Vec::new();
             tterms
@@ -2095,7 +2095,7 @@ impl ClauseSimplifier {
                         clause.insert_term(term);
                     }
                     changed = clause.subst(&self.subst) || changed;
-                    log! { @5 | "yielding {}", clause.to_string_info( _preds ).unwrap() }
+                    log! { @5 "yielding {}", clause.to_string_info( _preds ).unwrap() }
                     for (var, _) in self.subst.drain() {
                         clause.deactivate(var)?
                     }

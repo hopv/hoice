@@ -56,7 +56,10 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 ///     &String::from_utf8_lossy(&s)
 /// }
 /// ```
-pub struct OneRhs;
+pub struct OneRhs {
+    /// True if introducing quantifiers is okay.
+    quantifiers: bool,
+}
 
 impl OneRhs {
     /// Logs an extraction result.
@@ -100,7 +103,7 @@ impl OneRhs {
     ///
     /// Returns `None` if unfolding failed.
     fn work_on(
-        &self,
+        &mut self,
         pred: PrdIdx,
         clause: ClsIdx,
         instance: &mut PreInstance,
@@ -116,7 +119,7 @@ impl OneRhs {
                 match clause.lhs_preds().get(&pred) {
                     Some(apps) if !apps.is_empty() => ExtractRes::SuccessFalse,
                     _ => extraction.terms_of_rhs_app(
-                        true,
+                        self.quantifiers,
                         instance,
                         clause.vars(),
                         clause.lhs_terms(),
@@ -169,7 +172,7 @@ impl RedStrat for OneRhs {
     }
 
     fn new(_: &Instance) -> Self {
-        OneRhs
+        OneRhs { quantifiers: false }
     }
 
     fn apply(&mut self, instance: &mut PreInstance) -> Res<RedInfo> {
@@ -210,6 +213,8 @@ impl RedStrat for OneRhs {
                 log! { @4 "failed to unfold {}", instance[pred] }
             }
         }
+
+        self.quantifiers = ! self.quantifiers;
 
         Ok(red_info)
     }

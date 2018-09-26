@@ -367,28 +367,28 @@ impl<'a> Reductor<'a> {
         //
         // Returns `true` if the pre-processor did something.
         macro_rules! run {
-      (@ info $info_opt:expr) => (
-        $info_opt.unwrap_or( RedInfo::new() )
-      ) ;
-      (@ bool $info_opt:expr) => (
-        $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
-      ) ;
+            (@ info $info_opt:expr) => (
+                $info_opt.unwrap_or( RedInfo::new() )
+            ) ;
+            (@ bool $info_opt:expr) => (
+                $info_opt.map(|info: RedInfo| info.non_zero()).unwrap_or(false)
+            ) ;
 
-      ($preproc:ident) => ( run!($preproc bool) ) ;
-      ($preproc:ident $($tail:tt)*) => (
-        if let Some(preproc) = self.$preproc.as_mut() {
-          if let Some(red_info) = utils::run_preproc(
-            & mut self.instance, _profiler, preproc, & mut count
-          ) ? {
-            run! { @ $($tail)* Some(red_info) }
-          } else {
-            return Ok(())
-          }
-        } else {
-          run! { @ $($tail)* None }
+            ($preproc:ident) => ( run!($preproc bool) ) ;
+            ($preproc:ident $($tail:tt)*) => (
+                if let Some(preproc) = self.$preproc.as_mut() {
+                    if let Some(red_info) = utils::run_preproc(
+                        & mut self.instance, _profiler, preproc, & mut count
+                    ) ? {
+                        run! { @ $($tail)* Some(red_info) }
+                    } else {
+                        return Ok(())
+                    }
+                } else {
+                    run! { @ $($tail)* None }
+                }
+            ) ;
         }
-      ) ;
-    }
 
         utils::register_stats(&self.instance, _profiler, count)?;
 

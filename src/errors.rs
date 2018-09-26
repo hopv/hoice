@@ -1,16 +1,18 @@
 //! Error types.
 //!
-//! Two specific events are handled are errors so that they propagate upwards
-//! naturally, although technically they're not really errors.
+//! Some events are handled are errors so that they propagate upwards naturally, although
+//! technically they're not really errors:
 //!
-//! - [`ErrorKind::Unsat`][unsat], self-explanatory ;
-//! - [`LError::Exit`][exit], used in learners to bail out of the learning
-//!   phase when the teacher sent an exit order.
+//! - [`ErrorKind::Unsat`]
+//! - [`ErrorKind::Timeout`]
+//! - [`ErrorKind::Unknown`] (when hoice gave up on solving the clauses)
 //!
-//! [unsat]: enum.ErrorKind.html#variant.Unsat
-//! (Unsat variant of the ErrorKind enum)
-//! [exit]: learners/enum.LError.html#variant.Exit
-//! (Exit variant of the LError enum)
+//! As such, one should **not** use the usual `chain_err` function but [`chain`] instead.
+//!
+//! [`ErrorKind::Unsat`]: enum.ErrorKind.html#variant.Unsat (Unsat variant of ErrorKind)
+//! [`ErrorKind::Timeout`]: enum.ErrorKind.html#variant.Timeout (Timeout variant of ErrorKind)
+//! [`ErrorKind::Unknown`]: enum.ErrorKind.html#variant.Unknown (Unknown variant of ErrorKind)
+//! [`chain`]: struct.Error.html#method.chain (chain function over Error)
 
 use common::*;
 
@@ -93,57 +95,57 @@ impl_fmt!{
 }
 
 error_chain!{
-  types {
-    Error, ErrorKind, ResultExt, Res ;
-  }
+    types {
+        Error, ErrorKind, ResultExt, Res ;
+    }
 
-  links {
-    SmtError(
-      ::rsmt2::errors::Error, ::rsmt2::errors::ErrorKind
-    ) #[doc = "Error at SMT level."] ;
-  }
+    links {
+        SmtError(
+            ::rsmt2::errors::Error, ::rsmt2::errors::ErrorKind
+        ) #[doc = "Error at SMT level."] ;
+    }
 
-  foreign_links {
-    Io(::std::io::Error) #[doc = "IO error."] ;
-  }
+    foreign_links {
+        Io(::std::io::Error) #[doc = "IO error."] ;
+    }
 
-  errors {
-    #[doc = "Parse error."]
-    ParseError(data: ParseErrorData) {
-      description("parse error")
-      display("{}", data)
+    errors {
+        #[doc = "Parse error."]
+        ParseError(data: ParseErrorData) {
+            description("parse error")
+            display("{}", data)
+        }
+        #[doc = "Could not spawn z3."]
+        Z3SpawnError {
+            description("could not spawn z3")
+            display("could not spawn z3")
+        }
+        #[doc = "Not really an error, unknown early return."]
+        Unknown {
+            description(consts::err::unknown_desc)
+            display("unknown")
+        }
+        #[doc = "Not really an error, unsat early return."]
+        Unsat {
+            description(consts::err::unsat_desc)
+            display("unsat")
+        }
+        #[doc = "Not really an error, unsat early return because of some clause."]
+        UnsatFrom(clause: ClsIdx) {
+            description(consts::err::unsat_desc)
+            display("unsat by #{}", clause)
+        }
+        #[doc = "Not really an error, exit early return."]
+        Exit {
+            description(consts::err::exit_desc)
+            display("exit")
+        }
+        #[doc = "Timeout reached."]
+        Timeout {
+            description("timeout")
+            display("timeout")
+        }
     }
-    #[doc = "Could not spawn z3."]
-    Z3SpawnError {
-      description("could not spawn z3")
-      display("could not spawn z3")
-    }
-    #[doc = "Not really an error, unknown early return."]
-    Unknown {
-      description("unknown")
-      display("unknown")
-    }
-    #[doc = "Not really an error, unsat early return."]
-    Unsat {
-      description("unsat")
-      display("unsat")
-    }
-    #[doc = "Not really an error, unsat early return because of some clause."]
-    UnsatFrom(clause: ClsIdx) {
-      description("unsat")
-      display("unsat by #{}", clause)
-    }
-    #[doc = "Not really an error, exit early return."]
-    Exit {
-      description("exit")
-      display("exit")
-    }
-    #[doc = "Timeout reached."]
-    Timeout {
-      description("timeout")
-      display("timeout")
-    }
-  }
 }
 
 impl Error {
@@ -152,11 +154,12 @@ impl Error {
     /// [unsat]: enum.ErrorKind.html#variant.Unsat
     /// (ErrorKind's Unsat variant)
     pub fn is_unsat(&self) -> bool {
-        match *self.kind() {
-            ErrorKind::Unsat => true,
-            ErrorKind::UnsatFrom(_) => true,
-            _ => false,
+        for err in self.iter() {
+            if err.description() == consts::err::unsat_desc {
+                return true
+            }
         }
+        false
     }
 
     /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
@@ -172,9 +175,15 @@ impl Error {
     /// [unknown]: enum.ErrorKind.html#variant.Unknown
     /// (ErrorKind's Unknown variant)
     pub fn is_unknown(&self) -> bool {
-        match *self.kind() {
-            ErrorKind::Unknown => true,
-            _ => self.is_smt_unknown(),
+        if self.is_smt_unknown() {
+            true
+        } else {
+            for err in self.iter() {
+                if err.description() == consts::err::unknown_desc {
+                    return true
+                }
+            }
+            false
         }
     }
 
@@ -191,22 +200,27 @@ impl Error {
     /// [timeout]: enum.ErrorKind.html#variant.Timeout
     /// (ErrorKind's Timeout variant)
     pub fn is_timeout(&self) -> bool {
-        match self.kind() {
-            ErrorKind::Timeout => true,
-            ErrorKind::SmtError(smt_err) => smt_err.is_timeout(),
-            _ => false,
+        if let ErrorKind::SmtError(smt_err) =self.kind() {
+            return smt_err.is_timeout()
         }
+        for err in self.iter() {
+            if err.description() == consts::err::timeout_desc {
+                return true
+            }
+        }
+        false
     }
 
     /// True if the kind of the error is [`ErrorKind::Exit`][exit].
     ///
-    /// [exit]: enum.ErrorKind.html#variant.Exit
-    /// (ErrorKind's Exit variant)
+    /// [exit]: enum.ErrorKind.html#variant.Exit (ErrorKind's Exit variant)
     pub fn is_exit(&self) -> bool {
-        match *self.kind() {
-            ErrorKind::Exit => true,
-            _ => false,
+        for err in self.iter() {
+            if err.description() == consts::err::exit_desc {
+                return true
+            }
         }
+        false
     }
 }
 

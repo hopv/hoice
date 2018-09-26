@@ -771,10 +771,14 @@ pub fn run_preproc<Strat: RedStrat>(
     log! { @verb
       "running {}", conf.emph( preproc.name() )
     }
-    let red_info = preproc.apply(instance)?;
+    let red_info = preproc.apply(instance).chain_err(
+        || format!("while running preprocessor {}", conf.bad(preproc.name()))
+    );
     profile! {
       |_profiler| mark "preproc", preproc.name()
     }
+
+    let red_info = red_info?;
 
     process_red_info(instance, _profiler, preproc.name(), count, &red_info)?;
 

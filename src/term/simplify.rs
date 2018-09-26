@@ -12,6 +12,9 @@ use term::factory::NormRes;
 use common::*;
 
 lazy_static! {
+    /// Solver used to check term simplification.
+    ///
+    /// Needs to be activated via a command-line argument. None by default.
     static ref simpl_solver: RwLock<Option<::rsmt2::Solver<()>>> =
         RwLock::new(if conf.check_simpl {
             Some(
@@ -44,6 +47,16 @@ impl SimplRes {
             Yields(term) => Yields(term),
         }
     }
+
+    /// Inverts the result if the flag is true.
+    pub fn invert_if(self, do_it: bool) -> Self {
+        if do_it {
+            self.invert()
+        } else {
+            self
+        }
+    }
+
     /// True if `self` is not `None`.
     #[inline]
     pub fn is_some(&self) -> bool {
@@ -53,6 +66,74 @@ impl SimplRes {
     #[inline]
     pub fn is_none(&self) -> bool {
         !self.is_some()
+    }
+
+    /// Constructor for `Less`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::cmp::Ordering::*;
+    /// # use hoice::term::simplify::SimplRes;
+    /// assert_eq! { SimplRes::lt(), SimplRes::Cmp(Less) }
+    /// ```
+    #[inline]
+    pub fn lt() -> Self {
+        SimplRes::Cmp(Ordering::Less)
+    }
+
+    /// Constructor for `Equal`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::cmp::Ordering::*;
+    /// # use hoice::term::simplify::SimplRes;
+    /// assert_eq! { SimplRes::eq(), SimplRes::Cmp(Equal) }
+    /// ```
+    #[inline]
+    pub fn eq() -> Self {
+        SimplRes::Cmp(Ordering::Equal)
+    }
+
+    /// Constructor for `Greater`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::cmp::Ordering::*;
+    /// # use hoice::term::simplify::SimplRes;
+    /// assert_eq! { SimplRes::gt(), SimplRes::Cmp(Greater) }
+    /// ```
+    #[inline]
+    pub fn gt() -> Self {
+        SimplRes::Cmp(Ordering::Greater)
+    }
+
+    /// Constructor for `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::{ term, term::simplify::SimplRes };
+    /// assert_eq! { SimplRes::fls(), SimplRes::Yields(term::fls()) }
+    /// ```
+    #[inline]
+    pub fn fls() -> Self {
+        SimplRes::Yields(term::fls())
+    }
+
+    /// Constructor for `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::{ term, term::simplify::SimplRes };
+    /// assert_eq! { SimplRes::tru(), SimplRes::Yields(term::tru()) }
+    /// ```
+    #[inline]
+    pub fn tru() -> Self {
+        SimplRes::Yields(term::tru())
     }
 }
 
@@ -66,9 +147,89 @@ impl_fmt! {
     }
 }
 
+
+
+/// Checks the result of a binary simplification.
+fn check_bin_simpl<T1, T2>(lhs: &T1, rhs: &T2, res: &SimplRes, conj: bool)
+where
+    T1: Deref<Target = RTerm>,
+    T2: Deref<Target = RTerm>,
+{
+    if res.is_some() {
+        if let Some(solver) = simpl_solver
+            .write()
+            .expect("could not retrieve term simplification solver")
+            .as_mut()
+        {
+            solver
+                .push(1)
+                .expect("error on `push` during term simplification");
+            let mut vars = VarSet::new();
+            lhs.iter(|term| {
+                if let Some(idx) = term.var_idx() {
+                    let is_new = vars.insert(idx);
+                    if is_new {
+                        solver
+                            .declare_const(&format!("{}", term), term.typ().get())
+                            .expect("error on `declare_const` during term simplification (lhs)")
+                    }
+                }
+            });
+            rhs.iter(|term| {
+                if let Some(idx) = term.var_idx() {
+                    let is_new = vars.insert(idx);
+                    if is_new {
+                        solver
+                            .declare_const(&format!("{}", term), term.typ().get())
+                            .expect("error on `declare_const` during term simplification (rhs)")
+                    }
+                }
+            });
+
+            use std::cmp::Ordering::*;
+            let op = if conj { "and" } else { "or" };
+            let check = match res {
+                SimplRes::Cmp(Equal) => format!("(= {} {})", lhs.deref(), rhs.deref()),
+                SimplRes::Cmp(Less) => format!(
+                    "(= ({} {} {}) {})", op, lhs.deref(), rhs.deref(), rhs.deref()
+                ),
+                SimplRes::Cmp(Greater) => format!(
+                    "(= ({} {} {}) {})", op, lhs.deref(), rhs.deref(), lhs.deref()
+                ),
+                SimplRes::Yields(ref term) => {
+                    format!("(= ({} {} {}) {})", op, lhs.deref(), rhs.deref(), term)
+                }
+                SimplRes::None => unreachable!(),
+            };
+
+            solver
+                .assert(&format!("(not {})", check))
+                .expect("error on `assert` during term simplification");
+
+            if solver
+                .check_sat()
+                .expect("could not retrieve check-sat result in conjunction simplification")
+            {
+                log! { @0
+                  " " ;
+                  "{}", lhs.deref() ;
+                  "{}", rhs.deref() ;
+                  "{}", res ;
+                  " "
+                }
+                print_err(& "simplification failure".into())
+            }
+
+            solver
+                .pop(1)
+                .expect("error on `pop` during term simplification")
+        }
+    }
+}
+
 /// Adds a term to a set understood as a conjunction.
 ///
-/// Returns `true` if the resulting set is false.
+/// Returns `true` if the resulting set is false (think `is_unsat`).
 pub fn conj_term_insert(term: Term, set: &mut TermSet) -> bool {
     let mut next_term = Some(term);
     let mut fls = false;
@@ -122,7 +283,7 @@ pub fn conj_term_insert(term: Term, set: &mut TermSet) -> bool {
             }
 
             use std::cmp::Ordering::*;
-            match conj_simpl(&term, set_term) {
+            match bin_simpl(&term, set_term, true) {
                 SimplRes::None => true,
 
                 SimplRes::Cmp(Less) | SimplRes::Cmp(Equal) => {
@@ -162,42 +323,84 @@ pub fn conj_term_insert(term: Term, set: &mut TermSet) -> bool {
     fls
 }
 
-/// Simplifies a conjunction.
-fn conj_vec_simpl(terms: &mut Vec<Term>) {
-    let mut res = Vec::with_capacity(terms.len());
 
-    'add_terms: while let Some(term) = terms.pop() {
-        let mut cnt = 0;
 
-        while cnt < res.len() {
-            use self::SimplRes::*;
-            use std::cmp::Ordering::*;
+/// Simplifies two boolean terms.
+///
+/// Treats the pair of terms as a conjunction if `conj` is true, as a disjunction otherwise.
+fn bin_simpl_2<T1, T2>(lhs: &T1, rhs: &T2, conj: bool) -> SimplRes
+where T1: Deref<Target = RTerm>, T2: Deref<Target = RTerm> {
+    // use std::cmp::Ordering::*;
 
-            match conj_simpl(&term, &res[cnt]) {
-                None => cnt += 1,
-
-                Cmp(Less) | Cmp(Equal) => continue 'add_terms,
-
-                Cmp(Greater) => {
-                    res.swap_remove(cnt);
-                }
-
-                Yields(term) => {
-                    res.swap_remove(cnt);
-                    terms.push(term);
-                    continue 'add_terms;
-                }
-            }
-        }
-
-        res.push(term)
+    if lhs.deref() == rhs.deref() {
+        return SimplRes::eq();
     }
 
-    res.shrink_to_fit();
-    res.sort_unstable();
-    res.dedup();
+    match (lhs.bool(), rhs.bool()) {
+        (Some(true), _) => if conj {
+            return SimplRes::lt()
+        } else {
+            return SimplRes::tru()
+        },
+        (_, Some(true)) => if conj {
+            return SimplRes::gt()
+        } else {
+            return SimplRes::tru()
+        },
 
-    ::std::mem::swap(terms, &mut res)
+        (Some(false), _) => if conj {
+            return SimplRes::fls()
+        } else {
+            return SimplRes::lt()
+        },
+        (_, Some(false)) => if conj {
+            return SimplRes::fls()
+        } else {
+            return SimplRes::gt()
+        },
+
+        (None, None) => (),
+    }
+
+    let negated_lhs = term::not( lhs.deref().to_hcons() );
+    if negated_lhs.get() == rhs.deref() {
+        if conj {
+            return SimplRes::fls()
+        } else {
+            return SimplRes::tru()
+        }
+    }
+
+    int_simpl(lhs, rhs, conj)
+}
+
+
+/// Simplifies two boolean terms.
+///
+/// Treats the pair of terms as a conjunction if `conj` is true, as a disjunction otherwise.
+pub fn bin_simpl<T1, T2>(lhs: &T1, rhs: &T2, conj: bool) -> SimplRes
+where T1: Deref<Target = RTerm>, T2: Deref<Target = RTerm> {
+    if conf.term_simpl == 0 {
+        return SimplRes::None;
+    }
+
+    let res = if conj {
+        if let Some(args) = lhs.disj_inspect() {
+            conj_of_disj_and_term(args, rhs)
+        } else if let Some(args) = rhs.disj_inspect() {
+            conj_of_disj_and_term(args, lhs).invert()
+        } else {
+            bin_simpl_2(lhs, rhs, conj)
+        }
+    } else if let Some(args) = lhs.conj_inspect() {
+        disj_of_conj_and_term(args, rhs)
+    } else if let Some(args) = rhs.conj_inspect() {
+        disj_of_conj_and_term(args, lhs).invert()
+    } else {
+        bin_simpl_2(lhs, rhs, conj)
+    };
+    check_bin_simpl(lhs, rhs, &res, conj);
+    res
 }
 
 /// Checks the conjunction of two terms for simplification.
@@ -245,11 +448,11 @@ fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// # println!("=> {}\n\n", rhs) ;
 /// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
 ///
-// / let lhs = term::le( term::int_var(0), term::int(7) ) ;
-// / # println!("   {}", lhs) ;
-// / # println!("=> {}\n\n", rhs) ;
-// / let expected = term::eq( term::int_var(0), term::int(7) ) ;
-// / debug_assert_eq! { conj_simpl(& lhs, & rhs), Yields(expected) }
+/// let lhs = term::le( term::int_var(0), term::int(7) ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// let expected = term::eq( term::int_var(0), term::int(7) ) ;
+/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Yields(expected) }
 ///
 /// let lhs = term::le( term::int_var(1), term::int(7) ) ;
 /// # println!("   {}", lhs) ;
@@ -317,141 +520,112 @@ fn conj_vec_simpl(terms: &mut Vec<Term>) {
 /// assert_eq! { conj_simpl(& lhs, & rhs), None }
 /// ```
 pub fn conj_simpl<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
-where
-    T1: Deref<Target = RTerm>,
-    T2: Deref<Target = RTerm>,
-{
-    if conf.term_simpl == 0 {
-        return SimplRes::None;
-    }
-    let res = conj_simpl_2(lhs, rhs);
-
-    if res.is_some() {
-        if let Some(solver) = simpl_solver
-            .write()
-            .expect("could not retrieve term simplification solver")
-            .as_mut()
-        {
-            solver
-                .push(1)
-                .expect("error on `push` during term simplification");
-            let mut vars = VarSet::new();
-            lhs.iter(|term| {
-                if let Some(idx) = term.var_idx() {
-                    let is_new = vars.insert(idx);
-                    if is_new {
-                        solver
-                            .declare_const(&format!("{}", term), term.typ().get())
-                            .expect("error on `declare_const` during term simplification (lhs)")
-                    }
-                }
-            });
-            rhs.iter(|term| {
-                if let Some(idx) = term.var_idx() {
-                    let is_new = vars.insert(idx);
-                    if is_new {
-                        solver
-                            .declare_const(&format!("{}", term), term.typ().get())
-                            .expect("error on `declare_const` during term simplification (rhs)")
-                    }
-                }
-            });
-
-            use std::cmp::Ordering::*;
-            let check = match res {
-                SimplRes::Cmp(Equal) => format!("(= {} {})", lhs.deref(), rhs.deref()),
-                SimplRes::Cmp(Less) => format!("(=> {} {})", rhs.deref(), lhs.deref()),
-                SimplRes::Cmp(Greater) => format!("(=> {} {})", lhs.deref(), rhs.deref()),
-                SimplRes::Yields(ref term) => {
-                    format!("(= (and {} {}) {})", lhs.deref(), rhs.deref(), term)
-                }
-                SimplRes::None => unreachable!(),
-            };
-
-            solver
-                .assert(&format!("(not {})", check))
-                .expect("error on `assert` during term simplification");
-
-            if solver
-                .check_sat()
-                .expect("could not retrieve check-sat result in conjunction simplification")
-            {
-                log! { @0
-                  " " ;
-                  "{}", lhs.deref() ;
-                  "{}", rhs.deref() ;
-                  "{:?}", res ;
-                  " "
-                }
-                panic! { "simplification failure" }
-            }
-
-            solver
-                .pop(1)
-                .expect("error on `pop` during term simplification")
-        }
-    }
-
-    res
+where T1: Deref<Target = RTerm>, T2: Deref<Target = RTerm> {
+    bin_simpl(lhs, rhs, true)
 }
 
-fn conj_simpl_2<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
-where
-    T1: Deref<Target = RTerm>,
-    T2: Deref<Target = RTerm>,
-{
+
+/// Compares the disjunction of a conjunction and a term.
+fn disj_of_conj_and_term<T>(conj: & [Term], rhs: &T) -> SimplRes
+where T: Deref<Target = RTerm> {
     use std::cmp::Ordering::*;
 
-    // A term is equal to itself.
-    if lhs.deref() == rhs.deref() {
-        return SimplRes::Cmp(Equal);
+    let mut lesser_count = 0;
+    let mut yields = vec![];
+    for lhs in conj {
+        match bin_simpl(lhs, rhs, false) {
+            SimplRes::Cmp(Equal) | SimplRes::Cmp(Greater) => return SimplRes::gt(),
+            SimplRes::Cmp(Less) => lesser_count += 1,
+            SimplRes::Yields(term) => yields.push(term),
+            SimplRes::None => (),
+        }
     }
-
-    // A term and its negation yield false.
-    if let Some(sub_lhs) = lhs.neg_inspect() {
-        if sub_lhs.get() == rhs.deref() { return SimplRes::Yields(term::fls()) }
+    if yields.len() == conj.len() {
+        SimplRes::Yields(term::and(yields))
+    } else if lesser_count == conj.len() {
+        SimplRes::lt()
+    } else {
+        SimplRes::None
     }
-    if let Some(sub_rhs) = rhs.neg_inspect() {
-        if sub_rhs.get() == lhs.deref() { return SimplRes::Yields(term::fls()) }
+}
+
+
+/// Compares the conjunction of a disjunction and a term.
+fn conj_of_disj_and_term<T>(disj: & [Term], rhs: &T) -> SimplRes
+where T: Deref<Target = RTerm> {
+    use std::cmp::Ordering::*;
+
+    let mut greater_count = 0;
+    let mut yields = vec![];
+    for lhs in disj {
+        match bin_simpl(lhs, rhs, true) {
+            SimplRes::Cmp(Equal) | SimplRes::Cmp(Less) => return SimplRes::lt(),
+            SimplRes::Cmp(Greater) => greater_count += 1,
+            SimplRes::Yields(term) => yields.push(term),
+            SimplRes::None => (),
+        }
     }
+    if yields.len() == disj.len() {
+        SimplRes::Yields(term::or(yields))
+    } else if greater_count == disj.len() {
+        SimplRes::gt()
+    } else {
+        SimplRes::None
+    }
+}
 
-    if let Some(args) = lhs.disj_inspect() {
-        let mut greater_count = 0;
-        let mut yields = vec![];
-        for lhs in args {
-            match int_conj_simpl(lhs, rhs) {
-                SimplRes::Cmp(Equal) | SimplRes::Cmp(Less) => return SimplRes::Cmp(Less),
-                SimplRes::Cmp(Greater) => greater_count += 1,
+/// Simplifies a disjunction of terms.
+///
+/// Treats `terms` as a conjunction if `conj` is true, as a disjunction otherwise.
+///
+/// Assumes none of the terms are conjunctions (disjunctions) if `conj` is true (false).
+fn vec_simpl(terms: &mut Vec<Term>, conj: bool) {
 
-                SimplRes::Yields(term) => yields.push(term),
-                SimplRes::None => (),
+    let mut res = Vec::with_capacity(terms.len());
+
+    'add_terms: while let Some(term) = terms.pop() {
+        let mut cnt = 0;
+
+        while cnt < res.len() {
+            use std::cmp::Ordering::*;
+
+            match bin_simpl(&term, &res[cnt], conj) {
+                SimplRes::None => cnt += 1,
+
+                SimplRes::Cmp(Less) | SimplRes::Cmp(Equal) => continue 'add_terms,
+
+                SimplRes::Cmp(Greater) => {
+                    res.swap_remove(cnt);
+                }
+
+                SimplRes::Yields(term) => {
+                    res.swap_remove(cnt);
+
+                    match (term.bool(), conj) {
+                        (Some(false), false) |
+                        (Some(true), true) => (),
+
+                        (Some(true), false) |
+                        (Some(false), true) => {
+                            terms.clear();
+                            terms.push(term);
+                            return ()
+                        },
+
+                        (None, _) => terms.push(term),
+                    }
+
+                    continue 'add_terms;
+                }
             }
         }
-        if yields.len() == args.len() {
-            return SimplRes::Yields(term::or(yields));
-        } else if greater_count == args.len() {
-            return SimplRes::Cmp(Greater);
-        }
-    } else if let Some(args) = rhs.disj_inspect() {
-        let mut less_count = 0;
-        let mut yields = vec![];
-        for rhs in args {
-            match int_conj_simpl(lhs, rhs) {
-                SimplRes::Cmp(Equal) | SimplRes::Cmp(Greater) => return SimplRes::Cmp(Greater),
-                SimplRes::Cmp(Less) => less_count += 1,
 
-                SimplRes::Yields(term) => yields.push(term),
-                SimplRes::None => (),
-            }
-        }
-        if yields.len() == args.len() {
-            return SimplRes::Yields(term::or(yields));
-        } else if less_count == args.len() {
-            return SimplRes::Cmp(Greater);
-        }
+        res.push(term)
     }
 
-    int_conj_simpl(lhs, rhs)
+    res.shrink_to_fit();
+
+    ::std::mem::swap(terms, &mut res)
 }
 
 /// Result of deconstructing a sum.
@@ -459,6 +633,7 @@ where
 /// This is used in `int_deconstruct` below to deconstruct additions to compare relation over
 /// arithmetic terms as a sum of non-constant terms (lhs), an operator and a constant (rhs). The
 /// goal is to do without cloning anything.
+#[derive(Debug, Clone)]
 struct Deconstructed<'a> {
     /// Terms of the sum.
     trms: Vec<&'a Term>,
@@ -517,6 +692,20 @@ impl<'a> Deconstructed<'a> {
     }
 }
 
+impl<'a> ::std::fmt::Display for Deconstructed<'a> {
+    fn fmt(&self, fmt: & mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        if self.trms.len() == 1 {
+            self.trms[0].fmt(fmt)
+        } else {
+            write!(fmt, "(+")?;
+            for trm in &self.trms {
+                write!(fmt, " {}", trm)?;
+            }
+            write!(fmt, ")")
+        }
+    }
+}
+
 /// Deconstructs a relation between arithmetic subterms.
 fn int_deconstruct<T>(term: &T) -> Option<(Op, Deconstructed, Val)>
 where
@@ -566,42 +755,12 @@ where
     }
 }
 
-fn int_conj_simpl<T1, T2>(lhs_term: &T1, rhs_term: &T2) -> SimplRes
+fn int_simpl<T1, T2>(lhs_term: &T1, rhs_term: &T2, conj: bool) -> SimplRes
 where
     T1: Deref<Target = RTerm>,
     T2: Deref<Target = RTerm>,
 {
     use std::cmp::Ordering::*;
-    // Input boolean is true (false) for `lhs` => `rhs` (reversed).
-    macro_rules! ord_of_bool {
-        ($b:expr) => {
-            if $b {
-                SimplRes::Cmp(Greater)
-            } else {
-                SimplRes::Cmp(Less)
-            }
-        };
-    }
-
-    let (lhs, rhs) = (lhs_term.deref(), rhs_term.deref());
-
-    // A term is equal to itself.
-    if lhs == rhs {
-        return SimplRes::Cmp(Equal);
-    }
-
-    match (lhs.bool(), rhs.bool()) {
-        // True can only imply true.
-        (Some(true), rhs) => return ord_of_bool!(rhs.unwrap_or(false)),
-        // False implies anything.
-        (Some(false), _) => return ord_of_bool!(true),
-        // False can only be implied by false.
-        (lhs, Some(false)) => return ord_of_bool!(!lhs.unwrap_or(true)),
-        // True is implied by anything.
-        (_, Some(true)) => return ord_of_bool!(true),
-        // Otherwise we don't know (yet).
-        (None, None) => (),
-    }
 
     let (lhs_op, lhs_trm, lhs_cst) = if let Some(res) = int_deconstruct(lhs_term) {
         res
@@ -609,11 +768,24 @@ where
         return SimplRes::None;
     };
 
-    let (rhs_op, rhs_trm, rhs_cst) = if let Some(res) = int_deconstruct(rhs_term) {
+    let (mut rhs_op, mut rhs_trm, mut rhs_cst) = if let Some(res) = int_deconstruct(rhs_term) {
         res
     } else {
         return SimplRes::None;
     };
+
+    if rhs_trm.is_opposite(&lhs_trm) {
+        rhs_trm = lhs_trm.clone();
+        rhs_cst = rhs_cst.minus().expect("illegal term found during simplification");
+        rhs_op = match rhs_op {
+            Op::Eql => Op::Eql,
+            Op::Gt => Op::Lt,
+            Op::Ge => Op::Le,
+            Op::Lt => Op::Gt,
+            Op::Le => Op::Ge,
+            _ => panic!("unexpected operator {} during integer relation simplification", rhs_op)
+        }
+    }
 
     // println!();
     // println!("lhs:");
@@ -622,64 +794,176 @@ where
     // println!("  {} {} {}", rhs_trm.to_string(), rhs_op, rhs_cst);
 
     if lhs_trm.equal(&rhs_trm) {
+
         match (lhs_op, rhs_op) {
+
             (Op::Gt, Op::Gt) | (Op::Ge, Op::Ge) => {
                 return SimplRes::Cmp(
                     lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (same op)",
                     ),
-                )
+                ).invert_if(!conj)
             }
 
+            (Op::Le, Op::Le) | (Op::Lt, Op::Lt) => {
+                return SimplRes::Cmp(
+                    lhs_cst.get().compare(&rhs_cst).expect(
+                        "error during comparison unwrapping in term simplification (same op)",
+                    ),
+                ).invert_if(conj)
+            }
+
+            // Almost the same operator.
             (Op::Gt, Op::Ge) | (Op::Ge, Op::Gt) => {
                 if lhs_cst == rhs_cst {
+                    // Same constant.
                     if lhs_op == Op::Gt {
-                        return SimplRes::Cmp(Greater);
+                        return SimplRes::gt().invert_if(!conj);
                     } else {
-                        return SimplRes::Cmp(Less);
+                        return SimplRes::lt().invert_if(!conj);
                     }
                 } else {
                     return SimplRes::Cmp(lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (diff op)",
-                    ));
+                    )).invert_if(!conj);
+                }
+            }
+
+            // Almost the same operator.
+            (Op::Lt, Op::Le) | (Op::Le, Op::Lt) => {
+                if lhs_cst == rhs_cst {
+                    // Same constant.
+                    if lhs_op == Op::Gt {
+                        return SimplRes::gt().invert_if(conj);
+                    } else {
+                        return SimplRes::lt().invert_if(conj);
+                    }
+                } else {
+                    return SimplRes::Cmp(lhs_cst.get().compare(&rhs_cst).expect(
+                        "error during comparison unwrapping in term simplification (diff op)",
+                    )).invert_if(conj);
                 }
             }
 
             (Op::Eql, Op::Ge) | (Op::Eql, Op::Gt) => match lhs_cst.get().compare(&rhs_cst) {
-                Some(Less) => return SimplRes::Yields(term::fls()),
-                Some(Equal) if rhs_op == Op::Gt => return SimplRes::Yields(term::fls()),
-                Some(Equal) | Some(Greater) => return SimplRes::Cmp(Greater),
+                Some(Less) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
+                Some(Equal) if rhs_op == Op::Gt => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::Yields( term::ge( lhs_trm.into_term(), term::cst(lhs_cst) ) )
+                },
+                Some(Equal) | Some(Greater) => return SimplRes::gt().invert_if(!conj),
+                None => unreachable!(),
+            }
+
+            (Op::Eql, Op::Le) | (Op::Eql, Op::Lt) => match lhs_cst.get().compare(&rhs_cst) {
+                Some(Greater) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
+                Some(Equal) if rhs_op == Op::Lt => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::Yields( term::le( lhs_trm.into_term(), term::cst(lhs_cst) ) )
+                },
+                Some(Equal) | Some(Less) => return SimplRes::gt().invert_if(!conj),
+                None => unreachable!(),
+            }
+
+            (Op::Ge, Op::Eql) | (Op::Gt, Op::Eql) => match rhs_cst.get().compare(&lhs_cst) {
+                Some(Less) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
+                Some(Equal) if lhs_op == Op::Gt => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::Yields( term::ge( lhs_trm.into_term(), term::cst(lhs_cst) ) )
+                },
+                Some(Equal) | Some(Greater) => return SimplRes::lt().invert_if(!conj),
                 None => unreachable!(),
             },
 
-            (Op::Ge, Op::Eql) | (Op::Gt, Op::Eql) => match rhs_cst.get().compare(&lhs_cst) {
-                Some(Less) => return SimplRes::Yields(term::fls()),
-                Some(Equal) if lhs_op == Op::Gt => return SimplRes::Yields(term::fls()),
-                Some(Equal) | Some(Greater) => return SimplRes::Cmp(Less),
+            (Op::Le, Op::Eql) | (Op::Lt, Op::Eql) => match rhs_cst.get().compare(&lhs_cst) {
+                Some(Greater) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
+                Some(Equal) if lhs_op == Op::Gt => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::Yields( term::ge( lhs_trm.into_term(), term::cst(lhs_cst) ) )
+                },
+                Some(Equal) | Some(Less) => return SimplRes::lt().invert_if(!conj),
+                None => unreachable!(),
+            },
+
+            (Op::Ge, Op::Le) | (Op::Gt, Op::Le) |
+            (Op::Ge, Op::Lt) | (Op::Gt, Op::Lt) => match lhs_cst.get().compare(&rhs_cst) {
+                Some(Less) => if conj {
+                    return SimplRes::None
+                } else {
+                    return SimplRes::tru()
+                },
+                Some(Equal) if conj && (lhs_op == Op::Gt || rhs_op == Op::Lt) => {
+                    return SimplRes::fls()
+                },
+                Some(Equal) => if conj {
+                    return SimplRes::Yields( term::eq(lhs_trm.into_term(), term::cst(lhs_cst)) )
+                } else {
+                    return SimplRes::tru()
+                },
+                Some(Greater) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
+                None => unreachable!(),
+            },
+
+            (Op::Le, Op::Ge) | (Op::Le, Op::Gt) |
+            (Op::Lt, Op::Ge) | (Op::Lt, Op::Gt) => match lhs_cst.get().compare(&rhs_cst) {
+                Some(Greater) => if conj {
+                    return SimplRes::None
+                } else {
+                    return SimplRes::tru()
+                },
+                Some(Equal) if conj && (lhs_op == Op::Lt || rhs_op == Op::Gt) => {
+                    return SimplRes::fls()
+                },
+                Some(Equal) => if conj {
+                    return SimplRes::Yields( term::eq(lhs_trm.into_term(), term::cst(lhs_cst)) )
+                } else if lhs_op == Op::Lt && rhs_op == Op::Gt {
+                    return SimplRes::None
+                } else {
+                    return SimplRes::tru()
+                },
+                Some(Less) => if conj {
+                    return SimplRes::fls()
+                } else {
+                    return SimplRes::None
+                },
                 None => unreachable!(),
             },
 
             (Op::Eql, Op::Eql) => if rhs_cst.equal(&lhs_cst) {
-                return SimplRes::Cmp(Greater);
+                return SimplRes::eq();
+            } else if conj {
+                return SimplRes::fls();
             } else {
-                return SimplRes::Yields(term::fls());
+                return SimplRes::None;
             },
 
             _ => (),
         }
-    } else if lhs_op == Op::Ge
-        && rhs_op == Op::Ge
-        && lhs_cst == rhs_cst
-            .minus()
-            .expect("error during rhs inversion in term simplification")
-        && lhs_trm.is_opposite(&rhs_trm)
-    {
-        return SimplRes::Yields(term::eq(
-            lhs_trm.into_term(),
-            lhs_cst
-                .to_term()
-                .expect("error during lhs cst to term conversion in term simplification"),
-        ));
+
     }
 
     SimplRes::None
@@ -940,9 +1224,6 @@ simpl_fun! {
 
 simpl_fun! {
   fn and(args) {
-    args.sort_unstable() ;
-    args.dedup() ;
-
     let mut cnt = 0 ;
 
     while cnt < args.len() {
@@ -967,9 +1248,8 @@ simpl_fun! {
       }
     }
 
-    // if conf.term_simpl >= 3 {
-    conj_vec_simpl(args) ;
-    // }
+    vec_simpl(args, true) ;
+    args.sort_unstable();
 
     if args.is_empty() {
       Some(
@@ -986,9 +1266,6 @@ simpl_fun! {
 
   // Disjunction.
   fn or(args) {
-    args.sort_unstable() ;
-    args.dedup() ;
-
     let mut cnt = 0 ;
 
     while cnt < args.len() {
@@ -1011,6 +1288,9 @@ simpl_fun! {
         cnt += 1
       }
     }
+
+    vec_simpl(args, false) ;
+    args.sort_unstable();
 
     if args.is_empty() {
       Some(

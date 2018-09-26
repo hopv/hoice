@@ -1,64 +1,78 @@
 //! Constants of the crate.
 
 lazy_static! {
-  /// The constant `10` as an [`Int`][int].
-  ///
-  /// [int]: ../type.Int.html
-  /// (Int type)
-  pub static ref ten: ::common::Int = 10.into() ;
+    /// The constant `10` as an [`Int`].
+    ///
+    /// [`Int`]: ../type.Int.html (Int type)
+    pub static ref ten: ::common::Int = 10.into() ;
 }
+
+
+
+/// Error-related constants.
+pub mod err {
+    /// Description for unsat error(s).
+    pub static unsat_desc: &'static str = "unsat";
+    /// Description for unknown error(s).
+    pub static unknown_desc: &'static str = "unknown";
+    /// Description for timeout error(s).
+    pub static timeout_desc: &'static str = "timeout";
+    /// Description for exit error(s).
+    pub static exit_desc: &'static str = "exit";
+}
+
+
 
 /// Use this macro to declare keywords.
 ///
-/// Declares everything and creates a function testing if a string is a
-/// keyword.
+/// Declares everything and creates a function testing if a string is a keyword.
 macro_rules! keys {
-  // Create one keyword.
-  (|internal def|
-    $id:ident $def:expr, $doc:meta $(,$meta:meta)* $(,)*
-  ) => (
-    #[$doc]
-    $(#[$meta])*
-    pub const $id: & str = $def ;
-  ) ;
+    // Create one keyword.
+    (|internal def|
+        $id:ident $def:expr, $doc:meta $(,$meta:meta)* $(,)*
+    ) => (
+        #[$doc]
+        $(#[$meta])*
+        pub const $id: &str = $def ;
+    );
 
-  // Creates some keywords and some functions, if any.
-  (
-    funs {
-      $( $fn_kind:tt ( $($fn_stuff:tt)* ) )*
-    }
-    keys {
-      $( $id:ident ( $($stuff:tt)* ) )*
-    }
-    $(
-      $doc:meta mod $mod:ident { $($mod_stuff:tt)* }
-    )*
-  ) => (
-    #[doc = "
-      True if input is one of the keywords defined in this module and its
-      submodules.
-    "]
-    pub fn is_keyword(s: & str) -> bool {
-      $(
-        if $id == s { return true }
-      )*
-      $(
-        if $mod::is_keyword(s) { return true }
-      )*
-      false
-    }
-    $( keys! { |internal def| $id $($stuff)* } )*
-    $(
-      #[$doc]
-      pub mod $mod { keys! { $($mod_stuff)* } }
-    )*
-  ) ;
+    // Creates some keywords and some functions, if any.
+    (
+        funs {
+            $( $fn_kind:tt ( $($fn_stuff:tt)* ) )*
+        }
+        keys {
+            $( $id:ident ( $($stuff:tt)* ) )*
+        }
+        $(
+            $doc:meta mod $mod:ident { $($mod_stuff:tt)* }
+        )*
+    ) => (
+        #[doc = "
+            True if input is one of the keywords defined in this module and its
+            submodules.
+        "]
+        pub fn is_keyword(s: & str) -> bool {
+            $(
+                if $id == s { return true }
+            )*
+            $(
+                if $mod::is_keyword(s) { return true }
+            )*
+            false
+        }
+        $( keys! { |internal def| $id $($stuff)* } )*
+        $(
+            #[$doc]
+            pub mod $mod { keys! { $($mod_stuff)* } }
+        )*
+    );
 
-  (|internal lockstep|
-    $( ($($left:tt)*) )*, $mid:tt, $right:tt
-  ) => (
-    keys!{ $($($left)* $mid $right)* }
-  ) ;
+    (|internal lockstep|
+        $( ($($left:tt)*) )*, $mid:tt, $right:tt
+    ) => (
+        keys!{ $($($left)* $mid $right)* }
+    );
 }
 
 /// Values used in hoice.
@@ -78,10 +92,10 @@ pub mod values {
 pub mod errors {
     /// Unsat core asked but not active.
     pub const no_unsat_cores: &str = "\
-    unsat core production is not active:\n\
-    consider adding `(set-option :produce-unsat-core true)`\n\
-    at the start of your script
-  ";
+        unsat core production is not active:\n\
+        consider adding `(set-option :produce-unsat-core true)`\n\
+        at the start of your script
+    ";
 }
 
 /// Language keywords.

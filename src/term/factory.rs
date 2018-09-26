@@ -88,6 +88,29 @@ pub fn vars(t: &Term) -> VarSet {
 /// Each variable is visited only once.
 ///
 /// Pretty much equivalent to `term::vars(t).into_iter().map(f)`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let term = term::ge(
+///     term::add(vec![
+///         term::int_var(7),
+///         term::cmul(7, term::int_var(3)),
+///         term::mul( vec![term::int_var(2), term::int_var(7), term::int_var(5)] )
+///     ]), term::int(0)
+/// );
+/// let mut expected: VarSet = vec![
+///     7.into(), 3.into(), 2.into(), 5.into()
+/// ].into_iter().collect();
+/// term::map_vars(
+///     &term, |var| {
+///         let was_there = expected.remove(&var);
+///         assert! { was_there }
+///     }
+/// );
+/// assert! { expected.is_empty() }
+/// ```
 #[inline]
 pub fn map_vars<F>(t: &Term, mut f: F)
 where
@@ -441,7 +464,7 @@ pub fn ite(c: Term, t: Term, e: Term) -> Term {
 ///     term::bool_var(0),
 ///     term::or( vec![term::bool_var(7), term::bool_var(3)] )
 /// );
-/// assert_eq! { &format!("{}", t), "(or v_3 (not v_0) v_7)" }
+/// assert_eq! { &format!("{}", t), "(or v_7 v_3 (not v_0))" }
 /// ```
 #[inline]
 pub fn implies(lhs: Term, rhs: Term) -> Term {
@@ -520,15 +543,29 @@ pub fn not(term: Term) -> Term {
 /// assert_eq! { &format!("{}", t), "v_0" }
 /// ```
 ///
-// / Trivial disjunctions:
-// /
-// / ```rust
-// / # use hoice::common::*;
-// / let t = term::or(vec![
-// /     term::bool_var(1), term::bool_var(0), term::not(term::bool_var(1))
-// / ]);
-// / assert_eq! { &format!("{}", t), "true" }
-// / ```
+/// Trivial disjunctions:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::or(vec![
+///     term::bool_var(1), term::bool_var(0), term::not(term::bool_var(1))
+/// ]);
+/// assert_eq! { &format!("{}", t), "true" }
+/// ```
+///
+/// Arithmetic simplification:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::or(vec![
+///     term::ge(term::int_var(0), term::int(7)), term::le(term::int_var(0), term::int(7)),
+/// ]);
+/// assert_eq! { &format!("{}", t), "true" }
+/// let t = term::or(vec![
+///     term::ge(term::int_var(0), term::int(7)), term::gt(term::int_var(0), term::int(7)),
+/// ]);
+/// assert_eq! { &format!("{}", t), "(>= v_0 7)" }
+/// ```
 #[inline]
 pub fn or(terms: Vec<Term>) -> Term {
     app(Op::Or, terms)
@@ -570,6 +607,24 @@ pub fn or(terms: Vec<Term>) -> Term {
 /// # use hoice::common::*;
 /// let t = term::and(vec![
 ///     term::bool_var(1), term::bool_var(0), term::not(term::bool_var(1))
+/// ]);
+/// assert_eq! { &format!("{}", t), "false" }
+/// ```
+///
+/// Arithmetic simplification:
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::and(vec![
+///     term::ge(term::int_var(0), term::int(7)), term::le(term::int_var(0), term::int(7)),
+/// ]);
+/// assert_eq! { &format!("{}", t), "(= (+ v_0 (- 7)) 0)" }
+/// let t = term::and(vec![
+///     term::ge(term::int_var(0), term::int(7)), term::gt(term::int_var(0), term::int(7)),
+/// ]);
+/// assert_eq! { &format!("{}", t), "(>= v_0 8)" }
+/// let t = term::and(vec![
+///     term::ge(term::int_var(0), term::int(7)), term::lt(term::int_var(0), term::int(7)),
 /// ]);
 /// assert_eq! { &format!("{}", t), "false" }
 /// ```
