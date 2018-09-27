@@ -763,7 +763,9 @@ where
         if args.len() != fun.sig.len() {
             panic!(
                 "illegal application of function {} to {} arguments, expected {}",
-                conf.bad(&name), args.len(), fun.sig.len()
+                conf.bad(&name),
+                args.len(),
+                fun.sig.len()
             )
         }
         for (info, arg) in fun.sig.iter().zip(args.iter_mut()) {
@@ -775,7 +777,9 @@ where
             } else if info.typ != arg.typ() {
                 panic!(
                     "ill-typed application of function {}, {} does not have type {}",
-                    conf.bad(&name), arg, info.typ
+                    conf.bad(&name),
+                    arg,
+                    info.typ
                 )
             }
         }
@@ -792,7 +796,7 @@ where
             } else {
                 term
             }
-        },
+        }
         Err(e) => {
             print_err(&e);
             panic!("illegal function application")

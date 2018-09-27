@@ -7,8 +7,6 @@ lazy_static! {
     pub static ref ten: ::common::Int = 10.into() ;
 }
 
-
-
 /// Error-related constants.
 pub mod err {
     /// Description for unsat error(s).
@@ -20,8 +18,6 @@ pub mod err {
     /// Description for exit error(s).
     pub static exit_desc: &'static str = "exit";
 }
-
-
 
 /// Use this macro to declare keywords.
 ///

@@ -771,9 +771,9 @@ pub fn run_preproc<Strat: RedStrat>(
     log! { @verb
       "running {}", conf.emph( preproc.name() )
     }
-    let red_info = preproc.apply(instance).chain_err(
-        || format!("while running preprocessor {}", conf.bad(preproc.name()))
-    );
+    let red_info = preproc
+        .apply(instance)
+        .chain_err(|| format!("while running preprocessor {}", conf.bad(preproc.name())));
     profile! {
       |_profiler| mark "preproc", preproc.name()
     }

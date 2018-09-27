@@ -250,7 +250,7 @@ impl RedStrat for OneLhs {
                 .map(|argss| argss.len() != 1)
                 .unwrap_or(true)
             {
-                continue 'all_preds
+                continue 'all_preds;
             }
 
             log! { @3

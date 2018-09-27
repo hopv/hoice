@@ -1,7 +1,7 @@
 use common::{var_to::vals::VarValsSet, *};
 
 /// A sample is some values for a predicate.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct Sample {
     /// Predicate the sample is for.
     pub pred: PrdIdx,

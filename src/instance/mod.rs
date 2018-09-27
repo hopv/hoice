@@ -1363,7 +1363,7 @@ impl Instance {
     /// True if the teacher needs to maintain a sample graph (unsat
     /// cores/proofs).
     pub fn track_samples(&self) -> bool {
-        self.unsat_cores() || self.proofs()
+        false // self.unsat_cores() || self.proofs()
     }
 
     /// Converts `"true"` to `true`, `"false"` to `false`, and everything else to
@@ -1413,6 +1413,8 @@ impl Instance {
     /// Retrieves the lhs and rhs cex part from a bias.
     fn break_cex(&self, clause_idx: ClsIdx, bias: Bias) -> (CexLhs, CexRhs) {
         let clause = &self[clause_idx];
+        let bias = if self.proofs { Bias::Non } else { bias };
+
         match bias {
             // Consider the whole lhs of the clause positive.
             Bias::Lft => (vec![], clause.rhs()),

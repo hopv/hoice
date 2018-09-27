@@ -44,6 +44,8 @@ pub struct Data {
     // graph: Option<SampleGraph>,
     /// Profiler.
     _profiler: Profiler,
+    /// Entry point tracker.
+    entry_points: Option<::unsat_core::entry_points::EntryPoints>,
 }
 
 impl Clone for Data {
@@ -62,6 +64,7 @@ impl Clone for Data {
             cstr_info: self.cstr_info.clone(),
             // graph: None,
             _profiler: Profiler::new(),
+            entry_points: None,
         }
     }
 }
@@ -100,6 +103,12 @@ impl Data {
         }
         // let track_samples = instance.track_samples() ;
 
+        let entry_points = if instance.proofs() {
+            Some(::unsat_core::entry_points::EntryPoints::new())
+        } else {
+            None
+        };
+
         let constraints = CstrMap::with_capacity(103);
         Data {
             instance,
@@ -117,6 +126,7 @@ impl Data {
             //   None
             // },
             _profiler: Profiler::new(),
+            entry_points,
         }
     }
 
@@ -272,12 +282,60 @@ impl Data {
         Ok(useful)
     }
 
+    /// Registers a sample dependency.
+    ///
+    /// Input sample in the sample that is positive, second one is the one that depends on it.
+    fn register_sample_dep(
+        &mut self,
+        pred: PrdIdx,
+        args: &VarVals,
+        rhs: Option<Sample>,
+    ) -> Res<()> {
+        if let Some(rhs) = rhs {
+            self.entry_points
+                .as_mut()
+                .map(|e| e.register_dep(rhs, &Sample::new(pred, args.clone())))
+                .unwrap_or(Ok(()))?;
+        }
+        Ok(())
+    }
+
+    /// Registers a sample dependency.
+    ///
+    /// Input sample in the sample that is positive, second one is the one that depends on it.
+    fn register_raw_sample_dep(
+        &mut self,
+        pred: PrdIdx,
+        args: &VarVals,
+        rhs: Option<&(PrdIdx, RVarVals)>,
+    ) -> Res<()> {
+        if let Some((rhs_pred, var_vals)) = rhs {
+            let rhs_args = var_to::vals::new(var_vals.clone());
+            let rhs = Sample::new(*rhs_pred, rhs_args);
+            self.register_sample_dep(pred, args, Some(rhs))?
+        }
+        Ok(())
+    }
+
+    /// Registers a constraint simplification (lhs part).
+    ///
+    /// Input sample in the sample that is positive and was removed.
+    fn register_lhs_constraint_simpl(
+        &mut self,
+        constraint: CstrIdx,
+        pred: PrdIdx,
+        args: &VarVals,
+    ) -> Res<()> {
+        let rhs = self.constraints[constraint].rhs().cloned();
+        self.register_sample_dep(pred, args, rhs)
+    }
+
     /// Adds a positive example.
     ///
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    pub fn add_raw_pos(&mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals) -> bool {
+    fn add_raw_pos(&mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals) -> bool {
         let args = var_to::vals::new(args);
         self.add_pos(clause, pred, args.clone())
     }
@@ -287,7 +345,7 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    pub fn add_raw_neg(&mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals) -> bool {
+    fn add_raw_neg(&mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals) -> bool {
         let args = var_to::vals::new(args);
         self.add_neg(clause, pred, args.clone())
     }
@@ -297,7 +355,21 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    pub fn add_pos(&mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
+    pub fn add_pos(&mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
+        // println!("add_pos ({} {})", self.instance[pred], args);
+        // println!(
+        //     "#{} {}",
+        //     clause,
+        //     self.instance[clause]
+        //         .to_string_info(self.instance.preds())
+        //         .unwrap()
+        // );
+        if self.instance[clause].lhs_preds().is_empty() {
+            // println!("positive clause");
+            if let Some(e) = self.entry_points.as_mut() {
+                e.register(Sample::new(pred, args.clone()))
+            }
+        }
         // if self.add_pos_untracked( pred, args.clone() ) {
         //   if let Some(graph) = self.graph.as_mut() {
         //     graph.add(
@@ -461,17 +533,42 @@ impl Data {
     }
 
     /// Checks whether the data is contradictory.
-    pub fn is_unsat(&self) -> Option<Vec<(PrdIdx, VarVals)>> {
+    pub fn is_unsat(&self) -> bool {
+        self.get_unsat_proof().is_ok()
+    }
+
+    /// Retrieves a proof of unsat.
+    pub fn get_unsat_proof(&self) -> Res<::unsat_core::UnsatRes> {
+        // println!(
+        //     "all learning data:\n{}",
+        //     self.string_do(&(), |s| s.to_string()).unwrap()
+        // );
+        // println!("data:");
+        // for line in self
+        //     .entry_points
+        //     .as_ref()
+        //     .unwrap()
+        //     .to_string(&*self.instance)
+        //     .lines()
+        // {
+        //     println!("  {}", line)
+        // }
+        // println!("is unsat");
         for (pred, samples) in self.pos.index_iter() {
             for sample in samples {
                 for neg in &self.neg[pred] {
                     if sample.is_complementary(neg) {
-                        return Some(vec![(pred, sample.clone()), (pred, neg.clone())]);
+                        let entry_points = if let Some(entry_points) = &self.entry_points {
+                            Some(entry_points.entry_points_of(&Sample::new(pred, sample.clone()))?)
+                        } else {
+                            None
+                        };
+                        return Ok(::unsat_core::UnsatRes::new(entry_points));
                     }
                 }
             }
         }
-        None
+        bail!("asked for unsat proof while learning data is not unsat")
     }
 
     /// Propagates all staged samples.
@@ -559,22 +656,33 @@ impl Data {
                 if let Some(constraints) = self.remove_subs(pred, &args) {
                     profile! { self tick "propagate", "cstr update" }
                     for constraint_idx in constraints {
-                        let constraint = &mut self.constraints[constraint_idx];
-                        let map = &mut self.map;
+                        macro_rules! constraint {
+                            () => {
+                                self.constraints[constraint_idx]
+                            };
+                        }
 
-                        let tautology = constraint
-                            .force_sample(pred, &args, pos, |pred, args| {
-                                Self::tauto_fun(map, constraint_idx, pred, &args)
-                            }).chain_err(|| "in propagate")?;
+                        let tautology = {
+                            let map = &mut self.map;
+                            let constraint = &mut constraint!();
+                            constraint
+                                .force_sample(pred, &args, pos, |pred, args| {
+                                    Self::tauto_fun(map, constraint_idx, pred, &args)
+                                }).chain_err(|| "in propagate")?
+                        };
 
                         if tautology {
                             // Tautology, discard.
                             self.cstr_info.forget(constraint_idx)
                         } else {
-                            match constraint.try_trivial() {
+                            if pos {
+                                self.register_lhs_constraint_simpl(constraint_idx, pred, &args)?
+                            }
+
+                            match constraint!().try_trivial() {
                                 Either::Left((Sample { pred, args }, pos)) => {
                                     // Constraint is trivial: unlink and forget.
-                                    if let Some(set) = map[pred].get_mut(&args) {
+                                    if let Some(set) = self.map[pred].get_mut(&args) {
                                         let was_there = set.remove(&constraint_idx);
                                         debug_assert! { was_there }
                                     }
@@ -586,7 +694,7 @@ impl Data {
                                     // Otherwise, the constraint was modified and we're keeping
                                     // it.
                                     self.cstr_info
-                                        .register_modded(constraint_idx, &constraint)?;
+                                        .register_modded(constraint_idx, &constraint!())?;
                                     modded_constraints.insert(constraint_idx);
                                 }
                                 Either::Right(true) => {
@@ -681,12 +789,12 @@ impl Data {
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<bool> {
         let rhs = match rhs {
-            Some((pred, sample)) => if lhs.is_empty() {
+            Some((pred, sample)) => {
                 let add_as_neg = if let Some(str) = self.instance[pred].strength() {
                     // If the strengthening term of the predicate evaluates to false on a positive
                     // sample, this thing's unsat.
                     if let Some(value) = str.bool_eval(&sample)? {
-                        ! value
+                        !value
                     } else {
                         false
                     }
@@ -696,13 +804,15 @@ impl Data {
                 if add_as_neg {
                     self.add_raw_neg(clause, pred, sample.clone());
                 }
-                // Positive sample.
-                let new = self.add_raw_pos(clause, pred, sample);
-                return Ok(new);
-            } else {
-                // Constraint.
-                Some((pred, sample))
-            },
+                if lhs.is_empty() {
+                    // Positive sample.
+                    let new = self.add_raw_pos(clause, pred, sample);
+                    return Ok(new);
+                } else {
+                    // Constraint.
+                    Some((pred, sample))
+                }
+            }
 
             None => if lhs.len() == 1 {
                 // Negative sample.
@@ -745,6 +855,7 @@ impl Data {
             // If no partial examples and sample is new, no need to check anything.
             if conf.teacher.partial || !is_new {
                 if args.set_subsumed(&self.pos[pred]) {
+                    self.register_raw_sample_dep(pred, &args, rhs.as_ref())?;
                     // Positive, skip.
                     continue 'lhs_iter;
                 } else if args.set_subsumed(&self.neg[pred]) {
@@ -815,29 +926,28 @@ impl Data {
     /// Partial samples ARE NOT ALLOWED in constraints.
     ///
     /// - propagates staged samples beforehand
-    pub fn add_cstr(
+    fn add_cstr(
         &mut self,
         _clause: ClsIdx,
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<bool> {
         profile!(
-      self wrap { self.propagate() }
-      "add cstr", "pre-propagate"
-    )?;
+            self wrap { self.propagate() } "add cstr", "pre-propagate"
+        )?;
 
         if_log! { @4
-          log! { @4 "adding constraint" }
-          if let Some((pred, args)) = rhs.as_ref() {
-            log! { @4 "({} {})", self.instance[* pred], args }
-          } else {
-            log! { @4 "false" }
-          }
-          let mut pref = "<=" ;
-          for (pred, args) in & lhs {
-              log! { @4 "{} ({} {})", pref, self.instance[* pred], args }
-              pref = "  "
-          }
+            log! { @4 "adding constraint" }
+            if let Some((pred, args)) = rhs.as_ref() {
+                log! { @4 "({} {})", self.instance[* pred], args }
+            } else {
+                log! { @4 "false" }
+            }
+            let mut pref = "<=" ;
+            for (pred, args) in & lhs {
+                log! { @4 "{} ({} {})", pref, self.instance[* pred], args }
+                pref = "  "
+            }
         }
 
         profile! { self tick "add cstr", "pre-checks" }
@@ -867,9 +977,8 @@ impl Data {
             Either::Right(false) => {
                 // Handles linking and constraint info registration.
                 let is_new = profile!(
-          self wrap { self.raw_add_cstr(constraint) }
-          "add cstr", "raw"
-        )?;
+                    self wrap { self.raw_add_cstr(constraint) } "add cstr", "raw"
+                )?;
 
                 self.check("after add_cstr")?;
 

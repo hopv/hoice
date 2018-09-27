@@ -214,7 +214,7 @@ impl RedStrat for OneRhs {
             }
         }
 
-        self.quantifiers = ! self.quantifiers;
+        self.quantifiers = !self.quantifiers;
 
         Ok(red_info)
     }

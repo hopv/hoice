@@ -118,6 +118,9 @@ pub fn read_and_work<R: ::std::io::Read>(
     // - `None`             if not unsat
     let mut unsat = None;
 
+    // Original instance.
+    let mut original_instance = None;
+
     'parse_work: loop {
         use parse::Parsed;
 
@@ -163,6 +166,12 @@ pub fn read_and_work<R: ::std::io::Read>(
 
             // Check-sat, start class.
             Parsed::CheckSat => {
+                if instance.proofs() {
+                    let mut old = instance.clone();
+                    old.finalize()
+                        .chain_err(|| "while finalizing original instance")?;
+                    original_instance = Some(old)
+                }
                 log! { @info "Running top pre-processing" }
 
                 let preproc_profiler = Profiler::new();
@@ -180,12 +189,7 @@ pub fn read_and_work<R: ::std::io::Read>(
                         println!("unknown");
                         continue;
                     } else if e.is_unsat() {
-                        if let Some(clause) = e.unsat_cause() {
-                            unsat = Some(unsat_core::UnsatRes::Clause(clause))
-                        } else {
-                            unsat = Some(unsat_core::UnsatRes::None)
-                        }
-                        ()
+                        unsat = Some(unsat_core::UnsatRes::None)
                     } else {
                         bail!(e)
                     },
@@ -268,7 +272,21 @@ pub fn read_and_work<R: ::std::io::Read>(
             Parsed::GetUnsatCore => println!("unsupported"),
 
             // Print unsat core if available.
-            Parsed::GetProof => println!("unsupported"),
+            Parsed::GetProof => if let Some(unsat_res) = unsat.as_ref() {
+                if let Err(e) = original_instance
+                    .as_ref()
+                    .ok_or::<Error>(
+                        "unable to retrieve original instance for proof reconstruction".into(),
+                    ).and_then(|original| {
+                        unsat_res
+                            .write_proof(&mut stdout(), &instance, original)
+                            .chain_err(|| "while writing unsat proof")
+                    }) {
+                    print_err(&e)
+                }
+            } else {
+                print_err(&"no unsat proof available".into())
+            },
 
             // Print model if available.
             Parsed::GetModel => if let Some(model) = model.as_mut() {

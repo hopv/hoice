@@ -68,6 +68,13 @@ lazy_static!{
 
 // |===| Helpers.
 
+/// Provides a discard function that drops anything.
+pub trait Discard: Sized {
+    /// Drops self.
+    fn discard(self) {}
+}
+impl<T> Discard for T {}
+
 /// Stdout.
 pub use std::io::stdout;
 

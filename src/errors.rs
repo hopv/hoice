@@ -156,7 +156,7 @@ impl Error {
     pub fn is_unsat(&self) -> bool {
         for err in self.iter() {
             if err.description() == consts::err::unsat_desc {
-                return true
+                return true;
             }
         }
         false
@@ -180,7 +180,7 @@ impl Error {
         } else {
             for err in self.iter() {
                 if err.description() == consts::err::unknown_desc {
-                    return true
+                    return true;
                 }
             }
             false
@@ -200,12 +200,12 @@ impl Error {
     /// [timeout]: enum.ErrorKind.html#variant.Timeout
     /// (ErrorKind's Timeout variant)
     pub fn is_timeout(&self) -> bool {
-        if let ErrorKind::SmtError(smt_err) =self.kind() {
-            return smt_err.is_timeout()
+        if let ErrorKind::SmtError(smt_err) = self.kind() {
+            return smt_err.is_timeout();
         }
         for err in self.iter() {
             if err.description() == consts::err::timeout_desc {
-                return true
+                return true;
             }
         }
         false
@@ -217,7 +217,7 @@ impl Error {
     pub fn is_exit(&self) -> bool {
         for err in self.iter() {
             if err.description() == consts::err::exit_desc {
-                return true
+                return true;
             }
         }
         false

@@ -44,7 +44,7 @@ pub fn start_class(
                   unsat core will not be available\n\
                   please consider contacting the developer"
                 }
-                let core = teacher.unsat_core();
+                let core = teacher.unsat_core()?;
                 Ok(TeachRes::Unsat(core))
             }
 
@@ -112,7 +112,10 @@ pub fn teach(teacher: &mut Teacher) -> Res<TeachRes> {
 
         match teacher.get_candidates(false)? {
             // Unsat result, done.
-            Either::Right(unsat) => return Ok(TeachRes::Unsat(unsat)),
+            Either::Right(unsat) => {
+                teacher.data.is_unsat();
+                return Ok(TeachRes::Unsat(unsat));
+            }
 
             // Got a candidate.
             Either::Left((idx, candidates)) => {
@@ -353,6 +356,7 @@ impl<'a> Teacher<'a> {
         }
         self.assistant = None;
         log_debug! { "draining messages" }
+        self.data.is_unsat();
         while let Ok(_) = self.get_candidates(true) {}
 
         if conf.stats {
@@ -570,7 +574,7 @@ impl<'a> Teacher<'a> {
             },
             Err(e) => {
                 if e.is_unsat() {
-                    return Ok(Some(TeachRes::Unsat(self.unsat_core())));
+                    return Ok(Some(TeachRes::Unsat(self.unsat_core()?)));
                 } else {
                     bail!(e)
                 }
@@ -643,8 +647,8 @@ impl<'a> Teacher<'a> {
                     }
 
                     // Are we unsat?
-                    if self.data.is_unsat().is_some() {
-                        return Ok(Either::Right(self.unsat_core()));
+                    if self.data.is_unsat() {
+                        return Ok(Either::Right(self.unsat_core()?));
                     }
                 }
 
@@ -671,17 +675,16 @@ impl<'a> Teacher<'a> {
                     }
                 }
 
-                MsgKind::Unsat => if self.data.is_unsat().is_some() {
-                    return Ok(Either::Right(self.unsat_core()));
+                MsgKind::Unsat => if self.data.is_unsat() {
+                    return Ok(Either::Right(self.unsat_core()?));
                 },
             }
         }
     }
 
     /// Retrieves the unsat core, if any.
-    pub fn unsat_core(&mut self) -> UnsatRes {
-        // UnsatRes::new( self.data.sample_graph() )
-        UnsatRes::new(None)
+    pub fn unsat_core(&mut self) -> Res<UnsatRes> {
+        self.data.get_unsat_proof()
     }
 
     /// Initial check, where all candidates are `true`.
