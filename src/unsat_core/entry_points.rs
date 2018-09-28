@@ -32,6 +32,16 @@ impl EntryPoints {
         }
     }
 
+    /// Merges with another entry point tracker.
+    pub fn merge(&mut self, other: Self) {
+        for sample in other.real_pos_samples {
+            self.real_pos_samples.insert(sample);
+        }
+        for (sample, set) in other.pos_sample_map {
+            self.pos_sample_map.entry(sample).or_insert(set);
+        }
+    }
+
     /// String representation.
     pub fn to_string(&self, instance: &Instance) -> String {
         let mut s = "real_pos_samples:".to_string();
@@ -164,6 +174,7 @@ struct Reconstr<'a> {
     safe_preds: PrdSet,
     /// Predicates that are defined and can be used in positive samples.
     pos_preds: PrdSet,
+    nu_pos_preds: PrdSet,
     /// Original instance.
     original: &'a Instance,
     /// Instance.
@@ -186,6 +197,15 @@ impl<'a> Reconstr<'a> {
         to_do: Vec<Sample>,
         solver: &'a mut Slvr,
     ) -> Self {
+        let nu_pos_preds: PrdSet = original
+            .pos_clauses()
+            .iter()
+            .map(|idx| {
+                original[*idx]
+                    .rhs()
+                    .expect("positive clauses necessarily have a RHS")
+                    .0
+            }).collect();
         let mut safe_preds = PrdSet::new();
         let mut pos_preds = PrdSet::new();
         let mut fp = false;
@@ -196,6 +216,7 @@ impl<'a> Reconstr<'a> {
                     continue;
                 } else if let Some(def) = pred.def() {
                     if def.preds().is_empty() {
+                        fp = false;
                         pos_preds.insert(pred.idx);
                     }
                     if def.preds().is_subset(&safe_preds) {
@@ -207,15 +228,20 @@ impl<'a> Reconstr<'a> {
         }
 
         if_log! { @3
-            log! { @3 |=> "safe predicates:" }
-            for pred in &safe_preds {
-                log! { @3 |=> "  {}", instance[*pred] }
+            if safe_preds.is_empty() {
+                log! { @3 |=> "no safe predicates" }
+            } else {
+                log! { @3 |=> "safe predicates:" }
+                for pred in &safe_preds {
+                    log! { @3 |=> "  {}", instance[*pred] }
+                }
             }
         }
 
         Reconstr {
             safe_preds,
             pos_preds,
+            nu_pos_preds,
             original,
             instance,
             to_do,
@@ -312,9 +338,98 @@ impl<'a> Reconstr<'a> {
         }
     }
 
+    /// Reconstructs a sample using the definitions of the positive predicates.
+    fn work_on_defs(&mut self, pred: PrdIdx, vals: &VarVals) -> Res<bool> {
+        let mut current_pred = PrdSet::with_capacity(1);
+        current_pred.insert(pred);
+
+        log! { @4 "trying to reconstruct from {} definition(s)", self.nu_pos_preds.len() }
+
+        'find_pos_pred: for pos_pred in &self.nu_pos_preds {
+            let pos_pred = *pos_pred;
+            if let Some(def) = self.instance[pos_pred].def() {
+                let mut pred_args = None;
+                for pred_apps in def.pred_apps() {
+                    'current_apps: for (p, argss) in pred_apps {
+                        if self.safe_preds.contains(p) {
+                            continue 'current_apps;
+                        } else if *p == pred {
+                            for args in argss {
+                                let prev = ::std::mem::replace(&mut pred_args, Some(args));
+                                if prev.is_some() {
+                                    continue 'find_pos_pred;
+                                }
+                            }
+                        } else {
+                            continue 'find_pos_pred;
+                        }
+                    }
+                }
+
+                let pred_args = if let Some(args) = pred_args {
+                    args
+                } else {
+                    continue 'find_pos_pred;
+                };
+
+                log! { @5
+                    "positive predicate {} mentions {}: ({} {})",
+                    self.instance[pos_pred], self.instance[pred], self.instance[pred], pred_args
+                }
+
+                self.solver.push(1)?;
+
+                for (var, typ) in self.original[pos_pred].sig.index_iter() {
+                    self.solver.declare_const(&var, typ.get())?;
+                }
+
+                self.solver
+                    .assert_with(def, &(&current_pred, &PrdSet::new(), self.instance.preds()))?;
+
+                self.solver.assert(&smt::EqConj::new(pred_args, vals))?;
+
+                let sat = self.solver.check_sat()?;
+
+                let model = if sat {
+                    let model = self.solver.get_model()?;
+                    Some(smt::FullParser.fix_model(model)?)
+                } else {
+                    None
+                };
+
+                self.solver.pop(1)?;
+
+                if let Some(model) = model {
+                    log! { @5 "sat, getting sample" }
+                    let vals = Cex::of_pred_model(&self.original[pos_pred].sig, model, true)?;
+                    let vals = var_to::vals::new(vals);
+                    self.samples.insert(Sample::new(pos_pred, vals));
+                    return Ok(true);
+                } else {
+                    log! { @5 "unsat" }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Reconstructs a single positive sample.
     fn work_on_sample(&mut self, Sample { pred, args }: Sample) -> Res<()> {
         log! { @3 | "working on ({} {})", self.instance[pred], args }
+
+        // Already an entry point for the original instance?
+        if self.nu_pos_preds.contains(&pred) {
+            log! { @4 | "already a legal entry point" }
+            self.samples.insert(Sample::new(pred, args));
+            return Ok(());
+        }
+
+        // Try reconstructing by using predicate definitions directly.
+        let done = self.work_on_defs(pred, &args)?;
+        if done {
+            return Ok(());
+        }
+
         let (pos, others) = self.clauses_for(pred);
         log! { @4 | "{} positive clause(s), {} usable clause(s)", pos.len(), others.len() }
         if_log! { @5
@@ -362,7 +477,10 @@ impl<'a> Reconstr<'a> {
         }
 
         while let Some(sample) = self.to_do.pop() {
-            self.work_on_sample(sample.clone())?;
+            if let Err(e) = self.work_on_sample(sample.clone()) {
+                print_err(&e);
+                self.samples.insert(sample);
+            }
         }
 
         self.solver.reset()?;

@@ -841,6 +841,33 @@ impl TTerms {
         TTerms::Dnf { disj }.simplify()
     }
 
+    /// The predicate applications appearing in the top term.
+    pub fn pred_apps(&self) -> Vec<&PredApps> {
+        let mut res = vec![];
+        match self {
+            TTerms::True | TTerms::False => (),
+            TTerms::Conj { tterms, .. } => if !tterms.preds().is_empty() {
+                res.push(tterms.preds())
+            },
+            TTerms::Disj {
+                tterms, neg_preds, ..
+            } => {
+                if !tterms.preds().is_empty() {
+                    res.push(tterms.preds());
+                }
+                if !neg_preds.is_empty() {
+                    res.push(neg_preds)
+                }
+            }
+            TTerms::Dnf { disj } => for (_, tterms) in disj {
+                if !tterms.preds().is_empty() {
+                    res.push(tterms.preds())
+                }
+            },
+        }
+        res
+    }
+
     /// Predicates appearing in the top terms.
     pub fn preds(&self) -> PrdSet {
         let mut res = PrdSet::new();

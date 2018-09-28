@@ -126,6 +126,25 @@ impl RVarVals {
         Ok(slf)
     }
 
+    /// Constructor from a model for a predicate.
+    pub fn of_pred_model<T>(sig: &Sig, model: Vec<(VarIdx, T, Val)>, partial: bool) -> Res<Self> {
+        let mut slf = RVarVals {
+            map: sig
+                .iter()
+                .map(|typ| {
+                    if partial {
+                        val::none(typ.clone())
+                    } else {
+                        typ.default_val()
+                    }
+                }).collect(),
+        };
+        for (var, _, val) in model {
+            slf[var] = val.cast(&sig[var])?;
+        }
+        Ok(slf)
+    }
+
     /// Evaluates some arguments and yields the resulting `VarMap`.
     pub fn apply_to(&self, args: &VarMap<::term::Term>) -> ::errors::Res<Self> {
         let mut res = Self::with_capacity(args.len());

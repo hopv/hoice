@@ -2,15 +2,24 @@
 
 use common::*;
 use data::{Data, Sample};
+use var_to::vals::RVarVals;
 
 /// Result of trying to force a sample positive/negative.
 pub enum ForceRes {
     /// Failure.
     None,
     /// Sample was classified as positive.
-    Pos { sample: Sample, clause: ClsIdx },
+    Pos {
+        pred: PrdIdx,
+        sample: RVarVals,
+        clause: ClsIdx,
+    },
     /// Sample was classified as negative.
-    Neg { sample: Sample, clause: ClsIdx },
+    Neg {
+        pred: PrdIdx,
+        sample: RVarVals,
+        clause: ClsIdx,
+    },
 }
 
 /// Stores data from a positive / strict negative clause.
@@ -271,11 +280,11 @@ impl Assistant {
                     // Discard the constraint, regardless of what will happen.
                     profile! { self tick "data" }
                     data.tautologize(cstr)?;
-                    for (Sample { pred, args }, clause) in pos.drain(0..) {
-                        data.add_pos(clause, pred, args);
+                    for (pred, args, clause) in pos.drain(0..) {
+                        data.add_data(clause, vec![], Some((pred, args)))?;
                     }
-                    for (Sample { pred, args }, clause) in neg.drain(0..) {
-                        data.add_neg(clause, pred, args);
+                    for (pred, args, clause) in neg.drain(0..) {
+                        data.add_data(clause, vec![(pred, args)], None)?;
                     }
                     data.propagate()?;
                     profile! { self mark "data" }
@@ -286,14 +295,22 @@ impl Assistant {
             if let Some(&Sample { pred, ref args }) = data.constraints[cstr].rhs() {
                 match self.try_force(data, pred, args)? {
                     ForceRes::None => (),
-                    ForceRes::Pos { sample, clause } => {
-                        pos.push((sample, clause));
+                    ForceRes::Pos {
+                        pred,
+                        sample,
+                        clause,
+                    } => {
+                        pos.push((pred, sample, clause));
                         // Constraint is trivial, move on.
                         trivial = true
                     }
-                    ForceRes::Neg { sample, clause } => {
+                    ForceRes::Neg {
+                        pred,
+                        sample,
+                        clause,
+                    } => {
                         rhs_false = true;
-                        neg.push((sample, clause))
+                        neg.push((pred, sample, clause))
                     }
                 }
             }
@@ -309,9 +326,17 @@ impl Assistant {
                                 lhs_unknown += 1;
                                 lhs_trivial = false
                             }
-                            ForceRes::Pos { sample, clause } => pos.push((sample, clause)),
-                            ForceRes::Neg { sample, clause } => {
-                                neg.push((sample, clause));
+                            ForceRes::Pos {
+                                pred,
+                                sample,
+                                clause,
+                            } => pos.push((pred, sample, clause)),
+                            ForceRes::Neg {
+                                pred,
+                                sample,
+                                clause,
+                            } => {
+                                neg.push((pred, sample, clause));
                                 trivial = true;
                                 // Constraint is trivial, move on.
                                 // break 'lhs
@@ -411,7 +436,7 @@ impl Assistant {
             solver!(pop);
 
             if sat {
-                let args = if let Some(vars) = vars {
+                let sample = if let Some(vars) = vars {
                     let mut nu_vals = var_to::vals::RVarVals::with_capacity(vals.len());
                     for (idx, val) in vals.index_iter() {
                         if vars.contains(&idx) {
@@ -420,24 +445,30 @@ impl Assistant {
                             nu_vals.push(val::none(val.typ()))
                         }
                     }
-                    var_to::vals::new(nu_vals)
+                    nu_vals
                 } else {
-                    vals.clone()
+                    vals.get().clone()
                 };
 
                 self.solver.comment_args(format_args!(
                     "success, yielding {} sample ({} {})",
                     if *pos { "positive" } else { "negative" },
                     self.instance[pred],
-                    args
+                    sample
                 ))?;
 
-                let sample = Sample { pred, args };
-
                 if *pos {
-                    return Ok(ForceRes::Pos { sample, clause });
+                    return Ok(ForceRes::Pos {
+                        pred,
+                        sample,
+                        clause,
+                    });
                 } else {
-                    return Ok(ForceRes::Neg { sample, clause });
+                    return Ok(ForceRes::Neg {
+                        pred,
+                        sample,
+                        clause,
+                    });
                 }
             }
         }

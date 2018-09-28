@@ -155,11 +155,6 @@ impl Data {
         self._profiler
     }
 
-    /// Clears the modified constraint set.
-    pub fn clear_modded(&mut self) {
-        self.cstr_info.clear_modded()
-    }
-
     /// String representation of a constraint.
     #[allow(dead_code)]
     fn str_of(&self, c: CstrIdx) -> String {
@@ -171,17 +166,6 @@ impl Data {
                 .unwrap()
         )
     }
-
-    // /// The sample graph, used for unsat cores.
-    // pub fn sample_graph(& mut self) -> Option<SampleGraph> {
-    //   if let Some(ref mut graph) = self.graph {
-    //     let mut old_graph = SampleGraph::new() ;
-    //     ::std::mem::swap(graph, & mut old_graph) ;
-    //     Some(old_graph)
-    //   } else {
-    //     None
-    //   }
-    // }
 
     /// Clones the new/modded constraints to create a new `Data`.
     ///
@@ -203,8 +187,6 @@ impl Data {
 
     /// Merges the positive and negative samples in `other` to `self`.
     ///
-    /// Does not propagate.
-    ///
     /// Returns the number of new positive/negative examples.
     pub fn merge_samples(&mut self, other: Data) -> Res<(usize, usize)> {
         for (pred, samples) in other.pos.into_index_iter() {
@@ -217,13 +199,13 @@ impl Data {
                 self.staged.add_neg(pred, sample);
             }
         }
-        // if let Some(graph) = self.graph.as_mut() {
-        //   if let Some(other) = other.graph {
-        //     graph.merge(other)
-        //   } else {
-        //     bail!("inconsistent sample dependency tracking")
-        //   }
-        // }
+        if let Some(e) = self.entry_points.as_mut() {
+            if let Some(other) = other.entry_points {
+                e.merge(other)
+            } else {
+                bail!("failed to merge entry points while merging data samples")
+            }
+        }
         self.propagate()
     }
 
@@ -231,7 +213,7 @@ impl Data {
     ///
     /// Remove all constraints that this constraint makes useless, including the
     /// one(s) it is equal to.
-    pub fn cstr_useful(&mut self, index: CstrIdx) -> Res<bool> {
+    fn cstr_useful(&mut self, index: CstrIdx) -> Res<bool> {
         profile! { self tick "constraint subsumption" }
         let mut to_check = CstrSet::new();
         scoped! {
@@ -355,37 +337,18 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    pub fn add_pos(&mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
-        // println!("add_pos ({} {})", self.instance[pred], args);
-        // println!(
-        //     "#{} {}",
-        //     clause,
-        //     self.instance[clause]
-        //         .to_string_info(self.instance.preds())
-        //         .unwrap()
-        // );
+    fn add_pos(&mut self, clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
         if self.instance[clause].lhs_preds().is_empty() {
             // println!("positive clause");
             if let Some(e) = self.entry_points.as_mut() {
                 e.register(Sample::new(pred, args.clone()))
             }
         }
-        // if self.add_pos_untracked( pred, args.clone() ) {
-        //   if let Some(graph) = self.graph.as_mut() {
-        //     graph.add(
-        //       pred, self.instance[clause].rhs().unwrap().1.clone(),
-        //       args.clone(), clause, PrdHMap::new()
-        //     )
-        //   }
-        //   true
-        // } else {
-        //   false
-        // }
         self.add_pos_untracked(pred, args)
     }
     /// Adds a positive example.
     ///
-    /// Does track dependencies for unsat core.
+    /// Does track dependencies for unsat proof.
     ///
     /// Used by the learner(s).
     pub fn add_pos_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
@@ -397,36 +360,12 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    pub fn add_neg(&mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
-        // if self.add_neg_untracked( pred, args.clone() ) {
-        //   if let Some(graph) = self.graph.as_mut() {
-        //     let mut lhs = PrdHMap::with_capacity(1) ;
-        //     let mut farg_map = HConMap::new() ;
-        //     // debug_assert_eq! { 1, self.instance[clause].lhs_preds().len() }
-
-        //     let (
-        //       p, argss
-        //     ) = self.instance[clause].lhs_preds().iter().next().unwrap() ;
-        //     debug_assert_eq! { pred, * p }
-        //     debug_assert_eq! { 1, argss.len() }
-        //     let prev = farg_map.insert(
-        //       argss.iter().next().unwrap().clone(), args
-        //     ) ;
-        //     debug_assert! { prev.is_none() }
-
-        //     let prev = lhs.insert(pred, farg_map) ;
-        //     debug_assert! { prev.is_none() }
-        //     graph.add_neg(clause, lhs)
-        //   }
-        //   true
-        // } else {
-        //   false
-        // }
+    fn add_neg(&mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
         self.add_neg_untracked(pred, args)
     }
     /// Adds a negative example.
     ///
-    /// Does track dependencies for unsat core.
+    /// Does track dependencies for unsat proof.
     ///
     /// Used by the learner(s).
     pub fn add_neg_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
@@ -841,7 +780,7 @@ impl Data {
     ///
     /// Removes samples that are known to be true/false. Returns `None` if the
     /// constraint is trivial.
-    pub fn prune_cstr(
+    fn prune_cstr(
         &mut self,
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
