@@ -174,7 +174,6 @@ struct Reconstr<'a> {
     safe_preds: PrdSet,
     /// Predicates that are defined and can be used in positive samples.
     pos_preds: PrdSet,
-    nu_pos_preds: PrdSet,
     /// Original instance.
     original: &'a Instance,
     /// Instance.
@@ -197,7 +196,7 @@ impl<'a> Reconstr<'a> {
         to_do: Vec<Sample>,
         solver: &'a mut Slvr,
     ) -> Self {
-        let nu_pos_preds: PrdSet = original
+        let pos_preds: PrdSet = original
             .pos_clauses()
             .iter()
             .map(|idx| {
@@ -207,7 +206,6 @@ impl<'a> Reconstr<'a> {
                     .0
             }).collect();
         let mut safe_preds = PrdSet::new();
-        let mut pos_preds = PrdSet::new();
         let mut fp = false;
         while !fp {
             fp = true;
@@ -215,10 +213,6 @@ impl<'a> Reconstr<'a> {
                 if safe_preds.contains(&pred.idx) {
                     continue;
                 } else if let Some(def) = pred.def() {
-                    if def.preds().is_empty() {
-                        fp = false;
-                        pos_preds.insert(pred.idx);
-                    }
                     if def.preds().is_subset(&safe_preds) {
                         fp = false;
                         safe_preds.insert(pred.idx);
@@ -241,7 +235,6 @@ impl<'a> Reconstr<'a> {
         Reconstr {
             safe_preds,
             pos_preds,
-            nu_pos_preds,
             original,
             instance,
             to_do,
@@ -279,7 +272,7 @@ impl<'a> Reconstr<'a> {
     /// Returns `true` if the reconstruction was positive. If it was, (potentially) new positive
     /// samples have been added to `self.samples`.
     fn work_on_clause(&mut self, pred: PrdIdx, sample: &VarVals, clause: ClsIdx) -> Res<bool> {
-        debug_assert! { self.instance[clause].rhs().map(|(p, _)| p == pred).unwrap_or(false) }
+        debug_assert! { self.original[clause].rhs().map(|(p, _)| p == pred).unwrap_or(false) }
         self.solver.push(1)?;
         // Declare clause variables.
         self.original[clause].declare(self.solver)?;
@@ -297,7 +290,7 @@ impl<'a> Reconstr<'a> {
             }
         }
 
-        if let Some((p, args)) = self.instance[clause].rhs() {
+        if let Some((p, args)) = self.original[clause].rhs() {
             debug_assert_eq! { pred, p }
             self.solver.assert(&smt::EqConj::new(args, &sample))?
         } else {
@@ -329,7 +322,21 @@ impl<'a> Reconstr<'a> {
                     samples.push(Sample::new(*pred, var_to::vals::new(sample)))
                 }
                 if self.pos_preds.contains(pred) {
+                    if_log! { @5
+                        log! { @5 |=> "generated positive samples:" }
+                        for sample in &samples {
+                            log! { @5 |=> "  ({} {})", self.original[sample.pred], sample.args }
+                        }
+                    }
                     self.samples.extend(samples.into_iter())
+                } else {
+                    if_log! { @5
+                        log! { @5 |=> "generated new samples:" }
+                        for sample in &samples {
+                            log! { @5 |=> "  ({} {})", self.original[sample.pred], sample.args }
+                        }
+                    }
+                    self.to_do.extend(samples.into_iter())
                 }
             }
             Ok(true)
@@ -343,9 +350,9 @@ impl<'a> Reconstr<'a> {
         let mut current_pred = PrdSet::with_capacity(1);
         current_pred.insert(pred);
 
-        log! { @4 "trying to reconstruct from {} definition(s)", self.nu_pos_preds.len() }
+        log! { @4 "trying to reconstruct from {} definition(s)", self.pos_preds.len() }
 
-        'find_pos_pred: for pos_pred in &self.nu_pos_preds {
+        'find_pos_pred: for pos_pred in &self.pos_preds {
             let pos_pred = *pos_pred;
             if let Some(def) = self.instance[pos_pred].def() {
                 let mut pred_args = None;
@@ -418,7 +425,7 @@ impl<'a> Reconstr<'a> {
         log! { @3 | "working on ({} {})", self.instance[pred], args }
 
         // Already an entry point for the original instance?
-        if self.nu_pos_preds.contains(&pred) {
+        if self.pos_preds.contains(&pred) {
             log! { @4 | "already a legal entry point" }
             self.samples.insert(Sample::new(pred, args));
             return Ok(());
@@ -474,6 +481,17 @@ impl<'a> Reconstr<'a> {
         if !self.safe_preds.is_empty() {
             let model = self.instance.extend_model(PrdHMap::new())?;
             self.instance.write_definitions(self.solver, "", &model)?
+        }
+
+        if_log! { @4
+            log! { @4 |=> "{} safe preds", self.safe_preds.len() }
+            for pred in &self.safe_preds {
+                log! { @4 |=> "  {}", self.instance[*pred] }
+            }
+            log! { @4 |=> "{} pos preds", self.pos_preds.len() }
+            for pred in &self.pos_preds {
+                log! { @4 |=> "  {}", self.instance[*pred] }
+            }
         }
 
         while let Some(sample) = self.to_do.pop() {
