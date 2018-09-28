@@ -7,7 +7,7 @@ use common::*;
 pub mod entry_points;
 pub mod sample_graph;
 
-use self::entry_points::Entry;
+pub use self::entry_points::Entry;
 
 pub use self::sample_graph::SampleGraph;
 // use self::sample_graph::UnsatProof;
@@ -33,6 +33,11 @@ impl UnsatRes {
         } else {
             UnsatRes::None
         }
+    }
+
+    /// Empty entry constructor.
+    pub fn empty_entry() -> Self {
+        UnsatRes::Entry(Entry::new(entry_points::SampleSet::new()))
     }
 
     /// True if none.

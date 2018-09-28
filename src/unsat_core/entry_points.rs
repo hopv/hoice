@@ -69,18 +69,32 @@ impl EntryPoints {
             .pos_sample_map
             .remove(&sample)
             .unwrap_or_else(SampleSet::new);
-        if self.real_pos_samples.contains(dep) {
-            set.insert(dep.clone());
-        } else if let Some(dep_set) = self.pos_sample_map.get(dep) {
-            for sample in dep_set {
-                set.insert(sample.clone());
+
+        use var_to::vals::SubsumeExt;
+        let mut real_dep = None;
+        for s in &self.real_pos_samples {
+            if s.args.subsumes(&dep.args) {
+                real_dep = Some(s.clone());
+                break;
             }
+        }
+
+        if let Some(res) = real_dep {
+            set.insert(res);
         } else {
-            bail!(
-                "trying to register dependency to unknown positive sample {}",
-                dep
+            set.extend(
+                self.pos_sample_map
+                    .get(dep)
+                    .ok_or_else::<Error, _>(|| {
+                        format!(
+                            "trying to register dependency to unknown positive sample ({})",
+                            sample
+                        ).into()
+                    })?.iter()
+                    .cloned(),
             )
-        };
+        }
+
         let prev = self.pos_sample_map.insert(sample, set);
         debug_assert! { prev.is_none() }
         Ok(())
@@ -97,7 +111,7 @@ impl EntryPoints {
             .map(|entry| entry.clone().into())
             .ok_or_else::<Error, _>(|| {
                 format!(
-                    "trying to recover entry points for unknown sample {}",
+                    "trying to recover entry points for unknown sample ({})",
                     sample
                 ).into()
             })
@@ -476,8 +490,60 @@ impl<'a> Reconstr<'a> {
         )
     }
 
+    /// Generates a sample for each positive clause.
+    pub fn samples_of_pos_clauses(&mut self) -> Res<()> {
+        for clause in self.original.pos_clauses() {
+            let clause = *clause;
+            let (pred, args) = self.original[clause].rhs().ok_or_else::<Error, _>(|| {
+                "illegal (original) instance state, positive clause has no RHS".into()
+            })?;
+
+            debug_assert! { self.original[clause].lhs_preds().is_empty() }
+
+            self.solver.push(1)?;
+            // Declare clause variables.
+            self.original[clause].declare(self.solver)?;
+            // Assert lhs terms.
+            for term in self.original[clause].lhs_terms() {
+                self.solver.assert(&smt::SmtTerm::new(term))?;
+            }
+
+            let sat = self.solver.check_sat()?;
+
+            let model = if sat {
+                let model = self.solver.get_model()?;
+                Some(smt::FullParser.fix_model(model)?)
+            } else {
+                None
+            };
+
+            self.solver.pop(1)?;
+
+            if let Some(model) = model {
+                let model = Cex::of_model(self.original[clause].vars(), model, true)?;
+                // Reconstruct all LHS applications.
+                let mut sample = VarMap::with_capacity(args.len());
+                for arg in args.iter() {
+                    let val = arg.eval(&model)?;
+                    sample.push(val)
+                }
+                self.samples
+                    .insert(Sample::new(pred, var_to::vals::new(sample)));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Reconstructs the positive samples.
     pub fn work(mut self) -> Res<SampleSet> {
+        if self.to_do.is_empty() {
+            log! { @4 | "no samples to reconstruct, generating samples from positive clauses" }
+            self.samples_of_pos_clauses()?;
+            log! { @4 | "done, generated {} sample(s)", self.samples.len() }
+            return Ok(self.samples);
+        }
+
         if !self.safe_preds.is_empty() {
             let model = self.instance.extend_model(PrdHMap::new())?;
             self.instance.write_definitions(self.solver, "", &model)?

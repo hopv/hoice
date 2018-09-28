@@ -782,6 +782,7 @@ impl Data {
     /// constraint is trivial.
     fn prune_cstr(
         &mut self,
+        clause: ClsIdx,
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<Option<(PrdHMap<VarValsSet>, Option<Sample>)>> {
@@ -815,6 +816,10 @@ impl Data {
 
         let nu_rhs = if let Some((pred, args)) = rhs {
             let (args, is_new) = var_to::vals::new_is_new(args.clone());
+
+            if nu_lhs.is_empty() {
+                self.add_pos(clause, pred, args.clone());
+            }
 
             let args = if conf.teacher.partial || !is_new {
                 if args.set_subsumed(&self.pos[pred]) {
@@ -867,7 +872,7 @@ impl Data {
     /// - propagates staged samples beforehand
     fn add_cstr(
         &mut self,
-        _clause: ClsIdx,
+        clause: ClsIdx,
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<bool> {
@@ -891,11 +896,14 @@ impl Data {
 
         profile! { self tick "add cstr", "pre-checks" }
 
-        let (nu_lhs, nu_rhs) = if let Some(res) = self.prune_cstr(lhs, rhs)? {
+        let (nu_lhs, nu_rhs) = if let Some(res) = self.prune_cstr(clause, lhs, rhs)? {
             res
         } else {
             return Ok(false);
         };
+
+        let (pos, neg) = self.propagate()?;
+        let nu_stuff = pos != 0 || neg != 0;
 
         let mut constraint = Constraint::new(nu_lhs, nu_rhs);
         constraint.check().chain_err(|| {
@@ -911,7 +919,7 @@ impl Data {
         match constraint.try_trivial() {
             Either::Left((Sample { pred, args }, pos)) => {
                 let is_new = self.staged.add(pred, args, pos);
-                Ok(is_new)
+                Ok(nu_stuff || is_new)
             }
             Either::Right(false) => {
                 // Handles linking and constraint info registration.
@@ -921,7 +929,7 @@ impl Data {
 
                 self.check("after add_cstr")?;
 
-                Ok(is_new)
+                Ok(nu_stuff || is_new)
             }
             Either::Right(true) => unsat!("by `true => false` in constraint (data, add_cstr)"),
         }

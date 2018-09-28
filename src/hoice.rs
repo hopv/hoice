@@ -202,12 +202,13 @@ pub fn read_and_work<R: ::std::io::Read>(
                     if !maybe_model.is_unsat() {
                         println!("sat")
                     } else {
+                        use unsat_core::UnsatRes;
                         println!("unsat");
-                        if unsat.as_ref().map(|unsat| unsat.is_none()).unwrap_or(true)
-                            && (instance.unsat_cores() || instance.proofs())
-                        {
-                            bail!("unsat cores/proofs from preprocessing")
-                        }
+                        unsat = Some(if instance.proofs() {
+                            UnsatRes::empty_entry()
+                        } else {
+                            UnsatRes::None
+                        })
                     }
                     maybe_model.into_option()
                 } else {
