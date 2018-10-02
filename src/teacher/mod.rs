@@ -954,7 +954,7 @@ impl<'a> Teacher<'a> {
         just_try: bool,
     ) -> Res<Option<(Cex, Bias)>> {
         if let Some((actlit, bias)) = bias {
-            log! { @debug
+            log! { @debug |
                 "  checksat with bias {}", bias.to_string(& self.instance)
             }
             self.solver.comment(&format!(
@@ -965,17 +965,17 @@ impl<'a> Teacher<'a> {
             let sat = { self.solver.check_sat_act(Some(&actlit))? };
 
             if sat {
-                log! { @debug "  sat, getting cex" }
+                log! { @debug | "  sat, getting cex" }
                 profile!{ self mark "cexs", "biased check-sat" }
                 let cex = self.get_bias_cex(clause, &bias)?;
-                log! { @debug "  {}", cex }
+                log! { @debug | "  {}", cex }
                 self.solver.de_actlit(actlit)?;
                 Ok(Some((cex, bias)))
             } else {
                 Ok(None)
             }
         } else {
-            log! { @debug "  checksat" }
+            log! { @debug | "  checksat" }
             let sat = profile! {
                 self wrap {
 
@@ -1020,7 +1020,7 @@ impl<'a> Teacher<'a> {
             }?;
 
             if sat {
-                log! { @debug "  sat, getting cex" }
+                log! { @debug | "  sat, getting cex" }
                 let bias = if self.instance[clause].is_positive() {
                     Bias::Lft
                 } else if self.instance[clause].is_strict_neg() {
@@ -1038,6 +1038,7 @@ impl<'a> Teacher<'a> {
                 log! { @debug "  {}", cex }
                 Ok(Some((cex, bias)))
             } else {
+                log! { @debug | "  unsat" }
                 Ok(None)
             }
         }

@@ -194,20 +194,20 @@ fn qual_of_terms<F: FnMut(Term) -> Res<()>>(
                     || (nu_vars.len() <= 2)
                     || (nu_vars.len() < old_vars_1.len() + old_vars_2.len());
 
-                if use_qual {
-                    log! { @4
-                      "from {}", term ;
-                      "     {}", othr
-                    }
-                } else {
-                    // log! { @1
-                    //   " " ;
-                    //   "skipping" ;
-                    //   "from {}", term ;
-                    //   "     {}", othr ;
-                    //   "  -> {}", nu_lhs
-                    // }
-                }
+                // if use_qual {
+                //     log! { @4
+                //       "from {}", term ;
+                //       "     {}", othr
+                //     }
+                // } else {
+                //     // log! { @1
+                //     //   " " ;
+                //     //   "skipping" ;
+                //     //   "from {}", term ;
+                //     //   "     {}", othr ;
+                //     //   "  -> {}", nu_lhs
+                //     // }
+                // }
 
                 if use_qual {
                     let op = match (op_1, op_2) {
@@ -229,7 +229,7 @@ fn qual_of_terms<F: FnMut(Term) -> Res<()>>(
                     );
                     f(nu_term.clone())?;
 
-                    log! { @4 "  -> {}", nu_term }
+                    // log! { @4 "  -> {}", nu_term }
 
                     if op_1 == Op::Eql {
                         let nu_lhs = term::sub(vec![othr_args[0].clone(), term_args[0].clone()]);
