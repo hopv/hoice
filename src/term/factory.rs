@@ -850,6 +850,8 @@ pub fn val(val: Val) -> Term {
 
 /// Creates a datatype constructor.
 ///
+/// This function assumes the term created is legal. It will panic if the term is ill-typed.
+///
 /// # Examples
 ///
 /// ```rust
@@ -888,6 +890,8 @@ where
 }
 
 /// Creates a new datatype selector.
+///
+/// This function assumes the term created is legal. It will panic if the term is ill-typed.
 ///
 /// # Examples
 ///
@@ -931,6 +935,8 @@ where
 }
 
 /// Creates a new datatype tester.
+///
+/// This function assumes the term created is legal. It will panic if the term is ill-typed.
 ///
 /// # Examples
 ///
@@ -979,6 +985,27 @@ where
 /// Creates an operator application.
 ///
 /// Error if the application is ill-typed (int will be cast to real automatically).
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// use hoice::errors::TypError;
+/// let bool_var = term::bool_var(0);
+/// let int_term = term::add( vec![ term::int_var(1), term::int(7) ] );
+/// let ill_typed = term::try_app( Op::And, vec![ bool_var, int_term ] );
+/// # println!("{:?}", ill_typed);
+///
+/// assert! { ill_typed.is_err() }
+/// match ill_typed.unwrap_err() {
+///     TypError::Msg(blah) => panic!("unexpected error message `{}`", blah),
+///     TypError::Typ { expected, obtained, index } => {
+///         assert_eq! { expected, Some(typ::bool()) }
+///         assert_eq! { obtained, typ::int()        }
+///         assert_eq! {    index, 1                 }
+///     }
+/// }
+/// ```
 #[inline]
 pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
     let typ = op.type_check(&mut args)?;
@@ -986,71 +1013,226 @@ pub fn try_app(op: Op, mut args: Vec<Term>) -> Result<Term, term::TypError> {
 }
 
 /// Creates a less than or equal to.
+///
+/// Currently rewritten as a greater than or equal to.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::le( term::int_var(7), term::int(0) );
+/// assert_eq! { &format!("{}", t), "(>= (* (- 1) v_7) 0)" }
+/// ```
 #[inline]
 pub fn le(lhs: Term, rhs: Term) -> Term {
     app(Op::Le, vec![lhs, rhs])
 }
+
 /// Creates a less than.
+///
+/// Currently rewritten as a greater than (reals), or a greater than or equal to (integers).
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::lt( term::int_var(7), term::int(0) );
+/// assert_eq! { &format!("{}", t), "(>= (* (- 1) v_7) 1)" }
+/// let t = term::lt( term::real_var(7), term::real_of(0f64) );
+/// assert_eq! { &format!("{}", t), "(> (* (- 1.0) v_7) 0.0)" }
+/// ```
 #[inline]
 pub fn lt(lhs: Term, rhs: Term) -> Term {
     app(Op::Lt, vec![lhs, rhs])
 }
+
 /// Creates a greater than.
+///
+/// Currently rewritten as a greater than or equal to for integers.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::gt( term::int_var(7), term::int(0) );
+/// assert_eq! { &format!("{}", t), "(>= v_7 1)" }
+/// let t = term::gt( term::real_var(7), term::real_of(0f64) );
+/// assert_eq! { &format!("{}", t), "(> v_7 0.0)" }
+/// ```
 #[inline]
 pub fn gt(lhs: Term, rhs: Term) -> Term {
     app(Op::Gt, vec![lhs, rhs])
 }
+
 /// Creates a greater than or equal to.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::ge( term::int_var(7), term::int(0) );
+/// assert_eq! { &format!("{}", t), "(>= v_7 0)" }
+/// ```
 #[inline]
 pub fn ge(lhs: Term, rhs: Term) -> Term {
     app(Op::Ge, vec![lhs, rhs])
 }
 
 /// Creates an equality.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::eq( term::int_var(7), term::int(2) );
+/// assert_eq! { &format!("{}", t), "(= (+ v_7 (- 2)) 0)" }
+/// ```
 #[inline]
 pub fn eq(lhs: Term, rhs: Term) -> Term {
     app(Op::Eql, vec![lhs, rhs])
 }
 
 /// Creates a distinct application.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::distinct( vec![term::int_var(7), term::int(2)] );
+/// assert_eq! { &format!("{}", t), "(not (= (+ v_7 (- 2)) 0))" }
+/// let t = term::distinct( vec![term::int_var(7), term::int(2), term::int_var(3)] );
+/// assert_eq! { &format!("{}", t), "(distinct v_7 2 v_3)" }
+/// ```
 #[inline]
 pub fn distinct(terms: Vec<Term>) -> Term {
     app(Op::Distinct, terms)
 }
 
 /// Creates a sum.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::add( vec![term::int_var(7), term::int(2), term::int_var(7)] );
+/// assert_eq! { &format!("{}", t), "(+ 2 (* 2 v_7))" }
+/// let t = term::add( vec![term::int_var(7), term::int(2), term::int(40)] );
+/// assert_eq! { &format!("{}", t), "(+ v_7 42)" }
+/// let t = term::add( vec![term::int(7), term::int(2)] );
+/// assert_eq! { &format!("{}", t), "9" }
+/// ```
 #[inline]
 pub fn add(kids: Vec<Term>) -> Term {
     app(Op::Add, kids)
 }
+
 /// Creates a sum, binary version.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::add2(term::int_var(7), term::int(2));
+/// assert_eq! { &format!("{}", t), "(+ v_7 2)" }
+/// let t = term::add2(term::int_var(7), term::int_var(7));
+/// assert_eq! { &format!("{}", t), "(* 2 v_7)" }
+/// ```
 #[inline]
 pub fn add2(kid_1: Term, kid_2: Term) -> Term {
     app(Op::Add, vec![kid_1, kid_2])
 }
 
 /// Creates a subtraction.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::sub( vec![term::int_var(3), term::int(2), term::int_var(7)] );
+/// assert_eq! { &format!("{}", t), "(+ v_3 (* (- 1) v_7) (- 2))" }
+/// let t = term::sub( vec![term::int_var(7), term::int(2), term::int_var(7)] );
+/// assert_eq! { &format!("{}", t), "(- 2)" }
+/// let t = term::sub( vec![term::int_var(7), term::int(2), term::u_minus(term::int_var(7))] );
+/// assert_eq! { &format!("{}", t), "(+ (- 2) (* 2 v_7))" }
+/// let t = term::sub( vec![term::int(7), term::int(2)] );
+/// assert_eq! { &format!("{}", t), "5" }
+/// ```
 #[inline]
 pub fn sub(kids: Vec<Term>) -> Term {
     app(Op::Sub, kids)
 }
+
 /// Creates a subtraction, binary version.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::sub2( term::int_var(3), term::int(2) );
+/// assert_eq! { &format!("{}", t), "(+ v_3 (- 2))" }
+/// let t = term::sub2( term::int_var(7), term::int_var(7) );
+/// assert_eq! { &format!("{}", t), "0" }
+/// ```
 #[inline]
 pub fn sub2(kid_1: Term, kid_2: Term) -> Term {
     app(Op::Sub, vec![kid_1, kid_2])
 }
 
 /// Creates a unary minus.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::u_minus( term::int_var(3) );
+/// assert_eq! { &format!("{}", t), "(* (- 1) v_3)" }
+/// let t = term::u_minus( term::int(3) );
+/// assert_eq! { &format!("{}", t), "(- 3)" }
+/// let t = term::u_minus( t );
+/// assert_eq! { &format!("{}", t), "3" }
+/// let add = term::add2( term::int_var(7), term::int(5) );
+/// let t = term::u_minus( add );
+/// assert_eq! { &format!("{}", t), "(+ (* (- 1) v_7) (- 5))" }
+/// ```
 #[inline]
 pub fn u_minus(kid: Term) -> Term {
     app(Op::Sub, vec![kid])
 }
+
 /// Creates a multiplication.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::mul( vec![ term::int_var(3), term::int_var(7) ] );
+/// assert_eq! { &format!("{}", t), "(* v_3 v_7)" }
+/// let t = term::mul( vec![ term::int_var(3), term::int(7) ] );
+/// assert_eq! { &format!("{}", t), "(* 7 v_3)" }
+/// assert! { t.cmul_inspect().is_some() }
+/// let t = term::mul( vec![term::int(7), term::int(3)] );
+/// assert_eq! { &format!("{}", t), "21" }
+/// let t = term::mul( vec![term::int_var(3), term::add2(term::int_var(7), term::int(3))] );
+/// assert_eq! { &format!("{}", t), "(* v_3 (+ v_7 3))" }
+/// ```
 #[inline]
 pub fn mul(kids: Vec<Term>) -> Term {
     app(Op::Mul, kids)
 }
+
 /// Creates a multiplication by a constant.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::cmul( 7, term::int_var(3) );
+/// assert_eq! { &format!("{}", t), "(* 7 v_3)" }
+/// let t = term::cmul( 7, term::int(3) );
+/// assert_eq! { &format!("{}", t), "21" }
+/// let t = term::cmul( 7, term::add2(term::int_var(7), term::int(3)) );
+/// assert_eq! { &format!("{}", t), "(+ 21 (* 7 v_7))" }
+/// ```
 #[inline]
 pub fn cmul<V>(cst: V, term: Term) -> Term
 where
@@ -1068,27 +1250,78 @@ where
 }
 
 /// Creates an integer division.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::idiv( vec![ term::int(7), term::int_var(3) ] );
+/// assert_eq! { &format!("{}", t), "(div 7 v_3)" }
+/// let t = term::idiv( vec![ term::int(7), term::int(3) ] );
+/// assert_eq! { &format!("{}", t), "2" }
+/// ```
 #[inline]
 pub fn idiv(kids: Vec<Term>) -> Term {
     app(Op::IDiv, kids)
 }
-/// Creates a division.
+
+/// Creates a division for terms of sort `Real`.
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::div( vec![ term::real_of(7.), term::real_var(3) ] );
+/// assert_eq! { &format!("{}", t), "(/ 7.0 v_3)" }
+/// let t = term::div( vec![ term::real_of(7.), term::real_of(3.) ] );
+/// assert_eq! { &format!("{}", t), "(/ 7 3)" }
+/// ```
 #[inline]
 pub fn div(kids: Vec<Term>) -> Term {
     app(Op::Div, kids)
 }
+
 /// Creates a modulo application.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::modulo( term::int(7), term::int_var(3) );
+/// assert_eq! { &format!("{}", t), "(mod 7 v_3)" }
+/// let t = term::modulo( term::int(7), term::int(3) );
+/// assert_eq! { &format!("{}", t), "1" }
+/// ```
 #[inline]
 pub fn modulo(a: Term, b: Term) -> Term {
     app(Op::Mod, vec![a, b])
 }
 
 /// Creates a conversion from `Int` to `Real`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::to_real( term::int_var(3) );
+/// assert_eq! { &format!("{}", t), "(to_real v_3)" }
+/// let t = term::to_real( term::int(3) );
+/// assert_eq! { &format!("{}", t), "3.0" }
+/// ```
 #[inline]
 pub fn to_real(int: Term) -> Term {
     app(Op::ToReal, vec![int])
 }
+
 /// Creates a conversion from `Real` to `Int`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let t = term::to_int( term::real_var(3) );
+/// assert_eq! { &format!("{}", t), "(to_int v_3)" }
+/// let t = term::to_int( term::real_of(3.) );
+/// assert_eq! { &format!("{}", t), "3" }
+/// ```
 #[inline]
 pub fn to_int(real: Term) -> Term {
     app(Op::ToInt, vec![real])
@@ -1253,7 +1486,7 @@ fn normalize(op: Op, args: Vec<Term>, typ: Typ) -> Term {
 pub enum NormRes {
     /// Just a term.
     Term(Term),
-    /// More stuff to do.
+    /// A new application to normalize.
     App(Typ, Op, Vec<NormRes>),
 }
 

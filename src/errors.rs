@@ -17,17 +17,22 @@
 use common::*;
 
 /// A term type-checking error.
+///
+/// Can be created by [`try_app`] when creating operator applications.
+///
+/// [`try_app`]: ../term/fn.try_app.html (try_app function)
+#[derive(Clone, Debug)]
 pub enum TypError {
     /// No type info, just an error message.
     Msg(String),
-    /// Type info:
-    ///
-    /// - the type expected (if known),
-    /// - the type obtained,
-    /// - the index of the argument that caused it.
+    /// Type error on a specific argument.
     Typ {
+        /// The type that was expected. `None` if the type is unknown, for arithmetic operators for
+        /// instance.
         expected: Option<Typ>,
+        /// The actual type found.
         obtained: Typ,
+        /// The index of the argument that caused the error.
         index: usize,
     },
 }
