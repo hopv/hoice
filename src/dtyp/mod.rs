@@ -22,6 +22,10 @@ wrap_usize! {
 }
 
 /// A concrete type, a polymorphic type, a datatype or a type parameter.
+///
+/// This is used by [`RDTyp`] to represent datatype (potentially) with type parameters.
+///
+/// [`RDTyp`]: struct.RDTyp.html (RDTyp struct)
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PartialTyp {
     /// Array.
@@ -42,6 +46,24 @@ impl From<Typ> for PartialTyp {
 
 impl PartialTyp {
     /// True if the type mentions the datatype provided.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::dtyp::*;
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "MyADT".into(), dummy_pos, vec![
+    ///         list.into(), PartialTyp::DTyp( "SubADT".into(), dummy_pos, vec![].into() )
+    ///     ].into()
+    /// );
+    /// assert! { ptyp.mentions_dtyp("MyADT") }
+    /// assert! { ptyp.mentions_dtyp("SubADT") }
+    /// assert! { ptyp.mentions_dtyp("List") }
+    /// assert! { !ptyp.mentions_dtyp("NotThere") }
+    /// ```
     pub fn mentions_dtyp(&self, dtyp_name: &str) -> bool {
         let mut to_do = vec![self];
         let mut typ_to_do = vec![];
@@ -89,6 +111,43 @@ impl PartialTyp {
     }
 
     /// Resolves a partial type against a type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::dtyp::*;
+    /// # use hoice::common::*;
+    /// ::hoice::fun::test::create_length_fun();
+    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let param_0: TPrmIdx = 0.into();
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
+    /// );
+    /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let mut params: TPrmMap<Typ> = vec![ typ::unk() ].into();
+    /// assert_eq! { &params[param_0], &typ::unk() }
+    /// ptyp.unify(&int_list, &mut params).unwrap();
+    /// assert_eq! { &params[param_0], &typ::int() }
+    /// ```
+    ///
+    /// ```rust
+    /// # use hoice::dtyp::*;
+    /// # use hoice::common::*;
+    /// ::hoice::fun::test::create_length_fun();
+    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let param_0: TPrmIdx = 0.into();
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
+    /// );
+    /// let int = typ::int();
+    ///
+    /// let mut params: TPrmMap<Typ> = vec![ typ::unk() ].into();
+    /// assert_eq! { &params[param_0], &typ::unk() }
+    /// let res = ptyp.unify(&int, &mut params);
+    /// let err = res.unwrap_err();
+    /// assert_eq! { &format!("{}", err), "cannot unify (List '0) with (Int)" }
+    /// ```
     pub fn unify(&self, typ: &Typ, map: &mut TPrmMap<Typ>) -> Res<()> {
         let mut stack = vec![(self, typ)];
 
@@ -162,13 +221,26 @@ impl PartialTyp {
     }
 
     /// Checks a partial type is legal.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// # use hoice::dtyp::*;
+    /// let _ = dtyp::get("List");
+    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let unknown = PartialTyp::DTyp("Unknown".into(), dummy_pos, vec![].into());
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "List".into(), dummy_pos, vec![ unknown ].into()
+    /// );
+    /// let err = ptyp.check().unwrap_err().1;
+    /// assert_eq! { &err, "unknown sort `Unknown`" }
+    /// ```
     pub fn check(&self) -> Result<(), (::parse::Pos, String)> {
         let mut stack = vec![self];
 
         while let Some(ptyp) = stack.pop() {
             if let PartialTyp::DTyp(name, pos, args) = ptyp {
                 if get(name).is_err() {
-                    return Err((*pos, format!("unknown sort `{}`", name)));
+                    return Err((*pos, format!("unknown sort `{}`", conf.bad(name))));
                 }
                 for arg in args {
                     stack.push(arg)
@@ -180,6 +252,26 @@ impl PartialTyp {
     }
 
     /// Turns a partial type into a concrete type.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::dtyp::*;
+    /// # use hoice::common::*;
+    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let param_0: TPrmIdx = 0.into();
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
+    /// );
+    /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let mut params: TPrmMap<Typ> = vec![ typ::unk() ].into();
+    /// assert_eq! { &params[param_0], &typ::unk() }
+    /// ptyp.unify(&int_list, &mut params).unwrap();
+    /// assert_eq! { &params[param_0], &typ::int() }
+    /// let typ = ptyp.to_type(&params).unwrap();
+    /// assert_eq! { int_list, typ }
+    /// ```
     pub fn to_type(&self, prms: &TPrmMap<Typ>) -> Result<Typ, (::parse::Pos, String)> {
         enum Frame<'a> {
             ArrayLft(&'a PartialTyp),
@@ -336,7 +428,6 @@ lazy_static! {
 /// Creates the list datatype.
 ///
 /// Only available in test mode.
-#[test]
 pub fn create_list_dtyp() {
     let _ = mk(RDTyp::list());
     ()
@@ -460,6 +551,18 @@ pub fn mk(mut dtyp: RDTyp) -> Res<DTyp> {
 }
 
 /// Retrieves the datatype corresponding to a constructor.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let list = dtyp::get("List").unwrap();
+/// let dtyp = dtyp::of_constructor("nil");
+/// assert_eq! { list, dtyp.unwrap() }
+/// let dtyp = dtyp::of_constructor("insert");
+/// assert_eq! { list, dtyp.unwrap() }
+/// assert! { dtyp::of_constructor("unknown").is_none() }
+/// ```
 pub fn of_constructor(constructor: &str) -> Option<DTyp> {
     constructor_map
         .read()
@@ -469,6 +572,16 @@ pub fn of_constructor(constructor: &str) -> Option<DTyp> {
 }
 
 /// True if the identifier is known to be a selector.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let _ = dtyp::get("List");
+/// assert! { dtyp::is_selector("tail") }
+/// assert! { dtyp::is_selector("head") }
+/// assert! { !dtyp::is_selector("unknown") }
+/// ```
 pub fn is_selector(selector: &str) -> bool {
     selector_set
         .read()
@@ -476,7 +589,37 @@ pub fn is_selector(selector: &str) -> bool {
         .contains(selector)
 }
 
-/// Lists (some of) the constructors of a datatype as an error.
+/// Lists the constructors of a datatype as an error.
+///
+/// One line per constructor. If there are more than three constructor, lists only the first three
+/// followed by "and `<n>` others" where `<n>` is the number of constructors left.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let _ = dtyp::get("List");
+/// let err = dtyp::constructors_as_error("List");
+/// assert_eq! {
+///     &format!("{}", err),
+///     "insert (head '0) (tail (List '0))\n\
+///      nil"
+/// }
+/// ```
+///
+/// ```rust
+/// # use hoice::common::*;
+/// ::hoice::parse::fun_dtyp(
+///     "(declare-datatypes ( (Enum 0) ) \
+///         ( ( A B C D E F G H ) )
+///     )"
+/// );
+/// let err = dtyp::constructors_as_error("Enum");
+/// assert_eq! {
+///     &format!("{}", err),
+///     "A\nB\nC\nand 5 others"
+/// }
+/// ```
 pub fn constructors_as_error(dtyp: &str) -> Error {
     let dtyp = match get(dtyp) {
         Ok(res) => res,
@@ -484,12 +627,13 @@ pub fn constructors_as_error(dtyp: &str) -> Error {
     };
     let mut s = String::new();
     for (count, (constructor, args)) in dtyp.news.iter().enumerate() {
+        if count > 0 {
+            s.push_str("\n")
+        }
         if count >= 3 {
-            s.push_str(&format!("and {} others...", dtyp.news.len() - 3))
+            s.push_str(&format!("and {} others", dtyp.news.len() - 3));
+            break;
         } else {
-            if count > 0 {
-                s.push_str("\n")
-            }
             s.push_str(constructor);
             if !args.is_empty() {
                 for (selector, typ) in args {
@@ -507,6 +651,15 @@ pub fn constructors_as_error(dtyp: &str) -> Error {
 ///
 /// - the datatype does not exist, or
 /// - can't access the datatype map.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// assert! { dtyp::get("Unknown").is_err() }
+/// let lst = dtyp::get("List").unwrap();
+/// assert_eq! { lst.name, "List" }
+/// ```
 pub fn get(dtyp: &str) -> Res<DTyp> {
     let maybe_res = if let Ok(f) = factory.read() {
         f.get(dtyp).cloned()
@@ -540,7 +693,7 @@ pub fn write_constructor_map<W: Write>(w: &mut W, pref: &str) -> ::std::io::Resu
     Ok(())
 }
 
-/// Writes all the datatypes.
+/// Writes all the datatypes, SMT-LIB style.
 pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
     let decs = get_all();
 
@@ -600,6 +753,32 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
 }
 
 /// Types a constructor application.
+///
+/// Returns `None` if the constructor is unknown.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+/// let maybe_typ = dtyp::type_constructor(
+///     "insert", & [ term::int(7), term::dtyp_new(int_list.clone(), "nil", vec![]) ]
+/// ).unwrap();
+/// assert_eq! { maybe_typ, Some(int_list) }
+/// ```
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let _ = dtyp::get("List");
+/// let maybe_typ = dtyp::type_constructor("nil", &[]).unwrap();
+/// assert_eq! { &format!("{}", maybe_typ.unwrap()), "(List _)" }
+/// ```
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let maybe_typ = dtyp::type_constructor("unknown", &[]).unwrap();
+/// assert! { maybe_typ.is_none() }
+/// ```
 pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
     let dtyp = if let Some(dtyp) = of_constructor(constructor) {
         dtyp
@@ -639,6 +818,31 @@ pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
 }
 
 /// Types a datatype selector application.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// let typ = dtyp::type_selector(
+///     "head", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+/// ).unwrap();
+/// assert_eq! { typ, typ::int() }
+/// let typ = dtyp::type_selector(
+///     "tail", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+/// ).unwrap();
+/// assert_eq! { typ, int_list }
+/// ```
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// let (_, blah) = dtyp::type_selector("unknown", dummy, &term::int(7)).unwrap_err();
+/// assert_eq! {
+///     &blah, "`unknown` is not a legal selector for sort Int"
+/// }
+/// ```
 pub fn type_selector(
     selector: &str,
     slc_pos: ::parse::Pos,
@@ -657,7 +861,7 @@ pub fn type_selector(
     Err((
         slc_pos,
         format!(
-            "cannot apply selector `{}` to term of type {}",
+            "`{}` is not a legal selector for sort {}",
             conf.bad(selector),
             term.typ()
         ),
@@ -665,6 +869,34 @@ pub fn type_selector(
 }
 
 /// Types a datatype tester application.
+///
+/// Just like in term creation, the `tester` name is simply the name of the constructor (`"insert"`
+/// for instance) as opposed to the name of the tester function (`"is-insert"` in this case).
+///
+/// Does not return a type, since a tester always has sort `Bool`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// dtyp::type_tester(
+///     "nil", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+/// ).unwrap();
+/// dtyp::type_tester(
+///     "insert", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+/// ).unwrap();
+/// ```
+///
+/// ```rust
+/// # use hoice::common::*;
+/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// let (_, blah) = dtyp::type_tester("unknown", dummy, &term::int(7)).unwrap_err();
+/// assert_eq! {
+///     &blah, "`unknown` is not a legal tester for sort Int"
+/// }
+/// ```
 pub fn type_tester(
     tester: &str,
     tst_pos: ::parse::Pos,
@@ -679,7 +911,7 @@ pub fn type_tester(
     Err((
         tst_pos,
         format!(
-            "cannot apply tester `{}` to term of type {}, no such constructor",
+            "`{}` is not a legal tester for sort {}",
             conf.bad(tester),
             term.typ()
         ),
@@ -757,8 +989,8 @@ impl RDTyp {
         idx
     }
 
-    /// Writes the declaration for a datatype.
-    pub fn write_dec<W: Write>(&self, w: &mut W, pref: &str) -> ::std::io::Result<()> {
+    /// Writes the *body* of the declaration for a datatype.
+    fn write_dec<W: Write>(&self, w: &mut W, pref: &str) -> ::std::io::Result<()> {
         let close_par = if self.prms.is_empty() {
             writeln!(w, "{}( ; {}", pref, self.name)?;
             false
@@ -784,8 +1016,30 @@ impl RDTyp {
         writeln!(w, "{}){}", pref, if close_par { " )" } else { "" })
     }
 
+    /// String representation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = dtyp::get("List").unwrap();
+    /// assert_eq! {
+    ///     (* list).to_string(), "\
+    /// (List
+    ///   (insert (head T) (tail (List T)))
+    ///   nil
+    /// )\n\
+    ///     "
+    /// }
+    /// ```
+    pub fn to_string(&self) -> String {
+        let mut buff: Vec<u8> = vec![];
+        self.write(&mut buff, "").unwrap();
+        String::from_utf8_lossy(&buff).into()
+    }
+
     /// Writes a single datatype.
-    pub fn write<W: Write>(&self, w: &mut W, pref: &str) -> ::std::io::Result<()> {
+    fn write<W: Write>(&self, w: &mut W, pref: &str) -> ::std::io::Result<()> {
         writeln!(w, "{}({}", pref, self.name)?;
         for (name, args) in &self.news {
             if args.is_empty() {
@@ -806,6 +1060,9 @@ impl RDTyp {
     }
 
     /// Adds a datatype dependency.
+    ///
+    /// Dependencies indicates that some datatypes depend on each other. This useful mostly for
+    /// printing at SMT-level.
     pub fn add_dep<S>(&mut self, dep: S)
     where
         S: Into<String>,
@@ -862,6 +1119,14 @@ impl RDTyp {
     ///
     /// - there are only two constructors
     /// - one of them is recursive
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = dtyp::get("List").unwrap();
+    /// assert_eq! { list.rec_constructor(), Some("insert") }
+    /// ```
     pub fn rec_constructor(&self) -> Option<&str> {
         if self.news.len() == 2 {
             for (new, args) in &self.news {
@@ -876,12 +1141,29 @@ impl RDTyp {
     }
 
     /// Returns the selectors of a constructor.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = dtyp::get("List").unwrap();
+    /// let slcs = list.selectors_of("nil").unwrap();
+    /// assert! { slcs.is_empty() }
+    /// let slcs = list.selectors_of("insert").unwrap();
+    /// let mut slcs = slcs.iter();
+    /// assert_eq! { &slcs.next().unwrap().0, "head" }
+    /// assert_eq! { &slcs.next().unwrap().0, "tail" }
+    /// assert! { slcs.next().is_none() }
+    ///
+    /// let err = list.selectors_of("node").unwrap_err();
+    /// assert_eq! { &format!("{}", err), "unknown constructor `node` for dtyp List" }
+    /// ```
     pub fn selectors_of(&self, constructor: &str) -> Res<&CArgs> {
         if let Some(selectors) = self.news.get(constructor) {
             Ok(selectors)
         } else {
             bail!(
-                "unknown constructor {} for dtyp {}, no selectors",
+                "unknown constructor `{}` for dtyp {}",
                 conf.bad(constructor),
                 conf.emph(&self.name)
             )
@@ -890,4 +1172,20 @@ impl RDTyp {
 }
 impl_fmt! {
   RDTyp(self, fmt) { write!(fmt, "{}", self.name) }
+}
+
+#[test]
+fn dtyp_write_dec() {
+    let list = get("List").unwrap();
+    let mut buff: Vec<u8> = vec![];
+    list.write_dec(&mut buff, "").unwrap();
+    assert_eq!(
+        &String::from_utf8_lossy(&buff),
+        "\
+(par ( T ) (
+  (insert (head T) (tail (List T)))
+  (nil)
+) )\n\
+        "
+    )
 }

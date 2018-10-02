@@ -469,8 +469,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     /// Returns the current position.
-    pub fn pos(&mut self) -> Pos {
+    pub fn pos(&self) -> Pos {
         Pos(self.cursor)
+    }
+    /// Returns a dummy position, mostly for testing.
+    pub fn dummy_pos() -> Pos {
+        Pos(0)
     }
 
     /// Consumes whitespaces and comments.
