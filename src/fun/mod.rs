@@ -198,7 +198,7 @@ where
 }
 
 /// Creates a function definition.
-pub fn mk(fun: RFun) -> Res<Fun> {
+pub fn new(fun: RFun) -> Res<Fun> {
     let fun = Arc::new(fun);
     let f = factory!(write);
     let prev = f.insert(fun.name.clone(), fun.clone());

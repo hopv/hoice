@@ -1244,7 +1244,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
             let _ = fun::retrieve_dec(&fun.name)?;
 
-            fun::mk(fun).chain_err(|| self.error(pos, "while registering this function"))?;
+            fun::new(fun).chain_err(|| self.error(pos, "while registering this function"))?;
         }
 
         self.ws_cmt();
@@ -1410,6 +1410,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         self.ws_cmt();
 
         let mut dtyps = vec![];
+        let mut dtyps_pos = vec![];
 
         while self.tag_opt("(") {
             let (dtyp_pos, dtyp_ident) = self.ident().chain_err(|| "declaring a new datatype")?;
@@ -1424,7 +1425,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 )))
             };
 
-            dtyps.push((dtyp_pos, dtyp::RDTyp::new(dtyp_ident), arity));
+            dtyps.push((dtyp::RDTyp::new(dtyp_ident), arity));
+            dtyps_pos.push(dtyp_pos);
 
             self.tag(")").chain_err(|| {
                 format!("closing symbol/arity pair for `{}`", conf.emph(dtyp_ident))
@@ -1442,35 +1444,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         let mut final_dtyps = Vec::with_capacity(dtyps.len());
 
-        for (dtyp_pos, mut dtyp, dtyp_arity) in dtyps {
+        for (index, (mut dtyp, dtyp_arity)) in dtyps.into_iter().enumerate() {
             self.dtyp_dec(&mut dtyp, Some(dtyp_arity))
                 .chain_err(|| {
                     format!(
                         "while parsing the declaration for datatype `{}`",
                         conf.emph(&dtyp.name)
                     )
-                }).chain_err(|| self.error(dtyp_pos, "declared here"))?;
+                }).chain_err(|| self.error(dtyps_pos[index], "declared here"))?;
             self.ws_cmt();
-
-            let is_okay = dtyp::check_reserved(&dtyp.name);
-
-            let dtyp = is_okay.and_then(|_| dtyp::mk(dtyp)).chain_err(|| {
-                self.error(dtyp_pos, "while parsing the declaration for this datatype")
-            })?;
-            final_dtyps.push((dtyp_pos, dtyp))
+            final_dtyps.push(dtyp)
         }
 
         self.tag(")")
             .chain_err(|| "closing the list of datatype declaration")?;
 
-        for (dtyp_pos, dtyp) in final_dtyps {
-            if let Err((pos, err)) = dtyp.check() {
-                let err: Error = self.error(pos, err).into();
-                bail!(err.chain_err(|| self.error(dtyp_pos, "in this datatype declaration")))
-            }
+        match dtyp::new_recs(final_dtyps, |pos, blah| self.error(pos, blah)) {
+            Err((index, err)) => bail!(err.chain_err(|| self.error(
+                dtyps_pos[index],
+                "while parsing the declaration for this datatype"
+            ))),
+            Ok(_) => Ok(true),
         }
-
-        Ok(true)
     }
 
     /// Predicate declaration.
@@ -2569,7 +2564,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         if let Some(term) = body.to_term()? {
             let mut fun = RFun::new(name, var_info, out_sort);
             fun.set_def(term);
-            let _ = fun::mk(fun)
+            let _ = fun::new(fun)
                 .chain_err(|| self.error(name_pos, "while registering this function"))?;
             ()
         } else {

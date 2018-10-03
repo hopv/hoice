@@ -723,7 +723,7 @@ impl FunDef {
         dec.set_def(def);
         dec.invariants.extend(invs);
 
-        let fun = fun::mk(dec).chain_err(|| {
+        let fun = fun::new(dec).chain_err(|| {
             format!(
                 "while creating internal function for predicate {}",
                 conf.bad(&instance[pred].name)

@@ -19,7 +19,7 @@ new_consign! {
 pub type Val = HConsed<RVal>;
 
 /// Creates a value.
-pub fn mk<V: Into<RVal>>(val: V) -> Val {
+pub fn new<V: Into<RVal>>(val: V) -> Val {
     let val = val.into();
     // if val.typ().has_unk() {
     //   panic!(
@@ -32,7 +32,7 @@ pub fn mk<V: Into<RVal>>(val: V) -> Val {
 
 /// Creates a boolean value.
 pub fn bool(b: bool) -> Val {
-    mk(RVal::B(b))
+    new(RVal::B(b))
 }
 
 /// Creates an array with a default value.
@@ -45,7 +45,7 @@ pub fn array<Tgt: Into<Val>>(idx_typ: Typ, default: Tgt) -> Val {
     } else {
         default
     };
-    mk(RVal::Array {
+    new(RVal::Array {
         idx_typ,
         default,
         vals: Vec::new(),
@@ -67,7 +67,7 @@ pub fn array_of_fun(idx_typ: Typ, term: &Term) -> Res<Val> {
                 |(c, v)| c.typ() == idx_typ && v.typ() == val.typ()
               )
             }
-            return Ok(mk(RVal::Array {
+            return Ok(new(RVal::Array {
                 idx_typ,
                 default: val,
                 vals,
@@ -117,11 +117,11 @@ pub fn array_of_fun(idx_typ: Typ, term: &Term) -> Res<Val> {
 
 /// Creates an integer value.
 pub fn int<I: Into<Int>>(i: I) -> Val {
-    mk(RVal::I(i.into()))
+    new(RVal::I(i.into()))
 }
 /// Creates a rational value.
 pub fn real<R: Into<Rat>>(r: R) -> Val {
-    mk(RVal::R(r.into()))
+    new(RVal::R(r.into()))
 }
 /// Creates a real value from a float.
 pub fn real_of(f: f64) -> Val {
@@ -130,7 +130,7 @@ pub fn real_of(f: f64) -> Val {
 
 /// Creates a non-value for a type.
 pub fn none(typ: Typ) -> Val {
-    mk(RVal::N(typ))
+    new(RVal::N(typ))
 }
 
 /// Creates a new datatype value.
@@ -171,7 +171,7 @@ pub fn dtyp_new(typ: Typ, name: String, mut args: Vec<Val>) -> Val {
             }
         }
     }
-    mk(RVal::DTypNew { typ, name, args })
+    new(RVal::DTypNew { typ, name, args })
 }
 
 /// Values.
@@ -417,7 +417,7 @@ impl RVal {
         use num::One;
         use term::typ::RTyp;
         if &self.typ() == typ {
-            return Ok(mk(self.clone()));
+            return Ok(new(self.clone()));
         }
 
         match (self, typ.get()) {
@@ -669,15 +669,15 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(35), val::mk(7)) ;
+    /// let (mut lft, mut rgt) = (val::new(35), val::new(7)) ;
     /// let res = lft.add(& rgt).unwrap() ;
     /// # println!("{} + {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(42) }
+    /// assert_eq!{ res, val::new(42) }
     /// lft = val::none( typ::int() ) ;
     /// let res = lft.add(& rgt).unwrap() ;
     /// # println!("{} + {} = {}", lft, rgt, res) ;
     /// assert!{ ! res.is_known() }
-    /// rgt = val::mk(false) ;
+    /// rgt = val::new(false) ;
     /// let res = lft.add(& rgt) ;
     /// # println!("{} + {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -692,13 +692,13 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(49), val::mk(7)) ;
+    /// let (mut lft, mut rgt) = (val::new(49), val::new(7)) ;
     /// # println!("{} - {} = {}", lft, rgt, lft.sub(& rgt).unwrap()) ;
-    /// assert_eq!{ lft.sub(& rgt).unwrap(), val::mk(42) }
+    /// assert_eq!{ lft.sub(& rgt).unwrap(), val::new(42) }
     /// lft = val::none( typ::int() ) ;
     /// # println!("{} - {} = {}", lft, rgt, lft.sub(& rgt).unwrap()) ;
     /// assert_eq!{ lft.sub(& rgt).unwrap(), val::none( typ::int() ) }
-    /// rgt = val::mk(false) ;
+    /// rgt = val::new(false) ;
     /// # println!("{} - {} = {:?}", lft, rgt, lft.sub(& rgt)) ;
     /// assert!{ lft.sub(& rgt).is_err() }
     /// ```
@@ -712,27 +712,27 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(6), val::mk(7)) ;
+    /// let (mut lft, mut rgt) = (val::new(6), val::new(7)) ;
     /// let res = lft.mul(& rgt).unwrap() ;
     /// # println!("{} * {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(42) }
+    /// assert_eq!{ res, val::new(42) }
     /// lft = val::none(typ::int()) ;
     /// let res = lft.mul(& rgt).unwrap() ;
     /// # println!("{} * {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, lft }
-    /// rgt = val::mk(0) ;
+    /// rgt = val::new(0) ;
     /// let res = lft.mul(& rgt).unwrap() ;
     /// # println!("{} * {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(0) }
-    /// rgt = val::mk((0, 1)) ;
+    /// assert_eq!{ res, val::new(0) }
+    /// rgt = val::new((0, 1)) ;
     /// let res = lft.mul(& rgt).unwrap() ;
     /// # println!("{} * {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk((0, 1)) }
-    /// lft = val::mk(7) ;
+    /// assert_eq!{ res, val::new((0, 1)) }
+    /// lft = val::new(7) ;
     /// let res = lft.mul(& rgt).unwrap() ;
     /// # println!("{} * {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk((0, 1)) }
-    /// lft = val::mk(false) ;
+    /// assert_eq!{ res, val::new((0, 1)) }
+    /// lft = val::new(false) ;
     /// let res = lft.mul(& rgt) ;
     /// # println!("{} * {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -742,7 +742,7 @@ impl RVal {
         match self {
             RVal::N(ref typ) if typ.is_int() => match other.get() {
                 RVal::I(ref i) if i.is_zero() => Ok(int(0)),
-                RVal::R(ref r) if r.is_zero() => Ok(mk((0, 1))),
+                RVal::R(ref r) if r.is_zero() => Ok(new((0, 1))),
                 RVal::N(ref t_2) if t_2.is_arith() => Ok(none(t_2.clone())),
                 RVal::I(_) => Ok(none(typ.clone())),
                 RVal::R(_) => Ok(none(typ::real())),
@@ -750,8 +750,8 @@ impl RVal {
             },
 
             RVal::N(ref typ) if typ.is_real() => match other.get() {
-                RVal::I(ref i) if i.is_zero() => Ok(mk((0, 1))),
-                RVal::R(ref r) if r.is_zero() => Ok(mk((0, 1))),
+                RVal::I(ref i) if i.is_zero() => Ok(new((0, 1))),
+                RVal::R(ref r) if r.is_zero() => Ok(new((0, 1))),
                 RVal::N(ref t_2) if t_2.is_arith() => Ok(none(t_2.clone())),
                 RVal::I(_) => Ok(none(typ.clone())),
                 RVal::R(_) => Ok(none(typ::real())),
@@ -876,27 +876,27 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(3), val::mk(42)) ;
+    /// let (mut lft, mut rgt) = (val::new(3), val::new(42)) ;
     /// let res = lft.g_t(& rgt).unwrap() ;
     /// # println!("{} > {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
+    /// assert_eq!{ res, val::new(false) }
     /// lft = val::none( typ::int() ) ;
     /// let res = lft.g_t(& rgt).unwrap() ;
     /// # println!("{} > {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(103) ;
+    /// lft = val::new(103) ;
     /// let res = lft.g_t(& rgt).unwrap() ;
     /// # println!("{} > {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// lft = val::mk((103,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// lft = val::new((103,1)) ;
     /// let res = lft.g_t(& rgt).unwrap() ;
     /// # println!("{} > {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk((42,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new((42,1)) ;
     /// let res = lft.g_t(& rgt).unwrap() ;
     /// # println!("{} > {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(false) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(false) ;
     /// let res = lft.g_t(& rgt) ;
     /// # println!("{} > {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -913,27 +913,27 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(3), val::mk(42)) ;
+    /// let (mut lft, mut rgt) = (val::new(3), val::new(42)) ;
     /// let res = lft.g_e(& rgt).unwrap() ;
     /// # println!("{} >= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
+    /// assert_eq!{ res, val::new(false) }
     /// lft = val::none( typ::int() ) ;
     /// let res = lft.g_e(& rgt).unwrap() ;
     /// # println!("{} >= {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(42) ;
+    /// lft = val::new(42) ;
     /// let res = lft.g_e(& rgt).unwrap() ;
     /// # println!("{} >= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// lft = val::mk((42,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// lft = val::new((42,1)) ;
     /// let res = lft.g_e(& rgt).unwrap() ;
     /// # println!("{} >= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk((42,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new((42,1)) ;
     /// let res = lft.g_e(& rgt).unwrap() ;
     /// # println!("{} >= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(false) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(false) ;
     /// let res = lft.g_e(& rgt) ;
     /// # println!("{} >= {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -949,27 +949,27 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(42), val::mk(3)) ;
+    /// let (mut lft, mut rgt) = (val::new(42), val::new(3)) ;
     /// let res = lft.l_e(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
+    /// assert_eq!{ res, val::new(false) }
     /// lft = val::none( typ::int() ) ;
     /// let res = lft.l_e(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(3) ;
+    /// lft = val::new(3) ;
     /// let res = lft.l_e(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// lft = val::mk((3,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// lft = val::new((3,1)) ;
     /// let res = lft.l_e(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk((3,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new((3,1)) ;
     /// let res = lft.l_e(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(false) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(false) ;
     /// let res = lft.l_e(& rgt) ;
     /// # println!("{} <= {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -986,27 +986,27 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(42), val::mk(3)) ;
+    /// let (mut lft, mut rgt) = (val::new(42), val::new(3)) ;
     /// let res = lft.l_t(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
+    /// assert_eq!{ res, val::new(false) }
     /// lft = val::none( typ::int() ) ;
     /// let res = lft.l_t(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(2) ;
+    /// lft = val::new(2) ;
     /// let res = lft.l_t(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// lft = val::mk((2,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// lft = val::new((2,1)) ;
     /// let res = lft.l_t(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk((42,1)) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new((42,1)) ;
     /// let res = lft.l_t(& rgt).unwrap() ;
     /// # println!("{} <= {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(false) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(false) ;
     /// let res = lft.l_t(& rgt) ;
     /// # println!("{} <= {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -1050,23 +1050,23 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(true), val::mk(false)) ;
+    /// let (mut lft, mut rgt) = (val::new(true), val::new(false)) ;
     /// let res = lft.and(& rgt).unwrap() ;
     /// # println!("{} && {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
+    /// assert_eq!{ res, val::new(false) }
     /// lft = val::none( typ::bool() ) ;
     /// let res = lft.and(& rgt).unwrap() ;
     /// # println!("{} && {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
-    /// rgt = val::mk(true) ;
+    /// assert_eq!{ res, val::new(false) }
+    /// rgt = val::new(true) ;
     /// let res = lft.and(& rgt).unwrap() ;
     /// # println!("{} && {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(true) ;
+    /// lft = val::new(true) ;
     /// let res = lft.and(& rgt).unwrap() ;
     /// # println!("{} && {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(7) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(7) ;
     /// let res = lft.and(& rgt) ;
     /// # println!("{} && {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -1095,23 +1095,23 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let (mut lft, mut rgt) = (val::mk(false), val::mk(true)) ;
+    /// let (mut lft, mut rgt) = (val::new(false), val::new(true)) ;
     /// let res = lft.or(& rgt).unwrap() ;
     /// # println!("{} || {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
+    /// assert_eq!{ res, val::new(true) }
     /// lft = val::none( typ::bool() ) ;
     /// let res = lft.or(& rgt).unwrap() ;
     /// # println!("{} || {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(true) }
-    /// rgt = val::mk(false) ;
+    /// assert_eq!{ res, val::new(true) }
+    /// rgt = val::new(false) ;
     /// let res = lft.or(& rgt).unwrap() ;
     /// # println!("{} || {} = {}", lft, rgt, res) ;
     /// assert_eq!{ res, val::none( typ::bool() ) }
-    /// lft = val::mk(false) ;
+    /// lft = val::new(false) ;
     /// let res = lft.or(& rgt).unwrap() ;
     /// # println!("{} || {} = {}", lft, rgt, res) ;
-    /// assert_eq!{ res, val::mk(false) }
-    /// rgt = val::mk(7) ;
+    /// assert_eq!{ res, val::new(false) }
+    /// rgt = val::new(7) ;
     /// let res = lft.or(& rgt) ;
     /// # println!("{} || {} = {:?}", lft, rgt, res) ;
     /// assert!{ res.is_err() }
@@ -1139,19 +1139,19 @@ impl RVal {
     /// ```
     /// use hoice::term::typ ;
     /// use hoice::val ;
-    /// let mut buru = val::mk(true) ;
+    /// let mut buru = val::new(true) ;
     /// let res = buru.not().unwrap() ;
     /// # println!("not {} = {}", buru, res) ;
-    /// assert_eq!{ res, val::mk(false) }
-    /// buru = val::mk(false) ;
+    /// assert_eq!{ res, val::new(false) }
+    /// buru = val::new(false) ;
     /// let res = buru.not().unwrap() ;
     /// # println!("not {} = {}", buru, res) ;
-    /// assert_eq!{ res, val::mk(true) }
+    /// assert_eq!{ res, val::new(true) }
     /// buru = val::none( typ::bool() ) ;
     /// let res = buru.not().unwrap() ;
     /// # println!("not {} = {}", buru, res) ;
     /// assert_eq!{ res, buru }
-    /// buru = val::mk(7) ;
+    /// buru = val::new(7) ;
     /// let res = buru.not() ;
     /// # println!("not {} = {:?}", buru, res) ;
     /// assert!{ res.is_err() }

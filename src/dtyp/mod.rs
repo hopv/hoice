@@ -7,7 +7,7 @@
 //!
 //! Consider the following mutually recursive datatypes (stolen and fixed from the [z3 tutorial])
 //!
-//! ```lisp
+//! ```scheme
 //! (declare-datatypes ( (Tree 1) (TreeList 1) )
 //!     ((par (T)
 //!         (leaf)
@@ -26,7 +26,6 @@
 //!     - creating the list of constructors
 //! - register them as depending on each other (important for SMT-level printing)
 //! - finalize by hashconsing the definitions, thus obtaining [`DTyp`]s
-//! - check the definitions are fine
 //!
 //! If you skip the non-mandatory-but-strongly-recommended last step, problems will arise during
 //! term creation.
@@ -84,12 +83,14 @@
 //! tree_list.add_dep(tree_name);
 //!
 //! // Actually register.
-//! let tree = dtyp::mk(tree).expect("while registering `tree`");
-//! let tree_list = dtyp::mk(tree_list).expect("while registering `tree_list`");
+//! let dtyps = dtyp::new_recs(
+//!     vec![tree, tree_list], |_, err| err
+//! ).expect("while registering `tree`");
 //!
 //! // Everything okay?
-//! tree.check().expect("while checking `tree`");
-//! tree_list.check().expect("while checking `tree_list`");
+//! for dtyp in dtyps {
+//!     dtyp.check().expect("while checking datatype")
+//! }
 //! ```
 //!
 //! [`fun`]: ../fun/index.html (fun module)
@@ -488,10 +489,14 @@ impl_fmt! {
   }
 }
 
-/// A datatype.
+/// A hashconsed datatype.
 pub type DTyp = Arc<RDTyp>;
 
 /// Constructor arguments.
+///
+/// Each string is the name of the selector, *i.e.* the "name" of the field. It is associated to a
+/// partial type because, in general, it will mention type parameters of the datatype it belongs
+/// to.
 pub type CArgs = Vec<(String, PartialTyp)>;
 
 /// Type of the datatype factory.
@@ -524,7 +529,9 @@ lazy_static! {
 ///
 /// Only available in test mode.
 pub fn create_list_dtyp() {
-    let _ = mk(RDTyp::list());
+    let _ = new(RDTyp::list(), |_, blah| {
+        format!("failed to create List datatype: {}", blah)
+    });
     ()
 }
 
@@ -553,11 +560,81 @@ pub fn check_reserved(_name: &str) -> Res<()> {
 /// Will fail if either
 ///
 /// - the datatype already exists
+/// - it mentions a datatype that doesn't exist
 /// - one of the constructors of the datatype already exists
 /// - can't access the datatype map
 /// - the datatype has no constructor
 /// - the datatype has no constructor that don't mention itself
-pub fn mk(mut dtyp: RDTyp) -> Res<DTyp> {
+///
+/// Do *not* use this to construct mutually-recursive datatypes as it will fail. Use [`new_recs`]
+/// instead.
+///
+/// For more see the [module-level documentation].
+///
+/// [module-level documentation]: index.html (dtyp module documentation)
+/// [`new_recs`]: fn.new_recs.html (datatypes construction function)
+pub fn new<E, F>(dtyp: RDTyp, err: F) -> Res<DTyp>
+where
+    E: Into<Error>,
+    F: Fn(::parse::Pos, String) -> E,
+{
+    check_reserved(&dtyp.name)?;
+    new_raw(dtyp).and_then(|dtyp| {
+        if let Err((pos, blah)) = dtyp.check() {
+            bail!(err(pos, blah))
+        } else {
+            Ok(dtyp)
+        }
+    })
+}
+
+/// Creates mutually recursive datatypes.
+///
+/// Will fail if either
+///
+/// - one of the datatypes already exists
+/// - one of them mentions a datatype that doesn't exist
+/// - one of the constructors already exists
+/// - can't access the datatype map
+/// - one of the datatypes has no constructor
+/// - one of the datatypes has no constructor that don't mention itself
+///
+/// If an error occured, returns the index of the datatype for which it occured and the error
+/// itself.
+///
+/// For more see the [module-level documentation].
+///
+/// [module-level documentation]: index.html (dtyp module documentation)
+pub fn new_recs<E, F, RDTyps>(dtyp: RDTyps, err: F) -> Result<Vec<DTyp>, (usize, Error)>
+where
+    E: Into<Error>,
+    F: Fn(::parse::Pos, String) -> E,
+    RDTyps: IntoIterator<Item = RDTyp>,
+{
+    let mut res = vec![];
+    for (index, dtyp) in dtyp.into_iter().enumerate() {
+        check_reserved(&dtyp.name).map_err(|e| (index, e))?;
+        res.push(new_raw(dtyp).map_err(|e| (index, e))?)
+    }
+    for (index, dtyp) in res.iter().enumerate() {
+        if let Err((pos, blah)) = dtyp.check() {
+            return Err((index, err(pos, blah).into()));
+        }
+    }
+    Ok(res)
+}
+
+/// Creates a datatype.
+///
+/// Will fail if either
+///
+/// - the datatype already exists
+/// - name is reserved
+/// - one of the constructors of the datatype already exists
+/// - can't access the datatype map
+/// - the datatype has no constructor
+/// - the datatype has no constructor that don't mention itself
+fn new_raw(mut dtyp: RDTyp) -> Res<DTyp> {
     let name = dtyp.name.clone();
 
     if dtyp.news.is_empty() {
@@ -765,7 +842,9 @@ pub fn get(dtyp: &str) -> Res<DTyp> {
     if let Some(res) = maybe_res {
         Ok(res)
     } else if dtyp == "List" {
-        mk(RDTyp::list())
+        new(RDTyp::list(), |_, blah| {
+            format!("failed to create List datatype: {}", blah)
+        })
     } else {
         bail!("unknown datatype `{}`", dtyp)
     }
@@ -1171,9 +1250,13 @@ impl RDTyp {
     /// be registered*. So, checking a datatype before it is hashconsed and before its dependencies
     /// are hashconsed will usually fail.
     ///
+    /// This check runs automatically when hashconsing datatype(s) with [`new`] and [`new_recs`].
+    ///
     /// For more see the [module-level documentation].
     ///
     /// [module-level documentation]: index.html (dtyp module documentation)
+    /// [`new`]: fn.new.html (datatype construction function)
+    /// [`new_recs`]: fn.new_recs.html (datatypes construction function)
     pub fn check(&self) -> Result<(), (::parse::Pos, String)> {
         for (constructor, cargs) in &self.news {
             for (selector, ptyp) in cargs {
