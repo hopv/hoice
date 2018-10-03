@@ -3,7 +3,100 @@
 //! In test mode, the `List` datatype is automatically added, as well as a few functions (see the
 //! [`fun`] module). This is so that dtyp-related doc/lib tests have something to work with.
 //!
+//! # Creating Mutually Recursive Datatypes
+//!
+//! Consider the following mutually recursive datatypes (stolen and fixed from the [z3 tutorial])
+//!
+//! ```lisp
+//! (declare-datatypes ( (Tree 1) (TreeList 1) )
+//!     ((par (T)
+//!         (leaf)
+//!         (node (value T) (children (TreeList T)))
+//!     )(par (T)
+//!         (nil)
+//!         (cons (car (Tree T)) (cdr (TreeList T)))
+//!     ))
+//! )
+//! ```
+//!
+//! The main steps are
+//!
+//! - create [`RDTyp`] structures encoding each datatype, which itself consists in
+//!     - creating the list of type parameters if any
+//!     - creating the list of constructors
+//! - register them as depending on each other (important for SMT-level printing)
+//! - finalize by hashconsing the definitions, thus obtaining [`DTyp`]s
+//! - check the definitions are fine
+//!
+//! If you skip the non-mandatory-but-strongly-recommended last step, problems will arise during
+//! term creation.
+//!
+//! ```rust
+//! use hoice::{ dtyp, dtyp::{ RDTyp, PartialTyp } };
+//! let dummy_pos = ::hoice::parse::Pos::default();
+//! let (tree_name, tree_list_name) = ("DTypTestTree", "DTypTestTreeList");
+//! let (mut tree, mut tree_list) = (RDTyp::new(tree_name), RDTyp::new(tree_list_name));
+//!
+//! // Working on `Tree`.
+//! let t_param = tree.push_typ_param("T");
+//! // `leaf` constructor takes no arguments
+//! tree.add_constructor("leaf", vec![]).expect("while adding `leaf` constructor");
+//! let node_params = vec![
+//!     // `value` field of `node` has type `T`, registered as `t_param`
+//!     ("value".to_string(), PartialTyp::Param(t_param)),
+//!     // `children` field of `node` has type `(TreeList T)`
+//!     (
+//!         "children".to_string(),
+//!         PartialTyp::DTyp(
+//!             tree_list_name.into(),
+//!             dummy_pos, // Used for error reporting when actually parsing user's input.
+//!             // `TreeList` has a single argument, our type parameter `T`
+//!             vec![ PartialTyp::Param(t_param) ].into(),
+//!         )
+//!     ),
+//! ];
+//! tree.add_constructor("node", node_params).expect("while adding node constructor");
+//! // Finally, register dependency to `TreeList`.
+//! tree.add_dep(tree_list_name);
+//!
+//! // Working on `TreeList`.
+//! let t_param = tree_list.push_typ_param("T");
+//! tree_list.add_constructor("nil", vec![]).expect("while adding `nil` constructor");
+//! let cons_params = vec![
+//!     (
+//!         "car".to_string(),
+//!         PartialTyp::DTyp(
+//!             tree_name.into(),
+//!             dummy_pos,
+//!             vec![ PartialTyp::Param(t_param) ].into(),
+//!         )
+//!     ),
+//!     (
+//!         "cdr".to_string(),
+//!         PartialTyp::DTyp(
+//!             tree_list_name.into(),
+//!             dummy_pos,
+//!             vec![ PartialTyp::Param(t_param) ].into(),
+//!         )
+//!     ),
+//! ];
+//! tree_list.add_constructor("cons", cons_params).expect("while adding `cons` constructor");
+//! tree_list.add_dep(tree_name);
+//!
+//! // Actually register.
+//! let tree = dtyp::mk(tree).expect("while registering `tree`");
+//! let tree_list = dtyp::mk(tree_list).expect("while registering `tree_list`");
+//!
+//! // Everything okay?
+//! tree.check().expect("while checking `tree`");
+//! tree_list.check().expect("while checking `tree_list`");
+//! ```
+//!
 //! [`fun`]: ../fun/index.html (fun module)
+//! [z3 tutorial]: https://rise4fun.com/z3/tutorial
+//! (z3 tutorial at Rise4Fun)
+//! [`RDTyp`]: struct.RDTyp.html (RDTyp struct)
+//! [`DTyp`]: type.DTyp.html (DTyp type)
 
 use common::*;
 
@@ -53,7 +146,7 @@ impl PartialTyp {
     /// # use hoice::dtyp::*;
     /// # use hoice::common::*;
     /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let dummy_pos = ::hoice::parse::Pos::default();
     /// let ptyp = PartialTyp::DTyp(
     ///     "MyADT".into(), dummy_pos, vec![
     ///         list.into(), PartialTyp::DTyp( "SubADT".into(), dummy_pos, vec![].into() )
@@ -118,7 +211,7 @@ impl PartialTyp {
     /// # use hoice::dtyp::*;
     /// # use hoice::common::*;
     /// ::hoice::fun::test::create_length_fun();
-    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let dummy_pos = ::hoice::parse::Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -135,7 +228,7 @@ impl PartialTyp {
     /// # use hoice::dtyp::*;
     /// # use hoice::common::*;
     /// ::hoice::fun::test::create_length_fun();
-    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let dummy_pos = ::hoice::parse::Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -222,11 +315,13 @@ impl PartialTyp {
 
     /// Checks a partial type is legal.
     ///
+    /// This checks that all datatypes mentioned in the partial type exist.
+    ///
     /// ```rust
     /// # use hoice::common::*;
     /// # use hoice::dtyp::*;
     /// let _ = dtyp::get("List");
-    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let dummy_pos = ::hoice::parse::Pos::default();
     /// let unknown = PartialTyp::DTyp("Unknown".into(), dummy_pos, vec![].into());
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ unknown ].into()
@@ -258,7 +353,7 @@ impl PartialTyp {
     /// ```rust
     /// # use hoice::dtyp::*;
     /// # use hoice::common::*;
-    /// let dummy_pos = ::hoice::parse::Parser::dummy_pos();
+    /// let dummy_pos = ::hoice::parse::Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -824,21 +919,21 @@ pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
 /// ```rust
 /// # use hoice::common::*;
 /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// let dummy_pos = ::hoice::parse::Pos::default();
 /// let typ = dtyp::type_selector(
-///     "head", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+///     "head", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
 /// assert_eq! { typ, typ::int() }
 /// let typ = dtyp::type_selector(
-///     "tail", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+///     "tail", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
 /// assert_eq! { typ, int_list }
 /// ```
 ///
 /// ```rust
 /// # use hoice::common::*;
-/// let dummy = ::hoice::parse::Parser::dummy_pos();
-/// let (_, blah) = dtyp::type_selector("unknown", dummy, &term::int(7)).unwrap_err();
+/// let dummy_pos = ::hoice::parse::Pos::default();
+/// let (_, blah) = dtyp::type_selector("unknown", dummy_pos, &term::int(7)).unwrap_err();
 /// assert_eq! {
 ///     &blah, "`unknown` is not a legal selector for sort Int"
 /// }
@@ -880,19 +975,19 @@ pub fn type_selector(
 /// ```rust
 /// # use hoice::common::*;
 /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-/// let dummy = ::hoice::parse::Parser::dummy_pos();
+/// let dummy_pos = ::hoice::parse::Pos::default();
 /// dtyp::type_tester(
-///     "nil", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+///     "nil", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
 /// dtyp::type_tester(
-///     "insert", dummy, & term::dtyp_new(int_list.clone(), "nil", vec![])
+///     "insert", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
 /// ```
 ///
 /// ```rust
 /// # use hoice::common::*;
-/// let dummy = ::hoice::parse::Parser::dummy_pos();
-/// let (_, blah) = dtyp::type_tester("unknown", dummy, &term::int(7)).unwrap_err();
+/// let dummy_pos = ::hoice::parse::Pos::default();
+/// let (_, blah) = dtyp::type_tester("unknown", dummy_pos, &term::int(7)).unwrap_err();
 /// assert_eq! {
 ///     &blah, "`unknown` is not a legal tester for sort Int"
 /// }
@@ -1071,6 +1166,14 @@ impl RDTyp {
     }
 
     /// Checks a datatype is legal.
+    ///
+    /// This checks that all partial types are legal, meaning that all datatypes referenced *must
+    /// be registered*. So, checking a datatype before it is hashconsed and before its dependencies
+    /// are hashconsed will usually fail.
+    ///
+    /// For more see the [module-level documentation].
+    ///
+    /// [module-level documentation]: index.html (dtyp module documentation)
     pub fn check(&self) -> Result<(), (::parse::Pos, String)> {
         for (constructor, cargs) in &self.news {
             for (selector, ptyp) in cargs {
