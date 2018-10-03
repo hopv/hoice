@@ -2,10 +2,6 @@
 //!
 //! In test mode, the `List` datatype is automatically added, as well as a few functions (see the
 //! [`fun`] module). This is so that dtyp-related doc/lib tests have something to work with.
-//!
-//! # TODO
-//!
-//! Move this in the instance to avoid the unsafe code to borrow definitions.
 
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
@@ -16,18 +12,13 @@ pub type Fun = Arc<RFun>;
 
 /// Type of the function factory.
 ///
-/// The usize indicates whether an element of the factory is being borrowed **unsafely** by
-/// [`get_as_ref`]. If it is true, then borrowing the factory mutably is unsafe.
-///
 /// To avoid problems, **always** use the `factory` macro to access the
 /// factory.
-///
-/// [`get_as_ref`]: fn.get_as_ref.html (get_as_ref function)
-type Factory = RwLock<(BTreeMap<String, Fun>, usize)>;
+type Factory = RwLock<BTreeMap<String, Fun>>;
 lazy_static! {
     /// Function factory.
     static ref factory: Factory = RwLock::new(
-        ( BTreeMap::new(), 0 )
+        BTreeMap::new()
     ) ;
 
     /// Stores function declarations before obtaining the actual definition.
@@ -121,7 +112,7 @@ where
     F: for<'a> FnMut(&'a RFun) -> Res<T>,
 {
     if let Ok(defs) = factory.read() {
-        if let Some(def) = defs.0.get(fun) {
+        if let Some(def) = defs.get(fun) {
             return f(def);
         }
     } else {
@@ -155,7 +146,7 @@ where
 }
 
 /// Read version of the factory.
-fn read_factory<'a>() -> RwLockReadGuard<'a, (BTreeMap<String, Fun>, usize)> {
+fn read_factory<'a>() -> RwLockReadGuard<'a, BTreeMap<String, Fun>> {
     if let Ok(res) = factory.read() {
         res
     } else {
@@ -163,25 +154,18 @@ fn read_factory<'a>() -> RwLockReadGuard<'a, (BTreeMap<String, Fun>, usize)> {
     }
 }
 /// Write version of the factory.
-fn write_factory<'a>() -> RwLockWriteGuard<'a, (BTreeMap<String, Fun>, usize)> {
-    loop {
-        if let Ok(res) = factory.write() {
-            if res.1 != 0 {
-                continue;
-            }
-            return res;
-        } else {
-            panic!("failed to access function factory (write)")
-        }
-    }
+fn write_factory<'a>() -> RwLockWriteGuard<'a, BTreeMap<String, Fun>> {
+    factory
+        .write()
+        .expect("failed to access function factory (write)")
 }
 
 macro_rules! factory {
     (read) => {
-        &read_factory().0
+        &read_factory()
     };
     (write) => {
-        &mut write_factory().0
+        &mut write_factory()
     };
 }
 
@@ -191,7 +175,7 @@ where
     F: FnMut(&Fun) -> Res<()>,
 {
     let defs = read_factory();
-    for def in defs.0.values() {
+    for def in defs.values() {
         f(def)?
     }
     Ok(())
@@ -212,7 +196,7 @@ pub fn new(fun: RFun) -> Res<Fun> {
 
 /// Groups all functions by dependencies.
 pub fn ordered() -> Res<Vec<Vec<Fun>>> {
-    let mut all: Vec<_> = read_factory().0.values().cloned().collect();
+    let mut all: Vec<_> = read_factory().values().cloned().collect();
 
     let mut groups = vec![];
 
@@ -359,42 +343,14 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
     Ok(())
 }
 
-/// Retrieves the definition of a function as a reference.
+/// Retrieves all function definitions.
 ///
-/// This actually uses unsafe code, this kind of borrow should not be possible.
-/// If something modifies the factory while the borrow is alive, then it might
-/// end up pointing to arbitrary data.
-///
-/// It's made safe by keeping track of how many references have been created
-/// and preventing modifying the factory as long as this count is not zero.
-/// This function hence works in conjunction with [`decrease_ref_count`][link].
-/// When using this function, you must keep track of how many references you
-/// have created and when you are sure they're dead, call `decrease_ref_count`.
-///
-/// link: fun/fn.decrease_ref_count.html
-/// (decrease_ref_count function)
-pub fn get_as_ref<'a>(name: &'a str) -> Option<&'a Fun> {
-    let mut pair = if let Ok(mut f) = factory.write() {
+/// This used by term evaluation to zero-copy-evaluate function.
+pub fn all_defs<'a>() -> ::std::sync::RwLockReadGuard<'a, BTreeMap<String, Fun>> {
+    if let Ok(f) = factory.read() {
         f
     } else {
-        panic!("failed to access function factory (write)")
-    };
-    pair.1 += 1;
-    unsafe { ::std::mem::transmute::<Option<&Fun>, Option<&'a Fun>>(pair.0.get(name)) }
-}
-
-pub fn decrease_ref_count(count: usize) {
-    if count == 0 {
-        return ();
-    }
-    if let Ok(mut f) = factory.write() {
-        if count <= f.1 {
-            f.1 -= count
-        } else {
-            panic!("trying to decrease ref count for function factory by too much")
-        }
-    } else {
-        panic!("failed to access function factory (write)")
+        panic!("failed to access function factory (read)")
     }
 }
 

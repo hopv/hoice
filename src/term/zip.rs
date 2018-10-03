@@ -4,8 +4,7 @@
 //!
 //! - explain
 
-use std::fmt;
-use std::slice::Iter;
+use std::{fmt, slice::Iter};
 
 use common::*;
 
@@ -171,6 +170,37 @@ where
 
     Partial: for<'a> FnMut(ZipFrame<'a, Acc>) -> Result<ZipDo<'a, Acc, Yield>, E>,
 {
+    zip_with(
+        term,
+        &(),
+        |_, term| dwn_do(term),
+        |_, nul| nul_do(nul),
+        |_, op, typ, acc| app_do(op, typ, acc),
+        |_, frame| partial(frame),
+    )
+}
+
+/// Zip function.
+pub fn zip_with<Info, E, Acc, Yield, DwnF, NulF, AppF, Partial>(
+    term: &Term,
+    info: &Info,
+    mut dwn_do: DwnF,
+    mut nul_do: NulF,
+    mut app_do: AppF,
+    mut partial: Partial,
+) -> Result<Yield, E>
+where
+    Acc: Accumulator<Yield>,
+    Yield: Clone,
+
+    DwnF: for<'a> FnMut(&'a Info, &'a Term) -> Result<Option<Yield>, E>,
+
+    NulF: for<'a> FnMut(&'a Info, ZipNullary<'a>) -> Result<Yield, E>,
+
+    AppF: for<'a> FnMut(&'a Info, ZipOp<'a>, &'a Typ, Acc) -> Result<ZipDoTotal<'a, Yield>, E>,
+
+    Partial: for<'a> FnMut(&'a Info, ZipFrame<'a, Acc>) -> Result<ZipDo<'a, Acc, Yield>, E>,
+{
     // Empty vector of terms, useful when handling unary operators.
     let empty: Vec<Term> = Vec::with_capacity(0);
 
@@ -195,7 +225,7 @@ where
     'inspect_term: loop {
         // stack_print!() ;
 
-        let result = if let Some(yielded) = dwn_do(term)? {
+        let result = if let Some(yielded) = dwn_do(info, term)? {
             ZipDoTotal::Upp { yielded }
         } else {
             match *term.get() {
@@ -205,12 +235,12 @@ where
                     }
                 } else {
                     ZipDoTotal::Upp {
-                        yielded: nul_do(ZipNullary::Var(typ, var_idx))?,
+                        yielded: nul_do(info, ZipNullary::Var(typ, var_idx))?,
                     }
                 },
 
                 RTerm::Cst(ref cst) => ZipDoTotal::Upp {
-                    yielded: nul_do(ZipNullary::Cst(cst))?,
+                    yielded: nul_do(info, ZipNullary::Cst(cst))?,
                 },
 
                 RTerm::CArray {
@@ -252,7 +282,7 @@ where
 
                         continue 'inspect_term;
                     } else {
-                        app_do(op, typ, lft_args)?
+                        app_do(info, op, typ, lft_args)?
                     }
                 }
 
@@ -278,7 +308,7 @@ where
 
                         continue 'inspect_term;
                     } else {
-                        app_do(op, typ, lft_args)?
+                        app_do(info, op, typ, lft_args)?
                     }
                 }
 
@@ -348,7 +378,7 @@ where
 
                         continue 'inspect_term;
                     } else {
-                        app_do(op, typ, lft_args)?
+                        app_do(info, op, typ, lft_args)?
                     }
                 }
             }
@@ -390,7 +420,7 @@ where
                     lft_args.push(result);
 
                     if rgt_args.len() == 0 {
-                        match app_do(thing, typ, lft_args)? {
+                        match app_do(info, thing, typ, lft_args)? {
                             ZipDoTotal::Upp { yielded } => {
                                 result = yielded;
                                 continue 'inspect_do_res;
@@ -405,12 +435,15 @@ where
                             }
                         }
                     } else {
-                        match partial(ZipFrame {
-                            thing,
-                            typ,
-                            lft_args,
-                            rgt_args,
-                        })? {
+                        match partial(
+                            info,
+                            ZipFrame {
+                                thing,
+                                typ,
+                                lft_args,
+                                rgt_args,
+                            },
+                        )? {
                             ZipDo::Trm { nu_term, frame } => {
                                 term = nu_term;
                                 stack.push((frame, subst.clone()));

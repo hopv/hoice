@@ -24,29 +24,16 @@ pub fn eval<E: Evaluator>(term: &Term, model: &E) -> Res<Val> {
         }
     }
 
-    let mut fun_ref_count = 0;
+    let fun_defs = fun::all_defs();
 
-    let res = zip(
-        term,
-        |_| Ok(None),
-        |zip_null| leaf(model, zip_null),
-        |op, typ, values| total(op, typ, values, &mut fun_ref_count),
+    zip_with(
+        &*term,
+        &*fun_defs,
+        |_, _| Ok(None),
+        |_, zip_null| leaf(model, zip_null),
+        total,
         partial,
-    );
-
-    fun::decrease_ref_count(fun_ref_count);
-    // if let Ok(res) = res.as_ref() {
-    //   if model.len() > 0
-    //   && ! res.is_known() {
-    //     println!("eval {}", term) ;
-    //     for v in 0 .. model.len() {
-    //       println!("  v_{}: {}", v, model.get( v.into() ))
-    //     }
-    //     println!("= {}", res) ;
-    //     pause(" blah", & Profiler::new()) ;
-    //   }
-    // }
-    res
+    )
 }
 
 macro_rules! go {
@@ -70,10 +57,10 @@ fn leaf<'a, E: Evaluator>(model: &E, zip_null: ZipNullary<'a>) -> Res<Val> {
 }
 
 fn total<'a>(
+    fun_defs: &'a BTreeMap<String, Fun>,
     op: ZipOp<'a>,
     typ: &'a Typ,
     mut values: Vec<Val>,
-    fun_ref_count: &mut usize,
 ) -> Res<CmdT<'a>> {
     let yielded = match op {
         ZipOp::Op(op) => op
@@ -159,12 +146,11 @@ fn total<'a>(
         },
 
         ZipOp::Fun(name) => {
-            let fun = if let Some(fun) = fun::get_as_ref(name) {
+            let fun = if let Some(fun) = fun_defs.get(name) {
                 fun
             } else {
                 bail!("cannot evaluate unknown function `{}`", conf.bad(name))
             };
-            *fun_ref_count += 1;
 
             if values.len() != fun.sig.len() {
                 bail!(
@@ -186,6 +172,7 @@ fn total<'a>(
 }
 
 fn partial<'a>(
+    _: &BTreeMap<String, Fun>,
     Frame {
         thing,
         typ,
