@@ -8,7 +8,7 @@
 //! [`map_invert`]: (fn.map_invert.html) (map_invert function)
 
 use common::*;
-use fun::RFun;
+use fun::FunSig;
 use info::VarInfo;
 use preproc::{Clause, PreInstance, RedStrat};
 
@@ -719,11 +719,13 @@ impl FunDef {
         // Finally creating the function.
         let pred = self.pred;
 
-        let mut dec = fun::retrieve_dec(&self.name)?;
-        dec.set_def(def);
-        dec.invariants.extend(invs);
+        let sig = fun::retrieve_sig(&self.name)?;
+        let mut rfun = sig.into_fun(def);
 
-        let fun = fun::new(dec).chain_err(|| {
+        rfun.set_synthetic(pred);
+        rfun.invariants.extend(invs);
+
+        let fun = fun::new(rfun).chain_err(|| {
             format!(
                 "while creating internal function for predicate {}",
                 conf.bad(&instance[pred].name)
@@ -839,18 +841,16 @@ impl FunPreds {
             typ::bool()
         };
 
-        let mut rfun = RFun::new(
+        let sig = FunSig::new(
             pred_fun_name.clone(),
             var_infos.clone(),
             pred_fun_typ.clone(),
         );
-        rfun.set_synthetic(pred);
-
-        fun::register_dec(rfun)?;
+        fun::register_sig(sig)?;
 
         macro_rules! abort {
             ($($stuff:tt)*) => {{
-                let _ = fun::retrieve_dec(&pred_fun_name);
+                let _ = fun::retrieve_sig(&pred_fun_name);
                 return Ok(None);
             }};
         }

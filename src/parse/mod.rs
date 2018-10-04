@@ -1100,11 +1100,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             return Ok(false);
         }
 
-        use fun::RFun;
+        use fun::FunSig;
 
         self.functions.clear();
 
-        let mut funs: Vec<(RFun, Pos, _)> = vec![];
+        let mut funs: Vec<(FunSig, Pos, _)> = vec![];
 
         self.ws_cmt();
         self.tag("(")
@@ -1182,8 +1182,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 .sort()
                 .chain_err(|| format!("sort of function `{}`", conf.emph(name)))?;
 
-            let mut fun = RFun::new(name, args, typ);
-            fun::register_dec(fun.clone())?;
+            let fun = FunSig::new(name, args, typ);
+            fun::register_sig(fun.clone())?;
 
             // Check this is the first time we see this function and populate
             // dependencies.
@@ -1196,9 +1196,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         ).into();
                     bail!(e.chain_err(|| self.error(*other_pos, "first appearance")))
                 }
-
-                other.insert_dep(fun.name.clone());
-                fun.insert_dep(other.name.clone());
             }
 
             let prev = self
@@ -1221,7 +1218,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         // Parse all definitions.
         for (mut fun, pos, var_map) in funs {
-            if let Some(term) = self
+            let def = if let Some(term) = self
                 .term_opt(&fun.sig, &var_map, instance)
                 .chain_err(|| {
                     format!(
@@ -1230,21 +1227,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     )
                 }).chain_err(|| self.error(pos, "declared here"))?
             {
+                self.ws_cmt();
                 // Success.
-                fun.set_def(term);
-                self.ws_cmt()
+                let sig = fun::retrieve_sig(&fun.name)?;
+                sig.into_fun(term)
             } else {
                 let e: Error = self
                     .error_here(format!(
                         "expected definition (term) for function `{}`",
-                        conf.emph(&fun.name)
+                        conf.emph(fun.name)
                     )).into();
                 bail!(e.chain_err(|| self.error(pos, "declared here")))
-            }
+            };
 
-            let _ = fun::retrieve_dec(&fun.name)?;
-
-            fun::new(fun).chain_err(|| self.error(pos, "while registering this function"))?;
+            fun::new(def).chain_err(|| self.error(pos, "while registering this function"))?;
         }
 
         self.ws_cmt();
@@ -2074,18 +2070,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ) -> Res<(Term, Pos)> {
         use errors::TypError;
 
-        let res = if let Some((var_infos, _)) = self.functions.get(&name as &str) {
-            // Function application for one of the functions we are currently parsing
-            // the definition of? (i.e. the function is not registered yet)
-            fun::type_apply(name, var_infos, args)
-        } else {
-            // Function should already exist.
-            fun::apply(name, args)
-        };
-
-        // Parsing a application of a function that's already defined.
-
-        match res {
+        match term::try_fun(name, args) {
             Ok(term) => Ok((term, name_pos)),
 
             Err(TypError::Typ {

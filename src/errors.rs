@@ -18,9 +18,13 @@ use common::*;
 
 /// A term type-checking error.
 ///
-/// Can be created by [`try_app`] when creating operator applications.
+/// Can be created by
 ///
-/// [`try_app`]: ../term/fn.try_app.html (try_app function)
+/// - [`term::try_app`] when creating operator applications
+/// - [`term::try_fun`] when creating function calls
+///
+/// [`term::try_app`]: ../term/fn.try_app.html (try_app function)
+/// [`term::try_fun`]: ../term/fn.try_fun.html (try_fun function)
 #[derive(Clone, Debug)]
 pub enum TypError {
     /// No type info, just an error message.
@@ -35,6 +39,22 @@ pub enum TypError {
         /// The index of the argument that caused the error.
         index: usize,
     },
+}
+impl_fmt! {
+    TypError(self, fmt) {
+        match self {
+            TypError::Msg(s) => write!(fmt, "{}", s),
+            TypError::Typ {
+                expected, obtained, index
+            } => write!(fmt,
+                "error on argument #{}: found {} expected {}",
+                index, obtained,
+                expected.as_ref().map(
+                    |t| format!("{}", t)
+                ).unwrap_or_else(|| "something else".to_string())
+            )
+        }
+    }
 }
 impl TypError {
     /// Message constructor.

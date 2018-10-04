@@ -699,10 +699,21 @@ pub fn select(array: Term, idx: Term) -> Term {
 
 /// Function application.
 ///
-/// # Panics
+/// Panics when [`try_fun`] fails. See [`try_fun`] for examples.
 ///
-/// - if the function does not exist
-/// - if the arguments are illegal
+/// [`try_fun`]: fn.try_fun.html (try_fun function)
+#[inline]
+pub fn fun<S>(name: S, args: Vec<Term>) -> Term
+where
+    S: Into<String>,
+{
+    match try_fun(name, args) {
+        Ok(res) => res,
+        Err(e) => panic!("{}", e),
+    }
+}
+
+/// Function application.
 ///
 /// # Examples
 ///
@@ -711,10 +722,10 @@ pub fn select(array: Term, idx: Term) -> Term {
 /// fun::test::create_length_fun();
 /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
 ///
-/// let _ = term::fun(
+/// let _ = term::try_fun(
 ///     fun::test::length_fun_name(),
 ///     vec![ term::dtyp_new(list.clone(), "nil", vec![]) ],
-/// );
+/// ).expect("during function call creation");
 /// ```
 ///
 /// Constant arguments:
@@ -724,84 +735,91 @@ pub fn select(array: Term, idx: Term) -> Term {
 /// fun::test::create_length_fun();
 /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
 ///
-/// let cst = term::fun(
+/// let cst = term::try_fun(
 ///     fun::test::length_fun_name(),
 ///     vec![term::dtyp_new(
 ///         list.clone(), "insert", vec![term::int(7), term::dtyp_new(list.clone(), "nil", vec![])]
 ///     )],
-/// );
+/// ).expect("during function call creation");
 /// assert_eq! { cst.val().unwrap(), val::int(1) }
 /// ```
 ///
-/// Ill-typed application (panic):
+/// Ill-typed application:
 ///
-/// ```rust,should_panic
+/// ```rust
 /// use hoice::common::*;
 /// fun::test::create_length_fun();
 ///
-/// let _ = term::fun( // This panics.
+/// let err = term::try_fun(
 ///     fun::test::length_fun_name(), vec![ term::int(7) ],
-/// );
+/// ).unwrap_err();
+/// assert_eq! {
+///     format!("{}", err),
+///     format!(
+///         "ill-typed application of function {}, 7 does not have type (List Int)",
+///         fun::test::length_fun_name()
+///     )
+/// }
 /// ```
 ///
 /// Function does not exist (panic):
 ///
-/// ```rust,should_panic
+/// ```rust
 /// # use hoice::common::*;
-/// let _ = term::fun( // This panics.
+/// let err = term::try_fun(
 ///     "unknown_function", vec![ term::int_var(0) ]
-/// );
+/// ).unwrap_err();
+/// assert_eq! {
+///     format!("{}", err),
+///     "trying to retrieve signature for unknown function unknown_function\n\
+///     no function signature present".to_string()
+/// }
 /// ```
 #[inline]
-pub fn fun<S>(name: S, mut args: Vec<Term>) -> Term
+pub fn try_fun<S>(name: S, mut args: Vec<Term>) -> Result<Term, ::errors::TypError>
 where
     S: Into<String>,
 {
     let name = name.into();
     let mut all_args_constant = true;
-    match fun::dec_do(&name, |fun| {
-        if args.len() != fun.sig.len() {
-            panic!(
+
+    fun::sig_do(&name, |info| {
+        if args.len() != info.sig.len() {
+            return Err(TypError::Msg(format!(
                 "illegal application of function {} to {} arguments, expected {}",
                 conf.bad(&name),
                 args.len(),
-                fun.sig.len()
-            )
+                info.sig.len(),
+            )));
         }
-        for (info, arg) in fun.sig.iter().zip(args.iter_mut()) {
+        for (info, arg) in info.sig.iter().zip(args.iter_mut()) {
             if arg.val().is_none() {
                 all_args_constant = false
             }
             if let Some(nu_arg) = arg.force_dtyp(info.typ.clone()) {
                 *arg = nu_arg
             } else if info.typ != arg.typ() {
-                panic!(
+                return Err(TypError::Msg(format!(
                     "ill-typed application of function {}, {} does not have type {}",
                     conf.bad(&name),
                     arg,
                     info.typ
-                )
+                )));
             }
         }
-        Ok(fun.typ.clone())
-    }) {
-        Ok(typ) => {
-            let term = factory.mk(RTerm::new_fun(typ, name, args));
-            if all_args_constant {
-                if let Ok(val) = term.eval(&()) {
-                    cst(val)
-                } else {
-                    term
-                }
+        Ok(info.typ.clone())
+    }).map(|typ| {
+        let term = factory.mk(RTerm::new_fun(typ, name, args));
+        if all_args_constant {
+            if let Ok(val) = term.eval(&()) {
+                cst(val)
             } else {
                 term
             }
+        } else {
+            term
         }
-        Err(e) => {
-            print_err(&e);
-            panic!("illegal function application")
-        }
-    }
+    })
 }
 
 /// Creates an operator application.

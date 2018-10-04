@@ -1,19 +1,119 @@
 //! Hash consed functions.
 //!
-//! In test mode, the `List` datatype is automatically added, as well as a few functions (see the
-//! [`fun`] module). This is so that dtyp-related doc/lib tests have something to work with.
+//! "Functions" of this module are user-defined recursive functions and non-necessarily recursive
+//! function create by hoice, typically when working with datatypes. Function can be evaluated and
+//! can be used as qualifiers (for datatypes, typically).
+//!
+//! # Usage
+//!
+//! Creating (mutually) recursive is tricky: when constructing the body of the function(s), the
+//! definition does not really exist yet ---since we're constructing the body which is part of the
+//! definition. So if `f` calls itself recursively, we cannot create the term `(f <args>)` because
+//! `f` does not really exist yet: hoice will fail to check that the call is legal because it
+//! cannot retrieve `f`'s definition.
+//!
+//! To address this problem, this module allows to register some *function declarations*. The idea
+//! is to
+//!
+//! - create a [`FunSig`] for all mutually recursive functions
+//! - register these signatures using [`register_sig`], meaning that they become visible during
+//!   term creation
+//! - construct the bodies, including the recursive calls which are now legal
+//! - retrieve the signatures with [`retrieve_sig`] and add the bodies constructed in the previous
+//!   step
+//! - create the [`RFun`] from the `FunSig`, and register it as a function using [`new`]
+//!
+//! # Examples
+//!
+//! Consider the following function
+//!
+//! ```lisp
+//! (define-funs-rec
+//!   (
+//!     (len ( (l (List Int)) ) Int)
+//!   )
+//!   (
+//!     (ite
+//!       (= l nil)
+//!       0
+//!       (+ 1 (len (tail l)))
+//!     )
+//!   )
+//! )
+//! ```
+//!
+//! Then creating this function works as follows.
+//!
+//! ```rust
+//! use hoice::{ common::*, info::VarInfo };
+//! let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+//! let fun_name = "fun_test_len";
+//!
+//! let mut var_infos = VarInfos::new();
+//! let v_0 = var_infos.next_index();
+//! var_infos.push( VarInfo::new("l", int_list.clone(), v_0) );
+//!
+//! let signature = fun::FunSig::new(fun_name, var_infos, typ::int());
+//! fun::register_sig(signature).expect("while registering function signature");
+//!
+//! // Function declared, we can now create terms that use it.
+//! let v_0 = term::var(v_0, int_list.clone());
+//! let tail_of_v_0 = term::dtyp_slc(int_list.clone(), "tail", v_0.clone());
+//! let rec_call = term::fun(fun_name, vec![ tail_of_v_0 ]);
+//! let body = term::ite(
+//!     term::eq(v_0.clone(), term::dtyp_new(int_list.clone(), "nil", vec![])),
+//!     term::int(0),
+//!     term::add( vec![ term::int(1), rec_call ] )
+//! );
+//! assert_eq! {
+//!     format!("(ite (not (is-insert v_0)) 0 (+ ({} (tail v_0)) 1))", fun_name),
+//!     format!("{}", body)
+//! }
+//!
+//! // Retrieve and complete function definition.
+//! let sig = fun::retrieve_sig(fun_name).expect("while retrieving signature");
+//! let def = sig.into_fun(body);
+//! let _ = fun::new(def).expect("while hashconsing function");
+//!
+//! // Done!
+//! let len_app = term::fun(
+//!     fun_name, vec![
+//!         term::dtyp_new(
+//!             int_list.clone(), "insert", vec![
+//!                 term::int_var(0), term::dtyp_new(int_list.clone(), "nil", vec![])
+//!             ]
+//!         )
+//!     ]
+//! );
+//! assert_eq! {
+//!     format!("({} (insert v_0 (as nil (List Int))))", fun_name),
+//!     format!("{}", len_app)
+//! }
+//!
+//! let model: VarMap<Val> = vec![val::int(7)].into();
+//! assert_eq! { len_app.eval(& model).expect("during evaluation"), val::int(1) }
+//! ```
+//!
+//! # Testing
+//!
+//! The [`test`] module allows to create a length function over lists and should only be used in
+//! documentation/unit tests. The module does not exist in `release`.
+//!
+//! [`FunSig`]: struct.FunSig.html (FunSig struct)
+//! [`register_sig`]: fn.register_sig.html (register_sig function)
+//! [`retrieve_sig`]: fn.retrieve_sig.html (retrieve_sig function)
+//! [`Fun`]: type.Fun.html (Fun type)
+//! [`new`]: fn.new.html (new function)
+//! [`test`]: test/index.hmtl (function test module)
 
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use common::*;
 
-/// A function.
+/// A hashconsed function.
 pub type Fun = Arc<RFun>;
 
 /// Type of the function factory.
-///
-/// To avoid problems, **always** use the `factory` macro to access the
-/// factory.
 type Factory = RwLock<BTreeMap<String, Fun>>;
 lazy_static! {
     /// Function factory.
@@ -21,53 +121,19 @@ lazy_static! {
         BTreeMap::new()
     ) ;
 
-    /// Stores function declarations before obtaining the actual definition.
-    static ref fun_decs: RwLock< BTreeMap<String, RFun> > = RwLock::new(
+    /// Stores function signatures to construct the functions' bodies.
+    static ref fun_sigs: RwLock< BTreeMap<String, FunSig> > = RwLock::new(
         BTreeMap::new()
     ) ;
 }
 
-/// Test-related stuff for functions.
-pub mod test {
-
-    /// Name of the length function over `(List Int)` (test mode only).
-    pub fn length_fun_name() -> &'static str {
-        "length"
-    }
-
-    /// Creates the list datatype and a length function over `(List Int)` this should only be used
-    /// in (doc) tests.
-    pub fn create_length_fun() {
-        use super::*;
-        let name = length_fun_name();
-        if get(name).is_some() {
-            return ();
-        }
-
-        ::parse::fun_dtyp(&format!(
-            "\
-            (define-funs-rec
-              (
-                ({name} ( (l (List Int)) ) Int)
-              )
-              (
-                (ite
-                  (= l nil)
-                  0
-                  (+ 1 ({name} (tail l)))
-                )
-              )
-            )
-            (exit)
-        ",
-            name = name
-        ))
-    }
-}
-
-/// Registers a function declaration.
-pub fn register_dec(fun: RFun) -> Res<()> {
-    if let Ok(mut decs) = fun_decs.write() {
+/// Registers a function signature.
+///
+/// Used to create (mutually) recursive function(s), see [module-level documentation].
+///
+/// [module-level documentation]: index.html (module-level documentation)
+pub fn register_sig(fun: FunSig) -> Res<()> {
+    if let Ok(mut decs) = fun_sigs.write() {
         let prev = decs.insert(fun.name.clone(), fun);
         if let Some(prev) = prev {
             bail!("the function {} is declared twice", conf.bad(&prev.name))
@@ -78,21 +144,25 @@ pub fn register_dec(fun: RFun) -> Res<()> {
     Ok(())
 }
 
-/// Retrieves a function declaration.
-pub fn retrieve_dec(fun: &str) -> Res<RFun> {
-    if let Ok(mut decs) = fun_decs.write() {
-        if let Some(dec) = decs.remove(fun) {
-            Ok(dec)
+/// Retrieves a function signature.
+///
+/// Used to create (mutually) recursive function(s), see [module-level documentation].
+///
+/// [module-level documentation]: index.html (module-level documentation)
+pub fn retrieve_sig(fun: &str) -> Res<FunSig> {
+    if let Ok(mut sigs) = fun_sigs.write() {
+        if let Some(sig) = sigs.remove(fun) {
+            Ok(sig)
         } else {
             let mut s = format!(
-                "trying to retrieve declaration for unknown function {}\n",
+                "trying to retrieve signature for unknown function {}\n",
                 conf.bad(fun)
             );
-            if decs.is_empty() {
-                s += "no function declaration present"
+            if sigs.is_empty() {
+                s += "no function signature present"
             } else {
-                s += "function(s) declared:";
-                for (name, _) in decs.iter() {
+                s += "function(s) signatures available:";
+                for (name, _) in sigs.iter() {
                     s += " ";
                     s += name;
                     s += ","
@@ -106,42 +176,47 @@ pub fn retrieve_dec(fun: &str) -> Res<RFun> {
     }
 }
 
-/// Accesses the declaration of a function.
-pub fn dec_do<F, T>(fun: &str, mut f: F) -> Res<T>
+/// Accesses the signature of a function, if any.
+///
+/// Used to type-check function calls.
+pub fn sig_do<F, T>(fun: &str, mut f: F) -> Result<T, ::errors::TypError>
 where
-    F: for<'a> FnMut(&'a RFun) -> Res<T>,
+    F: for<'a> FnMut(&'a FunSig) -> Result<T, ::errors::TypError>,
 {
+    use errors::TypError;
     if let Ok(defs) = factory.read() {
         if let Some(def) = defs.get(fun) {
-            return f(def);
+            return f(&def.info);
         }
     } else {
-        bail!("unable to retrieve function factory")
+        return Err(TypError::Msg("unable to retrieve function factory".into()));
     }
 
-    if let Ok(defs) = fun_decs.read() {
-        if let Some(def) = defs.get(fun) {
-            f(def)
+    if let Ok(sigs) = fun_sigs.read() {
+        if let Some(sig) = sigs.get(fun) {
+            f(sig)
         } else {
             let mut s = format!(
-                "trying to retrieve declaration for unknown function {}\n",
+                "trying to retrieve signature for unknown function {}\n",
                 conf.bad(fun)
             );
-            if defs.is_empty() {
-                s += "no function declaration present"
+            if sigs.is_empty() {
+                s += "no function signature present"
             } else {
-                s += "function(s) declared:";
-                for (name, _) in defs.iter() {
+                s += "function(s) signatures available:";
+                for (name, _) in sigs.iter() {
                     s += " ";
                     s += name;
                     s += ","
                 }
             }
 
-            bail!(s)
+            return Err(TypError::Msg(s));
         }
     } else {
-        bail!("unable to retrieve function declarations")
+        return Err(TypError::Msg(
+            "unable to retrieve function declarations".into(),
+        ));
     }
 }
 
@@ -182,20 +257,40 @@ where
 }
 
 /// Creates a function definition.
+///
+/// Fails if the function is already defined.
+///
+/// # Examples
+///
+/// ```rust
+/// use hoice::{ common::*, fun, info::VarInfo };
+/// let sig: VarInfos = vec![ VarInfo::new("v_0", typ::int(), 0.into()) ].into();
+/// let fun_name = "fun_new_test_identity";
+/// let sig = fun::FunSig::new(fun_name, sig, typ::int());
+/// let def = sig.into_fun( term::int_var(0) );
+/// fun::new(def.clone()).expect("during first function registration");
+/// assert_eq! {
+///     format!("{}", fun::new(def).unwrap_err()),
+///     format!("attempting to redefine function `{}`", fun_name)
+/// }
+/// ```
 pub fn new(fun: RFun) -> Res<Fun> {
     let fun = Arc::new(fun);
     let f = factory!(write);
-    let prev = f.insert(fun.name.clone(), fun.clone());
+    let prev = f.insert(fun.name().clone(), fun.clone());
 
     if let Some(prev) = prev {
-        bail!("attempting to redefine function `{}`", prev.name)
+        bail!("attempting to redefine function `{}`", prev.name())
     }
 
     Ok(fun)
 }
 
 /// Groups all functions by dependencies.
-pub fn ordered() -> Res<Vec<Vec<Fun>>> {
+///
+/// Returns a list of functions classes. A function class is a list of function that depend on each
+/// other, meaning that they must be defined together at SMT-level.
+fn ordered() -> Res<Vec<Vec<Fun>>> {
     let mut all: Vec<_> = read_factory().values().cloned().collect();
 
     let mut groups = vec![];
@@ -204,7 +299,7 @@ pub fn ordered() -> Res<Vec<Vec<Fun>>> {
         let mut group = vec![fun];
         if !group[0].deps.is_empty() {
             all.retain(|fun| {
-                if group[0].deps.contains(&fun.name) {
+                if group[0].deps.contains(fun.name()) {
                     group.push(fun.clone());
                     false
                 } else {
@@ -219,7 +314,7 @@ pub fn ordered() -> Res<Vec<Vec<Fun>>> {
 }
 
 /// Defines a function, and all functions related to it.
-pub fn write<W>(w: &mut W, fun: &RFun, pref: &str) -> Res<()>
+fn write<W>(w: &mut W, fun: &RFun, pref: &str) -> Res<()>
 where
     W: Write,
 {
@@ -234,7 +329,7 @@ where
         } else {
             bail!(
                 "function `{}` depends on unknown function `{}`",
-                conf.emph(&fun.name),
+                conf.emph(fun.name()),
                 conf.bad(&dep)
             )
         }
@@ -245,11 +340,11 @@ where
     // Write all signatures.
     for fun in &all {
         write!(w, "{}  (", pref)?;
-        write!(w, "{} (", fun.name)?;
-        for info in &fun.sig {
+        write!(w, "{} (", fun.name())?;
+        for info in fun.sig() {
             write!(w, " ({} {})", info.idx.default_str(), info.typ)?
         }
-        writeln!(w, " ) {})", fun.typ)?
+        writeln!(w, " ) {})", fun.typ())?
     }
 
     writeln!(w, "{}) (", pref)?;
@@ -266,7 +361,7 @@ where
     Ok(())
 }
 
-/// Defines all the functions.
+/// Defines all the functions in SMT-LIB.
 pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
     for mut group in ordered()? {
         if group.len() == 1 {
@@ -278,12 +373,12 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
                 consts::keywords::cmd::def_fun
             };
 
-            writeln!(w, "{}({} {}", pref, def_key, fun.name)?;
+            writeln!(w, "{}({} {}", pref, def_key, fun.name())?;
             write!(w, "{}  (", pref)?;
-            for info in &fun.sig {
+            for info in fun.sig() {
                 write!(w, " ({} {})", info.idx.default_str(), info.typ)?
             }
-            writeln!(w, " ) {}", fun.typ)?;
+            writeln!(w, " ) {}", fun.typ())?;
 
             write!(w, "{}  ", pref)?;
 
@@ -295,11 +390,11 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
             // Write all signatures.
             for fun in &group {
                 write!(w, "{}  (", pref)?;
-                write!(w, "{} (", fun.name)?;
-                for info in &fun.sig {
+                write!(w, "{} (", fun.name())?;
+                for info in fun.sig() {
                     write!(w, " ({} {})", info.idx.default_str(), info.typ)?
                 }
-                writeln!(w, " ) {})", fun.typ)?
+                writeln!(w, " ) {})", fun.typ())?
             }
 
             writeln!(w, "{}) (", pref)?;
@@ -324,7 +419,7 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
                     writeln!(w, "{}(assert", pref)?;
                     writeln!(w, "{}  (forall", pref)?;
                     write!(w, "{}    (", pref)?;
-                    for info in &fun.sig {
+                    for info in fun.sig() {
                         write!(w, " ({} {})", info.idx.default_str(), info.typ)?
                     }
                     writeln!(w, " )")?;
@@ -360,63 +455,84 @@ pub fn get(name: &str) -> Option<Fun> {
     f.get(name).cloned()
 }
 
-/// Types and creates a function application.
-pub fn type_apply(
-    name: String,
-    var_info: &VarInfos,
-    args: Vec<Term>,
-) -> Result<Term, ::errors::TypError> {
-    if args.len() != var_info.len() {
-        return Err(TypError::Msg(format!(
-            "function `{}` is applied to {} arguments, expected {}",
-            conf.emph(name),
-            args.len(),
-            var_info.len()
-        )));
+/// A function signature, used when creating (mutually) recursive function(s).
+#[derive(Debug, Clone)]
+pub struct FunSig {
+    /// Name.
+    pub name: String,
+    /// Signature.
+    pub sig: VarInfos,
+    /// Type.
+    pub typ: Typ,
+}
+impl PartialEq for FunSig {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
     }
+}
+impl Eq for FunSig {}
 
-    for (arg, info) in args.iter().zip(var_info.iter()) {
-        if !arg.typ().is_compatible(&info.typ) {
-            return Err(TypError::Typ {
-                expected: Some(info.typ.clone()),
-                obtained: arg.typ().clone(),
-                index: *info.idx,
-            });
+impl PartialOrd for FunSig {
+    fn partial_cmp(&self, other: &Self) -> Option<::std::cmp::Ordering> {
+        self.name.partial_cmp(&other.name)
+    }
+}
+impl Ord for FunSig {
+    fn cmp(&self, other: &Self) -> ::std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+impl ::std::hash::Hash for FunSig {
+    fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state)
+    }
+}
+impl FunSig {
+    /// Constructor.
+    pub fn new<S>(name: S, sig: VarInfos, typ: Typ) -> Self
+    where
+        S: Into<String>,
+    {
+        FunSig {
+            name: name.into(),
+            sig,
+            typ,
         }
     }
 
-    Ok(term::fun(name, args))
-}
+    /// Sets the definition of a function.
+    pub fn into_fun(self, def: Term) -> RFun {
+        let mut deps = BTreeSet::new();
+        let mut recursive = false;
+        def.iter(|trm| {
+            if let Some((name, _)) = trm.fun_inspect() {
+                if name == &self.name {
+                    recursive = true
+                } else {
+                    deps.insert(name.to_string());
+                }
+            }
+        });
 
-/// Creates a function application.
-pub fn apply(name: String, args: Vec<Term>) -> Result<Term, ::errors::TypError> {
-    use errors::TypError;
-
-    let def = if let Some(def) = get(&name) {
-        def
-    } else {
-        return Err(TypError::Msg(format!(
-            "unknown function `{}`",
-            conf.bad(name)
-        )));
-    };
-
-    type_apply(name, &def.sig, args)
+        RFun {
+            info: self,
+            deps,
+            def,
+            synthetic: None,
+            invariants: TermSet::new(),
+            recursive,
+        }
+    }
 }
 
 /// Real structure for functions.
 #[derive(Debug, Clone)]
 pub struct RFun {
-    /// Name.
-    pub name: String,
+    /// Signature.
+    pub info: FunSig,
     /// Other functions this function depends on.
     pub deps: BTreeSet<String>,
-    /// Signature.
-    ///
-    /// The string stored is the original name of the argument.
-    pub sig: VarInfos,
-    /// Type.
-    pub typ: Typ,
     /// Definition.
     pub def: Term,
     /// The index of the predicate this function was created for.
@@ -427,27 +543,34 @@ pub struct RFun {
     recursive: bool,
 }
 
+impl ::std::ops::Deref for RFun {
+    type Target = FunSig;
+    fn deref(&self) -> &FunSig {
+        &self.info
+    }
+}
+
 impl PartialEq for RFun {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.info.name == other.info.name
     }
 }
 impl Eq for RFun {}
 
 impl PartialOrd for RFun {
     fn partial_cmp(&self, other: &Self) -> Option<::std::cmp::Ordering> {
-        self.name.partial_cmp(&other.name)
+        self.info.name.partial_cmp(&other.info.name)
     }
 }
 impl Ord for RFun {
     fn cmp(&self, other: &Self) -> ::std::cmp::Ordering {
-        self.name.cmp(&other.name)
+        self.info.name.cmp(&other.info.name)
     }
 }
 
 impl ::std::hash::Hash for RFun {
     fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state)
+        self.info.name.hash(state)
     }
 }
 
@@ -459,10 +582,8 @@ impl RFun {
     pub fn new<S: Into<String>>(name: S, sig: VarInfos, typ: Typ) -> Self {
         let name = name.into();
         RFun {
-            name,
+            info: FunSig::new(name, sig, typ),
             deps: BTreeSet::new(),
-            sig,
-            typ,
             def: term::tru(),
             synthetic: None,
             invariants: TermSet::new(),
@@ -470,12 +591,28 @@ impl RFun {
         }
     }
 
+    /// Name of the function.
+    #[inline]
+    pub fn name(&self) -> &String {
+        &self.info.name
+    }
+    /// Signature of the function.
+    #[inline]
+    pub fn sig(&self) -> &VarInfos {
+        &self.info.sig
+    }
+    /// Type of the function.
+    #[inline]
+    pub fn typ(&self) -> &Typ {
+        &self.info.typ
+    }
+
     /// Insert a dependency.
     ///
     /// Only inserts if `dep` is not `self.name`.
     pub fn insert_dep<S: Into<String>>(&mut self, dep: S) -> bool {
         let dep = dep.into();
-        if self.name == dep {
+        if self.info.name == dep {
             false
         } else {
             self.deps.insert(dep)
@@ -501,7 +638,7 @@ impl RFun {
     pub fn set_def(&mut self, def: Term) {
         def.iter(|trm| {
             if let Some((name, _)) = trm.fun_inspect() {
-                if name == &self.name {
+                if name == self.name() {
                     self.recursive = true
                 } else {
                     self.deps.insert(name.to_string());
@@ -521,7 +658,7 @@ impl RFun {
             if get(dep).is_none() {
                 bail!(
                     "function `{}` depends on unknown function `{}`",
-                    conf.emph(&self.name),
+                    conf.emph(self.name()),
                     conf.bad(dep)
                 )
             }
@@ -560,14 +697,14 @@ impl Functions {
         let mut from_to_typ = vec![];
 
         'find_funs: for fun in f.values() {
-            let mut sig = fun.sig.iter();
+            let mut sig = fun.sig().iter();
 
             let ftyp = match sig.next() {
                 Some(info) => info.typ == typ && sig.next().is_none(),
                 _ => false,
             };
 
-            let ttyp = fun.typ == typ;
+            let ttyp = fun.typ() == &typ;
 
             match (ftyp, ttyp) {
                 (true, true) => from_to_typ.push(fun.clone()),
@@ -583,5 +720,46 @@ impl Functions {
             to_typ,
             from_to_typ,
         }
+    }
+}
+
+/// Test-related stuff for functions.
+///
+/// This module is not available in `release` as it should only be used for testing purposes.
+#[cfg(debug_assertions)]
+pub mod test {
+
+    /// Name of the length function over `(List Int)` (test mode only).
+    pub fn length_fun_name() -> &'static str {
+        "length"
+    }
+
+    /// Creates the list datatype and a length function over `(List Int)` this should only be used
+    /// in (doc) tests.
+    pub fn create_length_fun() {
+        use super::*;
+        let name = length_fun_name();
+        if get(name).is_some() {
+            return ();
+        }
+
+        ::parse::fun_dtyp(&format!(
+            "\
+            (define-funs-rec
+              (
+                ({name} ( (l (List Int)) ) Int)
+              )
+              (
+                (ite
+                  (= l nil)
+                  0
+                  (+ 1 ({name} (tail l)))
+                )
+              )
+            )
+            (exit)
+        ",
+            name = name
+        ))
     }
 }
