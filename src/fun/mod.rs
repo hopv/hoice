@@ -456,6 +456,10 @@ pub fn get(name: &str) -> Option<Fun> {
 }
 
 /// A function signature, used when creating (mutually) recursive function(s).
+///
+/// For details, see [module-level documentation].
+///
+/// [module-level documentation]: index.html (module-level documentation)
 #[derive(Debug, Clone)]
 pub struct FunSig {
     /// Name.
@@ -501,7 +505,7 @@ impl FunSig {
         }
     }
 
-    /// Sets the definition of a function.
+    /// Transforms a signature in a function definition.
     pub fn into_fun(self, def: Term) -> RFun {
         let mut deps = BTreeSet::new();
         let mut recursive = false;
@@ -527,6 +531,10 @@ impl FunSig {
 }
 
 /// Real structure for functions.
+///
+/// For details, see [module-level documentation].
+///
+/// [module-level documentation]: index.html (module-level documentation)
 #[derive(Debug, Clone)]
 pub struct RFun {
     /// Signature.
@@ -607,18 +615,6 @@ impl RFun {
         &self.info.typ
     }
 
-    /// Insert a dependency.
-    ///
-    /// Only inserts if `dep` is not `self.name`.
-    pub fn insert_dep<S: Into<String>>(&mut self, dep: S) -> bool {
-        let dep = dep.into();
-        if self.info.name == dep {
-            false
-        } else {
-            self.deps.insert(dep)
-        }
-    }
-
     /// Flips the flag indicating that the function was created internally for a
     /// predicate.
     pub fn set_synthetic(&mut self, pred: PrdIdx) {
@@ -628,28 +624,6 @@ impl RFun {
     /// True if the function is recursive.
     pub fn is_recursive(&self) -> bool {
         self.recursive
-    }
-
-    /// Sets the definition of a function.
-    ///
-    /// # Panics
-    ///
-    /// - if `self.def` is not `term::tru()`
-    pub fn set_def(&mut self, def: Term) {
-        def.iter(|trm| {
-            if let Some((name, _)) = trm.fun_inspect() {
-                if name == self.name() {
-                    self.recursive = true
-                } else {
-                    self.deps.insert(name.to_string());
-                }
-            }
-        });
-        match *self.def {
-            RTerm::Cst(ref cst) if cst.is_true() => (),
-            _ => panic!("trying to set the definition of a function twice"),
-        }
-        self.def = def
     }
 
     /// Checks the function is legal.
@@ -676,6 +650,55 @@ impl RFun {
 }
 
 /// Stores functions from and to some type.
+///
+/// Automatically retrieves everything on creation. Only considers unary functions.
+///
+/// # Examples
+///
+/// ```rust
+/// use hoice::{ parse, fun::Functions, common::* };
+/// let (
+///     lst_name, len_name, rpt_name, rdc_name
+/// ) = (
+///     "FunFunctionsTestLst",
+///     "FunFunctionsTestLen",
+///     "FunFunctionsTestRpt",
+///     "FunFunctionsTestRdc",
+/// );
+/// parse::fun_dtyp(&format!("
+///     (declare-datatypes ( ({lst_name} 1) ) (
+///       (par (T) (
+///         (nil)
+///         (cons (head T) (tail ({lst_name} T)))
+///       ) )
+///     ) )
+///     (define-funs-rec
+///       ( ({len_name} ( (l ({lst_name} Int)) ) Int) )
+///       ( (ite (= l nil) 0 (+ 1 ({len_name} (tail l)))) )
+///     )
+///     (define-funs-rec
+///       ( ({rpt_name} ( (n Int) ) ({lst_name} Int)) )
+///       ( (ite (= n 0) nil (cons n ({rpt_name} (- n 1)))) )
+///     )
+///     (define-funs-rec
+///       ( ({rdc_name} ( (l ({lst_name} Int)) ) ({lst_name} Int)) )
+///       ( (ite (= l nil) nil (tail l)) )
+///     )
+///     (exit)
+/// ",
+///     lst_name = lst_name,
+///     len_name = len_name,
+///     rpt_name = rpt_name,
+///     rdc_name = rdc_name,
+/// ));
+/// let int_lst = typ::dtyp(
+///     dtyp::get(lst_name).expect("while retrieving dtyp"), vec![typ::int()].into()
+/// );
+/// let funs = Functions::new(int_lst);
+/// assert_eq! { &funs.from_typ[0].name, len_name }
+/// assert_eq! { &funs.to_typ[0].name, rpt_name }
+/// assert_eq! { &funs.from_to_typ[0].name, rdc_name }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Functions {
     /// Type these functions are for.
@@ -697,7 +720,7 @@ impl Functions {
         let mut from_to_typ = vec![];
 
         'find_funs: for fun in f.values() {
-            let mut sig = fun.sig().iter();
+            let mut sig = fun.sig.iter();
 
             let ftyp = match sig.next() {
                 Some(info) => info.typ == typ && sig.next().is_none(),

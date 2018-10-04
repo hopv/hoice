@@ -2503,8 +2503,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
     /// Tries to parse a `define-fun`.
     fn define_fun(&mut self, instance: &mut Instance) -> Res<bool> {
-        use fun::RFun;
-
         if !self.word_opt(keywords::cmd::def_fun) {
             return Ok(false);
         }
@@ -2547,8 +2545,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
 
         if let Some(term) = body.to_term()? {
-            let mut fun = RFun::new(name, var_info, out_sort);
-            fun.set_def(term);
+            use fun::FunSig;
+            let fun = FunSig::new(name, var_info, out_sort).into_fun(term);
             let _ = fun::new(fun)
                 .chain_err(|| self.error(name_pos, "while registering this function"))?;
             ()
