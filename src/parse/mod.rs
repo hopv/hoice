@@ -1,4 +1,70 @@
-//! SMT-LIB 2 horn clause problem parser.
+//! SMT-LIB 2 Horn clause parser.
+//!
+//! Parsing is with done with two structures. [`ParserCxt`], the *context*, stores collections used
+//! to build terms during parsing. [`Parser`] wraps a context, stores the text being parsed provide
+//! cursor-like functionalities as well as the actual parsing functions.
+//!
+//! The workflow for parsing is to create a context, and then create a parser everytime we are
+//! parsing some text.
+//!
+//! ```rust
+//! use hoice::{ common::*, parse::{ParserCxt, Parsed} };
+//! let mut instance = Instance::new();
+//! let mut cxt = ParserCxt::new();
+//! let prof = profiling::Profiler::new();
+//! let first_pred = instance.preds().next_index();
+//!
+//! {
+//!     let parser = cxt.parser("\
+//!         (declare-fun pred (Int Int) Bool)
+//!         (assert (forall ((n Int)) (pred n n)))
+//!     ", 0, &prof);
+//!     let res = parser.parse(&mut instance).expect("during first parsing test");
+//!     assert_eq! { res, Parsed::Items }
+//! }
+//!
+//! assert_eq! { instance.preds().len(), 1 }
+//! assert_eq! { &instance.preds()[first_pred].name, "pred" }
+//! assert_eq! { instance.clauses().len(), 1 }
+//!
+//! let second_pred = instance.preds().next_index();
+//!
+//! {
+//!     let parser = cxt.parser("\
+//!         (declare-fun other_pred (Int Int) Bool)
+//!         (assert (forall ((n Int)) (=> (other_pred n n) false)))
+//!     ", 0, &prof);
+//!     let res = parser.parse(&mut instance).expect("during second parsing test");
+//!     assert_eq! { res, Parsed::Items }
+//! }
+//!
+//! assert_eq! { instance.preds().len(), 2 }
+//! assert_eq! { &instance.preds()[second_pred].name, "other_pred" }
+//! assert_eq! { instance.clauses().len(), 2 }
+//!
+//! {
+//!     let parser = cxt.parser("\
+//!         (check-sat)
+//!     ", 0, &prof);
+//!     let res = parser.parse(&mut instance).expect("during third parsing test");
+//!     assert_eq! { res, Parsed::CheckSat }
+//! }
+//! ```
+//!
+//! # Parsing Terms
+//!
+//! The context mainly maintains a stack of [`TermFrame`]s. When parsing a compound term, such as
+//! an operator application or a function call, the parser pushes a term frame on the stack in the
+//! context and moves on to parse the subterms. This is refered to as *going down* in the code,
+//! since the parser goes down the term.
+//!
+//! After a term is parsed successfuly, the parser checks whether the term stack is empty. If it is
+//! not empty, the parser will push the term as an argument of the compound term represented by the
+//! frame operator on top of the stack. It then resumes parsing to gather the remaining arguments.
+//!
+//! [`Parser`]: struct.Parser.html (Parser struct)
+//! [`ParserCxt`]: struct.ParserCxt.html (ParserCxt struct)
+//! [`TermFrame`]: struct.TermFrame.html (TermFrame struct)
 
 use common::*;
 use info::VarInfo;
@@ -348,6 +414,16 @@ impl From<usize> for LetCount {
     }
 }
 
+/// Result of parsing a term token.
+enum TermTokenRes {
+    /// The token was a full term: value or variable.
+    Term(Term),
+    /// A frame to push on the stack. Compound term, *e.g.* an operator application.
+    Push(TermFrame),
+    /// Not a term, give up on parsing the (non-)term.
+    NotATerm,
+}
+
 /// Parser structure. Generated from a `ParserCxt`.
 pub struct Parser<'cxt, 's> {
     /// Parsing context.
@@ -428,7 +504,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     /// The next character, does not move the cursor.
     fn peek(&self) -> Option<&'s str> {
         if self.has_next() {
-            Some(&self.string[self.cursor..self.cursor + 1])
+            Some(&self.string[self.cursor..=self.cursor])
         } else {
             None
         }
@@ -439,7 +515,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         if self.cursor >= self.string.len() {
             false
         } else {
-            let char = &self.string[self.cursor..self.cursor + 1];
+            let char = &self.string[self.cursor..=self.cursor];
             char.is_alphanumeric() || id_special_chars.contains(&char)
         }
     }
@@ -745,196 +821,44 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Ok(true)
     }
 
-    /// Parses a sort or fails.
-    fn sort(&mut self) -> Res<Typ> {
-        if let Some(sort) = self.sort_opt()? {
-            Ok(sort)
-        } else {
-            bail!(self.error_here("expected sort (Int or Bool)"))
-        }
-    }
-
-    /// Tries to parse a sort.
+    /// Parses a sort.
     pub fn sort_opt(&mut self) -> Res<Option<Typ>> {
         let start_pos = self.pos();
-        let res = self.internal_sort_opt();
-        if let Ok(Some(typ)) = &res {
-            typ.check().chain_err(|| self.error(start_pos, ""))?
-        }
-        res
-    }
-
-    /// Tries to parse a sort.
-    pub fn internal_sort_opt(&mut self) -> Res<Option<Typ>> {
-        // Compound type under construction.
-        //
-        // The position is always that of the opening paren of the type.
-        enum CTyp<'a> {
-            // Array under construction, meaning we're parsing the index sort.
-            Array {
-                pos: Pos,
-            },
-            // Array with a source, meaning we're parsing the target sort.
-            ArraySrc {
-                pos: Pos,
-                src: Typ,
-            },
-            // A datatype application.
-            DTyp {
-                name: &'a str,
-                pos: Pos,
-                typs: dtyp::TPrmMap<Typ>,
-            },
-        }
-
-        let mut stack = vec![];
-
-        let start_pos = self.pos();
-
-        'go_down: loop {
-            self.ws_cmt();
-            let current_pos = self.pos();
-
-            let mut typ = if self.tag_opt("(") {
-                self.ws_cmt();
-                // Parsing a compound type.
-
-                if self.tag_opt("Array") {
-                    if !self.legal_id_char() {
-                        // We're parsing an array type.
-                        stack.push(CTyp::Array { pos: current_pos });
-                        continue 'go_down;
-                    } else {
-                        None
-                    }
-                } else if let Some((pos, name)) = self.ident_opt()? {
-                    stack.push(CTyp::DTyp {
-                        name,
-                        pos,
-                        typs: dtyp::TPrmMap::new(),
-                    });
-                    continue 'go_down;
-                } else {
-                    None
-                }
-            } else if self.tag_opt("Int") {
-                if !self.legal_id_char() {
-                    Some(typ::int())
-                } else {
-                    None
-                }
-            } else if self.tag_opt("Real") {
-                if !self.legal_id_char() {
-                    Some(typ::real())
-                } else {
-                    None
-                }
-            } else if self.tag_opt("Bool") {
-                if !self.legal_id_char() {
-                    Some(typ::bool())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            if typ.is_none() {
-                if let Some((pos, name)) = self.ident_opt()? {
-                    if let Ok(dtyp) = dtyp::get(name) {
-                        typ = Some(typ::dtyp(dtyp, vec![].into()))
-                    } else {
-                        bail!(self.error(pos, format!("unknown sort `{}`", conf.bad(name))))
-                    }
-                }
+        if let Some(res) = self.inner_sort_opt(None)? {
+            match res.to_type(None) {
+                Ok(res) => Ok(Some(res)),
+                Err((pos, msg)) => bail!(self.error(pos.unwrap_or(start_pos), msg)),
             }
-
-            'go_up: loop {
-                if let Some(typ) = &typ {
-                    typ.check()
-                        .chain_err(|| self.error(start_pos, "while parsing this sort"))?
-                }
-
-                match stack.pop() {
-                    Some(CTyp::Array { pos }) => if let Some(src) = typ {
-                        stack.push(CTyp::ArraySrc { pos, src });
-                        // Need to parse the domain now.
-                        continue 'go_down;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected index sort"))?
-                    },
-
-                    Some(CTyp::ArraySrc { pos, src }) => if let Some(tgt) = typ {
-                        typ = Some(typ::array(src, tgt));
-
-                        // Parse closing paren.
-                        self.ws_cmt();
-                        if !self.tag_opt(")") {
-                            let err: Error =
-                                self.error(pos, "while parsing this array sort").into();
-                            Err(err).chain_err(|| {
-                                self.error(current_pos, "expected expected closing paren")
-                            })?
-                        }
-
-                        continue 'go_up;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected domain sort"))?
-                    },
-
-                    Some(CTyp::DTyp {
-                        name,
-                        pos,
-                        mut typs,
-                    }) => if let Some(prm) = typ {
-                        typs.push(prm);
-
-                        self.ws_cmt();
-                        if self.tag_opt(")") {
-                            if let Ok(dtyp) = dtyp::get(name) {
-                                typ = Some(typ::dtyp(dtyp, typs))
-                            } else {
-                                let msg = format!("unknown sort `{}`", conf.bad(name));
-                                bail!(self.error(pos, msg))
-                            }
-                            continue 'go_up;
-                        } else {
-                            stack.push(CTyp::DTyp { name, pos, typs });
-                            continue 'go_down;
-                        }
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this sort").into())?
-                    },
-
-                    None => if typ.is_none() {
-                        self.backtrack_to(start_pos);
-                        return Ok(None);
-                    } else {
-                        return Ok(typ);
-                    },
-                }
-            }
+        } else {
+            Ok(None)
         }
     }
 
     /// Parses a sort.
-    pub fn nu_sort(
-        &mut self,
-        type_params: &BTreeMap<&'s str, dtyp::TPrmIdx>,
-    ) -> Res<dtyp::PartialTyp> {
-        if let Some(res) = self.nu_sort_opt(type_params)? {
+    pub fn sort(&mut self) -> Res<Typ> {
+        if let Some(res) = self.sort_opt()? {
             Ok(res)
         } else {
             bail!(self.error_here("expected sort"))
         }
     }
 
-    /// Tries to parse a sort.
-    pub fn nu_sort_opt(
+    /// Parses a sort with some type parameters.
+    pub fn paramed_sort(
         &mut self,
-        type_params: &BTreeMap<&'s str, dtyp::TPrmIdx>,
+        typ_params: &BTreeMap<&'s str, dtyp::TPrmIdx>,
+    ) -> Res<dtyp::PartialTyp> {
+        if let Some(res) = self.inner_sort_opt(Some(typ_params))? {
+            Ok(res)
+        } else {
+            bail!(self.error_here("expected sort"))
+        }
+    }
+
+    /// Tries to parse a sort given some optional type parameters.
+    fn inner_sort_opt(
+        &mut self,
+        type_params: Option<&BTreeMap<&'s str, dtyp::TPrmIdx>>,
     ) -> Res<Option<dtyp::PartialTyp>> {
         use dtyp::PartialTyp;
 
@@ -1014,7 +938,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             if typ.is_none() {
                 if let Some((pos, name)) = self.ident_opt()? {
                     // Type parameter?
-                    typ = if let Some(idx) = type_params.get(name) {
+                    typ = if let Some(idx) = type_params.and_then(|params| params.get(name)) {
                         Some(PartialTyp::Param(*idx))
                     } else {
                         Some(PartialTyp::DTyp(name.into(), pos, vec![].into()))
@@ -1276,7 +1200,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     ))
                 }
 
-                let ptyp = self.nu_sort(&params_map)?;
+                let ptyp = self.paramed_sort(&params_map)?;
                 selectors.push((selector_ident.to_string(), ptyp));
 
                 self.tag(")")
@@ -2014,8 +1938,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         match dtyp::type_selector(&name, slc_pos, &arg) {
             Ok(typ) => Ok((term::dtyp_slc(typ, name, arg), slc_pos)),
-
-            Err((pos, blah)) => bail!(self.error(pos, blah)),
+            Err((pos, msg)) => bail!(self.error(pos.unwrap_or(slc_pos), msg)),
         }
     }
 
@@ -2225,7 +2148,179 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         res
     }
 
+    /// Parses a token from a term.
+    ///
+    /// Returns a term when the next token was a constant or a variable. Returns `None` when
+    /// something new was pushed on the term stack, typically an opening paren and an operator.
+    fn inner_term_token(
+        &mut self,
+        var_map: &VarInfos,
+        map: &BTreeMap<&'s str, VarIdx>,
+        bind_count: LetCount,
+    ) -> Res<TermTokenRes> {
+        let term = if let Some(int) = self.int() {
+            term::int(int)
+        } else if let Some(real) = self.real()? {
+            term::real(real)
+        } else if let Some(b) = self.bool() {
+            term::bool(b)
+        } else if let Some((pos, id)) = self.ident_opt()? {
+            if let Some(idx) = map.get(id) {
+                term::var(*idx, var_map[*idx].typ.clone())
+            } else if let Some(ptterms) = self.get_bind(id) {
+                if let Some(term) = ptterms
+                    .to_term()
+                    .chain_err(|| format!("while retrieving binding for {}", conf.emph(id)))?
+                {
+                    term
+                } else {
+                    // Not in a legal term.
+                    return Ok(TermTokenRes::NotATerm);
+                }
+            } else if self.cxt.pred_name_map.get(id).is_some() {
+                // Identifier is a predicate, we're not in a legal term.
+                return Ok(TermTokenRes::NotATerm);
+            } else if let Some(datatype) = dtyp::of_constructor(id) {
+                if let Some(constructor) = datatype.news.get(id) {
+                    if constructor.is_empty() {
+                        let (term, _) =
+                            self.build_dtyp_new(id.into(), &datatype, pos, &[], vec![])?;
+                        term
+                    } else {
+                        bail!(self.error(
+                            pos,
+                            format!(
+                                "constructor `{}` of datatype `{}` takes {} value(s), \
+                                 applied here to none",
+                                conf.bad(id),
+                                conf.emph(&datatype.name),
+                                constructor.len()
+                            )
+                        ))
+                    }
+                } else {
+                    bail!("inconsistent datatype map internal state")
+                }
+            } else {
+                bail!(self.error(pos, format!("unknown identifier `{}`", conf.bad(id))))
+            }
+        } else if self.tag_opt("(") {
+            self.ws_cmt();
+            let op_pos = self.pos();
+
+            if let Some(op) = self.op_opt()? {
+                return Ok(TermTokenRes::Push(TermFrame::new(
+                    FrameOp::Op(op),
+                    op_pos,
+                    bind_count,
+                )));
+            } else if self.tag_opt(keywords::op::as_) {
+                return Ok(TermTokenRes::Push(TermFrame::new(
+                    FrameOp::Cast,
+                    op_pos,
+                    bind_count,
+                )));
+            } else if self.tag_opt("(") {
+                self.ws_cmt();
+
+                // Try to parse a constant array.
+                if self.tag_opt(keywords::op::as_) {
+                    self.ws_cmt();
+                    self.tag(keywords::op::const_)?;
+                    self.ws_cmt();
+                    let sort_pos = self.pos();
+                    let typ = self.sort()?;
+
+                    self.ws_cmt();
+                    self.tag(")")?;
+
+                    return Ok(TermTokenRes::Push(TermFrame::new(
+                        FrameOp::CArray(typ, sort_pos),
+                        op_pos,
+                        bind_count,
+                    )));
+                } else if self.tag_opt(keywords::op::lambda_) {
+                    self.ws_cmt();
+                    self.tag(keywords::op::is_)?;
+                    self.ws_cmt();
+
+                    let (op_pos, ident) = if let Some(res) = self.ident_opt()? {
+                        res
+                    } else if self.tag_opt("(") {
+                        self.ws_cmt();
+                        let res = self.ident()?;
+                        self.ws_cmt();
+                        self.tag("(")?;
+                        self.ws_cmt();
+                        while self.sort_opt()?.is_some() {
+                            self.ws_cmt()
+                        }
+                        self.tag(")")?;
+                        self.ws_cmt();
+                        self.sort()?;
+                        self.ws_cmt();
+                        self.tag(")")?;
+                        res
+                    } else {
+                        bail!(self.error_here("unexpected token"))
+                    };
+
+                    self.ws_cmt();
+                    self.tag(")")?;
+
+                    return Ok(TermTokenRes::Push(TermFrame::new(
+                        FrameOp::DTypTst(ident.into()),
+                        op_pos,
+                        bind_count,
+                    )));
+                } else {
+                    bail!(self.error_here("unexpected token"))
+                }
+            } else if let Some((pos, id)) = self
+                .ident_opt()
+                .chain_err(|| "while trying to parse datatype")?
+            {
+                if let Some(datatype) = dtyp::of_constructor(id) {
+                    debug_assert! { datatype.news.get(id).is_some() }
+                    return Ok(TermTokenRes::Push(TermFrame::new(
+                        FrameOp::DTypNew(id.into(), datatype),
+                        op_pos,
+                        bind_count,
+                    )));
+                } else if dtyp::is_selector(id) {
+                    return Ok(TermTokenRes::Push(TermFrame::new(
+                        FrameOp::DTypSlc(id.into()),
+                        op_pos,
+                        bind_count,
+                    )));
+                } else if self.functions.get(id).is_some() || fun::get(id).is_some() {
+                    let op = FrameOp::Fun(id.into());
+                    return Ok(TermTokenRes::Push(TermFrame::new(op, op_pos, bind_count)));
+                }
+
+                if self.cxt.term_stack.is_empty() {
+                    return Ok(TermTokenRes::NotATerm);
+                } else {
+                    for fun in self.functions.keys() {
+                        println!("- {}", fun)
+                    }
+                    bail!(self.error(pos, format!("unknown identifier (term) `{}`", conf.bad(id))))
+                }
+            } else if self.cxt.term_stack.is_empty() {
+                return Ok(TermTokenRes::NotATerm);
+            } else {
+                bail!(self.error_here("unexpected token"))
+            }
+        } else {
+            return Ok(TermTokenRes::NotATerm);
+        };
+
+        Ok(TermTokenRes::Term(term))
+    }
+
     /// Parses a single term.
+    ///
+    /// A term cannot contain operator applications.
     fn inner_term_opt(
         &mut self,
         var_map: &VarInfos,
@@ -2249,6 +2344,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
         conf.check_timeout()?;
 
+        let start_pos = self.pos();
+
         // The correct (non-error) way to exit this loop is
         //
         // `break 'read_kids <val>`
@@ -2264,163 +2361,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt();
             let mut term_pos = self.pos();
 
-            let mut term =
-                if let Some(int) = self.int() {
-                    term::int(int)
-                } else if let Some(real) = self.real()? {
-                    term::real(real)
-                } else if let Some(b) = self.bool() {
-                    term::bool(b)
-                } else if let Some((pos, id)) = self.ident_opt()? {
-                    if let Some(idx) = map.get(id) {
-                        term::var(*idx, var_map[*idx].typ.clone())
-                    } else if let Some(ptterms) = self.get_bind(id) {
-                        if let Some(term) = ptterms.to_term().chain_err(|| {
-                            format!("while retrieving binding for {}", conf.emph(id))
-                        })? {
-                            term
-                        } else {
-                            // Not in a legal term.
-                            break 'read_kids None;
-                        }
-                    } else if self.cxt.pred_name_map.get(id).is_some() {
-                        // Identifier is a predicate, we're not in a legal term.
-                        break 'read_kids None;
-                    } else if let Some(datatype) = dtyp::of_constructor(id) {
-                        if let Some(constructor) = datatype.news.get(id) {
-                            if constructor.is_empty() {
-                                let (term, _) =
-                                    self.build_dtyp_new(id.into(), &datatype, pos, &[], vec![])?;
-                                term
-                            } else {
-                                bail!(self.error(
-                                    pos,
-                                    format!(
-                                        "constructor `{}` of datatype `{}` takes {} value(s), \
-                                         applied here to none",
-                                        conf.bad(id),
-                                        conf.emph(&datatype.name),
-                                        constructor.len()
-                                    )
-                                ))
-                            }
-                        } else {
-                            bail!("inconsistent datatype map internal state")
-                        }
-                    } else {
-                        bail!(self.error(pos, format!("unknown identifier `{}`", conf.bad(id))))
-                    }
-                } else if self.tag_opt("(") {
-                    self.ws_cmt();
-                    let op_pos = self.pos();
-
-                    if let Some(op) = self.op_opt()? {
-                        let frame = TermFrame::new(FrameOp::Op(op), op_pos, bind_count);
-                        self.cxt.term_stack.push(frame);
-                        continue 'read_kids;
-                    } else if self.tag_opt(keywords::op::as_) {
-                        let frame = TermFrame::new(FrameOp::Cast, op_pos, bind_count);
-                        self.cxt.term_stack.push(frame);
-                        continue 'read_kids;
-                    } else if self.tag_opt("(") {
-                        self.ws_cmt();
-
-                        // Try to parse a constant array.
-                        if self.tag_opt(keywords::op::as_) {
-                            self.ws_cmt();
-                            self.tag(keywords::op::const_)?;
-                            self.ws_cmt();
-                            let sort_pos = self.pos();
-                            let typ = self.sort()?;
-
-                            self.ws_cmt();
-                            self.tag(")")?;
-
-                            let frame =
-                                TermFrame::new(FrameOp::CArray(typ, sort_pos), op_pos, bind_count);
-                            self.cxt.term_stack.push(frame);
-                            continue 'read_kids;
-                        } else if self.tag_opt(keywords::op::lambda_) {
-                            self.ws_cmt();
-                            self.tag(keywords::op::is_)?;
-                            self.ws_cmt();
-
-                            let (op_pos, ident) = if let Some(res) = self.ident_opt()? {
-                                res
-                            } else if self.tag_opt("(") {
-                                self.ws_cmt();
-                                let res = self.ident()?;
-                                self.ws_cmt();
-                                self.tag("(")?;
-                                self.ws_cmt();
-                                while self.sort_opt()?.is_some() {
-                                    self.ws_cmt()
-                                }
-                                self.tag(")")?;
-                                self.ws_cmt();
-                                self.sort()?;
-                                self.ws_cmt();
-                                self.tag(")")?;
-                                res
-                            } else {
-                                bail!(self.error_here("unexpected token"))
-                            };
-
-                            self.ws_cmt();
-                            self.tag(")")?;
-
-                            let frame =
-                                TermFrame::new(FrameOp::DTypTst(ident.into()), op_pos, bind_count);
-                            self.cxt.term_stack.push(frame);
-                            continue 'read_kids;
-                        } else {
-                            bail!(self.error_here("unexpected token"))
-                        }
-                    } else if let Some((pos, id)) = self
-                        .ident_opt()
-                        .chain_err(|| "while trying to parse datatype")?
-                    {
-                        if let Some(datatype) = dtyp::of_constructor(id) {
-                            debug_assert! { datatype.news.get(id).is_some() }
-                            let frame = TermFrame::new(
-                                FrameOp::DTypNew(id.into(), datatype),
-                                op_pos,
-                                bind_count,
-                            );
-                            self.cxt.term_stack.push(frame);
-                            continue 'read_kids;
-                        } else if dtyp::is_selector(id) {
-                            let frame =
-                                TermFrame::new(FrameOp::DTypSlc(id.into()), op_pos, bind_count);
-                            self.cxt.term_stack.push(frame);
-                            continue 'read_kids;
-                        } else if self.functions.get(id).is_some() || fun::get(id).is_some() {
-                            let op = FrameOp::Fun(id.into());
-                            let frame = TermFrame::new(op, op_pos, bind_count);
-                            self.cxt.term_stack.push(frame);
-                            continue 'read_kids;
-                        }
-
-                        if self.cxt.term_stack.is_empty() {
-                            self.backtrack_to(pos);
-                            break 'read_kids None;
-                        } else {
-                            for fun in self.functions.keys() {
-                                println!("- {}", fun)
-                            }
-                            bail!(self.error(
-                                pos,
-                                format!("unknown identifier (term) `{}`", conf.bad(id))
-                            ))
-                        }
-                    } else if self.cxt.term_stack.is_empty() {
-                        break 'read_kids None;
-                    } else {
-                        bail!(self.error_here("unexpected token"))
-                    }
-                } else {
+            let mut term = match self.inner_term_token(var_map, map, bind_count)? {
+                TermTokenRes::Term(term) => term,
+                TermTokenRes::Push(frame) => {
+                    // Push on the stack and keep parsing terms.
+                    self.cxt.term_stack.push(frame);
+                    continue 'read_kids;
+                }
+                // Not a legal term.
+                TermTokenRes::NotATerm => {
+                    self.cxt.term_stack.clear();
+                    self.backtrack_to(start_pos);
                     break 'read_kids None;
-                };
+                }
+            };
 
             'go_up: while let Some(mut frame) = self.cxt.term_stack.pop() {
                 self.ws_cmt();

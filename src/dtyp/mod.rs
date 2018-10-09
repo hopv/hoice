@@ -365,10 +365,13 @@ impl PartialTyp {
     /// assert_eq! { &params[param_0], &typ::unk() }
     /// ptyp.unify(&int_list, &mut params).unwrap();
     /// assert_eq! { &params[param_0], &typ::int() }
-    /// let typ = ptyp.to_type(&params).unwrap();
+    /// let typ = ptyp.to_type(Some(&params)).unwrap();
     /// assert_eq! { int_list, typ }
     /// ```
-    pub fn to_type(&self, prms: &TPrmMap<Typ>) -> Result<Typ, (::parse::Pos, String)> {
+    pub fn to_type(
+        &self,
+        prms: Option<&TPrmMap<Typ>>,
+    ) -> Result<Typ, (Option<::parse::Pos>, String)> {
         enum Frame<'a> {
             ArrayLft(&'a PartialTyp),
             ArrayRgt(Typ),
@@ -394,7 +397,7 @@ impl PartialTyp {
                     let dtyp = if let Ok(dtyp) = get(name) {
                         dtyp
                     } else {
-                        return Err((*pos, "unknown datatype".into()));
+                        return Err((Some(*pos), "unknown datatype".into()));
                     };
 
                     if let Some(partial) = prms.next() {
@@ -409,7 +412,14 @@ impl PartialTyp {
 
                 PartialTyp::Typ(typ) => typ.clone(),
 
-                PartialTyp::Param(idx) => prms[*idx].clone(),
+                PartialTyp::Param(idx) => {
+                    if let Some(prms) = prms {
+                        prms[*idx].clone()
+                    } else {
+                        return Err(
+                        (None, "trying to convert a partial sort in a total one without type parameters".into()));
+                    }
+                }
             };
 
             'go_up: loop {
@@ -1021,19 +1031,19 @@ pub fn type_selector(
     selector: &str,
     slc_pos: ::parse::Pos,
     term: &Term,
-) -> Result<Typ, (::parse::Pos, String)> {
+) -> Result<Typ, (Option<::parse::Pos>, String)> {
     if let Some((dtyp, prms)) = term.typ().dtyp_inspect() {
         for args in dtyp.news.values() {
             for (slc, partial_typ) in args {
                 if slc == selector {
-                    return partial_typ.to_type(prms);
+                    return partial_typ.to_type(Some(prms));
                 }
             }
         }
     }
 
     Err((
-        slc_pos,
+        Some(slc_pos),
         format!(
             "`{}` is not a legal selector for sort {}",
             conf.bad(selector),

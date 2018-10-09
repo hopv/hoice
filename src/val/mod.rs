@@ -162,7 +162,7 @@ pub fn dtyp_new(typ: Typ, name: String, mut args: Vec<Val>) -> Val {
 
         for (count, (_, ptyp)) in cargs.iter().enumerate() {
             let typ = ptyp
-                .to_type(typ_args)
+                .to_type(Some(typ_args))
                 .unwrap_or_else(|_| panic!("illegal datatype {}", typ));
             if let Some(nu) = args[count].typ().merge(&typ) {
                 if let Some(nu) = args[count].force_dtyp(nu) {

@@ -395,7 +395,7 @@ impl RTyp {
                         .expect("inconsistent datatype factory/map state")
                     {
                         let arg_typ = arg_typ
-                            .to_type(prms)
+                            .to_type(Some(prms))
                             .unwrap_or_else(|_| panic!("illegal type {}", current));
                         args.push(arg_typ)
                     }

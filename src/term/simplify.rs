@@ -2179,7 +2179,7 @@ where
             for (arg, param) in args.iter_mut().zip(fargs.iter()) {
                 let typ = param
                     .1
-                    .to_type(prms)
+                    .to_type(Some(prms))
                     .unwrap_or_else(|_| panic!("ill-formed datatype constructor: {}", typ));
                 if let Some(typ) = typ.merge(&arg.typ()) {
                     if let Some(nu_arg) = arg.force_dtyp(typ) {
