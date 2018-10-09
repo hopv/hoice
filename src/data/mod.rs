@@ -289,12 +289,10 @@ impl Data {
         &mut self,
         pred: PrdIdx,
         args: &VarVals,
-        rhs: Option<&(PrdIdx, RVarVals)>,
+        rhs: &Option<Sample>,
     ) -> Res<()> {
-        if let Some((rhs_pred, var_vals)) = rhs {
-            let rhs_args = var_to::vals::new(var_vals.clone());
-            let rhs = Sample::new(*rhs_pred, rhs_args);
-            self.register_sample_dep(pred, args, Some(rhs))?
+        if let Some(rhs) = rhs {
+            self.register_sample_dep(pred, args, Some(rhs.clone()))?
         }
         Ok(())
     }
@@ -472,12 +470,16 @@ impl Data {
     }
 
     /// Checks whether the data is contradictory.
-    pub fn is_unsat(&self) -> bool {
+    ///
+    /// Mutable because data needs to be propagated.
+    pub fn check_unsat(&mut self) -> bool {
         self.get_unsat_proof().is_ok()
     }
 
     /// Retrieves a proof of unsat.
-    pub fn get_unsat_proof(&self) -> Res<::unsat_core::UnsatRes> {
+    ///
+    /// Unsat because data needs to be propagated.
+    pub fn get_unsat_proof(&mut self) -> Res<::unsat_core::UnsatRes> {
         // println!(
         //     "all learning data:\n{}",
         //     self.string_do(&(), |s| s.to_string()).unwrap()
@@ -493,9 +495,13 @@ impl Data {
         //     println!("  {}", line)
         // }
         // println!("is unsat");
+        self.propagate()?;
         for (pred, samples) in self.pos.index_iter() {
+            // println!("{}", self.instance[pred]);
             for sample in samples {
+                // println!("  {}", sample);
                 for neg in &self.neg[pred] {
+                    // println!("    {}", neg);
                     if sample.is_complementary(neg) {
                         let entry_points = if let Some(entry_points) = &self.entry_points {
                             Some(entry_points.entry_points_of(&Sample::new(pred, sample.clone()))?)
@@ -783,19 +789,49 @@ impl Data {
     fn prune_cstr(
         &mut self,
         clause: ClsIdx,
-        lhs: Vec<(PrdIdx, RVarVals)>,
+        mut lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<Option<(PrdHMap<VarValsSet>, Option<Sample>)>> {
+        let nu_rhs = if let Some((pred, args)) = rhs {
+            let (args, is_new) = var_to::vals::new_is_new(args.clone());
+
+            let args = if conf.teacher.partial || !is_new {
+                if args.set_subsumed(&self.pos[pred]) {
+                    profile! { self mark "add cstr", "pre-checks" }
+                    profile! { self "trivial constraints" => add 1 }
+                    // Positive, constraint is trivial.
+                    return Ok(None);
+                } else if args.set_subsumed(&self.neg[pred]) {
+                    // Negative, ignore.
+                    None
+                } else {
+                    Some(args)
+                }
+            } else {
+                Some(args)
+            };
+
+            args.map(|args| Sample { pred, args })
+        } else {
+            None
+        };
+
         let mut nu_lhs = PrdHMap::with_capacity(lhs.len());
 
         // Look at the lhs and remove stuff we know is true.
-        'lhs_iter: for (pred, args) in lhs {
+        'lhs_iter: while let Some((pred, args)) = lhs.pop() {
             let (args, is_new) = var_to::vals::new_is_new(args);
 
             // If no partial examples and sample is new, no need to check anything.
             if conf.teacher.partial || !is_new {
                 if args.set_subsumed(&self.pos[pred]) {
-                    self.register_raw_sample_dep(pred, &args, rhs.as_ref())?;
+                    self.register_raw_sample_dep(pred, &args, &nu_rhs)?;
+                    // Is this the last (positive) sample in a `... => false` constraint?
+                    if nu_rhs.is_none() && lhs.is_empty() {
+                        // Then register as negative to record the conflict.
+                        self.add_neg(clause, pred, args);
+                        unsat!("by `true => false` in constraint (data, prune_cstr)")
+                    }
                     // Positive, skip.
                     continue 'lhs_iter;
                 } else if args.set_subsumed(&self.neg[pred]) {
@@ -814,47 +850,22 @@ impl Data {
             ()
         }
 
-        let nu_rhs = if let Some((pred, args)) = rhs {
-            let (args, is_new) = var_to::vals::new_is_new(args.clone());
-
+        if let Some(Sample { pred, args }) = nu_rhs.as_ref() {
             if nu_lhs.is_empty() {
-                self.add_pos(clause, pred, args.clone());
-            }
+                self.add_pos(clause, *pred, args.clone());
+            } else if let Some(argss) = nu_lhs.get(pred) {
+                // Subsumed by lhs?
 
-            let args = if conf.teacher.partial || !is_new {
-                if args.set_subsumed(&self.pos[pred]) {
+                // Partial samples are not allowed in constraints, no subsumption
+                // check.
+                if argss.contains(&args) {
                     profile! { self mark "add cstr", "pre-checks" }
                     profile! { self "trivial constraints" => add 1 }
-                    // Positive, constraint is trivial.
+                    // Trivially implied by lhs.
                     return Ok(None);
-                } else if args.set_subsumed(&self.neg[pred]) {
-                    // Negative, ignore.
-                    None
-                } else {
-                    Some(args)
-                }
-            } else {
-                Some(args)
-            };
-
-            if let Some(args) = args.as_ref() {
-                // Subsumed by lhs?
-                if let Some(argss) = nu_lhs.get(&pred) {
-                    // Partial samples are not allowed in constraints, no subsumption
-                    // check.
-                    if argss.contains(&args) {
-                        profile! { self mark "add cstr", "pre-checks" }
-                        profile! { self "trivial constraints" => add 1 }
-                        // Trivially implied by lhs.
-                        return Ok(None);
-                    }
                 }
             }
-
-            args.map(|args| Sample { pred, args })
-        } else {
-            None
-        };
+        }
 
         nu_lhs.shrink_to_fit();
 

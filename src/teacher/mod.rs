@@ -112,10 +112,7 @@ pub fn teach(teacher: &mut Teacher) -> Res<TeachRes> {
 
         match teacher.get_candidates(false)? {
             // Unsat result, done.
-            Either::Right(unsat) => {
-                teacher.data.is_unsat();
-                return Ok(TeachRes::Unsat(unsat));
-            }
+            Either::Right(unsat) => return Ok(TeachRes::Unsat(unsat)),
 
             // Got a candidate.
             Either::Left((idx, candidates)) => {
@@ -356,7 +353,6 @@ impl<'a> Teacher<'a> {
         }
         self.assistant = None;
         log_debug! { "draining messages" }
-        self.data.is_unsat();
         while let Ok(_) = self.get_candidates(true) {}
 
         if conf.stats {
@@ -647,7 +643,7 @@ impl<'a> Teacher<'a> {
                     }
 
                     // Are we unsat?
-                    if self.data.is_unsat() {
+                    if self.data.check_unsat() {
                         return Ok(Either::Right(self.unsat_core()?));
                     }
                 }
@@ -675,9 +671,7 @@ impl<'a> Teacher<'a> {
                     }
                 }
 
-                MsgKind::Unsat => if self.data.is_unsat() {
-                    return Ok(Either::Right(self.unsat_core()?));
-                },
+                MsgKind::Unsat => return Ok(Either::Right(self.unsat_core()?)),
             }
         }
     }

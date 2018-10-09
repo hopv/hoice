@@ -308,7 +308,7 @@ impl<'a> Reconstr<'a> {
             debug_assert_eq! { pred, p }
             self.solver.assert(&smt::EqConj::new(args, &sample))?
         } else {
-            bail!("proof reconstruction, illegal clause-level call (no rhs)")
+            bail!("proof reconstruction: illegal clause-level call (no rhs)")
         }
 
         let sat = self.solver.check_sat()?;
@@ -545,6 +545,12 @@ impl<'a> Reconstr<'a> {
         }
 
         if !self.safe_preds.is_empty() {
+            for pred in self.instance.preds() {
+                if !pred.is_defined() {
+                    let sig: Vec<_> = pred.original_sig().iter().map(|typ| typ.get()).collect();
+                    self.solver.declare_fun(&pred.name, &sig, "Bool")?
+                }
+            }
             let model = self.instance.extend_model(PrdHMap::new())?;
             self.instance.write_definitions(self.solver, "", &model)?
         }
