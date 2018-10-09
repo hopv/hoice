@@ -126,7 +126,7 @@ lazy_static! {
 }
 
 /// String extensions, lift char functions.
-pub trait StringExt {
+trait StringExt {
     /// Lifts `char::is_alphanumeric`.
     fn is_alphanumeric(&self) -> bool;
     /// Lifts `char::is_alphabetic`.
@@ -225,8 +225,11 @@ impl<T: ::std::io::BufRead> ItemRead for T {
 }
 
 /// String cursor.
-pub type Cursor = usize;
+type Cursor = usize;
+
 /// Position in the text.
+///
+/// Used mostly for backtracking the parser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Pos(usize);
 impl Default for Pos {
@@ -261,7 +264,7 @@ impl ClauseRes {
 
 /// The operator of an s-expression.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FrameOp {
+enum FrameOp {
     /// An actual operator.
     Op(Op),
     /// A constant array constructor.
@@ -293,7 +296,7 @@ impl FrameOp {
 }
 
 /// Term stack frame used in the parser to avoid recursion.
-pub struct TermFrame {
+struct TermFrame {
     /// Operator when going up.
     op: FrameOp,
     /// Position of the operator.
@@ -347,6 +350,11 @@ impl TermFrame {
 }
 
 /// Parser context.
+///
+/// The context stores collections used by term parsing so that they don't need to be re-allocated
+/// everytime. See the [module-level documentation] for more.
+///
+/// [module-level documentation]: index.html (dtyp module documentation)
 #[derive(Default)]
 pub struct ParserCxt {
     /// Term stack to avoid recursion.
@@ -364,11 +372,6 @@ impl ParserCxt {
             mem: Vec::with_capacity(17),
             pred_name_map: BTreeMap::new(),
         }
-    }
-
-    /// Term stack accessor.
-    pub fn term_stack(&self) -> &Vec<TermFrame> {
-        &self.term_stack
     }
 
     /// Generates a parser from itself.
@@ -399,7 +402,7 @@ impl ParserCxt {
 /// Wraps an integer, represents a number of let-bindings parsed.
 #[must_use]
 #[derive(Clone, Copy)]
-pub struct LetCount {
+struct LetCount {
     n: usize,
 }
 impl LetCount {
@@ -425,6 +428,10 @@ enum TermTokenRes {
 }
 
 /// Parser structure. Generated from a `ParserCxt`.
+///
+/// For details on how parsing works see the [module-level documentation].
+///
+/// [module-level documentation]: index.html (dtyp module documentation)
 pub struct Parser<'cxt, 's> {
     /// Parsing context.
     cxt: &'cxt mut ParserCxt,
@@ -821,7 +828,37 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         Ok(true)
     }
 
-    /// Parses a sort.
+    /// Tries to parse a sort.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ common::*, parse::* };
+    /// let prof = Profiler::new();
+    /// let mut cxt = ParserCxt::new();
+    /// assert_eq! {
+    ///     cxt.parser("Int", 0, &prof).sort_opt().expect("on Int"), Some(typ::int())
+    /// }
+    /// assert_eq! {
+    ///     cxt.parser("Real", 0, &prof).sort_opt().expect("on Real"), Some(typ::real())
+    /// }
+    /// assert_eq! {
+    ///     cxt.parser("Bool", 0, &prof).sort_opt().expect("on Bool"), Some(typ::bool())
+    /// }
+    /// assert_eq! {
+    ///     cxt.parser("(Array Int Int)", 0, &prof).sort_opt().expect("on (Array Int Int)"),
+    ///     Some(typ::array(typ::int(), typ::int()))
+    /// }
+    /// assert_eq! {
+    ///     cxt.parser("7", 0, &prof).sort_opt().expect("on (Array Int Int)"),
+    ///     None
+    /// }
+    /// hoice::dtyp::create_list_dtyp();
+    /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// assert_eq! {
+    ///     cxt.parser("(List Int)", 0, &prof).sort_opt().expect("on (List Int)"), Some(int_list)
+    /// }
+    /// ```
     pub fn sort_opt(&mut self) -> Res<Option<Typ>> {
         let start_pos = self.pos();
         if let Some(res) = self.inner_sort_opt(None)? {
@@ -835,6 +872,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     /// Parses a sort.
+    ///
+    /// Same as [`sort_opt`], but whenever `sort_opt` returns `None` then this function returns an
+    /// error.
+    ///
+    /// [`sort_opt`]: #method.sort_opt (sort_opt function)
     pub fn sort(&mut self) -> Res<Typ> {
         if let Some(res) = self.sort_opt()? {
             Ok(res)
@@ -844,6 +886,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     }
 
     /// Parses a sort with some type parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ common::*, parse::*, dtyp::TPrmIdx };
+    /// let prof = Profiler::new();
+    /// let mut cxt = ParserCxt::new();
+    /// let mut tparams = BTreeMap::new();
+    /// let mut index: TPrmIdx = 0.into();
+    /// tparams.insert("T_1", index);
+    /// index.inc();
+    /// tparams.insert("T_2", index);
+    /// let res = cxt.parser("(Array T_1 T_2)", 0, &prof)
+    ///         .paramed_sort(&tparams)
+    ///         .expect("on (Array T_1 T_2)");
+    /// assert_eq! { &format!("{}", res), "(Array '0 '1)" }
+    /// ```
     pub fn paramed_sort(
         &mut self,
         typ_params: &BTreeMap<&'s str, dtyp::TPrmIdx>,
@@ -3337,6 +3396,14 @@ pub fn var_infos(s: &str) -> VarInfos {
     );
 
     var_infos
+}
+
+/// Tries to parse a sort from an SMT 2 string.
+pub fn sort_opt(s: &str) -> Res<Option<Typ>> {
+    let mut cxt = ParserCxt::new();
+    let dummy_profiler = Profiler::new();
+    let mut parser = cxt.parser(s, 0, &dummy_profiler);
+    parser.sort_opt()
 }
 
 /// Parses a term from an SMT 2 string.

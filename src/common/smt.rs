@@ -865,10 +865,7 @@ impl<'a> IdentParser<FPVar, Typ, &'a str> for FullParser {
         }
     }
     fn parse_type(self, input: &'a str) -> SmtRes<Typ> {
-        let mut cxt = ::parse::ParserCxt::new();
-        let dummy_profiler = Profiler::new();
-        let mut parser = cxt.parser(input, 0, &dummy_profiler);
-        match parser.sort_opt() {
+        match ::parse::sort_opt(input) {
             Ok(Some(s)) => Ok(s),
             _ => Err(format!("unexpected type `{}`", input).into()),
         }
