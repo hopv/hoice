@@ -1,5 +1,4 @@
-/*! Hashconsed maps from variables to terms.
-*/
+//! Hashconsed maps from variables to terms.
 
 use std::cmp::Ordering;
 

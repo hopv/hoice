@@ -73,7 +73,7 @@ impl EntryPoints {
         use var_to::vals::SubsumeExt;
         let mut real_dep = None;
         for s in &self.real_pos_samples {
-            if s.args.subsumes(&dep.args) {
+            if s.pred == dep.pred && s.args.subsumes(&dep.args) {
                 real_dep = Some(s.clone());
                 break;
             }
