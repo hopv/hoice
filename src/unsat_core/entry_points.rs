@@ -193,11 +193,13 @@ struct Reconstr<'a> {
     /// Instance.
     instance: &'a Instance,
     /// Samples to reconstruct.
-    to_do: Vec<Sample>,
+    ///
+    /// Each element of the vector is a path toward what we're reconstructing. If we're trying to
+    /// reconstruct `(p vals)`, then several path are created for this sample if there are more
+    /// than one clauses that lead to this sample.
+    to_do: Vec<Vec<Sample>>,
     /// Positive samples for the original instance.
     samples: SampleSet,
-    // /// Stack of things, used when reconstructing a sample.
-    // stack: Vec<()>,
     /// Solver.
     solver: &'a mut Slvr,
 }
@@ -210,6 +212,7 @@ impl<'a> Reconstr<'a> {
         to_do: Vec<Sample>,
         solver: &'a mut Slvr,
     ) -> Self {
+        let to_do = vec![to_do];
         let pos_preds: PrdSet = original
             .pos_clauses()
             .iter()
@@ -263,18 +266,26 @@ impl<'a> Reconstr<'a> {
     ///
     /// - the positive clauses in which `pred` appears,
     /// - the clauses in which `pred` is the rhs and *all* predicates in the LHS are defined in the
-    ///   instance.
+    ///   instance or appear in a positive clause.
     fn clauses_for(&self, pred: PrdIdx) -> (Vec<ClsIdx>, Vec<ClsIdx>) {
         let mut pos = vec![];
         let mut others = vec![];
+        log! {
+            @4 | "retrieving {} clause(s) for {}",
+            self.original.rhs_clauses_of(pred).len(), self.original[pred]
+        }
         for clause_idx in self.original.rhs_clauses_of(pred) {
+            log! {
+                @5 "{}", self.original[*clause_idx].to_string_info(&self.original.preds()).unwrap()
+            }
             let clause_preds = self.original[*clause_idx].lhs_preds();
             if clause_preds.is_empty() {
                 pos.push(*clause_idx)
-            } else if clause_preds
-                .keys()
-                .all(|pred| self.safe_preds.contains(pred))
-            {
+            } else if clause_preds.keys().all(|pred| {
+                self.instance[*pred].is_defined()
+                    || self.safe_preds.contains(pred)
+                    || self.pos_preds.contains(pred)
+            }) {
                 others.push(*clause_idx)
             }
         }
@@ -285,7 +296,12 @@ impl<'a> Reconstr<'a> {
     ///
     /// Returns `true` if the reconstruction was positive. If it was, (potentially) new positive
     /// samples have been added to `self.samples`.
-    fn work_on_clause(&mut self, pred: PrdIdx, sample: &VarVals, clause: ClsIdx) -> Res<bool> {
+    fn work_on_clause(
+        &mut self,
+        pred: PrdIdx,
+        sample: &VarVals,
+        clause: ClsIdx,
+    ) -> Res<Option<Vec<Vec<Sample>>>> {
         debug_assert! { self.original[clause].rhs().map(|(p, _)| p == pred).unwrap_or(false) }
         self.solver.push(1)?;
         // Declare clause variables.
@@ -324,6 +340,7 @@ impl<'a> Reconstr<'a> {
 
         if let Some(model) = model {
             let model = Cex::of_model(self.original[clause].vars(), model, true)?;
+            let mut res = vec![];
             // Reconstruct all LHS applications.
             for (pred, argss) in self.original[clause].lhs_preds() {
                 let mut samples = vec![];
@@ -342,7 +359,7 @@ impl<'a> Reconstr<'a> {
                             log! { @5 |=> "  ({} {})", self.original[sample.pred], sample.args }
                         }
                     }
-                    self.samples.extend(samples.into_iter())
+                    res.push(samples)
                 } else {
                     if_log! { @5
                         log! { @5 |=> "generated new samples:" }
@@ -350,16 +367,18 @@ impl<'a> Reconstr<'a> {
                             log! { @5 |=> "  ({} {})", self.original[sample.pred], sample.args }
                         }
                     }
-                    self.to_do.extend(samples.into_iter())
+                    res.push(samples)
                 }
             }
-            Ok(true)
+            Ok(Some(res))
         } else {
-            Ok(false)
+            Ok(None)
         }
     }
 
     /// Reconstructs a sample using the definitions of the positive predicates.
+    ///
+    /// Returns `true` if the sample was discovered to be positive.
     fn work_on_defs(&mut self, pred: PrdIdx, vals: &VarVals) -> Res<bool> {
         let mut current_pred = PrdSet::with_capacity(1);
         current_pred.insert(pred);
@@ -435,20 +454,23 @@ impl<'a> Reconstr<'a> {
     }
 
     /// Reconstructs a single positive sample.
-    fn work_on_sample(&mut self, Sample { pred, args }: Sample) -> Res<()> {
+    ///
+    /// Returns `true` if the sample was found to be a legal positive sample for the original
+    /// instance.
+    fn work_on_sample(&mut self, Sample { pred, args }: Sample, path: &Vec<Sample>) -> Res<bool> {
         log! { @3 | "working on ({} {})", self.instance[pred], args }
 
         // Already an entry point for the original instance?
         if self.pos_preds.contains(&pred) {
             log! { @4 | "already a legal entry point" }
             self.samples.insert(Sample::new(pred, args));
-            return Ok(());
+            return Ok(true);
         }
 
         // Try reconstructing by using predicate definitions directly.
         let done = self.work_on_defs(pred, &args)?;
         if done {
-            return Ok(());
+            return Ok(true);
         }
 
         let (pos, others) = self.clauses_for(pred);
@@ -469,25 +491,40 @@ impl<'a> Reconstr<'a> {
         }
 
         for clause in pos {
-            let okay = self.work_on_clause(pred, &args, clause)?;
-            if okay {
-                log! { @3 | "  reconstructed using positive clause #{}", clause }
-                return Ok(());
+            if let Some(steps) = self.work_on_clause(pred, &args, clause)? {
+                if !steps.is_empty() {
+                    debug_assert! { steps.iter().all(|step| step.is_empty()) }
+                    log! { @3 | "  reconstructed using positive clause #{}", clause }
+                    return Ok(true);
+                }
             }
         }
+        let mut clause_count = 0;
         for clause in others {
-            let okay = self.work_on_clause(pred, &args, clause)?;
-            if okay {
-                log! { @3 | "  reconstructed using non-positive clause #{}", clause }
-                return Ok(());
+            if let Some(steps) = self.work_on_clause(pred, &args, clause)? {
+                log! {
+                    @3 | "  reconstructed using non-positive clause #{}, {} step(s)",
+                    clause, steps.len()
+                }
+                clause_count += 1;
+                for step in steps {
+                    let mut path = path.clone();
+                    path.extend(step.into_iter());
+                    self.to_do.push(path)
+                }
             }
         }
 
-        bail!(
-            "could not reconstruct sample ({} {})",
-            self.instance[pred],
-            args
-        )
+        if clause_count == 0 {
+            // Reconstruction failed. This can be okay, when there are more than one path and the
+            // current one has no solution.
+            log! { @3
+                "could not reconstruct sample ({} {})",
+                self.instance[pred],
+                args
+            }
+        }
+        Ok(false)
     }
 
     /// Generates a sample for each positive clause.
@@ -537,7 +574,7 @@ impl<'a> Reconstr<'a> {
 
     /// Reconstructs the positive samples.
     pub fn work(mut self) -> Res<SampleSet> {
-        if self.to_do.is_empty() {
+        if self.to_do.iter().all(|to_do| to_do.is_empty()) {
             log! { @4 | "no samples to reconstruct, generating samples from positive clauses" }
             self.samples_of_pos_clauses()?;
             log! { @4 | "done, generated {} sample(s)", self.samples.len() }
@@ -566,14 +603,46 @@ impl<'a> Reconstr<'a> {
             }
         }
 
-        while let Some(sample) = self.to_do.pop() {
-            if let Err(e) = self.work_on_sample(sample.clone()) {
-                print_err(&e);
-                self.samples.insert(sample);
+        'all_branches: while let Some(mut to_do) = self.to_do.pop() {
+            if_log ! { @3
+                log! { @3 |=> "to_do {} other branch(es):", self.to_do.len() }
+                for sample in &to_do {
+                    log! { @3 |=> "  ({} {})", self.instance[sample.pred], sample.args }
+                }
             }
+            while let Some(sample) = to_do.pop() {
+                match self.work_on_sample(sample.clone(), &to_do) {
+                    Err(e) => {
+                        print_err(&e);
+                        self.samples.insert(sample);
+                    }
+                    Ok(true) => {
+                        log! { @4 | "positive" }
+                        // This sample was positive, keep going in the current branch.
+                        ()
+                    }
+                    Ok(false) => {
+                        log! { @4 | "new branches" }
+                        // New branches to explore, keep going.
+                        continue 'all_branches;
+                    }
+                }
+            }
+
+            // Reachable if all samples in `to_do` have been explained positively.
+            log! { @3 |
+                "solution found, discarding {} remaining path(s)", self.to_do.len()
+            }
+            self.to_do.clear();
+            break 'all_branches;
         }
 
         self.solver.reset()?;
+
+        if self.samples.is_empty() {
+            bail!("could not reconstruct entry points")
+        }
+
         Ok(self.samples)
     }
 }

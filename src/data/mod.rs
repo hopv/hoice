@@ -504,6 +504,11 @@ impl Data {
                     // println!("    {}", neg);
                     if sample.is_complementary(neg) {
                         let entry_points = if let Some(entry_points) = &self.entry_points {
+                            log! { @5
+                                "retrieving entry points for ({} {})\n{}",
+                                self.instance[pred], sample,
+                                entry_points.to_string(&self.instance)
+                            }
                             Some(entry_points.entry_points_of(&Sample::new(pred, sample.clone()))?)
                         } else {
                             None
