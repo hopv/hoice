@@ -2,967 +2,2555 @@
 //!
 //! # Terms
 //!
-//! The factory is a `static_ref` for easy creation. The `R`eal term structure
-//! is [`RTerm`](enum.RTerm.html) which is hashconsed into
-//! [`Term`](type.Term.html). The factory
-//! ([`HashConsign`](https://crates.io/crates/hashconsing)) is not directly
-//! accessible. Terms are created *via* the functions in this module, such as
-//! [var](fn.var.html), [int](fn.int.html), [app](fn.app.html), *etc.*
+//! The factory is a `static_ref` for easy creation. The `R`eal term structure is [`RTerm`] which
+//! is hashconsed into [`Term`]. The factory ([`HashConsign`]) is not directly accessible. Terms
+//! are created *via* the functions in this module, such as [`var`], [`int`], [`app`], *etc.* Terms
+//! are simplified (when possible) at creation. In particular, the order of the arguments can
+//! change, double negations will be simplified, *etc.*
 //!
-//! Terms are not typed at all. A predicate application is **not** a term, only
-//! operator applications are.
-//!
-//! Terms are simplified (when possible) at creation. In particular, the order
-//! of the arguments can change, double negations will be simplified, *etc.*
-//! See [`normalize`](fn.normalize.html) for more details.
+//! A predicate application is **not** a term, only operator applications are.
 //!
 //! # Top-level terms
 //!
-//! A [`TTerm`](enum.tterm.html) is either a term or a predicate application to
-//! some terms. Top-level terms are not hashconsed as they are shallow.
+//! A [`TTerm`] is either a term or a predicate application to some terms. Top-level terms are not
+//! hashconsed as they are shallow.
 //!
 //! # Variables
 //!
-//! A variable is a `usize` wrapped in a zero-cost
-//! [`VarIdx`](../common/struct.VarIdx.html) for safety. It has no semantics at
-//! all by itself. Variables are given meaning by
+//! A variable is a `usize` wrapped in a zero-cost [`VarIdx`] for safety. It has no semantics at
+//! all by itself. Variables are given meaning by the `sig` field of a [`Pred`] or the [`VarInfo`]s
+//! stored in a [`Clause`].
 //!
-//! - the `sig` field of a [`PrdInfo`](../instance/info/struct.PrdInfo.html),
-//!   which gives them types;
-//! - the [`VarInfo`s](../instance/info/struct.VarInfo.html) stored in a
-//!   [`Clause`](../instance/struct.Clause.html), which give them a name and a
-//!   type.
+//! [`RTerm`]: enum.RTerm.html (RTerm enum)
+//! [`Term`]: type.Term.html (Term type)
+//! [`HashConsign`]: https://crates.io/crates/hashconsing (hashconsing crate)
+//! [`var`]: fn.var.html (var creation function)
+//! [`int`]: fn.int.html (int creation function)
+//! [`app`]: fn.app.html (app creation function)
+//! [`TTerm`]: enum.tterm.html (top term enum)
+//! [`VarIdx`]: ../common/struct.VarIdx.html (variable index struct)
+//! [`Clause`]: ../common/struct.Clause.html (Clause struct)
+//! [`VarInfo`]: ../info/struct.VarInfo.html (VarInfo struct)
+//! [`Pred`]: ../info/struct.Pred.html (Pred struct)
 //!
 //! # Examples
 //!
 //! ```rust
-//! # use hoice::term ;
-//! # use hoice::term::{ Op, RTerm, typ } ;
+//! # use hoice::{ term, term::{ Op, RTerm, typ } } ;
 //! let some_term = term::eq(
-//!   term::int(11), term::app(
-//!     Op::Mul, vec![ term::int_var(5), term::int(2) ]
-//!   )
+//!     term::int(11), term::app(
+//!         Op::Mul, vec![ term::int_var(5), term::int(2) ]
+//!     )
 //! ) ;
 //! # println!("{}", some_term) ;
-//! 
+//!
 //! // A `Term` dereferences to an `RTerm`:
 //! match * some_term {
-//!   RTerm::App { ref typ, op: Op::Eql, ref args } => {
-//!     assert_eq!( typ, & typ::bool() ) ;
-//!     assert_eq!( args.len(), 2 ) ;
-//!     assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
-//!   },
-//!   _ => panic!("not an equality"),
+//!     RTerm::App { ref typ, op: Op::Eql, ref args, .. } => {
+//!         assert_eq!( typ, & typ::bool() ) ;
+//!         assert_eq!( args.len(), 2 ) ;
+//!         assert_eq!( format!("{}", some_term), "(= (+ (* (- 2) v_5) 11) 0)" )
+//!     },
+//!     _ => panic!("not an equality"),
 //! }
 //! ```
 
-use hashconsing::* ;
+use hashconsing::*;
 
-use common::* ;
-use var_to::terms::VarTermsSet ;
+use common::*;
 
 #[macro_use]
-mod op ;
-pub use self::op::* ;
-mod factory ;
+mod op;
+pub mod bindings;
+mod eval;
+mod factory;
+mod leaf_iter;
+pub mod simplify;
+mod tterms;
+pub mod typ;
+mod zip;
 
-pub mod simplify ;
-pub mod typ ;
+pub use self::bindings::Bindings;
+pub use self::factory::*;
+pub use self::leaf_iter::LeafIter;
+pub use self::op::*;
+pub use self::tterms::*;
+pub use self::typ::Typ;
+
 #[cfg(test)]
-mod test ;
+mod test;
 
-pub use self::factory::* ;
-pub use self::typ::Typ ;
+/// Hash consed term.
+pub type Term = HConsed<RTerm>;
 
-
-/// A real term.
+/// A real term, before hashconsing.
+///
+/// See the [module level documentation] for more details.
+///
+/// [module level documentation]: ../term/index.html (term module)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RTerm {
-  /// A clause variable.
-  Var(Typ, VarIdx),
-  /// An integer.
-  Int(Int),
-  /// A real (actually a rational).
-  Real(Rat),
-  /// A boolean.
-  Bool(bool),
-  /// A **constant** array.
-  ///
-  /// The type is the type of **the indices** of the arrays.
-  CArray { typ: Typ, term: Box<Term> },
-  /// An operator application.
-  App {
-    /// Type of the application.
-    typ: Typ,
-    /// The operator.
-    op: Op,
-    /// The arguments.
-    args: Vec<Term>,
-  },
+    /// A clause variable.
+    Var(Typ, VarIdx),
+
+    /// A constant.
+    Cst(Val),
+
+    /// A constant array.
+    ///
+    /// The type is the type of **the indices** of the arrays.
+    ///
+    /// A constant array is not (necessarily) a (constant) value. It is an array which maps all
+    /// indices to the same term.
+    CArray {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of **the indices** (not the array).
+        typ: Typ,
+        /// Default term of the array.
+        term: Term,
+    },
+
+    /// An operator application.
+    App {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of the application.
+        typ: Typ,
+        /// The operator.
+        op: Op,
+        /// The arguments.
+        args: Vec<Term>,
+    },
+
+    /// A datatype constructor application.
+    DTypNew {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of the application.
+        typ: Typ,
+        /// Name of the constructor.
+        name: String,
+        /// Arguments of the constructor.
+        args: Vec<Term>,
+    },
+
+    /// A datatype selector application.
+    DTypSlc {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of the application.
+        typ: Typ,
+        /// Name of the selector.
+        name: String,
+        /// Argument of the selector.
+        term: Term,
+    },
+
+    /// A datatype tester application.
+    DTypTst {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of the term (always bool).
+        typ: Typ,
+        /// Name of the tester.
+        name: String,
+        /// Argument of the selector.
+        term: Term,
+    },
+
+    /// A function application.
+    Fun {
+        /// Depth of this term.
+        depth: usize,
+        /// Type of this term.
+        typ: Typ,
+        /// Function being applied.
+        name: String,
+        /// Arguments of the function application.
+        args: Vec<Term>,
+    },
 }
+
+/// Constructors.
 impl RTerm {
-  /// The operator and the kids of a term.
-  pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
-    match * self {
-      RTerm::App { op, ref args, .. } => Some((op, args)),
-      _ => None,
-    }
-  }
-
-  /// Returns the kids of an ite.
-  pub fn ite_inspect(& self) -> Option<(& Term, & Term, & Term)> {
-    match * self {
-      RTerm::App { op: Op::Ite, ref args, .. } => {
-        debug_assert_eq! { args.len(), 3 }
-        Some( (& args[0], & args[1], & args[2]) )
-      },
-      _ => None,
-    }
-  }
-
-  /// Returns the kid of a negation.
-  pub fn neg_inspect(& self) -> Option<& Term> {
-    match * self {
-      RTerm::App { op: Op::Not, ref args, .. } => {
-        debug_assert_eq! { args.len(), 1 }
-        Some(& args[0])
-      },
-      _ => None,
-    }
-  }
-
-  /// Returns the kids of conjunctions.
-  pub fn conj_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::And, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of disjunctions.
-  pub fn disj_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Or, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of equalities.
-  pub fn eq_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Eql, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of additions.
-  pub fn add_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Add, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of subtractions.
-  pub fn sub_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Sub, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of multiplications.
-  pub fn mul_inspect(& self) -> Option<& Vec<Term>> {
-    match * self {
-      RTerm::App { op: Op::Mul, ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-  /// Returns the kids of a constant multiplication.
-  pub fn cmul_inspect(& self) -> Option<(Val, & Term)> {
-    match * self {
-      RTerm::App { op: Op::CMul, ref args, .. } => {
-        if args.len() == 2 {
-          if let Some(val) = args[0].val() {
-            return Some((val, & args[1]))
-          }
+    /// Constructs an operator application.
+    fn new_app(typ: Typ, op: Op, args: Vec<Term>) -> Self {
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        RTerm::App {
+            depth,
+            typ,
+            op,
+            args,
         }
-        panic!("illegal c_mul application: {}", self)
-      },
-      _ => None,
     }
-  }
 
-  /// Iterates over the subterms of a term.
-  pub fn iter<F: FnMut(& RTerm)>(& self, mut f: F) {
-    let mut stack = vec![self] ;
-
-    while let Some(term) = stack.pop() {
-      f(term) ;
-      match * term {
-        RTerm::App { ref args, .. } => for term in args {
-          stack.push(term)
-        },
-        RTerm::CArray { ref term, .. } => stack.push(& * term),
-        RTerm::Var(_, _) |
-        RTerm::Int(_) |
-        RTerm::Real(_) |
-        RTerm::Bool(_) => (),
-      }
-    }
-  }
-
-  /// Type of the term.
-  pub fn typ(& self) -> Typ {
-    match * self {
-      RTerm::Var(ref typ, _) => typ.clone(),
-      RTerm::Int(_) => typ::int(),
-      RTerm::Real(_) => typ::real(),
-      RTerm::Bool(_) => typ::bool(),
-      RTerm::CArray { ref typ, ref term } => typ::array(
-        typ.clone(), term.typ()
-      ),
-      RTerm::App { ref typ, .. } => typ.clone(),
-    }
-  }
-
-  /// True if the term is zero (integer or real).
-  pub fn is_zero(& self) -> bool {
-    match ( self.int(), self.real() ) {
-      (Some(i), _) => i.is_zero(),
-      (_, Some(r)) => r.is_zero(),
-      _ => false,
-    }
-  }
-
-  /// True if the term is one (integer or real).
-  pub fn is_one(& self) -> bool {
-    use num::One ;
-    match ( self.int(), self.real() ) {
-      (Some(i), _) => i == Int::one(),
-      (_, Some(r)) => r == Rat::one(),
-      _ => false,
-    }
-  }
-
-  /// Write a real term using a special function to write variables.
-  pub fn write<W, WriteVar>(
-    & self, w: & mut W, write_var: WriteVar
-  ) -> IoRes<()>
-  where W: Write, WriteVar: Fn(& mut W, VarIdx) -> IoRes<()> {
-    let mut stack = vec![
-      (vec![self], "", "")
-    // ^^^^^^^^^|  ^^| ^^~~~ termination string (written once vector's empty)
-    //          |    |~~~~~~ prefix string      (written before next element)
-    //          |~~~~~~~~~~~ elements to write
-    ] ;
-    while let Some( (mut to_do, sep, end) ) = stack.pop() {
-      use self::RTerm::* ;
-      if let Some(this_term) = to_do.pop() {
-        stack.push( (to_do, sep, end) ) ;
-        match * this_term {
-          Var(_, v) => {
-            write!(w, "{}", sep) ? ;
-            write_var(w, v) ?
-          },
-          Int(ref i) => {
-            write!(w, "{}", sep) ? ;
-            int_to_smt!(w, i) ?
-          },
-          Real(ref r) => {
-            write!(w, "{}", sep) ? ;
-            rat_to_smt!(w, r) ?
-          },
-          Bool(b) => write!(w, "{}{}", sep, b) ?,
-          CArray { ref term, .. } => {
-            write!(w, "{}((as const {})", sep, this_term.typ()) ? ;
-            stack.push( (vec![term], " ", ")") )
-          },
-          App { op, ref args, .. } => {
-            write!(w, "{}({}", sep, op) ? ;
-            stack.push(
-              (args.iter().rev().map(|t| t.get()).collect(), " ", ")")
-            )
-          },
+    /// Constructs a function application.
+    fn new_fun<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    where
+        S: Into<String>,
+    {
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        let name = name.into();
+        RTerm::Fun {
+            depth,
+            typ,
+            name,
+            args,
         }
-      } else { w.write_all( end.as_bytes() ) ? }
     }
-    Ok(())
-  }
 
-  /// True if atom `self` implies atom `other` syntactically.
-  ///
-  /// Returns
-  ///
-  /// - `None` if no conclusion was reached,
-  /// - `Some(Greater)` if `lhs => rhs`,
-  /// - `Some(Less)` if `lhs <= rhs`,
-  /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
-  ///
-  /// So *greater* really means *more generic*.
-  ///
-  /// See [the module's function][atom implies] for more details and examples.
-  ///
-  /// [atom implies]: fn.atom_implies.html (atom_implies module-level function)
-  pub fn conj_simpl(& self, other: & Self) -> simplify::SimplRes {
-    simplify::conj_simpl(& self, & other)
-  }
-
-  /// Term evaluation (int).
-  pub fn int_eval<E: Evaluator>(
-    & self, model: & E
-  ) -> Res< Option<Int> > {
-    self.eval(model)?.to_int()
-  }
-
-  /// Term evaluation (real).
-  pub fn real_eval<E: Evaluator>(
-    & self, model: & E
-  ) -> Res< Option<Rat> > {
-    self.eval(model)?.to_real()
-  }
-
-  /// Term evaluation (bool).
-  pub fn bool_eval<E: Evaluator>(
-    & self, model: & E
-  ) -> Res< Option<bool> > {
-    self.eval(model)?.to_bool()
-  }
-
-  /// True if the term has no variables and evaluates to true.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use hoice::term ;
-  /// use hoice::term::Op ;
-  ///
-  /// let term = term::tru() ;
-  /// println!("true") ;
-  /// assert!( term.is_true() ) ;
-  /// let term = term::fls() ;
-  /// println!("false") ;
-  /// assert!( ! term.is_true() ) ;
-  /// let term = term::eq(
-  ///   term::int(7), term::int_var(1)
-  /// ) ;
-  /// println!("7 = v_1") ;
-  /// assert!( ! term.is_true() ) ;
-  /// let term = term::eq(
-  ///   term::int(9), term::int(9)
-  /// ) ;
-  /// println!("9 = 9") ;
-  /// assert!( term.is_true() ) ;
-  /// let term = term::eq(
-  ///   term::int(1), term::int(9)
-  /// ) ;
-  /// println!("1 = 9") ;
-  /// assert!( ! term.is_true() ) ;
-  /// let term = term::le(
-  ///   term::app(
-  ///     Op::Add, vec![ term::int(3), term::int(4) ]
-  ///   ), term::int(9)
-  /// ) ;
-  /// println!("3 + 4 = 9") ;
-  /// assert!( term.is_true() ) ;
-  /// ```
-  pub fn is_true(& self) -> bool {
-    match self.bool_eval( & () ) {
-      Ok(Some(b)) => b,
-      _ => false,
-    }
-  }
-  
-  /// True if the term has no variables and evaluates to true.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use hoice::term ;
-  /// use hoice::term::Op ;
-  ///
-  /// let term = term::tru() ;
-  /// println!("true") ;
-  /// assert!( ! term.is_false() ) ;
-  /// let term = term::fls() ;
-  /// println!("false") ;
-  /// assert!( term.is_false() ) ;
-  /// let term = term::eq(
-  ///   term::int(7), term::int_var(1)
-  /// ) ;
-  /// println!("7 = v_1") ;
-  /// assert!( ! term.is_false() ) ;
-  /// let term = term::eq(
-  ///   term::int(9), term::int(9)
-  /// ) ;
-  /// println!("9 = 9") ;
-  /// assert!( ! term.is_false() ) ;
-  /// let term = term::eq(
-  ///   term::int(1), term::int(9)
-  /// ) ;
-  /// println!("1 = 9") ;
-  /// assert!( term.is_false() ) ;
-  /// let term = term::le(
-  ///   term::int(9), term::app(
-  ///     Op::Add, vec![ term::int(3), term::int(4) ]
-  ///   )
-  /// ) ;
-  /// println!("9 <= 3 + 4") ;
-  /// assert!( term.is_false() ) ;
-  /// ```
-  pub fn is_false(& self) -> bool {
-    match self.bool_eval( & () ) {
-      Ok(Some(b)) => ! b,
-      _ => false,
-    }
-  }
-  /// Boolean a constant boolean term evaluates to.
-  pub fn bool(& self) -> Option<bool> {
-    match self.bool_eval( & () ) {
-      Ok(Some(b)) => Some(b),
-      _ => None
-    }
-  }
-
-  /// Evaluates a term with an empty model.
-  pub fn as_val(& self) -> Val {
-    if let Ok(res) = self.eval(& ()) { res } else {
-      val::none(self.typ().clone())
-    }
-  }
-
-  /// Integer a constant integer term evaluates to.
-  pub fn int(& self) -> Option<Int> {
-    if self.typ() != typ::int() { return None }
-    match self.int_eval( & () ) {
-      Ok(Some(i)) => Some(i),
-      _ => None
-    }
-  }
-  /// Integer a constant integer term evaluates to.
-  pub fn real(& self) -> Option<Rat> {
-    match self.real_eval( & () ) {
-      Ok(Some(r)) => Some(r),
-      _ => None
-    }
-  }
-
-  /// Turns a constant term in a `Val`.
-  pub fn val(& self) -> Option<Val> {
-    match * self {
-      RTerm::Int(ref i) => Some( val::int(i.clone()) ),
-      RTerm::Real(ref r) => Some( val::real(r.clone()) ),
-      RTerm::Bool(b) => Some( val::bool(b) ),
-      _ => None,
-    }
-  }
-
-  /// Returns a constant arithmetic version of the term if any.
-  pub fn arith(& self) -> Option<Term> {
-    if let Some(i) = self.int() {
-      Some( term::int(i) )
-    } else if let Some(r) = self.real() {
-      Some( term::real(r) )
-    } else {
-      None
-    }
-  }
-
-  /// The kids of this term, if any.
-  pub fn kids(& self) -> Option<& [Term]> {
-    if let RTerm::App{ ref args, .. } = * self {
-      Some(args)
-    } else {
-      None
-    }
-  }
-
-  /// Checks whether the term is a relation.
-  pub fn is_relation(& self) -> bool {
-    match * self {
-      RTerm::App { op: Op::Eql, .. } |
-      RTerm::App { op: Op::Gt, .. } |
-      RTerm::App { op: Op::Ge, .. } |
-      RTerm::App { op: Op::Lt, .. } |
-      RTerm::App { op: Op::Le, .. } => true,
-      RTerm::App { op: Op::Not, ref args, .. } => args[0].is_relation(),
-      _ => false,
-    }
-  }
-  /// Checks whether a term is an equality.
-  pub fn is_eq(& self) -> bool {
-    match * self {
-      RTerm::App { op: Op::Eql, .. } => true,
-      _ => false,
-    }
-  }
-
-
-  /// Term evaluation.
-  ///
-  /// # TODO
-  ///
-  /// - remove recursive call for constant arrays
-  pub fn eval<E: Evaluator>(& self, model: & E) -> Res<Val> {
-    use self::RTerm::* ;
-    let mut current = self ;
-    let mut stack = vec![] ;
-
-    'eval: loop {
-      // Go down applications.
-      let mut evaled = match * current {
-        App { op, ref args, .. } => {
-          current = & args[0] ;
-          stack.push( (op, & args[1..], vec![]) ) ;
-          continue 'eval
-        },
-        // Rest are leaves, going up.
-        Var(_, v) => if v < model.len() {
-          model.get(v).clone()
-        } else {
-          bail!("model is too short ({})", model.len())
-        },
-        Int(ref i) => val::int( i.clone() ),
-        Real(ref r) => val::real( r.clone() ),
-        Bool(b) => val::bool(b),
-        CArray { ref typ, ref term } => {
-          let default = term.eval(model) ? ;
-          val::array(typ.clone(), default)
-        },
-      } ;
-
-      // Go up.
-      'go_up: loop {
-        if let Some( (op, to_do, mut values) ) = stack.pop() {
-          if to_do.is_empty() {
-            values.push(evaled) ;
-            evaled = op.eval(values).chain_err(
-              || format!("while evaluating operator `{}`", op)
-            ) ? ;
-            continue 'go_up
-          } else {
-            // Going down the first element of `to_do`.
-            current = & to_do[0] ;
-            values.push(evaled) ;
-            stack.push( (op, & to_do[1..], values) ) ;
-            // Go down.
-            continue 'eval
-          }
-        } else {
-          // We are at the top level, done.
-          return Ok(evaled)
+    /// Constructs a constant array.
+    ///
+    ///
+    fn new_carray(typ: Typ, term: Term) -> Self {
+        RTerm::CArray {
+            depth: term.depth() + 1,
+            typ,
+            term,
         }
-      }
-
     }
-  }
 
-  /// If the term's an integer constant, returns the value.
-  pub fn int_val(& self) -> Option<& Int> {
-    if let RTerm::Int(ref i) = * self { Some( i ) } else { None }
-  }
-  /// If the term's a rational constant, returns the value.
-  pub fn real_val(& self) -> Option<& Rat> {
-    if let RTerm::Real(ref r) = * self { Some( r ) } else { None }
-  }
-
-  /// The highest variable index appearing in the term.
-  pub fn highest_var(& self) -> Option<VarIdx> {
-    let mut to_do = vec![ self ] ;
-    let mut max = None ;
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(_, i) => max = Some(
-          ::std::cmp::max( i, max.unwrap_or_else(|| 0.into()) )
-        ),
-        RTerm::Int(_) |
-        RTerm::Real(_) |
-        RTerm::Bool(_) => (),
-        RTerm::CArray { ref term, .. } => to_do.push(& * term),
-        RTerm::App{ ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-      }
-    }
-    max
-  }
-
-  /// Returns the variable index if the term is a variable.
-  pub fn var_idx(& self) -> Option<VarIdx> {
-    match * self {
-      RTerm::Var(_, i) => Some(i),
-      _ => None,
-    }
-  }
-
-  /// Return true if the term mentions at least one variable from `vars`.
-  pub fn mentions_one_of(& self, vars: & VarSet) -> bool {
-    let mut to_do = vec![ self ] ;
-    while let Some(term) = to_do.pop() {
-      match * term {
-        RTerm::Var(_, var) => if vars.contains(& var) {
-          return true
-        },
-        RTerm::Bool(_) |
-        RTerm::Int(_) |
-        RTerm::Real(_) |
-        RTerm::CArray { .. } => (),
-        RTerm::App { ref args, .. } => for arg in args {
-          to_do.push(arg)
-        },
-      }
-    }
-    false
-  }
-
-  /// If the term is a negation, returns what's below the negation.
-  pub fn rm_neg(& self) -> Option<Term> {
-    match * self {
-      RTerm::App { op: Op::Not, ref args, .. } => {
-        debug_assert_eq!( args.len(), 1 ) ;
-        Some( args[0].clone() )
-      },
-      _ => None,
-    }
-  }
-
-
-  /// Turns a real term in a hashconsed one.
-  #[inline]
-  pub fn to_hcons(& self) -> Term {
-    term( self.clone() )
-  }
-
-
-
-  /// Variable substitution.
-  ///
-  /// The `total` flag causes substitution to fail if a variable that's not in
-  /// `map`.
-  ///
-  /// The boolean returned is true if at least on substitution occured.
-  ///
-  /// # TODO
-  ///
-  /// - remove recursive call in the array case
-  pub fn subst_custom<Map: VarIndexed<Term>>(
-    & self, map: & Map, total: bool
-  ) -> Option<(Term, bool)> {
-    let mut current = & self.to_hcons() ;
-    // Stack for traversal.
-    let mut stack = vec![] ;
-    // Number of substitutions performed.
-    let mut subst_count = 0 ;
-
-    'go_down: loop {
-
-      // Go down.
-      let mut term = match * current.get() {
-        RTerm::Var(ref typ, var) => if let Some(term) = map.var_get(var) {
-          debug_assert_eq! { typ, & term.typ() }
-          subst_count += 1 ;
-          term
-        } else if total {
-          return None
-        } else {
-          current.clone()
-        },
-        RTerm::App { op, ref args, .. } => {
-          current = & args[0] ;
-          stack.push(
-            (op, & args[1..], Vec::with_capacity( args.len() ))
-          ) ;
-          continue 'go_down
-        },
-        RTerm::CArray { ref typ, ref term } => {
-          if let Some((term, changed)) = term.subst_custom(map, total) {
-            if changed {
-              subst_count += 1 ;
-            }
-            cst_array(typ.clone(), term)
-          } else {
-            return None
-          }
-
-        },
-        RTerm::Bool(_) |
-        RTerm::Real(_) |
-        RTerm::Int(_) => current.clone(),
-      } ;
-
-      // Go up.
-      'go_up: while let Some(
-        (op, args, mut new_args)
-      ) = stack.pop() {
-        new_args.push( term ) ;
-        
-        if args.is_empty() {
-          term = app(op, new_args) ;
-          continue 'go_up // Just for readability
-        } else {
-          current = & args[0] ;
-          stack.push( (op, & args[1..], new_args) ) ;
-          continue 'go_down
+    /// Constructs a datatype selector application.
+    fn new_dtyp_slc<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypSlc {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
         }
-      }
-
-      // Only way to get here is if the stack is empty, meaning we're done.
-      return Some( (term, subst_count > 0) )
     }
-  }
 
-  /// Variable substitution.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  ///
-  /// Used for substitutions in the same clause / predicate scope.
-  #[inline]
-  pub fn subst<Map: VarIndexed<Term>>(
-    & self, map: & Map
-  ) -> (Term, bool) {
-    self.subst_custom(map, false).expect("total substitution can't fail")
-  }
-
-  /// Fixed-point (partial) variable substitution.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occured.
-  pub fn subst_fp<Map: VarIndexed<Term>>(
-    & self, map: & Map
-  ) -> (Term, bool) {
-    let (mut term, mut changed) = self.subst(map) ;
-    while changed {
-      let (new_term, new_changed) = term.subst(map) ;
-      term = new_term ;
-      changed = new_changed
-    }
-    (term, changed)
-  }
-
-  /// Total variable substition, returns `None` if there was a variable in the
-  /// term that was not in the map.
-  ///
-  /// Returns the new term and a boolean indicating whether any substitution
-  /// occsured.
-  ///
-  /// Used for substitutions between different same clause / predicate scopes.
-  pub fn subst_total<Map: VarIndexed<Term>>(
-    & self, map: & Map
-  ) -> Option< (Term, bool) > {
-    self.subst_custom(map, true)
-  }
-
-
-  /// Tries to turn a term into a substitution.
-  ///
-  /// Works only on equalities.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use hoice::term ;
-  ///
-  /// let bv0 = term::bool_var(0) ;
-  /// let bv1 = term::bool_var(1) ;
-  /// let bv2 = term::bool_var(2) ;
-  /// let rhs = term::or(vec![bv1, bv2]) ;
-  /// let term = term::eq(bv0, rhs.clone()) ;
-  /// debug_assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
-  /// ```
-  pub fn as_subst(& self) -> Option<(VarIdx, Term)> {
-    if let Some(kids) = self.eq_inspect() {
-      debug_assert_eq! { kids.len(), 2 }
-      let (lhs, rhs) = (& kids[0], & kids[1]) ;
-
-      if let Some(var_idx) = lhs.var_idx() {
-        return Some((var_idx, rhs.clone()))
-      } else if let Some(var_idx) = rhs.var_idx() {
-        return Some((var_idx, lhs.clone()))
-      }
-
-      if lhs.typ().is_arith() {
-        debug_assert! { rhs.is_zero() }
-
-        let lhs = if let Some((_, term)) = lhs.cmul_inspect() {
-          term
-        } else { lhs } ;
-
-        let mut add = vec![] ;
-        let mut var = None ;
-        let mut negated = false ;
-
-        if let Some(kids) = lhs.add_inspect() {
-          for kid in kids {
-            if var.is_some() {
-              add.push(kid.clone()) ;
-              continue
-            }
-            if let Some(var_index) = kid.var_idx() {
-              debug_assert! { var.is_none() }
-              var = Some(var_index) ;
-              continue
-            } else if let Some((val, term)) = kid.cmul_inspect() {
-              if let Some(var_index) = term.var_idx() {
-                if val.is_one() {
-                  var = Some(var_index) ;
-                  continue
-                } else if val.is_minus_one() {
-                  var = Some(var_index) ;
-                  negated = true ;
-                  continue
-                }
-              }
-            }
-            add.push(kid.clone())
-          }
-
-          if let Some(var) = var {
-            let mut sum = term::add(add) ;
-            if ! negated { sum = term::u_minus(sum) }
-            Some((var, sum))
-          } else {
-            None
-          }
-        } else {
-          None
+    /// Constructs a datatype tester application.
+    fn new_dtyp_tst<S>(typ: Typ, name: S, term: Term) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        RTerm::DTypTst {
+            depth: term.depth() + 1,
+            typ,
+            name,
+            term,
         }
-      } else {
-        None
-      }
-
-    } else {
-      None
     }
-  }
 
-
-
-  /// Attempts to invert a term from a variable.
-  pub fn invert_var(& self, var: VarIdx, typ: Typ) -> Option<(VarIdx, Term)> {
-    self.invert( term::var(var, typ) )
-  }
-
-  /// Attempts to invert a term.
-  ///
-  /// More precisely, if the term only mentions one variable `v`, attempts to
-  /// find a `f` that's a solution of `var = term <=> v = f(var)`.
-  ///
-  /// Currently, only works when `v` appears exactly once. That is, it will
-  /// fail on `var = 3.v + 7.v` for instance. (This would be fine if
-  /// normalization handled this kind cases though.)
-  ///
-  /// Also, only works when all operators are binary (expect for unary minus).
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// use hoice::term ;
-  ///
-  /// let term = term::u_minus( term::int_var(0) ) ;
-  /// println!("{}", term) ;
-  /// assert_eq!{
-  ///   term.invert( term::int_var(1) ),
-  ///   Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
-  /// }
-  /// let term = term::sub( vec![ term::int_var(0), term::int(7) ] ) ;
-  /// println!("{}", term) ;
-  /// assert_eq!{
-  ///   term.invert( term::int_var(1) ),
-  ///   Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
-  /// }
-  /// let term = term::add( vec![ term::int(7), term::int_var(0) ] ) ;
-  /// println!("{}", term) ;
-  /// assert_eq!{
-  ///   term.invert( term::int_var(1) ),
-  ///   Some(
-  ///     (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
-  ///   )
-  /// }
-  /// ```
-  pub fn invert(& self, term: Term) -> Option<(VarIdx, Term)> {
-    let mut solution = term ;
-    let mut term = self ;
-
-    loop {
-      // println!("inverting {}", term) ;
-      match * term {
-        RTerm::App { op, ref args, .. } => {
-          let (po, symmetric) = match op {
-            Op::Add => (Op::Sub, true),
-            Op::Sub => {
-              if args.len() == 1 {
-                solution = term::u_minus( solution ) ;
-                term = & args[0] ;
-                continue
-              } else if args.len() == 2 {
-                if args[0].val().is_some() {
-                  solution = term::sub(
-                    vec![ args[0].clone(), solution ]
-                  ) ;
-                  term = & args[1] ;
-                  continue
-                } else if args[1].val().is_some() {
-                  solution = term::add(
-                    vec![ args[1].clone(), solution ]
-                  ) ;
-                  term = & args[0] ;
-                  continue
-                }
-              }
-              return None
-            },
-            Op::IDiv => return None,
-            Op::CMul => {
-              if args.len() == 2 {
-                if let Some(val) = args[0].val() {
-                  if val.minus().expect(
-                    "illegal c_mul application found in `invert`"
-                  ).is_one() {
-                    solution = term::u_minus(solution) ;
-                    term = & args[1] ;
-                    continue
-                  } else {
-                    return None
-                  }
-                }
-              }
-
-              panic!("illegal c_mul application found in `invert`")
-            },
-            // Op::Div => (Op::Mul, false),
-            // Op::Mul => (Op::Div, true),
-            Op::ToReal => {
-              solution = term::to_int(solution) ;
-              term = & args[0] ;
-              continue
-            },
-            Op::ToInt => {
-              solution = term::to_real(solution) ;
-              term = & args[0] ;
-              continue
-            },
-            _ => return None,
-          } ;
-          if args.len() != 2 { return None }
-
-          if let Some(arith) = args[0].arith() {
-            if symmetric {
-              solution = term::app( po, vec![ solution, arith ] )
-            } else {
-              solution = term::app( op, vec![ arith, solution ] )
-            }
-            term = & args[1]
-          } else if let Some(arith) = args[1].arith() {
-            solution = term::app( po, vec![ solution, arith ] ) ;
-            term = & args[0]
-          } else {
-            return None
-          }
-        },
-        RTerm::Var(_, v) => return Some((v, solution)),
-        _ => return None,
-      }
+    /// Constructs a datatype constructor application.
+    fn new_dtyp_new<S>(typ: Typ, name: S, args: Vec<Term>) -> Self
+    where
+        S: Into<String>,
+    {
+        let name = name.into();
+        let depth = args
+            .iter()
+            .fold(1, |acc, term| ::std::cmp::max(acc, term.depth() + 1));
+        RTerm::DTypNew {
+            depth,
+            typ,
+            name,
+            args,
+        }
     }
-  }
-
-
 }
+
+/// Accessors and testers.
+impl RTerm {
+    /// Size of a term: number of subterms.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(0) ),
+    ///         term::int_var(1)
+    ///     ]), term::int(7)
+    /// );
+    /// assert_eq! { term.depth(), 4 }
+    /// ```
+    pub fn depth(&self) -> usize {
+        match self {
+            RTerm::Var(_, _) | RTerm::Cst(_) => 1,
+            RTerm::CArray { depth, .. }
+            | RTerm::App { depth, .. }
+            | RTerm::DTypNew { depth, .. }
+            | RTerm::DTypSlc { depth, .. }
+            | RTerm::DTypTst { depth, .. }
+            | RTerm::Fun { depth, .. } => *depth,
+        }
+    }
+
+    /// Type of the term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let sum = term::add(vec![
+    ///     term::cmul( 2, term::int_var(0) ),
+    ///     term::int_var(1)
+    /// ]);
+    /// assert! { sum.typ().is_int() }
+    ///
+    /// let to_real = term::to_real(sum);
+    /// assert! { to_real.typ().is_real() }
+    ///
+    /// let term = term::eq(
+    ///     to_real, term::real_of(7.0)
+    /// );
+    /// assert! { term.typ().is_bool() }
+    /// ```
+    pub fn typ(&self) -> Typ {
+        match self {
+            RTerm::CArray { typ, term, .. } => typ::array(typ.clone(), term.typ()),
+
+            RTerm::Cst(val) => val.typ(),
+
+            RTerm::Var(typ, _)
+            | RTerm::App { typ, .. }
+            | RTerm::Fun { typ, .. }
+            | RTerm::DTypSlc { typ, .. }
+            | RTerm::DTypTst { typ, .. }
+            | RTerm::DTypNew { typ, .. } => typ.clone(),
+        }
+    }
+
+    /// Returns the variable index if the term is a variable.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let v_1 = term::int_var(1);
+    /// assert_eq! { v_1.var_idx(), Some(1.into()) }
+    ///
+    /// let mul = term::cmul( 2, v_1 );
+    /// assert_eq! { mul.var_idx(), None }
+    /// ```
+    pub fn var_idx(&self) -> Option<VarIdx> {
+        match *self {
+            RTerm::Var(_, i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// True if the term is zero (integer or real).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert! { ! one.is_zero() }
+    ///
+    /// let sum = term::add( vec![one.clone(), term::u_minus(one)] );
+    /// assert! { sum.is_zero() }
+    /// ```
+    pub fn is_zero(&self) -> bool {
+        match (self.int(), self.real()) {
+            (Some(i), _) => i.is_zero(),
+            (_, Some(r)) => r.is_zero(),
+            _ => false,
+        }
+    }
+
+    /// True if the term is one (integer or real).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert! { one.is_one() }
+    ///
+    /// let sum = term::add( vec![one.clone(), term::u_minus(one)] );
+    /// assert! { ! sum.is_one() }
+    /// ```
+    pub fn is_one(&self) -> bool {
+        use num::One;
+        match (self.int(), self.real()) {
+            (Some(i), _) => i == Int::one(),
+            (_, Some(r)) => r == Rat::one(),
+            _ => false,
+        }
+    }
+
+    /// Compares two terms as a conjunction.
+    ///
+    /// Returns
+    ///
+    /// - `None` if no conclusion was reached,
+    /// - `Some(Greater)` if `lhs => rhs`,
+    /// - `Some(Less)` if `lhs <= rhs`,
+    /// - `Some(Equal)` if `lhs` and `rhs` are equivalent.
+    ///
+    /// So *greater* really means *stronger*.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::cmp::Ordering::*;
+    /// use hoice::{ term, term::simplify::SimplRes::* };
+    /// let eq = &term::eq( term::int_var(0), term::int(7) );
+    /// let ge = &term::ge( term::int_var(0), term::int(7) );
+    /// let gt = &term::gt( term::int_var(0), term::int(7) );
+    /// let ge_2 = &term::ge( term::int(7), term::int_var(0) );
+    ///
+    /// # println!("{} cmp {}", eq, eq);
+    /// assert_eq! { eq.conj_cmp(eq), Cmp(Equal  ) }
+    /// # println!("{} cmp {}", eq, ge);
+    /// assert_eq! { eq.conj_cmp(ge), Cmp(Greater) }
+    /// # println!("{} cmp {}", ge, eq);
+    /// assert_eq! { ge.conj_cmp(eq), Cmp(Less   ) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", eq, gt);
+    /// assert_eq! { eq.conj_cmp(gt), Yields(term::fls()) }
+    /// # println!("{} cmp {}", gt, eq);
+    /// assert_eq! { gt.conj_cmp(eq), Yields(term::fls()) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", gt, ge);
+    /// assert_eq! { gt.conj_cmp(ge), Cmp(Greater) }
+    /// # println!("{} cmp {}", ge, gt);
+    /// assert_eq! { ge.conj_cmp(gt), Cmp(Less   ) }
+    ///
+    /// # println!();
+    /// # println!("{} cmp {}", ge, ge_2);
+    /// assert_eq! { ge.conj_cmp(ge_2), Yields(eq.clone()) }
+    /// # println!("{} cmp {}", ge_2, ge);
+    /// assert_eq! { ge_2.conj_cmp(ge), Yields(eq.clone()) }
+    /// ```
+    pub fn conj_cmp(&self, other: &Self) -> simplify::SimplRes {
+        simplify::conj_simpl(&self, &other)
+    }
+
+    /// True if the term has no variables and evaluates to true.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::{ term, term::Op };
+    /// let term = term::tru() ;
+    /// println!("true") ;
+    /// assert!( term.is_true() ) ;
+    /// let term = term::fls() ;
+    /// println!("false") ;
+    /// assert!( ! term.is_true() ) ;
+    /// let term = term::eq(
+    ///     term::int(7), term::int_var(1)
+    /// ) ;
+    /// println!("7 = v_1") ;
+    /// assert!( ! term.is_true() ) ;
+    /// let term = term::eq(
+    ///     term::int(9), term::int(9)
+    /// ) ;
+    /// println!("9 = 9") ;
+    /// assert!( term.is_true() ) ;
+    /// let term = term::eq(
+    ///     term::int(1), term::int(9)
+    /// ) ;
+    /// println!("1 = 9") ;
+    /// assert!( ! term.is_true() ) ;
+    /// let term = term::le(
+    ///     term::app(
+    ///         Op::Add, vec![ term::int(3), term::int(4) ]
+    ///     ), term::int(9)
+    /// ) ;
+    /// println!("3 + 4 = 9") ;
+    /// assert!( term.is_true() ) ;
+    /// ```
+    pub fn is_true(&self) -> bool {
+        match self.bool_eval(&()) {
+            Ok(Some(b)) => b,
+            _ => false,
+        }
+    }
+
+    /// True if the term has no variables and evaluates to true.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::{term, term::Op};
+    /// let term = term::tru() ;
+    /// println!("true") ;
+    /// assert!( ! term.is_false() ) ;
+    /// let term = term::fls() ;
+    /// println!("false") ;
+    /// assert!( term.is_false() ) ;
+    /// let term = term::eq(
+    ///     term::int(7), term::int_var(1)
+    /// ) ;
+    /// println!("7 = v_1") ;
+    /// assert!( ! term.is_false() ) ;
+    /// let term = term::eq(
+    ///     term::int(9), term::int(9)
+    /// ) ;
+    /// println!("9 = 9") ;
+    /// assert!( ! term.is_false() ) ;
+    /// let term = term::eq(
+    ///     term::int(1), term::int(9)
+    /// ) ;
+    /// println!("1 = 9") ;
+    /// assert!( term.is_false() ) ;
+    /// let term = term::le(
+    ///     term::int(9), term::app(
+    ///         Op::Add, vec![ term::int(3), term::int(4) ]
+    ///     )
+    /// ) ;
+    /// println!("9 <= 3 + 4") ;
+    /// assert!( term.is_false() ) ;
+    /// ```
+    pub fn is_false(&self) -> bool {
+        match self.bool_eval(&()) {
+            Ok(Some(b)) => !b,
+            _ => false,
+        }
+    }
+
+    /// Returns a constant arithmetic version of the term if any.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let sum = term::add(vec![
+    ///     term::cmul( 2, term::int(0) ),
+    ///     term::int(1)
+    /// ]);
+    /// assert_eq! { sum.arith(), Some(term::int(1)) }
+    ///
+    /// let to_real = term::to_real(sum);
+    /// assert_eq! { to_real.arith(), Some(term::real_of(1.0)) }
+    ///
+    /// let term = term::eq(
+    ///     to_real, term::real_of(7.0)
+    /// );
+    /// assert_eq! { term.arith(), None }
+    /// ```
+    pub fn arith(&self) -> Option<Term> {
+        if let Some(i) = self.int() {
+            Some(term::int(i))
+        } else if let Some(r) = self.real() {
+            Some(term::real(r))
+        } else {
+            None
+        }
+    }
+
+    /// If the term's an integer constant, returns the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term;
+    /// let one = term::int(1);
+    /// assert_eq! { one.int_val(), Some(& 1.into()) }
+    ///
+    /// let sum = term::add(vec![term::int_var(0), one]);
+    /// assert_eq! { sum.int_val(), None }
+    ///
+    /// let one = term::real_of(1.0);
+    /// assert_eq! { one.int_val(), None }
+    /// ```
+    pub fn int_val(&self) -> Option<&Int> {
+        if let RTerm::Cst(val) = self {
+            if let val::RVal::I(i) = val.get() {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// If the term's a rational constant, returns the value.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, common::Rat };
+    /// let one = term::real_of(1.0);
+    /// assert_eq! { one.real_val(), Some(&Rat::new(1.into(),1.into())) }
+    ///
+    /// let sum = term::add(vec![term::real_var(0), one]);
+    /// assert_eq! { sum.real_val(), None }
+    ///
+    /// let one = term::int(1);
+    /// assert_eq! { one.real_val(), None }
+    /// ```
+    pub fn real_val(&self) -> Option<&Rat> {
+        if let RTerm::Cst(val) = self {
+            if let val::RVal::R(r) = val.get() {
+                return Some(r);
+            }
+        }
+        None
+    }
+
+    /// Return true if the term mentions at least one variable from `vars`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let mut vars = VarSet::new();
+    /// vars.insert(7.into());
+    /// vars.insert(5.into());
+    /// vars.insert(3.into());
+    ///
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(0) ),
+    ///         term::int_var(6),
+    ///     ]),
+    ///     term::int(0)
+    /// );
+    /// assert! { !term.mentions_one_of(&vars) }
+    ///
+    /// let term = term::eq(
+    ///     term::add(vec![
+    ///         term::cmul( 2, term::int_var(7) ),
+    ///         term::int_var(6),
+    ///     ]),
+    ///     term::int(0)
+    /// );
+    /// assert! { term.mentions_one_of(&vars) }
+    /// ```
+    pub fn mentions_one_of(&self, vars: &VarSet) -> bool {
+        for var_or_cst in self.leaf_iter() {
+            if let Either::Left((_, var_idx)) = var_or_cst {
+                if vars.contains(&var_idx) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns true if the term mentions a function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun };
+    /// fun::test::create_length_fun();
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let t_1 = term::ge(
+    ///     term::fun(
+    ///         fun::test::length_fun_name(),
+    ///         vec![ term::var(0, list.clone()) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { t_1.has_fun_apps() }
+    ///
+    /// let t_2 = term::ge(
+    ///     term::int_var(7),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_2.has_fun_apps() }
+    /// ```
+    pub fn has_fun_apps(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if let Some((_, _)) = term.fun_inspect() {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(_) => Err(()),
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(_),
+                    ..
+                } => Err(()),
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// Returns true if the term mentions a recursive function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun, parse };
+    /// fun::test::create_length_fun();
+    /// // Adding a non-recursive function.
+    /// parse::fun_dtyp("\
+    ///     (define-fun get_head ( (lst (List Int)) ) Int
+    ///         (head lst)
+    ///     )
+    /// ");
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let t_1 = term::ge(
+    ///     term::fun(
+    ///         fun::test::length_fun_name(), vec![ term::var(0, list.clone()) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { t_1.has_rec_fun_apps() }
+    ///
+    /// let t_2 = term::ge(
+    ///     term::fun(
+    ///         "get_head", vec![ term::var(0, list.clone()) ]
+    ///     ),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_2.has_rec_fun_apps() }
+    ///
+    /// let t_3 = term::ge(
+    ///     term::int_var(7),
+    ///     term::int(0)
+    /// );
+    /// assert! { !t_3.has_rec_fun_apps() }
+    /// ```
+    pub fn has_rec_fun_apps(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if let Some((name, _)) = term.fun_inspect() {
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive()
+                    {
+                        Err(())
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(name)
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(name),
+                    ..
+                }
+                    if fun::get(name)
+                        .expect("inconsistent function application: unknown function")
+                        .is_recursive() =>
+                {
+                    Err(())
+                }
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`: \
+                         empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// Returns true if the term mentions a function or an ADT.
+    pub fn has_fun_app_or_adt(&self) -> bool {
+        use self::zip::*;
+
+        // Will be `Ok(())` if there's no function application, and `Err(())`
+        // otherwise.
+        let res = zip(
+            &self.to_hcons(),
+            |term| {
+                if term.fun_inspect().is_some()
+                    || term.dtyp_new_inspect().is_some()
+                    || term.dtyp_slc_inspect().is_some()
+                {
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(()),
+            |zip_op, _, _: ()| match zip_op {
+                ZipOp::Fun(_) | ZipOp::New(_) | ZipOp::Slc(_) => Err(()),
+                _ => Ok(ZipDoTotal::Upp { yielded: () }),
+            },
+            |frame| match frame {
+                ZipFrame {
+                    thing: ZipOp::Fun(_),
+                    ..
+                }
+                | ZipFrame {
+                    thing: ZipOp::New(_),
+                    ..
+                }
+                | ZipFrame {
+                    thing: ZipOp::Slc(_),
+                    ..
+                } => Err(()),
+                mut frame => {
+                    let nu_term = frame.rgt_args.next().expect(
+                        "illegal call to `partial_op`:
+            empty `rgt_args` (has_fun_app_or_adt)",
+                    );
+                    Ok(ZipDo::Trm { nu_term, frame })
+                }
+            },
+        );
+
+        res.is_err()
+    }
+
+    /// The kids of this term, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let kids = vec![term::int_var(0), term::int(2)];
+    /// let t = term::add( kids.clone() );
+    /// # println!("{}", t);
+    /// assert_eq! { t.kids(), Some(&kids as &[Term]) }
+    /// ```
+    pub fn kids(&self) -> Option<&[Term]> {
+        if let RTerm::App { ref args, .. } = *self {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Checks whether a term is an equality.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert! { ! t.is_eq() }
+    /// let t = term::eq( t, term::int(42) );
+    /// # println!("{}", t);
+    /// assert! { t.is_eq() }
+    /// ```
+    pub fn is_eq(&self) -> bool {
+        match *self {
+            RTerm::App { op: Op::Eql, .. } => true,
+            _ => false,
+        }
+    }
+}
+
+/// Term modifiers.
+impl RTerm {
+    /// Turns a real term in a hashconsed one.
+    #[inline]
+    pub fn to_hcons(&self) -> Term {
+        term(self.clone())
+    }
+
+    /// Forces the type of a datatype constructor.
+    pub fn force_dtyp(&self, nu_typ: Typ) -> Option<Term> {
+        match self {
+            RTerm::DTypNew {
+                typ, name, args, ..
+            } => {
+                debug_assert! { nu_typ.is_compatible(typ) }
+                Some(dtyp_new(nu_typ, name.clone(), args.clone()))
+            }
+            RTerm::Cst(val) => val.force_dtyp(nu_typ).map(cst),
+            _ => None,
+        }
+    }
+
+    /// Casts a term.
+    ///
+    /// Only legal if the term's type and the one provided are compatible.
+    ///
+    /// Returns
+    ///
+    /// - an error if the types are not compatible
+    /// - `None` if the cast didn't do anything
+    /// - the new term otherwise
+    pub fn cast(&self, to_typ: &Typ) -> Res<Option<Term>> {
+        let nu_typ = if let Some(typ) = self.typ().merge(to_typ) {
+            if to_typ == &typ {
+                return Ok(None);
+            }
+            typ
+        } else {
+            bail!("types {} and {} are incompatible", self.typ(), to_typ)
+        };
+
+        enum Frame<'a> {
+            // Array frame.
+            Arr(Typ),
+            // Datatype constructor.
+            New {
+                typ: Typ,
+                name: String,
+                lft: Vec<Term>,
+                rgt: ::std::vec::IntoIter<(Typ, &'a RTerm)>,
+            },
+        }
+
+        let mut stack = vec![];
+        let (mut nu_typ, mut curr) = (nu_typ, self);
+
+        'go_down: loop {
+            let mut term = match curr {
+                RTerm::Var(_, idx) => term::var(*idx, nu_typ),
+
+                RTerm::Cst(val) => if let Ok(val) = val.cast(&nu_typ) {
+                    factory::cst(val)
+                } else {
+                    return Ok(None);
+                },
+
+                RTerm::App { op, args, .. } => term::app(*op, args.clone()),
+
+                RTerm::CArray { typ, term, .. } => {
+                    let (src, tgt) = typ.array_inspect().unwrap();
+                    stack.push(Frame::Arr(src.clone()));
+                    nu_typ = tgt.clone();
+                    curr = term.get();
+                    continue 'go_down;
+                }
+
+                RTerm::DTypNew {
+                    typ, name, args, ..
+                } => {
+                    let mut lft = vec![];
+                    let mut next = None;
+                    let mut rgt = vec![];
+
+                    scoped! {
+
+                      let (_, nu_prms) = nu_typ.dtyp_inspect().unwrap() ;
+                      let (_, prms) = typ.dtyp_inspect().unwrap() ;
+                      debug_assert_eq! { args.len(), nu_prms.len() }
+                      debug_assert_eq! { args.len(), prms.len() }
+                      let mut all = nu_prms.iter().zip(
+                        prms.iter()
+                      ).zip( args.iter() ) ;
+
+                      while let Some(((nu, typ), arg)) = all.next()  {
+                        if nu == typ {
+                          lft.push( arg.clone() )
+                        } else {
+                          next = Some(
+                            ( arg.get(), nu.clone() )
+                          )
+                        }
+                      }
+
+                      for ((nu_typ, _), arg) in all {
+                        rgt.push( (nu_typ.clone(), arg.get()) )
+                      }
+
+                    }
+
+                    if let Some((term, nu)) = next {
+                        let frame = Frame::New {
+                            typ: nu_typ,
+                            name: name.clone(),
+                            lft,
+                            rgt: rgt.into_iter(),
+                        };
+                        stack.push(frame);
+                        nu_typ = nu;
+                        curr = term;
+
+                        continue 'go_down;
+                    } else {
+                        term::dtyp_new(nu_typ, name.clone(), lft)
+                    }
+                }
+
+                RTerm::DTypSlc {
+                    typ, name, term, ..
+                } => {
+                    debug_assert_eq! { typ, & nu_typ }
+                    term::dtyp_slc(typ.clone(), name.clone(), term.clone())
+                }
+
+                RTerm::DTypTst {
+                    name, term, typ, ..
+                } => {
+                    debug_assert_eq! { typ, & nu_typ }
+                    term::dtyp_tst(name.clone(), term.clone())
+                }
+
+                RTerm::Fun {
+                    typ, name, args, ..
+                } => {
+                    debug_assert_eq! { typ, & nu_typ }
+                    term::fun(name.clone(), args.clone())
+                }
+            };
+
+            'go_up: loop {
+                match stack.pop() {
+                    None => return Ok(Some(term)),
+
+                    Some(Frame::Arr(typ)) => {
+                        term = term::cst_array(typ, term);
+                        continue 'go_up;
+                    }
+
+                    Some(Frame::New {
+                        typ,
+                        name,
+                        mut lft,
+                        mut rgt,
+                    }) => {
+                        lft.push(term);
+
+                        if let Some((ty, tm)) = rgt.next() {
+                            nu_typ = ty;
+                            curr = tm;
+                            stack.push(Frame::New {
+                                typ,
+                                name,
+                                lft,
+                                rgt,
+                            });
+                            continue 'go_down;
+                        } else {
+                            term = term::dtyp_new(typ, name, lft);
+                            continue 'go_up;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// If the term is a negation, returns what's below the negation.
+    pub fn rm_neg(&self) -> Option<Term> {
+        match *self {
+            RTerm::App {
+                op: Op::Not,
+                ref args,
+                ..
+            } => {
+                debug_assert_eq!(args.len(), 1);
+                Some(args[0].clone())
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Variant deconstructors.
+impl RTerm {
+    /// The operator and the kids of a term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::modulo( term::int_var(0), term::int(7) );
+    ///
+    /// let (op, args) = t.app_inspect().unwrap();
+    /// assert_eq! { op, Op::Mod }
+    /// assert_eq! { args, &vec![ term::int_var(0), term::int(7) ] }
+    /// ```
+    pub fn app_inspect(&self) -> Option<(Op, &Vec<Term>)> {
+        if let RTerm::App { op, ref args, .. } = *self {
+            Some((op, args))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of an ite.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ite( term::bool_var(3), term::int_var(0), term::int(7) );
+    ///
+    /// let (cnd, thn, els) = t.ite_inspect().unwrap();
+    /// assert_eq! { cnd, &term::bool_var(3) }
+    /// assert_eq! { thn, &term::int_var(0) }
+    /// assert_eq! { els, &term::int(7) }
+    /// ```
+    pub fn ite_inspect(&self) -> Option<(&Term, &Term, &Term)> {
+        if let RTerm::App {
+            op: Op::Ite,
+            ref args,
+            ..
+        } = *self
+        {
+            debug_assert_eq! { args.len(), 3 }
+            Some((&args[0], &args[1], &args[2]))
+        } else {
+            None
+        }
+    }
+
+    /// Inspects a function application.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ term, term::typ, dtyp, fun };
+    /// fun::test::create_length_fun();
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    ///
+    /// let t = term::fun( fun::test::length_fun_name(), vec![ term::var(0, list.clone()) ] );
+    ///
+    /// let (name, args) = t.fun_inspect().unwrap();
+    /// assert_eq! { name, fun::test::length_fun_name() }
+    /// assert_eq! { args, & vec![ term::var(0, list) ] }
+    /// ```
+    pub fn fun_inspect(&self) -> Option<(&String, &Vec<Term>)> {
+        if let RTerm::Fun {
+            ref name, ref args, ..
+        } = *self
+        {
+            Some((name, args))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kid of a negation.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::not(term::bool_var(3));
+    ///
+    /// let kid = t.neg_inspect().unwrap();
+    /// assert_eq! { kid, &term::bool_var(3) }
+    /// ```
+    pub fn neg_inspect(&self) -> Option<&Term> {
+        if let RTerm::App {
+            op: Op::Not,
+            ref args,
+            ..
+        } = *self
+        {
+            debug_assert_eq! { args.len(), 1 }
+            Some(&args[0])
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of conjunctions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let not_v_3 = term::not(term::bool_var(3));
+    /// let ge = term::ge( term::int_var(0), term::int(17) );
+    /// let t = term::and(vec![ not_v_3.clone(), ge.clone() ]);
+    ///
+    /// let kids = t.conj_inspect().unwrap();
+    /// assert_eq! { kids, &vec![not_v_3, ge] }
+    /// ```
+    pub fn conj_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::And,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of disjunctions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let not_v_3 = term::not(term::bool_var(3));
+    /// let ge = term::ge( term::int_var(0), term::int(17) );
+    /// let t = term::or(vec![ not_v_3.clone(), ge.clone() ]);
+    ///
+    /// let kids = t.disj_inspect().unwrap();
+    /// assert_eq! { kids, &vec![not_v_3, ge] }
+    /// ```
+    pub fn disj_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Or,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of equalities.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::eq( term::int_var(0), term::int(0) );
+    ///
+    /// let kids = t.eq_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int(0) ] }
+    ///
+    /// // Kids will change in general. For instance:
+    /// let t = term::eq( term::int_var(0), term::int(17) );
+    ///
+    /// let kids = t.eq_inspect().unwrap();
+    /// assert_ne! { kids, &vec![ term::int_var(0), term::int(17) ] }
+    /// assert_eq! {
+    ///     kids, &vec![
+    ///         term::add(vec![term::int_var(0), term::u_minus(term::int(17))]),
+    ///         term::int(0)
+    ///     ]
+    /// }
+    /// ```
+    pub fn eq_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Eql,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of additions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(17)] );
+    ///
+    /// let kids = t.add_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int(17) ] }
+    ///
+    /// // Be careful that the order might change.
+    /// let t = term::add( vec![term::int_var(3), term::int_var(0)] );
+    ///
+    /// let kids = t.add_inspect().unwrap();
+    /// assert_ne! { kids, &vec![ term::int_var(3), term::int_var(0) ] }
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int_var(3) ] }
+    /// ```
+    pub fn add_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Add,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of subtractions.
+    ///
+    /// Unused currently, subtraction are rewritten as addition with unary minuses.
+    #[allow(dead_code)]
+    fn sub_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Sub,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of multiplications.
+    ///
+    /// Deconstructs *only* multiplications in the sense of [`Op::Mul`], *not to be confused* with
+    /// [`Op::CMul`].
+    ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::mul( vec![term::int_var(0), term::int_var(2)] );
+    ///
+    /// let kids = t.mul_inspect().unwrap();
+    /// assert_eq! { kids, &vec![ term::int_var(0), term::int_var(2) ] }
+    ///
+    /// // Careful of `Op::CMul`.
+    /// let t = term::mul( vec![term::int(3), term::int_var(0)] );
+    ///
+    /// assert! { t.mul_inspect().is_none() }
+    /// assert! { t.cmul_inspect().is_some() }
+    /// ```
+    pub fn mul_inspect(&self) -> Option<&Vec<Term>> {
+        if let RTerm::App {
+            op: Op::Mul,
+            ref args,
+            ..
+        } = *self
+        {
+            Some(args)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a constant multiplication.
+    ///
+    /// Deconstructs *only* multiplications in the sense of [`Op::CMul`], *not to be confused* with
+    /// [`Op::Mul`].
+    ///
+    /// [`Op::Mul`]: enum.Op.html#variant.Mul
+    /// [`Op::CMul`]: enum.Op.html#variant.CMul
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::mul( vec![term::int(3), term::int_var(0)] );
+    ///
+    /// let (val, kid) = t.cmul_inspect().unwrap();
+    /// assert_eq! { val, val::int(3) }
+    /// assert_eq! { kid, &term::int_var(0) }
+    ///
+    /// let t = term::cmul( 7, t.clone() );
+    ///
+    /// let (val, kid) = t.cmul_inspect().unwrap();
+    /// assert_eq! { val, val::int(7 * 3) }
+    /// assert_eq! { kid, &term::int_var(0) }
+    /// ```
+    pub fn cmul_inspect(&self) -> Option<(Val, &Term)> {
+        if let RTerm::App {
+            op: Op::CMul,
+            ref args,
+            ..
+        } = *self
+        {
+            if args.len() == 2 {
+                if let Some(val) = args[0].val() {
+                    return Some((val, &args[1]));
+                }
+            }
+            panic!("illegal c_mul application: {}", self)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype tester.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let t = term::dtyp_tst("insert", term::var(0, list.clone()));
+    ///
+    /// # println!("{}", t);
+    /// let (constructor, term) = t.dtyp_tst_inspect().unwrap();
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { term, &term::var(0, list.clone()) }
+    ///
+    /// // Careful of unary tester rewriting.
+    /// let t = term::dtyp_tst("nil", term::var(0, list.clone()));
+    /// # println!("{}", t);
+    /// assert! { t.dtyp_tst_inspect().is_none() }
+    ///
+    /// let negated = t.neg_inspect().unwrap();
+    /// let (constructor, term) = negated.dtyp_tst_inspect().unwrap();
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { term, &term::var(0, list) }
+    /// ```
+    pub fn dtyp_tst_inspect(&self) -> Option<(&str, &Term)> {
+        if let RTerm::DTypTst { name, term, .. } = self {
+            Some((name, term))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype constructor.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let nil = term::dtyp_new(list.clone(), "nil", vec![]);
+    /// let only_v_0 = term::dtyp_new(
+    ///     list.clone(), "insert", vec![ term::int_var(0), nil.clone()]
+    /// );
+    ///
+    /// # println!("{}", only_v_0);
+    /// let (typ, constructor, kids) = only_v_0.dtyp_new_inspect().unwrap();
+    /// assert_eq! { typ, & list }
+    /// assert_eq! { constructor, "insert" }
+    /// assert_eq! { kids, &[term::int_var(0), nil] }
+    /// ```
+    pub fn dtyp_new_inspect(&self) -> Option<(&Typ, &str, &[Term])> {
+        if let RTerm::DTypNew {
+            typ, name, args, ..
+        } = self
+        {
+            Some((typ, name, args))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the kids of a datatype selector.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let only_v_0 = term::dtyp_slc(list.clone(), "tail", term::int_var(0));
+    ///
+    /// # println!("{}", only_v_0);
+    /// let (typ, constructor, kids) = only_v_0.dtyp_slc_inspect().unwrap();
+    /// assert_eq! { typ, & list }
+    /// assert_eq! { constructor, "tail" }
+    /// assert_eq! { kids, &term::int_var(0) }
+    /// ```
+    pub fn dtyp_slc_inspect(&self) -> Option<(&Typ, &str, &Term)> {
+        if let RTerm::DTypSlc {
+            typ, name, term, ..
+        } = self
+        {
+            Some((typ, name, term))
+        } else {
+            None
+        }
+    }
+}
+
+/// Variable substitution.
+///
+/// All substitution functions take a mapping from variables to terms in the form of a
+/// [`VarIndexed`].
+///
+/// The central variable substitution function is [`subst_custom`]. It applies a substitution and
+/// takes a flag indicating whether the substitution should be considered total or not. The
+/// difference is crucial: when applying a substitution to a term coming from the body of a clause
+/// to form a term for a predicate definition, the substitution should **always** be total.
+/// Otherwise clauses variables will end up in the predicate's definition which makes no sense and
+/// is dangerous. Conversely, substitution from  a predicate term to a clause term should always be
+/// total.
+///
+/// As such, makes sure that you use [`subst_total`] whenever you're doing clause-to-predicate or
+/// predicate-to-clause conversions. Otherwise, [`subst`] performs partial variable substitution,
+/// which can never fail. Last, [`subst_fp`] iterates until the fixed-point of a substitution.
+///
+/// [`VarIndexed`]: ../common/trait.VarIndexed.html (VarIndexed trait)
+/// [`subst_custom`]: enum.RTerm.html#method.subst_custom (subst_custom function for RTerm)
+/// [`subst_total`]: enum.RTerm.html#method.subst_total (subst_total function for RTerm)
+/// [`subst_fp`]: enum.RTerm.html#method.subst_fp (subst_fp function for RTerm)
+/// [`subst`]: enum.RTerm.html#method.subst (subst function for RTerm)
+impl RTerm {
+    /// Variable substitution.
+    ///
+    /// The `total` flag causes substitution to fail if a variable that's not in `map`. The boolean
+    /// returned is true if at least one substitution occurred. The map itself is given as a
+    /// [`VarIndexed`].
+    ///
+    /// [`VarIndexed`]: ../common/trait.VarIndexed.html (VarIndexed trait)
+    ///
+    /// # Examples
+    ///
+    /// Total substitution.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->
+    ///     term::add( vec![term::int_var(7), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    ///     // v_2 ->
+    ///     term::int_var(9),
+    /// ].into_iter().collect();
+    ///
+    /// // Asking for total substitution ~~~~~~~~~~~~~~vvvv
+    /// let (res, at_least_one) = t.subst_custom(&map, true).unwrap();
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= (+ v_9 (* 3 v_7) (* (- 3) v_8)) (- 6))"
+    /// }
+    /// ```
+    ///
+    /// Partial substitution.
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// // Map does not mention `v_2`.
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->
+    ///     term::add( vec![term::int_var(7), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    /// ].into_iter().collect();
+    ///
+    /// // Asking for total substitution ~~~vvvv
+    /// let res =      t.subst_custom(&map, true);
+    /// // Total substitution failed.
+    /// assert! { res.is_none() }
+    ///
+    /// // Asking for partial substitution ~vvvvv
+    /// let res =      t.subst_custom(&map, false);
+    /// // Success.
+    /// let (res, at_least_one) = res.unwrap();
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= (+ v_2 (* 3 v_7) (* (- 3) v_8)) (- 6))"
+    /// } // `v_2` is still here ~~~~~~~~^^^
+    /// ```
+    pub fn subst_custom<Map: VarIndexed<Term>>(
+        &self,
+        map: &Map,
+        total: bool,
+    ) -> Option<(Term, bool)> {
+        use self::zip::*;
+        let mut changed = false;
+
+        let res = zip(
+            &self.to_hcons(),
+            |_| Ok(None),
+            |zip_null| match zip_null {
+                ZipNullary::Cst(val) => Ok(cst(val.clone())),
+                ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {
+                    debug_assert_eq! { typ, & term.typ() }
+                    changed = true;
+                    Ok(term)
+                } else if total {
+                    Err(())
+                } else {
+                    Ok(term::var(var, typ.clone()))
+                },
+            },
+            |zip_op, typ, mut acc| {
+                let yielded = match zip_op {
+                    ZipOp::Op(op) => term::app(op, acc),
+                    ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
+
+                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype selector {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_slc(typ.clone(), name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype selector {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype tester {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_tst(name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype tester {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::CArray => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal constant array application to {} arguments",
+                                acc.len() + 1
+                            )
+                        }
+                        term::cst_array(typ.clone(), kid)
+                    } else {
+                        panic!("illegal constant array application to 0 arguments")
+                    },
+                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
+                };
+
+                Ok(ZipDoTotal::Upp { yielded })
+            },
+            |mut frame| {
+                let nu_term = frame
+                    .rgt_args
+                    .next()
+                    .expect("illegal call to `partial_op`: empty `rgt_args` (subst_custom)");
+                Ok(ZipDo::Trm { nu_term, frame })
+            },
+        );
+
+        if let Ok(term) = res {
+            Some((term, changed))
+        } else {
+            None
+        }
+    }
+
+    /// Variable substitution.
+    ///
+    /// Returns the new term and a boolean indicating whether any substitution occurred. Used for
+    /// substitutions in the same clause / predicate scope.
+    ///
+    /// Equivalent to `self.subst_custom(map, false).unwrap()`. For examples see [`subst_custom`].
+    ///
+    /// [`subst_custom`]: #method.subst_custom (subst_custom function for RTerm)
+    #[inline]
+    pub fn subst<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
+        self.subst_custom(map, false)
+            .expect("partial substitution can't fail")
+    }
+
+    /// Fixed-point (partial) variable substitution.
+    ///
+    /// Applies `term = term.subst(map)`, starting with `self`, until the substitution does not
+    /// change the term anymore. Returns the new term and a boolean indicating whether any
+    /// substitution occurred.
+    ///
+    /// This function will loop forever if no fixed-point exists (the map is circular).
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::mul(vec![ term::int(3), term::int_var(1) ])
+    /// );
+    /// # println!("{}", t);
+    /// let map: VarMap<_> = vec![
+    ///     // v_0 ->             vvvvvvvvvv~~~ v_0 maps to a term mentioning v_1
+    ///     term::add( vec![term::int_var(1), term::int(2)] ),
+    ///     // v_1 ->
+    ///     term::int_var(8),
+    ///     // v_2 ->
+    ///     term::int_var(1), // v_2 maps to v_1
+    /// ].into_iter().collect();
+    ///
+    /// let (res, at_least_one) = t.subst_fp(&map);
+    /// assert! { at_least_one }
+    /// assert_eq! {
+    ///     &format!("{}", res), "(>= v_8 (- 6))"
+    /// }
+    /// ```
+    ///
+    /// [`subst`]: #method.subst (subst function for RTerm)
+    pub fn subst_fp<Map: VarIndexed<Term>>(&self, map: &Map) -> (Term, bool) {
+        let (mut term, changed) = self.subst(map);
+        let mut fp = !changed;
+        while !fp {
+            let (new_term, changed) = term.subst(map);
+            term = new_term;
+            fp = !changed
+        }
+        (term, changed)
+    }
+
+    /// Total variable substitution.
+    ///
+    /// Returns the new term and a boolean indicating whether any substitution occurred. Used for
+    /// substitutions between different same clause / predicate scopes.
+    ///
+    /// Equivalent to `self.subst_custom(map, true)`. For examples see [`subst_custom`].
+    ///
+    /// [`subst_custom`]: #method.subst_custom (subst_custom function for RTerm)
+    pub fn subst_total<Map: VarIndexed<Term>>(&self, map: &Map) -> Option<(Term, bool)> {
+        self.subst_custom(map, true)
+    }
+}
+
+/// Fold/map/zip functions.
+impl RTerm {
+    /// Iterator over over all the leafs of a term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let sum = term::add(vec![
+    ///     term::int_var(0),
+    ///     term::cmul(2, term::int_var(1))
+    /// ]);
+    /// let t = term::ge(sum, term::int(0));
+    /// # println!("{}", t);
+    ///
+    /// let int = typ::int();
+    /// let (zero, two) = (val::int(0), val::int(2));
+    /// let mut leaves: Vec<Either<(&Typ, VarIdx), &Val>> = vec![
+    ///     Either::Left((&int, 0.into())), // v_0: Int |
+    ///     Either::Right(& two),           // 2        |- LHS of the `<=`
+    ///     Either::Left((&int, 1.into())), // v_1: Int |
+    ///     Either::Right(& zero),          // 0, RHS of the `<=`
+    /// ];
+    /// leaves.reverse(); // <- We're going to pop below, hence the reversal.
+    /// for leaf in t.leaf_iter() {
+    ///     assert_eq! { Some(leaf), leaves.pop() }
+    /// }
+    /// ```
+    pub fn leaf_iter(&self) -> LeafIter {
+        LeafIter::of_rterm(self)
+    }
+
+    /// Iterates over all the subterms of a term, including itself.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let v_0 = term::int_var(0);
+    /// let v_1 = term::int_var(1);
+    /// let two = term::int(2);
+    /// let two_v_1 = term::mul(vec![ two.clone(), v_1.clone() ]);
+    /// let sum = term::add(vec![ v_0.clone(), two_v_1.clone() ]);
+    /// let zero = term::int(0);
+    /// let t = term::ge(sum.clone(), zero.clone());
+    /// # println!("{}", t);
+    /// let mut all: TermSet = vec![
+    ///     v_0, v_1, two, two_v_1, sum, zero, t.clone()
+    /// ].into_iter().collect();
+    ///
+    /// t.iter(
+    ///     |term| {
+    ///         let term = term.to_hcons();
+    ///         let was_there = all.remove(&term);
+    ///         assert! { was_there }
+    ///     }
+    /// );
+    /// assert! { all.is_empty() }
+    /// ```
+    pub fn iter<F>(&self, mut f: F)
+    where
+        F: FnMut(&RTerm),
+    {
+        use RTerm::*;
+        let mut stack = vec![self];
+
+        while let Some(term) = stack.pop() {
+            f(term);
+            match term {
+                App { args, .. } | DTypNew { args, .. } | Fun { args, .. } => {
+                    stack.extend(args.iter().map(|term| term.get()))
+                }
+
+                CArray { term, .. } | DTypSlc { term, .. } | DTypTst { term, .. } => {
+                    stack.push(term.get())
+                }
+
+                Var(_, _) | Cst(_) => (),
+            }
+        }
+    }
+
+    /// Boolean a constant boolean term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge( term::int_var(0), term::int_var(0) );
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), Some(true) }
+    /// let t = term::not(t);
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), Some(false) }
+    /// let t = term::ge( term::int_var(0), term::int(2) );
+    /// # println!("{}", t);
+    /// assert_eq! { t.bool(), None }
+    /// ```
+    pub fn bool(&self) -> Option<bool> {
+        match self.bool_eval(&()) {
+            Ok(Some(b)) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Integer value the term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.int(), None }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.int(), Some(7.into()) }
+    /// ```
+    pub fn int(&self) -> Option<Int> {
+        if self.typ() != typ::int() {
+            return None;
+        }
+        match self.int_eval(&()) {
+            Ok(Some(i)) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Real value the term evaluates to.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::real_var(0), term::real_of(2.)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.real(), None }
+    /// let t = term::add( vec![term::real_of(5.), term::real_of(2.)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.real(), Some(rat_of_float(7.).into()) }
+    /// ```
+    pub fn real(&self) -> Option<Rat> {
+        match self.real_eval(&()) {
+            Ok(Some(r)) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Evaluates a term with an empty model.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.as_val(), val::none(typ::int()) }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.as_val(), val::int(7) }
+    /// ```
+    pub fn as_val(&self) -> Val {
+        if let Ok(res) = self.eval(&()) {
+            res
+        } else {
+            val::none(self.typ().clone())
+        }
+    }
+
+    /// Turns a constant term in a `Val`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.val(), None }
+    /// let t = term::add( vec![term::int(5), term::int(2)] );
+    /// # println!("{}", t);
+    /// assert_eq! { t.val(), Some(val::int(7)) }
+    /// ```
+    pub fn val(&self) -> Option<Val> {
+        match *self {
+            RTerm::Cst(ref val) => Some(val.clone()),
+            _ => None,
+        }
+    }
+
+    /// The highest variable index appearing in the term.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge(
+    ///     term::add( vec![term::real_var(0), term::real_var(2), term::real_of(17.)] ),
+    ///     term::real_var(666)
+    /// );
+    /// # println!("{}", t);
+    /// assert_eq! { t.highest_var(), Some(666.into()) }
+    /// ```
+    pub fn highest_var(&self) -> Option<VarIdx> {
+        let mut max = None;
+
+        for var_or_cst in self.leaf_iter() {
+            if let Either::Left((_, var_idx)) = var_or_cst {
+                max = Some(::std::cmp::max(var_idx, max.unwrap_or_else(|| 0.into())))
+            }
+        }
+
+        max
+    }
+
+    /// TOP-DOWN term substitution.
+    ///
+    /// Applies the term map provided to all matching terms while going down in the term. When it
+    /// replaces a subterm with `trm` from `map`, this function will not go down `trm`.
+    ///
+    /// This is used by let-[`bindings`] in clauses for concise printing.
+    ///
+    /// This function is equivalent to [`self.top_down_map(|t| map.get(t).cloned())`].
+    ///
+    /// [`bindings`]: bindings/index.html (bindings module)
+    /// [`self.top_down_map(|t| map.get(t).cloned())`]: #method.top_down_map
+    /// (top_down_map function over RTerm)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::int(3)
+    /// );
+    /// # println!("{}", t);
+    /// let map: TermMap<Term> = vec![
+    ///     (        three_v_0, term::int_var(7)  ),
+    ///     // This mapping won't be used, as the mapping above will trigger first.
+    ///     ( term::int_var(0), term::int_var(8)  ),
+    ///     // Likewise, this mapping will only trigger in the LHS of the `>=`, not in the
+    ///     // multiplication since the first binding will replace it.
+    ///     (     term::int(3), term::int_var(9)  ),
+    ///     // This last one will not be used at all since the function does not go down new terms.
+    ///     ( term::int_var(7), term::int_var(42) ),
+    /// ].into_iter().collect();
+    ///
+    /// assert_eq! { &format!("{}", t.term_subst(&map)), "(>= (+ v_2 v_7 (* (- 1) v_9)) 0)" }
+    /// ```
+    pub fn term_subst(&self, map: &TermMap<Term>) -> Term {
+        self.top_down_map(|term| map.get(term).cloned())
+    }
+
+    /// TOP-DOWN map over terms.
+    ///
+    /// Applies the term map provided (as a function) to all matching terms while going down in the
+    /// term. When it replaces a subterm with `trm` from `map`, this function will not go down
+    /// `trm`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let three_v_0 = term::cmul( 3, term::int_var(0) );
+    /// let t = term::ge(
+    ///     term::add(vec![ three_v_0.clone(), term::int_var(2) ]),
+    ///     term::int(3)
+    /// );
+    /// # println!("{}", t);
+    /// let map: TermMap<Term> = vec![
+    ///     (        three_v_0, term::int_var(7)  ),
+    ///     // This mapping won't be used, as the mapping above will trigger first.
+    ///     ( term::int_var(0), term::int_var(8)  ),
+    ///     // Likewise, this mapping will only trigger in the LHS of the `>=`, not in the
+    ///     // multiplication since the first binding will replace it.
+    ///     (     term::int(3), term::int_var(9)  ),
+    ///     // This last one will not be used at all since the function does not go down new terms.
+    ///     ( term::int_var(7), term::int_var(42) ),
+    /// ].into_iter().collect();
+    ///
+    /// assert_eq! {
+    ///     &format!("{}", t.top_down_map(|t| map.get(t).cloned())),
+    ///     "(>= (+ v_2 v_7 (* (- 1) v_9)) 0)"
+    /// }
+    /// ```
+    pub fn top_down_map<Fun>(&self, mut f: Fun) -> Term
+    where
+        Fun: for<'a> FnMut(&'a Term) -> Option<Term>,
+    {
+        use self::zip::*;
+        let res: Res<Term> = zip(
+            &self.to_hcons(),
+            |term| Ok(f(term)),
+            |zip_null| match zip_null {
+                ZipNullary::Cst(val) => Ok(cst(val.clone())),
+                ZipNullary::Var(typ, var) => Ok(term::var(var, typ.clone())),
+            },
+            |zip_op, typ, mut acc| {
+                let yielded = match zip_op {
+                    ZipOp::Op(op) => term::app(op, acc),
+                    ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
+
+                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype selector {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_slc(typ.clone(), name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype selector {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal application of datatype tester {} to {} arguments",
+                                conf.bad(name),
+                                acc.len() + 1
+                            )
+                        }
+                        term::dtyp_tst(name.clone(), kid)
+                    } else {
+                        panic!(
+                            "illegal application of datatype tester {} to 0 arguments",
+                            conf.bad(name)
+                        )
+                    },
+
+                    ZipOp::CArray => if let Some(kid) = acc.pop() {
+                        if !acc.is_empty() {
+                            panic!(
+                                "illegal constant array application to {} arguments",
+                                acc.len() + 1
+                            )
+                        }
+                        term::cst_array(typ.clone(), kid)
+                    } else {
+                        panic!("illegal constant array application to 0 arguments")
+                    },
+                    ZipOp::Fun(name) => term::fun(name.clone(), acc),
+                };
+
+                Ok(ZipDoTotal::Upp { yielded })
+            },
+            |mut frame| {
+                let nu_term = frame.rgt_args.next().expect(
+                    "illegal call to `partial_op`: \
+                     empty `rgt_args` (has_fun_app_or_adt)",
+                );
+                Ok(ZipDo::Trm { nu_term, frame })
+            },
+        );
+
+        res.expect("top down map can never fail")
+    }
+
+    /// Tries to turn a term into a substitution.
+    ///
+    /// Works only on equalities.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term ;
+    /// let bv0 = term::bool_var(0) ;
+    /// let bv1 = term::bool_var(1) ;
+    /// let bv2 = term::bool_var(2) ;
+    /// let rhs = term::or(vec![bv1, bv2]) ;
+    /// let term = term::eq(bv0, rhs.clone()) ;
+    /// assert_eq! { term.as_subst(), Some((0.into(), rhs)) }
+    /// ```
+    pub fn as_subst(&self) -> Option<(VarIdx, Term)> {
+        if let Some(kids) = self.eq_inspect() {
+            debug_assert_eq! { kids.len(), 2 }
+            let (lhs, rhs) = (&kids[0], &kids[1]);
+
+            if let Some(var_idx) = lhs.var_idx() {
+                return Some((var_idx, rhs.clone()));
+            } else if let Some(var_idx) = rhs.var_idx() {
+                return Some((var_idx, lhs.clone()));
+            }
+
+            if lhs.typ().is_arith() {
+                debug_assert! { rhs.is_zero() }
+
+                let lhs = if let Some((_, term)) = lhs.cmul_inspect() {
+                    term
+                } else {
+                    lhs
+                };
+
+                let mut add = vec![];
+                let mut var = None;
+                let mut negated = false;
+
+                if let Some(kids) = lhs.add_inspect() {
+                    for kid in kids {
+                        if var.is_some() {
+                            add.push(kid.clone());
+                            continue;
+                        }
+                        if let Some(var_index) = kid.var_idx() {
+                            debug_assert! { var.is_none() }
+                            var = Some(var_index);
+                            continue;
+                        } else if let Some((val, term)) = kid.cmul_inspect() {
+                            if let Some(var_index) = term.var_idx() {
+                                if val.is_one() {
+                                    var = Some(var_index);
+                                    continue;
+                                } else if val.is_minus_one() {
+                                    var = Some(var_index);
+                                    negated = true;
+                                    continue;
+                                }
+                            }
+                        }
+                        add.push(kid.clone())
+                    }
+
+                    if let Some(var) = var {
+                        let mut sum = term::add(add);
+                        if !negated {
+                            sum = term::u_minus(sum)
+                        }
+                        Some((var, sum))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Attempts to invert a term from a variable.
+    pub fn invert_var(&self, var: VarIdx, typ: Typ) -> Option<(VarIdx, Term)> {
+        self.invert(term::var(var, typ))
+    }
+
+    /// Attempts to invert a term.
+    ///
+    /// More precisely, if the term only mentions one variable `v`, attempts to
+    /// find a `f` that's a solution of `var = term <=> v = f(var)`.
+    ///
+    /// Currently, only works when `v` appears exactly once. That is, it will
+    /// fail on `var = 3.v + 7.v` for instance. (This would be fine if
+    /// normalization handled this kind cases though.)
+    ///
+    /// Also, only works when all operators are binary (expect for unary minus).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::term ;
+    /// let term = term::u_minus( term::int_var(0) ) ;
+    /// println!("{}", term) ;
+    /// assert_eq!{
+    ///     term.invert( term::int_var(1) ),
+    ///     Some( (0.into(), term::u_minus( term::int_var(1) ) ) )
+    /// }
+    /// let term = term::sub( vec![ term::int_var(0), term::int(7) ] ) ;
+    /// println!("{}", term) ;
+    /// assert_eq!{
+    ///     term.invert( term::int_var(1) ),
+    ///     Some( (0.into(), term::add( vec![ term::int_var(1), term::int(7) ] ) ) )
+    /// }
+    /// let term = term::add( vec![ term::int(7), term::int_var(0) ] ) ;
+    /// println!("{}", term) ;
+    /// assert_eq!{
+    ///     term.invert( term::int_var(1) ),
+    ///     Some(
+    ///         (0.into(), term::sub( vec![ term::int_var(1), term::int(7) ] ) )
+    ///     )
+    /// }
+    /// ```
+    pub fn invert(&self, term: Term) -> Option<(VarIdx, Term)> {
+        let mut solution = term;
+        let mut term = self;
+
+        loop {
+            // println!("inverting {}", term) ;
+            match *term {
+                RTerm::App { op, ref args, .. } => {
+                    let (po, symmetric) = match op {
+                        Op::Add => (Op::Sub, true),
+                        Op::Sub => {
+                            if args.len() == 1 {
+                                solution = term::u_minus(solution);
+                                term = &args[0];
+                                continue;
+                            } else if args.len() == 2 {
+                                if args[0].val().is_some() {
+                                    solution = term::sub(vec![args[0].clone(), solution]);
+                                    term = &args[1];
+                                    continue;
+                                } else if args[1].val().is_some() {
+                                    solution = term::add(vec![args[1].clone(), solution]);
+                                    term = &args[0];
+                                    continue;
+                                }
+                            }
+                            return None;
+                        }
+                        Op::IDiv => return None,
+                        Op::CMul => {
+                            if args.len() == 2 {
+                                if let Some(val) = args[0].val() {
+                                    if val
+                                        .minus()
+                                        .expect("illegal c_mul application found in `invert`")
+                                        .is_one()
+                                    {
+                                        solution = term::u_minus(solution);
+                                        term = &args[1];
+                                        continue;
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                            }
+
+                            panic!("illegal c_mul application found in `invert`")
+                        }
+                        // Op::Div => (Op::Mul, false),
+                        // Op::Mul => (Op::Div, true),
+                        Op::ToReal => {
+                            solution = term::to_int(solution);
+                            term = &args[0];
+                            continue;
+                        }
+                        Op::ToInt => {
+                            solution = term::to_real(solution);
+                            term = &args[0];
+                            continue;
+                        }
+                        _ => return None,
+                    };
+                    if args.len() != 2 {
+                        return None;
+                    }
+
+                    if let Some(arith) = args[0].arith() {
+                        if symmetric {
+                            solution = term::app(po, vec![solution, arith])
+                        } else {
+                            solution = term::app(op, vec![arith, solution])
+                        }
+                        term = &args[1]
+                    } else if let Some(arith) = args[1].arith() {
+                        solution = term::app(po, vec![solution, arith]);
+                        term = &args[0]
+                    } else {
+                        return None;
+                    }
+                }
+
+                RTerm::Var(_, v) => return Some((v, solution)),
+
+                RTerm::Cst(_)
+                | RTerm::Fun { .. }
+                | RTerm::CArray { .. }
+                | RTerm::DTypNew { .. }
+                | RTerm::DTypSlc { .. }
+                | RTerm::DTypTst { .. } => return None,
+            }
+        }
+    }
+}
+
+/// Term evaluation.
+impl RTerm {
+    /// Term evaluation.
+    ///
+    /// Fails when the model given does not type-check with respect to the model provided.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int_var(2), term::int(17)] );
+    /// let values: VarMap<_> = vec![
+    ///     val::int(7), // v_0
+    ///     val::int(0), // v_1 (not used in `t`)
+    ///     val::int(2), // v_2
+    /// ].into();
+    /// assert_eq! { t.eval(&values).unwrap(), val::int(7 + 2 + 17) }
+    ///
+    /// let ill_typed: VarMap<_> = vec![
+    ///     val::int(7),      // v_0
+    ///     val::int(0),      // v_1 (not used in `t`)
+    ///     val::bool(false), // v_2 ILL-TYPED
+    /// ].into();
+    /// assert! { t.eval(&ill_typed).is_err() }
+    /// ```
+    pub fn eval<E: Evaluator>(&self, model: &E) -> Res<Val> {
+        eval::eval(&factory::term(self.clone()), model)
+    }
+
+    /// Term evaluation (int).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Int`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_int())`.
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add( vec![term::int_var(0), term::int_var(2), term::int(17)] );
+    /// let values: VarMap<_> = vec![
+    ///     val::int(7), // v_0
+    ///     val::int(0), // v_1 (not used in `t`)
+    ///     val::int(2), // v_2
+    /// ].into();
+    /// assert_eq! { t.int_eval(&values).unwrap(), Some( (7 + 2 + 17).into() ) }
+    /// ```
+    #[inline]
+    pub fn int_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Int>> {
+        self.eval(model)?.to_int()
+    }
+
+    /// Term evaluation (real).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Real`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_real())`.
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::add(
+    ///     vec![term::real_var(0), term::real_var(2), term::real_of(17.)]
+    /// );
+    /// let values: VarMap<_> = vec![
+    ///     val::real_of(7.), // v_0
+    ///     val::real_of(0.), // v_1 (not used in `t`)
+    ///     val::real_of(2.), // v_2
+    /// ].into();
+    /// assert_eq! { t.real_eval(&values).unwrap(), Some( rat_of_float(7. + 2. + 17.).into() ) }
+    /// ```
+    #[inline]
+    pub fn real_eval<E: Evaluator>(&self, model: &E) -> Res<Option<Rat>> {
+        self.eval(model)?.to_real()
+    }
+
+    /// Term evaluation (bool).
+    ///
+    /// Fails whenever [`self.eval(model)`] would fail, or if the term evaluates to a value that's
+    /// not of type `Bool`. Returns `None` if the model is partial and evaluation resulted in a
+    /// non-value.
+    ///
+    /// In fact, this is strictly equivalent to `self.eval(model).and_then(|val| val.to_bool())`.
+    ///
+    /// [`self.eval(model)`]: #method.eval (eval function over RTerm)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::common::*;
+    /// let t = term::ge(
+    ///     term::add( vec![term::real_var(0), term::real_var(2), term::real_of(17.)] ),
+    ///     term::real_of(42.)
+    /// );
+    /// let values: VarMap<_> = vec![
+    ///     val::real_of(7.), // v_0
+    ///     val::real_of(0.), // v_1 (not used in `t`)
+    ///     val::real_of(2.), // v_2
+    /// ].into();
+    /// assert_eq! { t.bool_eval(&values).unwrap(), Some( false.into() ) }
+    /// ```
+    #[inline]
+    pub fn bool_eval<E: Evaluator>(&self, model: &E) -> Res<Option<bool>> {
+        self.eval(model)?.to_bool()
+    }
+}
+
+/// Term writing.
+impl RTerm {
+    /// Writes a term in a writer.
+    pub fn write<W, WriteVar>(&self, w: &mut W, write_var: WriteVar) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        self.write_with(w, write_var, None)
+    }
+
+    /// Writes a term in a writer using optional bindings.
+    ///
+    /// Also takes some optional bindings. This is used when printing the body of a clause to apply
+    /// let-binding factoring on the fly, while printing to the solver.
+    pub fn write_with<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&bindings::Bindings>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        self.write_with_raw(w, write_var, bindings.map(|b| b.bindings()))
+    }
+
+    /// Write a term in a writer.
+    ///
+    /// Factors code for `write` and `write_with` by taking optional bindings.
+    fn write_with_raw<W, WriteVar>(
+        &self,
+        w: &mut W,
+        write_var: WriteVar,
+        bindings: Option<&[TermMap<VarIdx>]>,
+    ) -> IoRes<()>
+    where
+        W: Write,
+        WriteVar: Fn(&mut W, VarIdx) -> IoRes<()>,
+    {
+        // Stores triplets of
+        // - the elements to write,
+        // - the prefix string, written before next element
+        // - the suffix, written once there's no more elements to write
+        let mut stack = vec![(vec![self], "", "")];
+
+        'work: while let Some((mut to_do, sep, end)) = stack.pop() {
+            use self::RTerm::*;
+
+            if let Some(this_term) = to_do.pop() {
+                stack.push((to_do, sep, end));
+                write!(w, "{}", sep)?;
+
+                // Is term in the bindings?
+                if let Some(bindings) = bindings {
+                    for map in bindings {
+                        if let Some(var) = map.get(&this_term.to_hcons()) {
+                            Bindings::write_var(w, *var)?;
+                            continue 'work;
+                        }
+                    }
+                }
+
+                match this_term {
+                    Var(_, v) => write_var(w, *v)?,
+
+                    Cst(val) => write!(w, "{}", val)?,
+
+                    CArray { term, .. } => {
+                        write!(
+                            w,
+                            "(({} {} {})",
+                            keywords::op::as_,
+                            keywords::op::const_,
+                            this_term.typ()
+                        )?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    App { op, args, .. } => {
+                        write!(w, "({}", op)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    }
+
+                    DTypSlc { name, term, .. } => {
+                        write!(w, "({}", name)?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    DTypTst { name, term, .. } => {
+                        write!(w, "({}-{}", keywords::op::is_, name)?;
+                        stack.push((vec![term], " ", ")"))
+                    }
+
+                    DTypNew { name, args, .. } => if args.is_empty() {
+                        write!(w, "{}", name)?
+                    } else {
+                        write!(w, "({}", name)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    },
+
+                    Fun { name, args, .. } => if args.is_empty() {
+                        write!(w, "{}", name)?
+                    } else {
+                        write!(w, "({}", name)?;
+                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                    },
+                }
+            } else {
+                w.write_all(end.as_bytes())?
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl_fmt!{
   RTerm(self, fmt) {
     let mut buf = Vec::with_capacity(250) ;
@@ -976,1515 +2564,11 @@ impl_fmt!{
   }
 }
 impl<'a> PebcakFmt<'a> for RTerm {
-  type Info = & 'a VarMap< ::instance::info::VarInfo > ;
-  fn pebcak_err(& self) -> ErrorKind {
-    "during term pebcak formatting".into()
-  }
-  fn pebcak_io_fmt<W: Write>(
-    & self, w: & mut W, vars: & 'a VarMap< ::instance::info::VarInfo >
-  ) -> IoRes<()> {
-    self.write(
-      w, |w, var| w.write_all( vars[var].as_bytes() )
-    )
-  }
-}
-
-
-
-
-/// Hash consed term.
-pub type Term = HConsed<RTerm> ;
-
-
-
-
-/// Top term, as they appear in clauses.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum TTerm {
-  /// A predicate application.
-  P {
-    /// Predicate applied.
-    pred: PrdIdx,
-    /// The arguments.
-    args: VarTerms,
-  },
-  /// Just a term.
-  T(Term),
-}
-impl TTerm {
-  /// The false top term.
-  pub fn fls() -> Self {
-    TTerm::T( term::fls() )
-  }
-  /// The true top term.
-  pub fn tru() -> Self {
-    TTerm::T( term::tru() )
-  }
-
-  /// Type of the top term.
-  ///
-  /// Should always be bool, except during parsing.
-  pub fn typ(& self) -> Typ {
-    match * self {
-      TTerm::P { .. } => typ::bool(),
-      TTerm::T(ref term) => term.typ(),
+    type Info = &'a VarMap<::info::VarInfo>;
+    fn pebcak_err(&self) -> ErrorKind {
+        "during term pebcak formatting".into()
     }
-  }
-
-  /// True if the top term is a term with no variables and evaluates to true.
-  pub fn is_true(& self) -> bool {
-    self.bool() == Some(true)
-  }
-  /// True if the top term is a term with no variables and evaluates to false.
-  pub fn is_false(& self) -> bool {
-    self.bool() == Some(false)
-  }
-  /// Boolean corresponding to the top term if it's a bool constant.
-  pub fn bool(& self) -> Option<bool> {
-    match * self {
-      TTerm::T(ref t) => t.bool(),
-      _ => None,
+    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, vars: &'a VarMap<::info::VarInfo>) -> IoRes<()> {
+        self.write(w, |w, var| w.write_all(vars[var].as_bytes()))
     }
-  }
-  /// Boolean corresponding to the top term if it's an integer constant.
-  pub fn int(& self) -> Option<Int> {
-    match * self {
-      TTerm::T(ref t) => t.int(),
-      _ => None,
-    }
-  }
-  /// The operator and the kids of a top term, if it's an operator application.
-  pub fn app_inspect(& self) -> Option< (Op, & Vec<Term>) > {
-    match * self {
-      TTerm::T(ref t) => t.app_inspect(),
-      _ => None,
-    }
-  }
-  /// If the top term is simply a term, returns that term.
-  #[inline]
-  pub fn term(& self) -> Option<& Term> {
-    if let TTerm::T(ref t) = * self { Some(t) } else { None }
-  }
-
-  /// The predicate a top term is an application of, if any.
-  pub fn pred(& self) -> Option<PrdIdx> {
-    match * self {
-      TTerm::P { pred, .. } => Some(pred),
-      _ => None,
-    }
-  }
-
-  /// The arguments of a top term if it's a predicate application.
-  pub fn args(& self) -> Option<& VarTerms> {
-    match * self {
-      TTerm::P { ref args, .. } => Some(args),
-      _ => None,
-    }
-  }
-
-  /// Applies some treatment if the top term is a predicate application.
-  pub fn pred_app_fold<T, F>(& mut self, init: T, f: F) -> T
-  where F: Fn(T, PrdIdx, & mut VarTerms) -> T {
-    if let TTerm::P { pred, ref mut args } = * self {
-      f(init, pred, args)
-    } else {
-      init
-    }
-  }
-
-  /// Variables appearing in a top term.
-  pub fn vars(& self) -> VarSet {
-    match * self {
-      TTerm::P { ref args, .. } => {
-        let mut vars = VarSet::with_capacity(17) ;
-        for term in args.iter() {
-          vars.extend( term::vars(term) )
-        }
-        vars
-      },
-      TTerm::T(ref term) => term::vars(term),
-    }
-  }
-
-  /// In-place variable substitution for top terms.
-  ///
-  /// Used for substitutions in the same clause / predicate scope.
-  pub fn subst<Map: VarIndexed<Term>>(
-    & mut self, map: & Map
-  ) -> bool {
-    match * self {
-      TTerm::T(ref mut term) => {
-        let (t, b) = term.subst(map) ;
-        * term = t ;
-        b
-      },
-      TTerm::P { ref mut args, .. } => {
-        let mut changed = false ;
-        let mut nu_args = VarMap::with_capacity( args.len() ) ;
-        for arg in args.iter() {
-          let (t, b) = arg.subst(map) ;
-          nu_args.push(t) ;
-          changed = changed || b
-        }
-        * args = nu_args.into() ;
-        changed
-      },
-    }
-  }
-
-  /// Total variable substitution for top terms.
-  ///
-  /// Used for substitutions in different clause / predicate scope.
-  pub fn subst_total<Map: VarIndexed<Term>>(
-    & self, map: & Map
-  ) -> Res<TTerm> {
-    match * self {
-      TTerm::P { pred, ref args } => {
-        let mut new_args = VarMap::with_capacity( args.len() ) ;
-        for term in args.iter() {
-          if let Some((term, _)) = term.subst_total(map) {
-            new_args.push(term)
-          } else {
-            bail!("total substitution failed (predicate)")
-          }
-        }
-        Ok( TTerm::P { pred, args: new_args.into() } )
-      },
-      TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
-        Ok( TTerm::T(term) )
-      } else {
-        bail!("total substitution failed (term)")
-      },
-    }
-  }
-
-  /// Writes a top term using special functions for writing predicates and
-  /// variables.
-  pub fn write<W, WriteVar, WritePrd>(
-    & self, w: & mut W, write_var: WriteVar, write_prd: WritePrd
-  ) -> IoRes<()>
-  where
-  W: Write,
-  WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    use self::TTerm::* ;
-    match * self {
-      P { pred, ref args } => write_prd(w, pred, args),
-      T(ref t) => t.write(w, write_var),
-    }
-  }
-
-  /// Writes a top term smt2 style using a special function for writing
-  /// predicates.
-  pub fn write_smt2<W, WritePrd>(
-    & self, w: & mut W, write_prd: WritePrd
-  ) -> IoRes<()>
-  where
-  W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    self.write(
-      w, |w, var| var.default_write(w), write_prd
-    )
-  }
-}
-impl_fmt!{
-  TTerm(self, fmt) {
-    match * self {
-      TTerm::P { pred, ref args } => {
-        write!(fmt, "(p_{}", pred) ? ;
-        for arg in args.iter() {
-          write!(fmt, " {}", arg) ?
-        }
-        write!(fmt, ")")
-      },
-      TTerm::T(ref t) => write!(fmt, "{}", t),
-    }
-  }
-}
-
-
-/// A *set* of top terms.
-///
-/// Actually contains a set of `Term`s and a map from predicates to their
-/// arguments.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct TTermSet {
-  /// Set of terms.
-  terms: TermSet,
-  /// Predicate applications.
-  preds: PrdHMap< VarTermsSet >,
-}
-impl TTermSet {
-  /// Creates a new top term set with some capacity
-  #[inline]
-  pub fn with_capacity(capa: usize) -> Self {
-    TTermSet {
-      terms: TermSet::with_capacity(capa),
-      preds: PrdHMap::with_capacity(capa),
-    }
-  }
-  /// Creates a new top term set with some capacities
-  #[inline]
-  pub fn with_capacities(term_capa: usize, pred_capa: usize) -> Self {
-    TTermSet {
-      terms: TermSet::with_capacity(term_capa),
-      preds: PrdHMap::with_capacity(pred_capa),
-    }
-  }
-
-  /// Destroys the set.
-  #[inline]
-  pub fn destroy(self) -> (TermSet, PrdHMap<VarTermsSet>) {
-    (self.terms, self.preds)
-  }
-
-  /// Reserves some space.
-  #[inline]
-  pub fn reserve(& mut self, terms: usize, preds: usize) {
-    self.terms.reserve(terms) ;
-    self.preds.reserve(preds)
-  }
-
-  /// Creates an empty top term set.
-  #[inline]
-  pub fn new() -> Self { Self::with_capacity(5) }
-
-  /// Creates a top term set from a set of terms.
-  #[inline]
-  pub fn of_terms(terms: TermSet, pred_capa: usize) -> Self {
-    TTermSet {
-      terms, preds: PrdHMap::with_capacity(pred_capa),
-    }
-  }
-
-  /// True iff the set is empty.
-  #[inline]
-  pub fn is_empty(& self) -> bool {
-    self.terms.is_empty() && self.preds.is_empty()
-  }
-
-  /// Number of elements.
-  #[inline]
-  pub fn len(& self) -> usize {
-    let mut len = self.terms.len() ;
-    for (_, argss) in & self.preds {
-      len += argss.len()
-    }
-    len
-  }
-
-  /// Terms.
-  #[inline]
-  pub fn terms(& self) -> & TermSet {
-    & self.terms
-  }
-  /// Predicate applications.
-  #[inline]
-  pub fn preds(& self) -> & PrdHMap< VarTermsSet > {
-    & self.preds
-  }
-
-  /// Terms (mutable version).
-  #[inline]
-  pub fn terms_mut(& mut self) -> & mut TermSet {
-    & mut self.terms
-  }
-  /// Predicate applications (mutable version).
-  #[inline]
-  pub fn preds_mut(& mut self) -> & mut PrdHMap< VarTermsSet > {
-    & mut self.preds
-  }
-
-  /// True if `self` is a subset of `that`.
-  #[inline]
-  pub fn is_subset_of(& self, that: & Self) -> bool {
-    // `terms` subset?
-    if ! self.terms.is_subset(& that.terms) { return false }
-    // All predicates in `that` also appear in `self`?
-    for (pred, _) in & that.preds {
-      if ! self.preds.contains_key(pred) {
-        return false
-      }
-    }
-    // All applications in `self` also in `that`?
-    for (pred, self_set) in & self.preds {
-      if let Some(that_set) = that.preds.get(pred) {
-        if ! self_set.is_subset(that_set) { return false }
-      } else {
-        return false
-      }
-    }
-    true
-  }
-
-  /// Variable substitution.
-  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
-    let mut terms = TermSet::with_capacity(self.terms.len()) ;
-    for term in self.terms() {
-      let (term, _) = term.subst(map) ;
-      terms.insert(term) ;
-    }
-
-    let mut preds = PrdHMap::with_capacity( self.preds.len() ) ;
-    for (pred, argss) in self.preds.iter() {
-      let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
-      for args in argss {
-        let args = var_to::terms::new( args.subst(map) ) ;
-        nu_argss.insert(args) ;
-      }
-      preds.insert(* pred, nu_argss) ;
-    }
-
-    TTermSet { terms, preds }
-  }
-
-  /// Inserts a predicate application.
-  #[inline]
-  pub fn insert_pred_app(& mut self, pred: PrdIdx, args: VarTerms) -> bool {
-    self.preds.entry(pred).or_insert_with(VarTermsSet::new).insert(args)
-  }
-  /// Inserts some predicate applications.
-  pub fn insert_pred_apps<Iter, TArgss>(
-    & mut self, pred: PrdIdx, argss: TArgss
-  )
-  where
-  Iter: Iterator<Item = VarTerms> + ExactSizeIterator,
-  TArgss: IntoIterator<Item = VarTerms, IntoIter = Iter> {
-    let argss = argss.into_iter() ;
-    if argss.len() == 0 { return () }
-    self.preds.entry(pred).or_insert_with(VarTermsSet::new).extend( argss )
-  }
-
-  /// Inserts a term.
-  #[inline]
-  pub fn insert_term(& mut self, term: Term) -> bool {
-    self.terms.insert(term)
-  }
-  /// Inserts some terms.
-  #[inline]
-  pub fn insert_terms<Iter, Terms>(& mut self, terms: Terms)
-  where
-  Iter: Iterator<Item = Term> + ExactSizeIterator,
-  Terms: IntoIterator<Item = Term, IntoIter = Iter> {
-    let terms = terms.into_iter() ;
-    self.terms.reserve( terms.len() ) ;
-    for term in terms { self.terms.insert(term) ; () }
-  }
-
-  /// Inserts a top term.
-  pub fn insert_tterm(& mut self, tterm: TTerm) -> bool {
-    match tterm {
-      TTerm::T(term) => self.insert_term(term),
-      TTerm::P { pred, args } => self.insert_pred_app(pred, args)
-    }
-  }
-
-  /// Constructor from some top terms.
-  pub fn of_tterms<Iter, TTs>(tterms: TTs) -> Self
-  where
-  Iter: Iterator<Item = TTerm> + ExactSizeIterator,
-  TTs: IntoIterator<Item = TTerm, IntoIter = Iter> {
-    let tterms = tterms.into_iter() ;
-    let mut slf = Self::with_capacity( tterms.len() ) ;
-    for tterm in tterms {
-      slf.insert_tterm(tterm) ; ()
-    }
-    slf
-  }
-
-  /// Constructor from a single term.
-  pub fn of_term(term: Term) -> Self {
-    let mut slf = Self::new() ;
-    slf.insert_term(term) ;
-    slf
-  }
-
-  /// Puts the variables appearing in the top terms in some set.
-  pub fn vars(& self, set: & mut VarSet) {
-    for term in & self.terms {
-      set.extend( term::vars(term) )
-    }
-    for (_, argss) in & self.preds {
-      for args in argss {
-        for arg in args.iter() {
-          set.extend( term::vars(arg) )
-        }
-      }
-    }
-  }
-
-  /// Removes some arguments from the predicate applications.
-  pub fn remove_vars(& mut self, to_keep: & PrdHMap<VarSet>) {
-    remove_vars_from_pred_apps(
-      & mut self.preds, to_keep
-    )
-  }
-
-
-  /// Writes all top terms with some separator.
-  pub fn write<W, WriteVar, WritePrd>(
-    & self, w: & mut W, sep: & str, write_var: WriteVar, write_pred: WritePrd
-  ) -> IoRes<()>
-  where
-  W: Write,
-  WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    // Don't print the separator the first time.
-    let mut separate = false ;
-    macro_rules! write_sep {
-      () => (
-        if separate {
-          write!(w, "{}", sep) ?
-        } else {
-          separate = true
-        }
-      ) ;
-    }
-
-    for term in & self.terms {
-      write_sep!() ;
-      term.write(w, & write_var) ?
-    }
-
-    for (pred, argss) in & self.preds {
-      for args in argss {
-        write_sep!() ;
-        write_pred(w, * pred, args) ?
-      }
-    }
-
-    Ok(())
-  }
-}
-impl ::std::cmp::PartialOrd for TTermSet {
-  fn partial_cmp(& self, other: & Self) -> Option<::std::cmp::Ordering> {
-    use ::std::cmp::Ordering::* ;
-    let mut le = true ;
-    let mut ge = true ;
-    macro_rules! check_none {
-      () => ( if ! le && ! ge { return None } )
-    }
-
-    for term in & self.terms {
-      if ! other.terms.contains(term) { le = false ; break }
-    }
-    for term in & other.terms {
-      if ! self.terms.contains(term) { ge = false ; break }
-    }
-    check_none! {}
-
-    // Part of what happens in this loop is explained below.
-    for (pred, argss) in & self.preds {
-      check_none! {}
-      if let Some(ass) = other.preds.get(pred) {
-        if ! argss.is_subset(ass) {
-          le = false
-        }
-        if ! ass.is_subset(argss) {
-          ge = false
-        }
-      } else {
-        le = false
-      }
-    }
-
-    // At this point we checked all predicate applications in `self`. We won't
-    // touch `le` anymore.
-    //
-    // The only way `ge` can change is if it is true and `other` has some
-    // predicates that don't appear in `self`. That's because in the previous
-    // loop, whenever a predicate from `self` also appears in `other`, we
-    // checked whether the other set of arguments is a subset of the self set
-    // of arguments and set `ge` to false if it's not the case.
-
-    if ge {
-      for pred in other.preds.keys() {
-        if ! self.preds.contains_key(pred) {
-          ge = false ;
-          break
-        }
-      }
-    }
-
-    match (le, ge) {
-      (true, true) => Some(Equal),
-      (true, false) => Some(Less),
-      (false, true) => Some(Greater),
-      (false, false) => None,
-    }
-  }
-}
-
-/// Removes some arguments from some predicate applications.
-fn remove_vars_from_pred_apps(
-  apps: & mut PrdHMap< VarTermsSet >, to_keep: & PrdHMap<VarSet>
-) {
-  for (pred, argss) in apps.iter_mut() {
-    let vars_to_keep = if let Some(vars) = to_keep.get(pred) {
-      vars
-    } else {
-      continue
-    } ;
-    let mut old_argss = VarTermsSet::with_capacity( argss.len() ) ;
-    ::std::mem::swap( & mut old_argss, argss ) ;
-    for args in old_argss {
-      argss.insert( args.remove( vars_to_keep ) ) ;
-    }
-  }
-}
-
-
-/// A formula composed of top terms.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TTerms {
-  /// True.
-  True,
-  /// False.
-  False,
-  /// Conjunction.
-  Conj {
-    quant: Option<Quant>,
-    tterms: TTermSet,
-  },
-  /// Disjunction.
-  Disj {
-    quant: Option<Quant>,
-    tterms: TTermSet,
-    neg_preds: PrdHMap< VarTermsSet >,
-  },
-  /// Almost a DNF: a disjunction of conjunctions of `TTerm`s.
-  Dnf {
-    disj: Vec< (Option<Quant>, TTermSet) >
-  },
-}
-impl TTerms {
-  // pub fn inspect(& self) {
-  //   match * self {
-  //     TTerms::True => println!("true"),
-  //     TTerms::False => println!("false"),
-  //     TTerms::Conj { ref quant, ref tterms } => println!(
-  //       "conj, {} ({})", tterms.len(),
-  //       if let Some(q) = quant.as_ref() {
-  //         format!("{}", q.len())
-  //       } else { "none".into() }
-  //     ),
-  //     TTerms::Disj { ref quant, ref tterms, ref neg_preds } => println!(
-  //       "conj, {}, {}, {}", tterms.len(), neg_preds.len(),
-  //       if let Some(q) = quant.as_ref() {
-  //         format!("{}", q.len())
-  //       } else { "none".into() }
-  //     ),
-  //     TTerms::Dnf { ref disj } => println!(
-  //       "dnf, {}", disj.len()
-  //     ),
-  //   }
-  // }
-
-  /// True.
-  #[inline]
-  pub fn tru() -> Self { TTerms::True }
-  /// False.
-  #[inline]
-  pub fn fls() -> Self { TTerms::False }
-  /// Constructor from a boolean.
-  #[inline]
-  pub fn of_bool(b: bool) -> Self {
-    if b { Self::tru() } else { Self::fls() }
-  }
-
-  /// Attempts to transform some terms in a term.
-  pub fn to_term(& self) -> Option<Term> {
-    match * self {
-      TTerms::True => Some( term::tru() ),
-      TTerms::False => Some( term::fls() ),
-
-      TTerms::Conj { ref quant, .. } if quant.is_some() => None,
-      TTerms::Conj { ref tterms, .. } if ! tterms.preds.is_empty() => None,
-      TTerms::Conj { ref tterms, .. } => Some(
-        term::and(
-          tterms.terms().iter().cloned().collect()
-        )
-      ),
-
-      TTerms::Disj { ref quant, .. } if quant.is_some() => None,
-      TTerms::Disj {
-        ref tterms, ref neg_preds, ..
-      } if ! tterms.preds.is_empty() || ! neg_preds.is_empty() => None,
-      TTerms::Disj { ref tterms, .. } => Some(
-        term::or(
-          tterms.terms().iter().cloned().collect()
-        )
-      ),
-
-      TTerms::Dnf { ref disj } => {
-        let mut disj_terms = Vec::with_capacity( disj.len() ) ;
-        for & (ref quant, ref conj) in disj {
-          if quant.is_some()
-          || ! conj.preds.is_empty() { return None }
-          disj_terms.push(
-            term::and(
-              conj.terms().iter().cloned().collect()
-            )
-          )
-        }
-        Some( term::or(disj_terms) )
-      },
-    }
-  }
-
-  /// Boolean value of some top terms.
-  #[inline]
-  pub fn bool(& self) -> Option<bool> {
-    match * self {
-      TTerms::True => Some(true),
-      TTerms::False => Some(false),
-      _ => None,
-    }
-  }
-
-  /// Removes some arguments from the predicate applications.
-  pub fn remove_vars(& mut self, to_keep: & PrdHMap< VarSet >) {
-    match * self {
-      TTerms::True | TTerms::False => (),
-      TTerms::Conj { ref mut tterms, .. } => tterms.remove_vars(to_keep),
-      TTerms::Disj {
-        ref mut tterms, ref mut neg_preds, ..
-      } => {
-        tterms.remove_vars(to_keep) ;
-        remove_vars_from_pred_apps(neg_preds, to_keep)
-      },
-      TTerms::Dnf { ref mut disj } => for & mut (_, ref mut tterms) in disj {
-        tterms.remove_vars(to_keep)
-      },
-    }
-  }
-
-  /// Variable substitution.
-  pub fn subst<Map: VarIndexed<Term>>(& self, map: & Map) -> Self {
-    match * self {
-      TTerms::True => TTerms::True,
-      TTerms::False => TTerms::False,
-
-      TTerms::Conj { ref quant, ref tterms } => {
-        debug_assert! {
-          if let Some(quant) = quant.as_ref() {
-            quant.vars().keys().all(
-              |v| map.var_get(* v).is_none()
-            )
-          } else {
-            true
-          }
-        }
-        TTerms::Conj { quant: quant.clone(), tterms: tterms.subst(map) }
-      },
-
-      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
-        debug_assert! {
-          if let Some(quant) = quant.as_ref() {
-            quant.vars().keys().all(
-              |v| map.var_get(* v).is_none()
-            )
-          } else {
-            true
-          }
-        }
-
-        let mut preds = PrdHMap::with_capacity( neg_preds.len() ) ;
-        for (pred, argss) in neg_preds.iter() {
-          let mut nu_argss = VarTermsSet::with_capacity( argss.len() ) ;
-          for args in argss {
-            let args = var_to::terms::new( args.subst(map) ) ;
-            nu_argss.insert(args) ;
-          }
-          preds.insert(* pred, nu_argss) ;
-        }
-
-        TTerms::Disj {
-          quant: quant.clone(),
-          tterms: tterms.subst(map),
-          neg_preds: preds,
-        }
-      },
-
-      TTerms::Dnf { ref disj } => {
-        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
-        for & (ref quant, ref tterms) in disj {
-          debug_assert! {
-            if let Some(quant) = quant.as_ref() {
-              quant.vars().keys().all(
-                |v| map.var_get(* v).is_none()
-              )
-            } else {
-              true
-            }
-          }
-          nu_disj.push(
-            (quant.clone(), tterms.subst(map))
-          )
-        }
-        TTerms::Dnf { disj: nu_disj }
-      },
-    }
-  }
-
-  /// Constructor for a single term.
-  pub fn of_term(quant: Option<Quant>, term: Term) -> Self {
-    Self::conj( quant, TTermSet::of_term(term) )
-  }
-
-  /// Constructs a conjuction.
-  pub fn conj(quant: Option<Quant>, tterms: TTermSet) -> Self {
-    TTerms::Conj { quant, tterms }.simplify()
-  }
-
-  /// Constructs a disjuction.
-  pub fn disj(
-    quant: Option<Quant>, tterms: TTermSet, neg_preds: PrdHMap<VarTermsSet>
-  ) -> Self {
-    TTerms::Disj { quant, tterms, neg_preds }.simplify()
-  }
-  /// Constructs a disjunction from a positive application and some negated top
-  /// terms.
-  ///
-  /// This special format is exactly the one used by preprocessing.
-  pub fn disj_of_pos_neg(
-    quant: Option<Quant>, pos: Option<(PrdIdx, VarTerms)>, neg: TTermSet
-  ) -> Self {
-    let TTermSet { terms, preds: neg_preds } = neg ;
-    let mut tterms = TTermSet::with_capacities(terms.len(), 1) ;
-    for term in terms {
-      tterms.insert_term( not(term) ) ;
-    }
-    if let Some((pred, args)) = pos {
-      tterms.insert_pred_app(pred, args) ;
-    }
-    TTerms::Disj {
-      quant, tterms, neg_preds
-    }
-  }
-
-  /// Constructs a DNF.
-  pub fn dnf(disj: Vec< (Option<Quant>, TTermSet) >) -> Self {
-    TTerms::Dnf{ disj }.simplify()
-  }
-
-  /// Predicates appearing in the top terms.
-  pub fn preds(& self) -> PrdSet {
-    let mut res = PrdSet::new() ;
-    match * self {
-      TTerms::True | TTerms::False => (),
-
-      TTerms::Conj { ref tterms, .. } => for pred in tterms.preds.keys() {
-        res.insert(* pred) ;
-      },
-      TTerms::Disj { ref tterms, ref neg_preds, .. } => {
-        for pred in tterms.preds.keys() {
-          res.insert(* pred) ;
-        }
-        for pred in neg_preds.keys() {
-          res.insert(* pred) ;
-        }
-      },
-
-      TTerms::Dnf { ref disj } => for & (_, ref tterms) in disj {
-        for pred in tterms.preds.keys() {
-          res.insert(* pred) ;
-        }
-      },
-    }
-
-    res
-  }
-
-  /// Constructs the disjunction of `self` and `conj` (a conjunction).
-  ///
-  /// Does not call `simplify` if it creates a dnf.
-  ///
-  /// # Error if
-  ///
-  /// - called on a `Disj`
-  pub fn or(self, conj: (Option<Quant>, TTermSet)) -> Res<Self> {
-    match self {
-      TTerms::True => Ok(self),
-      TTerms::False => Ok(
-        TTerms::conj(conj.0, conj.1).simplify()
-      ),
-      TTerms::Conj { quant, tterms } => {
-        if tterms.is_subset_of(& conj.1) {
-          // conj => self?
-          Ok( TTerms::Conj { quant, tterms } )
-        } else if conj.1.is_subset_of(& tterms) {
-          // self => conj?
-          Ok(
-            TTerms::Conj{ quant: conj.0, tterms: conj.1 }.simplify()
-          )
-        } else {
-          Ok(
-            TTerms::dnf(
-              vec![ (quant, tterms), conj ]
-            )
-          )
-        }
-      },
-      TTerms::Disj { .. } => bail!(
-        "TTerms: trying to call `or` on a disjunction"
-      ),
-      TTerms::Dnf { disj } => {
-        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
-        let mut ignore_conj = false ;
-        for (quant, tterms) in disj {
-          use std::cmp::Ordering::* ;
-          match tterms.partial_cmp( & conj.1 ) {
-            // conj => tterms
-            // don't need `conj`
-            Some(Less) => ignore_conj = true,
-            // tterms => conj
-            // skip `tterms`
-            Some(Greater) => continue,
-            // tterms = conj
-            // skip `conj`
-            Some(Equal) => ignore_conj = true,
-
-            None => (),
-          }
-          nu_disj.push( (quant, tterms) )
-        }
-
-        if ! ignore_conj { nu_disj.push(conj) }
-
-        // Note that if we ignored a `tterms_1` because `tterms_1 => conj`, and
-        // then we saw a `tterms_2` s.t. `conj => tterms_2` so we ignored
-        // `conj` as well, there is no problem because implication is
-        // transitive.
-
-        Ok( TTerms::Dnf { disj: nu_disj } )
-      },
-    }
-  }
-
-  /// Simplifies a formula of top terms.
-  ///
-  /// # TODO
-  ///
-  /// - factor code inside this function, `Conj` and `Disj` are almost the
-  ///   same, DRY
-  ///
-  /// # Warning
-  ///
-  /// This function recurses on a `Conj` in the `Dnf` case. At the time of
-  /// writing, this recursive call is guaranteed not to cause more recursive
-  /// calls.
-  ///
-  /// Be careful to maintain, or (ideally) improve, this invariant.
-  pub fn simplify(self) -> Self {
-
-    match self {
-
-      TTerms::True | TTerms::False => self,
-
-      TTerms::Conj { quant, mut tterms } => {
-        tterms.preds.retain(
-          |_, argss| ! argss.is_empty()
-        ) ;
-
-        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
-        // Used to inline conjunctions.
-        let mut swap = TermSet::new() ;
-        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
-
-        'inline_conjs: loop {
-
-          'inspect_conj_terms: for term in old_terms.drain() {
-
-            // Is the term a conjunction?
-            if let Some(kids) = term.conj_inspect() {
-              for kid in kids {
-                swap.insert( kid.clone() ) ;
-                ()
-              }
-              continue 'inspect_conj_terms
-            }
-
-            // Term trivial?
-            match term.bool() {
-              Some(true) => continue 'inspect_conj_terms,
-              Some(false) => return TTerms::fls(),
-              None => (),
-            }
-
-            // Do we also have its negation?
-            if tterms.terms.contains( & not( term.clone() ) ) {
-              return TTerms::fls()
-            }
-
-            // Okay, move on.
-            tterms.terms.insert(term) ;
-            ()
-          }
-
-          // Keep going if `swap` is not empty.
-          if ! swap.is_empty() {
-            ::std::mem::swap( & mut old_terms, & mut swap ) ;
-            continue 'inline_conjs
-          } else {
-            break 'inline_conjs
-          }
-
-        }
-
-        // Only keep active quantified variables.
-        let quant = quant.and_then(
-          |quant| {
-            let mut active = VarSet::with_capacity(
-              quant.vars().len() * 2
-            ) ;
-            tterms.vars(& mut active) ;
-            quant.filter(|var| active.contains(var))
-          }
-        ) ;
-
-        if tterms.is_empty() {
-          TTerms::tru()
-        } else {
-          TTerms::Conj { quant, tterms }
-        }
-      },
-
-      TTerms::Disj {
-        quant, mut tterms, mut neg_preds
-      } => {
-        tterms.preds.retain(
-          |_, argss| ! argss.is_empty()
-        ) ;
-        neg_preds.retain(
-          |_, argss| ! argss.is_empty()
-        ) ;
-
-        // Do we have a predicate application and its negation?
-        for (pred, argss) in & tterms.preds {
-          if let Some(neg_argss) = neg_preds.get(pred) {
-            for args in argss {
-              if neg_argss.contains(args) { return TTerms::tru() }
-            }
-          }
-        }
-
-        let mut old_terms = TermSet::with_capacity( tterms.terms.len() ) ;
-        // Used to inline disjunctions.
-        let mut swap = TermSet::new() ;
-        ::std::mem::swap( & mut old_terms, & mut tterms.terms ) ;
-
-        'inline_disj: loop {
-
-          'inspect_disj_terms: for term in old_terms.drain() {
-
-            // Is the term a disjunction?
-            if let Some(kids) = term.disj_inspect() {
-              for kid in kids {
-                swap.insert( kid.clone() ) ;
-                ()
-              }
-              continue 'inspect_disj_terms
-            }
-
-            // Term trivial?
-            match term.bool() {
-              Some(true) => return TTerms::tru(),
-              Some(false) => continue 'inspect_disj_terms,
-              None => (),
-            }
-
-            // Do we also have its negation?
-            if tterms.terms.contains( & not( term.clone() ) ) {
-              return TTerms::tru()
-            }
-
-            // Okay, move on.
-            tterms.terms.insert(term) ;
-            ()
-          }
-
-          // Keep going if `swap` is not empty.
-          if ! swap.is_empty() {
-            ::std::mem::swap( & mut old_terms, & mut swap ) ;
-            continue 'inline_disj
-          } else {
-            break 'inline_disj
-          }
-
-        }
-
-        // Only keep active quantified variables.
-        let quant = quant.and_then(
-          |quant| {
-            let mut active = VarSet::with_capacity(
-              quant.vars().len() * 2
-            ) ;
-            tterms.vars(& mut active) ;
-            for (_, argss) in & neg_preds {
-              for args in argss {
-                for arg in args.iter()   {
-                  active.extend( term::vars(arg) )
-                }
-              }
-            }
-            quant.filter(|var| active.contains(var))
-          }
-        ) ;
-
-        if tterms.is_empty() && neg_preds.is_empty() {
-          TTerms::fls()
-        } else {
-          TTerms::Disj { quant, tterms, neg_preds }
-        }
-      },
-
-      TTerms::Dnf { disj } => {
-        // We're cheating a bit here. Simplifying the disjuncts is done by
-        // constructing the corresponding `TTerms::Conj` and simplifying them.
-        // While this causes a recursive call, it's fine because it is
-        // guaranteed to be the only one.
-        //
-        // Unless something changes later in `Conj`'s simplification...
-        let mut nu_disj: Vec<(_, TTermSet)> = Vec::with_capacity(
-          disj.len()
-        ) ;
-        'simplify_disjuncts: for (quant, tterms) in disj {
-          match ( TTerms::Conj { quant, tterms } ).simplify() {
-            TTerms::True => return TTerms::True,
-            TTerms::False => (),
-            TTerms::Conj { quant, tterms } => {
-              // Check with other disjuncts.
-              let mut cnt = 0 ;
-              while cnt < nu_disj.len() {
-                use std::cmp::Ordering::* ;
-                match tterms.partial_cmp(& nu_disj[cnt].1) {
-                  None => cnt += 1,
-                  // other disjunct => this disjunct
-                  Some(Less) => { nu_disj.swap_remove(cnt) ; () },
-                  // other disjunct = this disjunct
-                  Some(Equal) => continue 'simplify_disjuncts,
-                  // this disjunct => other disjunct
-                  Some(Greater) => continue 'simplify_disjuncts,
-                }
-              }
-              nu_disj.push( (quant, tterms) )
-            },
-            TTerms::Disj { .. } => panic!(
-              "simplification of a conjunct in a TTerms DNF \
-              yielded a disjunction, unreachable"
-            ),
-            TTerms::Dnf { .. } => panic!(
-              "simplification of a conjunct in a TTerms DNF \
-              yielded a DNF, unreachable"
-            ),
-          }
-        }
-        match nu_disj.len() {
-          0 => TTerms::fls(),
-          1 => if let Some((quant, tterms)) = nu_disj.pop() {
-            TTerms::Conj { quant, tterms }
-          } else {
-            unreachable!()
-          },
-          _ => TTerms::Dnf { disj: nu_disj }
-        }
-      },
-    }
-  }
-
-
-  /// Simplifies some top terms given some definitions for the predicates.
-  pub fn simplify_pred_apps(
-    self, model: ModelRef, pred_terms: & PrdMap< Option<TTerms> >
-  ) -> Self {
-    macro_rules! if_defined {
-      ($pred:ident then |$def:ident| $stuff:expr) => (
-        if let Some($def) = pred_terms[* $pred].as_ref() {
-          $stuff
-        } else {
-          for (ref idx, ref $def) in model {
-            if idx == $pred { $stuff }
-          }
-        }
-      )
-    }
-
-    match self {
-      TTerms::True => TTerms::True,
-      TTerms::False => TTerms::False,
-
-      TTerms::Conj { quant, mut tterms } => {
-        let mut to_rm = PrdSet::new() ;
-
-        for pred in tterms.preds.keys() {
-          if_defined! {
-            pred then |def| match def.bool() {
-              Some(true) => { to_rm.insert(* pred) ; () },
-              Some(false) => return TTerms::fls(),
-              None => (),
-            }
-          }
-        }
-
-        for pred in to_rm {
-          let value = tterms.preds.remove(& pred) ;
-          debug_assert!( value.is_some() )
-        }
-
-        TTerms::Conj { quant, tterms }.simplify()
-      },
-
-      TTerms::Disj { quant, mut tterms, mut neg_preds } => {
-        let mut to_rm = PrdSet::new() ;
-
-        for pred in tterms.preds.keys() {
-          if_defined! {
-            pred then |def| match def.bool() {
-              Some(false) => { to_rm.insert(* pred) ; () },
-              Some(true) => return TTerms::tru(),
-              None => (),
-            }
-          }
-        }
-
-        for pred in to_rm.drain() {
-          let value = tterms.preds.remove(& pred) ;
-          debug_assert!( value.is_some() )
-        }
-
-        for pred in neg_preds.keys() {
-          if_defined! {
-            pred then |def| match def.bool() {
-              Some(true) => { to_rm.insert(* pred) ; () },
-              Some(false) => return TTerms::tru(),
-              None => (),
-            }
-          }
-        }
-
-        for pred in to_rm.drain() {
-          let value = neg_preds.remove(& pred) ;
-          debug_assert!( value.is_some() )
-        }
-
-        TTerms::Disj { quant, tterms, neg_preds }.simplify()
-      },
-
-      TTerms::Dnf { disj } => {
-        let mut nu_disj = Vec::with_capacity( disj.len() ) ;
-
-        for (quant, tterms) in disj {
-          match (
-            TTerms::Conj { quant, tterms }
-          ).simplify_pred_apps(model, pred_terms) {
-            TTerms::True => return TTerms::tru(),
-            TTerms::False => (),
-
-            TTerms::Conj { quant, tterms } => nu_disj.push(
-              (quant, tterms)
-            ),
-
-            TTerms::Disj { .. } => panic!(
-              "simplification of a conjunct in a TTerms DNF \
-              yielded a disjunction, unreachable"
-            ),
-            TTerms::Dnf { .. } => panic!(
-              "simplification of a conjunct in a TTerms DNF \
-              yielded a DNF, unreachable"
-            ),
-          }
-        }
-
-        TTerms::Dnf{ disj: nu_disj }.simplify()
-      },
-    }
-  }
-
-
-  /// Writes some top terms using special functions for writing predicates and
-  /// variables.
-  pub fn write<W, WriteVar, WritePrd>(
-    & self, w: & mut W, write_var: WriteVar, write_prd: WritePrd
-  ) -> IoRes<()>
-  where
-  W: Write,
-  WriteVar: Fn(& mut W, VarIdx) -> IoRes<()>,
-  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-
-    macro_rules! write_conj {
-      ($quant:expr, $tterms:expr) => ({
-        let close_quant = if let Some(quant) = $quant.as_ref() {
-          write!(w, "(") ? ;
-          quant.write(w, & write_var) ? ;
-          write!(w, " ") ? ;
-          true
-        } else { false } ;
-
-        let close_and = if $tterms.len() > 1 {
-          write!(w, "(and ") ? ;
-          true
-        } else { false } ;
-
-        $tterms.write(w, " ", & write_var, & write_prd) ? ;
-
-        if close_and { write!(w, ")") ? }
-
-        if close_quant { write!(w, ")") } else { Ok(()) }
-      }) ;
-    }
-
-    match * self {
-      TTerms::True => return write!(w, "true"),
-      TTerms::False => return write!(w, "false"),
-
-      TTerms::Conj { ref quant, ref tterms } => write_conj!(quant, tterms),
-
-      TTerms::Disj { ref quant, ref tterms, ref neg_preds } => {
-        let close_quant = if let Some(quant) = quant.as_ref() {
-          write!(w, "(") ? ;
-          quant.write(w, & write_var) ? ;
-          write!(w, " ") ? ;
-          true
-        } else { false } ;
-
-        let close_or = if tterms.len() + neg_preds.len() > 1 {
-          write!(w, "(or ") ? ;
-          true
-        } else { false } ;
-
-        tterms.write(w, " ", & write_var, & write_prd) ? ;
-
-        let mut sep = ! tterms.is_empty() && ! neg_preds.is_empty() ;
-
-        for (pred, argss) in neg_preds {
-          for args in argss {
-            if sep {
-              write!(w, " ") ?
-            } else {
-              sep = true
-            }
-            write!(w, "(not ") ? ;
-            write_prd(w, * pred, args) ? ;
-            write!(w, ")") ?
-          }
-        }
-
-        if close_or { write!(w, ")") ? }
-
-        if close_quant { write!(w, ")") } else { Ok(()) }
-      },
-
-      TTerms::Dnf { ref disj } => {
-        let close_or = if disj.len() > 1 {
-          write!(w, "(or") ? ;
-          true
-        } else { false } ;
-
-        for & (ref quant, ref tterms) in disj {
-          write!(w, " ") ? ;
-          write_conj!(quant, tterms) ?
-        }
-
-        if close_or { write!(w, ")") } else { Ok(()) }
-      },
-    }
-  }
-
-  /// Writes some top terms smt2 style using a special function for writing
-  /// predicates.
-  ///
-  /// Equivalent to `write` with variable default printing.
-  pub fn write_smt2<W, WritePrd>(
-    & self, w: & mut W, write_prd: WritePrd
-  ) -> IoRes<()>
-  where
-  W: Write,
-  WritePrd: Fn(& mut W, PrdIdx, & VarTerms) -> IoRes<()> {
-    self.write(
-      w, |w, var| var.default_write(w), write_prd
-    )
-  }
-}
-
-impl<'a, 'b> ::rsmt2::print::Expr2Smt<
-  & 'b (& 'a PrdSet, & 'a PrdSet, & 'a PrdMap< ::instance::info::PrdInfo >)
-> for TTerms {
-  fn expr_to_smt2<Writer: Write>(
-    & self, w: & mut Writer, info: & 'b (
-      & 'a PrdSet, & 'a PrdSet, & 'a PrdMap<::instance::info::PrdInfo>
-    )
-  ) -> SmtRes<()> {
-    let (true_preds, false_preds, pred_info) = * info ;
-    self.write_smt2(
-      w, |w, pred, args| {
-        if true_preds.contains(& pred) {
-          write!(w, "true")
-        } else if false_preds.contains(& pred) {
-          write!(w, "false")
-        } else if args.is_empty() {
-          write!(w, "{}", pred_info[pred])
-        } else {
-          write!(w, "({}", pred_info[pred]) ? ;
-          for arg in args.iter() {
-            write!(w, " ") ? ;
-            arg.write(w, |w, var| var.default_write(w)) ?
-          }
-          write!(w, ")")
-        }
-      }
-    ) ? ;
-    Ok(())
-  }
-}
-
-
-
-/// Existential or universal quantifier.
-///
-/// Always use the constructors to avoid falsifying the invariant.
-///
-/// # Invariant
-///
-/// The variable partial maps are never empty.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Quant {
-  /// Exists.
-  Exists( VarHMap<Typ> ),
-  /// Forall.
-  Forall( VarHMap<Typ> ),
-}
-impl Quant {
-  /// Creates an existential qualifier.
-  pub fn exists(map: VarHMap<Typ>) -> Option<Self> {
-    if map.is_empty() { None } else { Some( Quant::Exists(map) ) }
-  }
-  /// Creates an existential qualifier.
-  pub fn forall(map: VarHMap<Typ>) -> Option<Self> {
-    if map.is_empty() { None } else { Some( Quant::Forall(map) ) }
-  }
-
-  /// Quantified variables.
-  pub fn vars(& self) -> & VarHMap<Typ> {
-    match * self {
-      Quant::Exists(ref vars) => vars,
-      Quant::Forall(ref vars) => vars,
-    }
-  }
-
-  /// Quantified variables (mutable version).
-  pub fn vars_mut(& mut self) -> & mut VarHMap<Typ> {
-    match * self {
-      Quant::Exists(ref mut vars) => vars,
-      Quant::Forall(ref mut vars) => vars,
-    }
-  }
-
-  /// Number of quantified variables.
-  pub fn len(& self) -> usize {
-    let map = match * self {
-      Quant::Exists(ref map) => map,
-      Quant::Forall(ref map) => map,
-    } ;
-    debug_assert! { ! map.is_empty() }
-    map.len()
-  }
-
-  /// True if there are no quantified variables.
-  pub fn is_empty(& self) -> bool { self.len() == 0 }
-
-  /// Filters some quantified variables.
-  ///
-  /// Keeps all quantified variables such that `f(var)`.
-  ///
-  /// Returns `None` if the mapping ends up being empty.
-  pub fn filter<F>(mut self, f: F) -> Option<Self>
-  where F: Fn(& VarIdx) -> bool {
-    self.vars_mut().retain( |var, _| f(var) ) ;
-    if self.vars().is_empty() { None } else { Some(self) }
-  }
-
-  /// Writes the quantier and its quantified variables.
-  pub fn write<W, WVar>(
-    & self, w: & mut W, write_var: WVar
-  ) -> IoRes<()>
-  where W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
-    debug_assert!( ! self.vars().is_empty() ) ;
-
-    let qvars = match * self {
-      Quant::Exists(ref qvars) => {
-        write!(w, "exists ") ? ;
-        qvars
-      },
-      Quant::Forall(ref qvars) => {
-        write!(w, "forall ") ? ;
-        qvars
-      },
-    } ;
-
-    write!(w, "(") ? ;
-    for (var, typ) in qvars {
-      write!(w, " (") ? ;
-      write_var(w, * var) ? ;
-      write!(w, " {})", typ) ? ;
-    }
-    write!(w, " )")
-  }
-
-  /// Writes the opening part of the quantifier as a line.
-  ///
-  /// Basically `"{}(<quantified> ( <qvars> )\n", prefix`.
-  pub fn write_pref<W, WVar>(
-    & self, w: & mut W, pref: & str, write_var: WVar
-  ) -> IoRes<()>
-  where
-  W: Write, WVar: Fn(& mut W, VarIdx) -> IoRes<()> {
-    w.write_all( pref.as_bytes() ) ? ;
-    let map = match * self {
-      Quant::Exists(ref map) => {
-        write!(w, "(exists (") ? ;
-        map
-      },
-      Quant::Forall(ref map) => {
-        write!(w, "(forall (") ? ;
-        map
-      },
-    } ;
-    for (var, typ) in map {
-      write!(w, " (") ? ;
-      write_var(w, * var) ? ;
-      write!(w, " {})", typ) ?
-    }
-    writeln!(w, " )")
-  }
-}
-
-
-/// A term type-checking error.
-pub enum TypError {
-  /// No type info, just an error message.
-  Msg(String),
-  /// Type info:
-  ///
-  /// - the type expected (if known),
-  /// - the type obtained,
-  /// - the index of the argument that caused it.
-  Typ {
-    expected: Option<Typ>,
-    obtained: Typ,
-    index: usize,
-  }
-}
-impl TypError {
-  /// Message constructor.
-  pub fn msg<S: Into<String>>(s: S) -> Self {
-    TypError::Msg( s.into() )
-  }
-
-  /// Type info constructor.
-  pub fn typ(
-    expected: Option<Typ>, obtained: Typ, index: usize
-  ) -> Self {
-    TypError::Typ { expected, obtained, index }
-  }
 }

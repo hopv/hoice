@@ -1,410 +1,482 @@
 //! Tests for the term structure.
 
-use common::* ;
-use term::Op ;
-use term::int ;
+use common::*;
+use term::int;
+use term::Op;
 
 #[test]
 fn cst_add() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let sum = term::app( Op::Add, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let sum = term::app(Op::Add, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     int model => sum, 10
   )
 }
 
 #[test]
 fn cst_sub_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let sub = term::app( Op::Sub, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let sub = term::app(Op::Sub, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     int model => sub, 4
   )
 }
 
 #[test]
 fn cst_sub_2() {
-  let c_1 = int(7) ;
-  let sub = term::app( Op::Sub, vec![ c_1 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let sub = term::app(Op::Sub, vec![c_1]);
+    let model = model!();
+    assert_eval!(
     int model => sub, (-7)
   )
 }
 
 #[test]
 fn cst_mul() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let mul = term::app( Op::Mul, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let mul = term::app(Op::Mul, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     int model => mul, 21
   )
 }
 
 #[test]
 fn cst_div() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let div = term::app( Op::IDiv, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let div = term::app(Op::IDiv, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     int model => div, 2
   )
 }
 
 #[test]
 fn cst_mod() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let m0d = term::app( Op::Mod, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let m0d = term::app(Op::Mod, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     int model => m0d, 1
   )
 }
 
 #[test]
 fn cst_gt_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let gt = term::app( Op::Gt, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let gt = term::app(Op::Gt, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => gt
   )
 }
 
 #[test]
 fn cst_gt_2() {
-  let c_1 = int(7) ;
-  let c_2 = int(7) ;
-  let gt = term::app( Op::Gt, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(7);
+    let gt = term::app(Op::Gt, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => gt
   )
 }
 
 #[test]
 fn cst_ge_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let ge = term::app( Op::Ge, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let ge = term::app(Op::Ge, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => ge
   )
 }
 
 #[test]
 fn cst_ge_2() {
-  let c_1 = int(7) ;
-  let c_2 = int(7) ;
-  let ge = term::app( Op::Ge, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(7);
+    let ge = term::app(Op::Ge, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => ge
   )
 }
 
 #[test]
 fn cst_le_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let le = term::app( Op::Le, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let le = term::app(Op::Le, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => le
   )
 }
 
 #[test]
 fn cst_le_2() {
-  let c_1 = int(7) ;
-  let c_2 = int(7) ;
-  let le = term::app( Op::Le, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(7);
+    let le = term::app(Op::Le, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => le
   )
 }
 
 #[test]
 fn cst_lt_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let lt = term::app( Op::Lt, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let lt = term::app(Op::Lt, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => lt
   )
 }
 
 #[test]
 fn cst_lt_2() {
-  let c_1 = int(7) ;
-  let c_2 = int(7) ;
-  let lt = term::app( Op::Lt, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(7);
+    let lt = term::app(Op::Lt, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => lt
   )
 }
 
 #[test]
 fn cst_eq_1() {
-  let c_1 = int(7) ;
-  let c_2 = int(7) ;
-  let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(7);
+    let eq = term::app(Op::Eql, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => eq
   )
 }
 
 #[test]
 fn cst_eq_2() {
-  let c_1 = int(7) ;
-  let c_2 = int(3) ;
-  let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = int(7);
+    let c_2 = int(3);
+    let eq = term::app(Op::Eql, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => eq
   )
 }
 
 #[test]
 fn cst_eq_3() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let eq = term::app(Op::Eql, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => eq
   )
 }
 
 #[test]
 fn cst_eq_4() {
-  let c_1 = term::fls() ;
-  let c_2 = term::tru() ;
-  let eq = term::app( Op::Eql, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::tru();
+    let eq = term::app(Op::Eql, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => eq
   )
 }
 
 #[test]
 fn cst_impl_1() {
-  let c_1 = term::fls() ;
-  let c_2 = term::fls() ;
-  let imp = term::app( Op::Impl, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::fls();
+    let imp = term::app(Op::Impl, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => imp
   )
 }
 
 #[test]
 fn cst_impl_2() {
-  let c_1 = term::tru() ;
-  let c_2 = term::fls() ;
-  let imp = term::app( Op::Impl, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::fls();
+    let imp = term::app(Op::Impl, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool not model => imp
   )
 }
 
 #[test]
 fn cst_impl_3() {
-  let c_1 = term::fls() ;
-  let c_2 = term::tru() ;
-  let imp = term::app( Op::Impl, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::tru();
+    let imp = term::app(Op::Impl, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => imp
   )
 }
 
 #[test]
 fn cst_impl_4() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let imp = term::app( Op::Impl, vec![ c_1, c_2 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let imp = term::app(Op::Impl, vec![c_1, c_2]);
+    let model = model!();
+    assert_eval!(
     bool model => imp
   )
 }
 
 #[test]
 fn cst_not_1() {
-  let c_1 = term::fls() ;
-  let not = term::app( Op::Not, vec![ c_1 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let not = term::app(Op::Not, vec![c_1]);
+    let model = model!();
+    assert_eval!(
     bool model => not
   )
 }
 
 #[test]
 fn cst_not_2() {
-  let c_1 = term::tru() ;
-  let not = term::app( Op::Not, vec![ c_1 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let not = term::app(Op::Not, vec![c_1]);
+    let model = model!();
+    assert_eval!(
     bool not model => not
   )
 }
 
 #[test]
 fn cst_and_1() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::tru() ;
-  let c_4 = term::tru() ;
-  let and = term::app( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let c_3 = term::tru();
+    let c_4 = term::tru();
+    let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool model => and
   )
 }
 
 #[test]
 fn cst_and_2() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::fls() ;
-  let c_4 = term::tru() ;
-  let and = term::app( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let c_3 = term::fls();
+    let c_4 = term::tru();
+    let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool not model => and
   )
 }
 
 #[test]
 fn cst_and_3() {
-  let c_1 = term::fls() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::tru() ;
-  let c_4 = term::tru() ;
-  let and = term::app( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::tru();
+    let c_3 = term::tru();
+    let c_4 = term::tru();
+    let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool not model => and
   )
 }
 
 #[test]
 fn cst_and_4() {
-  let c_1 = term::tru() ;
-  let c_2 = term::fls() ;
-  let c_3 = term::fls() ;
-  let c_4 = term::tru() ;
-  let and = term::app( Op::And, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::fls();
+    let c_3 = term::fls();
+    let c_4 = term::tru();
+    let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool not model => and
   )
 }
 
 #[test]
 fn cst_or_1() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::tru() ;
-  let c_4 = term::tru() ;
-  let or = term::app( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let c_3 = term::tru();
+    let c_4 = term::tru();
+    let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool model => or
   )
 }
 
 #[test]
 fn cst_or_2() {
-  let c_1 = term::tru() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::fls() ;
-  let c_4 = term::tru() ;
-  let or = term::app( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::tru();
+    let c_3 = term::fls();
+    let c_4 = term::tru();
+    let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool model => or
   )
 }
 
 #[test]
 fn cst_or_3() {
-  let c_1 = term::fls() ;
-  let c_2 = term::tru() ;
-  let c_3 = term::tru() ;
-  let c_4 = term::tru() ;
-  let or = term::app( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::tru();
+    let c_3 = term::tru();
+    let c_4 = term::tru();
+    let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool model => or
   )
 }
 
 #[test]
 fn cst_or_4() {
-  let c_1 = term::tru() ;
-  let c_2 = term::fls() ;
-  let c_3 = term::fls() ;
-  let c_4 = term::tru() ;
-  let or = term::app( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::tru();
+    let c_2 = term::fls();
+    let c_3 = term::fls();
+    let c_4 = term::tru();
+    let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool model => or
   )
 }
 
 #[test]
 fn cst_or_5() {
-  let c_1 = term::fls() ;
-  let c_2 = term::fls() ;
-  let c_3 = term::fls() ;
-  let c_4 = term::fls() ;
-  let or = term::app( Op::Or, vec![ c_1, c_2, c_3, c_4 ] ) ;
-  let model = model!() ;
-  assert_eval!(
+    let c_1 = term::fls();
+    let c_2 = term::fls();
+    let c_3 = term::fls();
+    let c_4 = term::fls();
+    let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
+    let model = model!();
+    assert_eval!(
     bool not model => or
   )
 }
 
 #[test]
 fn add_real_1() {
-  let v_1 = term::var( 0, typ::real() ) ;
-  let add = term::add( vec![ term::real_of_float(-2.0), v_1.clone() ] ) ;
-  let model = model!( val::real( rat_of_float(1.0) ) ) ;
-  assert_eval!( real model => add, - 1.0 ) ;
+    let v_1 = term::var(0, typ::real());
+    let add = term::add(vec![term::real_of(-2.0), v_1.clone()]);
+    let model = model!(val::real(rat_of_float(1.0)));
+    assert_eval!( real model => add, - 1.0 );
 }
 
 #[test]
 fn ite_1() {
-  let v_1 = term::var( 0, typ::real() ) ;
-  let ite = term::ite(
-    term::eq(
-      term::add( vec![ term::real_of_float(-2.0), v_1.clone() ] ),
-      term::real_of_float(0.0)
-    ),
-    term::real_of_float(1.0),
-    term::add(
-      vec![ term::real_of_float(1.0), v_1.clone() ]
-    )
-  ) ;
-  let model = model!( val::real( rat_of_float(1.0) ) ) ;
-  assert_eval!( real model => ite, 2.0 ) ;
+    let v_1 = term::var(0, typ::real());
+    let ite = term::ite(
+        term::eq(
+            term::add(vec![term::real_of(-2.0), v_1.clone()]),
+            term::real_of(0.0),
+        ),
+        term::real_of(1.0),
+        term::add(vec![term::real_of(1.0), v_1.clone()]),
+    );
+    let model = model!(val::real(rat_of_float(1.0)));
+    println!("ite_1");
+    println!("model:");
+    model.print();
+    assert_eval!( real model => ite, 2.0 );
+}
+
+// The lazy evaluation tests rely on the order in which the terms are created.
+// This is not the case outside of these tests obviously. But here the goal is
+// to have the last term being illegal, usually a variable that's not defined
+// in the model. That way, if lazy evaluation does not do the right thing the
+// test crashes.
+//
+// Unfortunately, test run in parallel and this can end up screwing up the
+// order of the terms. To avoid this, the illegal variable should use a
+// different index each time, ideally a high one to avoid clashes with other
+// tests.
+
+#[test]
+fn lazy_1() {
+    let v_0 = term::real_var(0);
+    let t_1 = term::ge(v_0, term::real(rat_of_float(7.0)));
+    let v_1 = term::real_var(1000);
+    let t_2 = term::ge(v_1, term::real(rat_of_float(0.0)));
+
+    let conj = term::and(vec![t_1, t_2]);
+
+    let model = model!(val::real(rat_of_float(1.0)));
+
+    // This evaluation should not work: `v_1` is not defined in the model, but
+    // because evaluation is lazy and `t_1` is false with this model, it goes
+    // through and the conjunction evaluates to false.
+
+    assert_eval!( bool not model => conj )
+}
+
+#[test]
+fn lazy_2() {
+    let v_0 = term::real_var(0);
+    let t_1 = term::ge(v_0, term::real(rat_of_float(0.0)));
+    let v_1 = term::real_var(1001);
+    let t_2 = term::ge(v_1, term::real(rat_of_float(0.0)));
+
+    let disj = term::or(vec![t_1, t_2]);
+
+    let model = model!(val::real(rat_of_float(1.0)));
+
+    // This evaluation should not work: `v_1` is not defined in the model, but
+    // because evaluation is lazy and `t_1` is false with this model, it goes
+    // through and the conjunction evaluates to false.
+
+    assert_eval!( bool model => disj )
+}
+
+#[test]
+fn lazy_3() {
+    let v_0 = term::real_var(0);
+    let t_1 = term::ge(v_0.clone(), term::real(rat_of_float(7.0)));
+    let v_1 = term::real_var(1002);
+    let ite = term::ite(t_1, v_1, v_0);
+
+    let model = model!(val::real(rat_of_float(1.0)));
+
+    assert_eval!( real model => ite, 1.0 )
+}
+
+#[test]
+fn lazy_4() {
+    let v_0 = term::real_var(0);
+    let t_1 = term::u_minus(v_0.clone());
+    let v_1 = term::real_var(1003);
+    let distinct = term::distinct(vec![t_1, v_0, v_1]);
+
+    let model = model!(val::real(rat_of_float(0.0)));
+
+    assert_eval!( bool not model => distinct )
 }
 
 // #[test]
@@ -412,7 +484,6 @@ fn ite_1() {
 //   let v_1 = term::bool_var(0) ;
 //   let v_2 = term::int_var(1) ;
 //   let v_3 = term::int_var(2) ;
-
 
 //   let model_1 = model!( true, 2, 3 ) ;
 //   let model_2 = model!( true, 7, 0 ) ;
@@ -445,8 +516,6 @@ fn ite_1() {
 
 //   ()
 // }
-
-
 
 // #[test]
 // fn partial_eval() {
@@ -523,11 +592,7 @@ fn ite_1() {
 //   assert_eval!{ int model => term, 0 }
 // }
 
-
-
-
 // use term::{ tru, fls } ;
-
 
 // macro_rules! eq {
 //   ($(> $lhs:expr, $rhs:expr);* $(;)*) => ({
@@ -756,7 +821,6 @@ fn ite_1() {
 //   // }
 // }
 
-
 // macro_rules! parser {
 //   (
 //     vars {
@@ -804,7 +868,6 @@ fn ite_1() {
 
 //   // ($($tt:tt)*) => ($($tt)*) ;
 // }
-
 
 // #[test]
 // fn bug_find() {
@@ -909,8 +972,3 @@ fn ite_1() {
 //     }
 //   }
 // }
-
-
-
-
-

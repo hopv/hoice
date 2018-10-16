@@ -1,6 +1,6 @@
 [package]
 name = "hoice"
-version = "1.5.0"
+version = "1.7.0"
 authors = ["Adrien Champion <adrien.champion@email.com>"]
 description = "A ICE-based Horn clause solver."
 homepage = "https://github.com/hopv/hoice"
@@ -31,14 +31,15 @@ panic = 'unwind'
 bench = [ ]
 
 [dependencies]
+libc = "*"
 lazy_static = "*"
 clap = "*"
 hashconsing = { git = "https://github.com/AdrienChampion/hashconsing" }
 error-chain = "*"
 ansi_term = "*"
-rsmt2 = { git = "https://github.com/kino-mc/rsmt2" }
+rsmt2 = "^0.9.11"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 either = "*"
 rand = "*"
-isatty = "*"
+atty = "*"

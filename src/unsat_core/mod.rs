@@ -1,116 +1,80 @@
 //! Unsat core extraction.
+//!
+//! Currently inactive.
 
-use common::* ;
+use common::*;
 
-pub mod sample_graph ;
+pub mod entry_points;
+pub mod sample_graph;
 
-pub use self::sample_graph::SampleGraph ;
-use self::sample_graph::UnsatProof ;
+pub use self::entry_points::Entry;
+
+pub use self::sample_graph::SampleGraph;
+// use self::sample_graph::UnsatProof;
 
 /// An unsat result.
 pub enum UnsatRes {
-  /// Unsat cores were not active.
-  None,
-  /// A sample dependency graph: raw result from teacher.
-  Graph(SampleGraph),
-  /// A proof, obtained from a graph.
-  Proof(UnsatProof),
-  /// An unsat result from a single clause.
-  Clause(ClsIdx),
+    /// Unsat cores were not active.
+    None,
+    // /// A sample dependency graph: raw result from teacher.
+    // Graph(SampleGraph),
+    // /// A proof, obtained from a graph.
+    // Proof(UnsatProof),
+    // /// An unsat result from a single clause.
+    // Clause(ClsIdx),
+    /// Some entry points.
+    Entry(Entry),
 }
 impl UnsatRes {
-  /// Constructor.
-  pub fn new(graph: Option<SampleGraph>) -> Self {
-    if let Some(graph) = graph {
-      UnsatRes::Graph(graph)
-    } else {
-      UnsatRes::None
+    /// Constructor.
+    pub fn new(entry: Option<Entry>) -> Self {
+        if let Some(entry) = entry {
+            UnsatRes::Entry(entry)
+        } else {
+            UnsatRes::None
+        }
     }
-  }
 
-  /// True if none.
-  pub fn is_none(& self) -> bool {
-    match self { UnsatRes::None => true, _ => false }
-  }
-
-  /// Retrieves the unsat core.
-  fn get_core(& mut self, instance: & Instance) -> Res<ClsSet> {
-    let (nu_self, res) = match self {
-      UnsatRes::None => bail!(
-        "cannot produce unsat cores without `{}`",
-        conf.emph("(set-option :produce-unsat-cores true)")
-      ),
-      UnsatRes::Graph(graph) => {
-        let proof = graph.get_proof(instance) ? ;
-        let core = proof.core() ;
-
-        ( UnsatRes::Proof(proof), core )
-      },
-      UnsatRes::Proof(proof) => return Ok( proof.core() ),
-      UnsatRes::Clause(clause) => {
-        let mut set = ClsSet::new() ;
-        set.insert(* clause) ;
-        return Ok(set)
-      },
-    } ;
-
-    * self = nu_self ;
-
-    Ok(res)
-  }
-
-  /// Writes the unsat core.
-  pub fn write_core<W: Write>(
-    & mut self, w: & mut W, instance: & Instance
-  ) -> Res<()> {
-    let core = self.get_core(& instance) ? ;
-    if ! instance.unsat_cores() {
-      bail!(
-        "cannot produce unsat cores without `{}`",
-        conf.emph("(set-option :produce-unsat-cores true)")
-      )
+    /// Empty entry constructor.
+    pub fn empty_entry() -> Self {
+        UnsatRes::Entry(Entry::new(entry_points::SampleSet::new()))
     }
-    write!(w, "(") ? ;
-    for clause in core {
-      if let Some(name) = instance.name_of_old_clause(clause) {
-        write!(w, " {}", name) ?
-      }
+
+    /// True if none.
+    pub fn is_none(&self) -> bool {
+        match self {
+            UnsatRes::None => true,
+            _ => false,
+        }
     }
-    writeln!(w, " )") ? ;
-    Ok(())
-  }
 
-  /// Writes an unsat proof.
-  pub fn write_proof<W: Write>(
-    & mut self, w: & mut W, instance: & Instance
-  ) -> Res<()> {
-    let err = || ErrorKind::from(
-      format!(
-        "cannot produce proof without `{}`",
-        conf.emph("(set-option :produce-proofs true)")
-      )
-    ) ;
-    let nu_self = match self {
-      _ if ! instance.proofs() => bail!( err() ),
-      UnsatRes::None => bail!( err() ),
-      UnsatRes::Graph(graph) => {
-        let proof = graph.get_proof(instance) ? ;
-        proof.write(w, instance) ? ;
+    /// Tries to retrieve the unsat proof.
+    fn get_proof(&self, instance: &Instance, original: &Instance) -> Res<Option<Entry>> {
+        match self {
+            UnsatRes::None => Ok(None),
+            UnsatRes::Entry(entry) => Ok(Some(entry.reconstruct(instance, original)?)),
+        }
+    }
 
-        UnsatRes::Proof(proof)
-      },
-      UnsatRes::Proof(proof) => {
-        proof.write(w, instance) ? ;
-        return Ok(())
-      },
-      UnsatRes::Clause(_) => {
-        writeln!(w, "( () () () )") ? ;
-        return Ok(())
-      },
-    } ;
-
-    * self = nu_self ;
-
-    Ok(())
-  }
+    /// Tries to write the unsat proof.
+    pub fn write_proof<W: Write>(
+        &self,
+        w: &mut W,
+        instance: &Instance,
+        original: &Instance,
+    ) -> Res<()> {
+        if let Some(entry) = self.get_proof(instance, original)? {
+            writeln!(w, "(")?;
+            for sample in &entry.samples {
+                writeln!(w, "  ({} {})", instance[sample.pred], sample.args)?
+            }
+            writeln!(w, ")")?;
+        } else {
+            bail!(
+                "cannot produce unsat proof without `{}`",
+                conf.emph("(set-option :produce-unsat-proof true)")
+            )
+        }
+        Ok(())
+    }
 }
