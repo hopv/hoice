@@ -11,6 +11,73 @@ use common::mk_dir;
 use errors::*;
 use instance::Instance;
 
+/// Creates a function adding arguments to a `::clap::App`.
+macro_rules! app_fun {
+    // Internal rules.
+    (@app $app:expr, $order:expr =>) => ($app);
+    (@app $app:expr, $order:expr =>
+        , $($tail:tt)*
+    ) => (
+        app_fun!(@app $app, $order => $($tail)*)
+    );
+    (@app $app:expr, $order:expr =>
+        $id:ident($($stuff:tt)*) $($tail:tt)*
+    ) => ({
+        let arg = app_fun!(
+            @arg Arg::with_name(stringify!($id)).display_order(*$order) => $($stuff)*
+        );
+        *$order += 1;
+        let app = $app.arg(arg);
+        app_fun!(@app app, $order => $($tail)*)
+    });
+
+    (@arg $arg:expr => long $long:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.long($long) => $($stuff)*)
+    );
+    (@arg $arg:expr => short $short:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.short($short) => $($stuff)*)
+    );
+    (@arg $arg:expr => help $help:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.help($help) => $($stuff)*)
+    );
+    (@arg $arg:expr => long_help $long_help:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.long_help($long_help) => $($stuff)*)
+    );
+    (@arg $arg:expr => validator $validator:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.validator($validator) => $($stuff)*)
+    );
+    (@arg $arg:expr => val_name $val_name:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.value_name($val_name) => $($stuff)*)
+    );
+    (@arg $arg:expr => default $default:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.default_value($default) => $($stuff)*)
+    );
+    (@arg $arg:expr => takes_val, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.takes_value(true) => $($stuff)*)
+    );
+    (@arg $arg:expr => val_nb $val_nb:expr, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.number_of_values($val_nb) => $($stuff)*)
+    );
+    (@arg $arg:expr => hidden, $($stuff:tt)*) => (
+        app_fun!(@arg $arg.hidden(true) => $($stuff)*)
+    );
+    (@arg $arg:expr => $(,)*) => ($arg);
+    (@arg $arg:expr => $stuff:tt) => (
+        app_fun!(@arg $arg => $stuff,)
+    );
+    (@arg $arg:expr => $stuff_1:tt $stuff_2:tt) => (
+        app_fun!(@arg $arg => $stuff_1 $stuff_2,)
+    );
+
+    // Entry point.
+    ($(#[$doc:meta])* $fun:ident $($stuff:tt)*) => (
+        $(#[$doc])*
+        fn $fun(app: App, order: &mut usize) -> App {
+            app_fun!(@app app, order => $($stuff)*)
+        }
+    );
+}
+
 /// Clap `App` with static lifetimes.
 pub type App = ::clap::App<'static, 'static>;
 /// Clap `ArgMatches` with static lifetime.
@@ -176,32 +243,28 @@ impl SmtConf {
         }
     }
 
-    /// Adds clap options to a clap `App`.
-    pub fn add_args(app: App, mut order: usize) -> App {
-        let mut order = || {
-            order += 1;
-            order
-        };
-
-        app.arg(
-            Arg::with_name("z3_cmd")
-                .long("--z3")
-                .help("sets the command used to call z3")
-                .default_value("z3")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("smt_log")
-                .long("--smt_log")
-                .help("(de)activates smt logging to the output directory")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        )
+    app_fun! {
+        // /// SMT-related arguments.
+        add_args
+        z3_cmd(
+            long "--z3",
+            help "sets the command used to call z3",
+            default "z3",
+            takes_val,
+            val_nb 1,
+        ),
+        smt_log(
+            long "--smt_log",
+            help "(de)activates smt logging to the output directory",
+            long_help "\
+                if active, logs the interactions with *all* the solvers in the output directory\
+            ",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+        ),
     }
 
     /// Creates itself from some matches.
@@ -223,6 +286,8 @@ impl SmtConf {
 /// Pre-processing configuration.
 pub struct PreprocConf {
     /// (De)activates the whole preprocessing.
+    ///
+    /// (De)activates all preprocessors except for basic clause-by-clause simplification.
     pub active: bool,
 
     /// Dump all steps of the preprocessing as smt2 systems.
@@ -237,22 +302,6 @@ pub struct PreprocConf {
     /// (CfgRed reduction strategy)
     pub dump_pred_dep: bool,
 
-    /// Horn reduction flag.
-    ///
-    /// (De)activates [`SimpleOneLhs`][slhs], [`SimpleOneRhs`][srhs],
-    /// [`OneLhs`][lhs], and [`OneRhs`][rhs]. If true, then these strategies are
-    /// controlled separately by the flags below.
-    ///
-    /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
-    /// (SimpleOneLhs reduction strategy)
-    /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
-    /// (SimpleOneRhs reduction strategy)
-    /// [lhs]: ../../instance/preproc/struct.OneLhs.html
-    /// (OneLhs reduction strategy)
-    /// [rhs]: ../../instance/preproc/struct.OneRhs.html
-    /// (OneRhs reduction strategy)
-    pub reduction: bool,
-
     /// Allows right-hand side Horn reduction.
     ///
     /// Deactivates [`OneRhs`][rhs] and [`SimpleOneRhs`][srhs] if false.
@@ -262,13 +311,7 @@ pub struct PreprocConf {
     /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
     /// (SimpleOneRhs reduction strategy)
     pub one_rhs: bool,
-    /// Allows full right-hand side Horn reduction.
-    ///
-    /// Deactivates [`OneRhs`][rhs] if false.
-    ///
-    /// [rhs]: ../../instance/preproc/struct.OneRhs.html
-    /// (OneRhs reduction strategy)
-    pub one_rhs_full: bool,
+
     /// Allows left-hand side Horn reduction.
     ///
     /// Deactivates [`OneLhs`][lhs] and [`SimpleOneLhs`][slhs] if false.
@@ -278,13 +321,6 @@ pub struct PreprocConf {
     /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
     /// (SimpleOneLhs reduction strategy)
     pub one_lhs: bool,
-    /// Allows full left-hand side Horn reduction.
-    ///
-    /// Deactivates [`OneLhs`][lhs] if false.
-    ///
-    /// [lhs]: ../../instance/preproc/struct.OneLhs.html
-    /// (OneLhs reduction strategy)
-    pub one_lhs_full: bool,
 
     /// Allows cfg reduction.
     ///
@@ -418,224 +454,206 @@ impl PreprocConf {
         }
     }
 
-    /// Adds clap options to a clap `App`.
-    pub fn add_args(app: App, mut order: usize) -> App {
-        let mut order = || {
-            order += 1;
-            order
-        };
+    app_fun! {
+        /// Adds clap options to a clap `App`.
+        add_args
 
-        app.arg(
-            Arg::with_name("preproc")
-                .long("--preproc")
-                .help("(de)activates pre-processing")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("dump_preproc")
-                .long("--dump_preproc")
-                .help("(de)activates instance dumping during preprocessing")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("prune_terms")
-                .long("--prune_terms")
-                .help("(de)activates clause term pruning when simplifying clauses")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("reduction")
-                .long("--reduction")
-                .help("(de)activates all Horn reduction")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("one_rhs")
-                .long("--one_rhs")
-                .help("(de)activates one rhs reduction")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("one_rhs_full")
-                .long("--one_rhs_full")
-                .help("(de)activates full one rhs reduction (might introduce quantifiers)")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("one_lhs")
-                .long("--one_lhs")
-                .help(
-                    "(de)activates reduction of predicate \
-                     appearing in exactly one clause lhs",
-                ).validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("one_lhs_full")
-                .long("--one_lhs_full")
-                .help("(de)activates full one lhs reduction (might introduce quantifiers)")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("arg_red")
-                .long("--arg_red")
-                .help("(de)activates argument reduction")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("cfg_red")
-                .long("--cfg_red")
-                .help("(de)activates control flow graph reduction")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("dump_pred_dep")
-                .long("--dump_pred_dep")
-                .help("(de)activates predicate dependency dumps (cfg_red)")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("runroll")
-                .long("--runroll")
-                .help("(de)activates reverse unrolling")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("off")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("pos_unroll")
-                .long("--pos_unroll")
-                .help("(de)activates positive unrolling")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("neg_unroll")
-                .long("--neg_unroll")
-                .help("(de)activates negative unrolling")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .hidden(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("split_strengthen")
-                .long("--split_strengthen")
-                .help("(de)activates strengthening when splitting is active")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("split_sort")
-                .long("--split_sort")
-                .help("(de)activates clause sorting when splitting is active")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("strict_neg")
-                .long("--strict_neg")
-                .help("(de)activates strengthening by strict negative clauses")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .hidden(true)
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("fun_preds")
-                .long("--fun_preds")
-                .help("(de)activates predicate-to-function reduction")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .hidden(true)
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        )
+        preproc(
+            long "--preproc",
+            help "(de)activates pre-processing",
+            long_help "\
+                If inactive, almost none of the pre-processors will run. Only `simplify` will \
+                run, the pre-processor in charge of simplifying clauses locally. That is, clauses \
+                are looked at one by one, not in relation with each other.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        log_preproc(
+            long "--log_preproc",
+            help "(de)activates instance logging during preprocessing",
+            long_help "\
+                If active, the instance will be logged in the output directory whenever a \
+                pre-processor runs and modifies it.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "no",
+        ),
+        prune_terms(
+            long "--prune_terms",
+            help "(de)activates expensive clause term pruning when simplifying clauses",
+            long_help "\
+                If active, runs an SMT-solver to check atoms one by one for redundancy and \
+                conflicts.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "no",
+            hidden,
+        ),
+        one_rhs(
+            long "--one_rhs",
+            help "(de)activates one rhs reduction",
+            long_help "\
+                If active, predicates that appear as a consequent in exactly one clause will be \
+                replaced by the tail of said clause, when possible. This pre-processor might \
+                introduce quantifiers in the predicates' definitions.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        one_lhs(
+            long "--one_lhs",
+            help "(de)activates reduction of predicate appearing in exactly one clause lhs",
+            long_help "\
+                If active, predicates that appear as a consequent in exactly one clause will be \
+                replaced by the definition inferred from said clause, when possible. This \
+                pre-processor might introduce quantifiers in the predicates' definitions.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        arg_red(
+            long "--arg_red",
+            help "(de)activates argument reduction",
+            long_help "\
+                If active, looks for predicate arguments that can be removed without changing the \
+                semantics. Only removes arguments that are irrelevant, similar to a cone of \
+                influence analysis.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        cfg_red(
+            long "--cfg_red",
+            help "(de)activates control flow graph reduction",
+            long_help "\
+                If active, analyzes the *control flow graph* of the predicates and inlines \
+                predicates that are not involved in loops. This pre-processor might introduce \
+                quantifiers in the predicates' definitions.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        log_pred_dep(
+            long "--log_pred_dep",
+            help "(de)activates predicate dependency dumps (cfg_red)",
+            long_help "\
+                If active, dumps the dependencies between the predicates as a `dot` graph. If \
+                `dot` is available on your computer, the pdf will be generated automatically. In \
+                addition to the original dependency graph, a new graph is dumped each time a \
+                pre-processor changed the relations between the predicates.\
+            ",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "no",
+        ),
+        runroll(
+            long "--runroll",
+            help "(de)activates reverse unrolling",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "off",
+            hidden,
+        ),
+        pos_unroll(
+            long "--pos_unroll",
+            help "(de)activates positive unrolling",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        neg_unroll(
+            long "--neg_unroll",
+            help "(de)activates negative unrolling",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        split_strengthen(
+            long "--split_strengthen",
+            help "(de)activates strengthening when splitting is active",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+        ),
+        split_sort(
+            long "--split_sort",
+            help "(de)activates clause sorting when splitting is active",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+        ),
+        strict_neg(
+            long "--strict_neg",
+            help "(de)activates strengthening by strict negative clauses",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
+        fun_preds(
+            long "--fun_preds",
+            help "(de)activates predicate-to-function reduction",
+            takes_val,
+            val_name bool_format,
+            val_nb 1,
+            validator bool_validator,
+            default "on",
+            hidden,
+        ),
     }
 
     /// Creates itself from some matches.
     pub fn new(matches: &Matches) -> Self {
         let active = bool_of_matches(matches, "preproc");
-        let reduction = bool_of_matches(matches, "reduction");
         let arg_red = bool_of_matches(matches, "arg_red");
         let one_rhs = bool_of_matches(matches, "one_rhs");
-        let one_rhs_full = bool_of_matches(matches, "one_rhs_full");
         let one_lhs = bool_of_matches(matches, "one_lhs");
-        let one_lhs_full = bool_of_matches(matches, "one_lhs_full");
         let cfg_red = bool_of_matches(matches, "cfg_red");
-        let dump = bool_of_matches(matches, "dump_preproc");
-        let dump_pred_dep = bool_of_matches(matches, "dump_pred_dep");
+        let dump = bool_of_matches(matches, "log_preproc");
+        let dump_pred_dep = bool_of_matches(matches, "log_pred_dep");
         let prune_terms = bool_of_matches(matches, "prune_terms");
         let runroll = bool_of_matches(matches, "runroll");
         let pos_unroll = bool_of_matches(matches, "pos_unroll");
@@ -649,11 +667,8 @@ impl PreprocConf {
             dump,
             dump_pred_dep,
             active,
-            reduction,
             one_rhs,
-            one_rhs_full,
             one_lhs,
-            one_lhs_full,
             cfg_red,
             arg_red,
             prune_terms,
@@ -1180,10 +1195,11 @@ impl Config {
     /// Parses command-line arguments and generates the configuration.
     pub fn clap() -> Self {
         let mut app = App::new(crate_name!());
+        // let mut order = 0;
         app = Self::add_args(app, 0);
-        app = PreprocConf::add_args(app, 100);
+        app = PreprocConf::add_args(app, &mut 100);
         app = InstanceConf::add_args(app, 200);
-        app = SmtConf::add_args(app, 300);
+        app = SmtConf::add_args(app, &mut 300);
         app = IceConf::add_args(app, 400);
         app = TeacherConf::add_args(app, 500);
         app = Self::add_check_args(app, 600);
