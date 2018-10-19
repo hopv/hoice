@@ -1,4 +1,7 @@
 //! Hoice's global configuration.
+//!
+//! (Sub-)configurations are created with the `make_conf` macro. That way the help and long help
+//! for each field of the (sub-)configs end up as comments automatically.
 
 use std::path::PathBuf;
 
@@ -72,9 +75,66 @@ macro_rules! app_fun {
     // Entry point.
     ($(#[$doc:meta])* $fun:ident $($stuff:tt)*) => (
         $(#[$doc])*
-        fn $fun(app: App, order: &mut usize) -> App {
+        pub fn $fun(app: App, order: &mut usize) -> App {
             app_fun!(@app app, order => $($stuff)*)
         }
+    );
+}
+
+/// Creates a structure with some fields corresponding to CLAs.
+///
+/// A field is an ident followed by a comma-separated list of CLAP options between parens. The
+/// first two elements of the list need to be the **short help** followed by the **long help**.
+macro_rules! make_conf {
+    ($(#[$struct_meta:meta])* $struct:ident {$(
+        $arg:ident, $field:ident: $field_ty:ty {
+            help $help:expr,
+            long_help $long_help:expr,
+            $($tail:tt)*
+        } {
+            |$mtch:pat| $field_do:expr
+        }
+    )*}
+
+    $($rest:tt)*
+
+    ) => (
+        $(#[$struct_meta])*
+        pub struct $struct {
+            $(
+                #[doc = $help]
+                #[doc = ""]
+                #[doc = $long_help]
+                pub $field: $field_ty,
+            )*
+        }
+        impl $struct {
+            app_fun! {
+                /// Adds CLAP info to an `App`.
+                add_args
+                $(
+                    $arg ( help $help, long_help $long_help, $($tail)* )
+                )*
+            }
+
+            /// Constructor from some CLAP matches.
+            pub fn new(matches: &Matches) -> Self {
+                $(let $field = {
+                    let $mtch = matches.value_of(stringify!($arg)).unwrap_or_else(
+                        || panic!(
+                            "unreachable, default for {} should be provided",
+                            stringify!($arg)
+                        )
+                    );
+                    $field_do
+                };)*
+                $struct {
+                    $($field),*
+                }
+            }
+        }
+
+        $($rest)*
     );
 }
 
@@ -87,6 +147,164 @@ pub type Matches = ::clap::ArgMatches<'static>;
 pub trait SubConf {
     /// True if the options of the subconf need the output directory.
     fn need_out_dir(&self) -> bool;
+}
+
+make_conf! {
+    /// Solver configuration.
+    SmtConf {
+        z3_cmd, conf: SolverConf {
+            help "Sets the command used to call z3.",
+            long_help "\
+                Specifies which command to run to spawn z3. Hoice automatically launches it in \
+                *interactive* mode, so there's no need to specify `-in`.\
+            ",
+            long "--z3",
+            default "z3",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| {
+                let z3_cmd = mtch.to_string();
+                let mut conf = SolverConf::z3();
+                conf.cmd(z3_cmd);
+                conf.models();
+                conf
+            }
+        }
+        smt_log, log: bool {
+            help "(De)activates smt logging to the output directory.",
+            long_help "\
+                If active, logs the interactions with *all* the solvers in the output directory.\
+            ",
+            long "--smt_log",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+    }
+
+    impl SubConf for SmtConf {
+        fn need_out_dir(&self) -> bool {
+            self.log
+        }
+    }
+
+    impl SmtConf {
+        /// Actual, `rsmt2` solver configuration.
+        pub fn conf(&self) -> SolverConf {
+            self.conf.clone()
+        }
+
+        /// Spawns a solver.
+        ///
+        /// Performs the solver initialization step given by `common::smt::init`.
+        ///
+        /// If logging is active, will log to `<name>.smt2`.
+        fn internal_spawn<Parser, I>(
+            &self,
+            name: &'static str,
+            parser: Parser,
+            instance: I,
+            preproc: bool,
+        ) -> Res<::rsmt2::Solver<Parser>>
+        where
+            I: AsRef<Instance>,
+        {
+            let mut smt_conf = self.conf.clone();
+            if let Some(timeout) = ::common::conf.until_timeout() {
+                smt_conf.option(format!("-T:{}", timeout.as_secs() + 1));
+            }
+
+            let mut solver = ::rsmt2::Solver::new(smt_conf, parser)?;
+            if let Some(log) = self
+                .log_file(name, instance.as_ref())
+                .chain_err(|| format!("While opening log file for {}", ::common::conf.emph(name)))?
+            {
+                solver.tee(log)?
+            }
+
+            if preproc {
+                ::smt::preproc_init(&mut solver)?
+            } else {
+                ::smt::init(&mut solver, instance)?
+            }
+            Ok(solver)
+        }
+
+        /// Spawns a solver.
+        ///
+        /// Performs the solver initialization step given by `common::smt::init`.
+        ///
+        /// If logging is active, will log to `<name>.smt2`.
+        pub fn spawn<Parser, I>(
+            &self,
+            name: &'static str,
+            parser: Parser,
+            instance: I,
+        ) -> Res<::rsmt2::Solver<Parser>>
+        where
+            I: AsRef<Instance>,
+        {
+            self.internal_spawn(name, parser, instance, false)
+        }
+
+        /// Spawns a preprocessing solver.
+        ///
+        /// Performs the solver initialization step given by `common::smt::init`.
+        ///
+        /// If logging is active, will log to `<name>.smt2`.
+        pub fn preproc_spawn<Parser, I>(
+            &self,
+            name: &'static str,
+            parser: Parser,
+            instance: I,
+        ) -> Res<::rsmt2::Solver<Parser>>
+        where
+            I: AsRef<Instance>,
+        {
+            self.internal_spawn(name, parser, instance, true)
+        }
+
+        /// Smt log dir, if any.
+        fn log_dir(&self, instance: &Instance) -> Res<Option<PathBuf>> {
+            if self.log {
+                let mut path = ::common::conf.out_dir(instance);
+                path.push("solvers");
+                mk_dir(&path)?;
+                Ok(Some(path))
+            } else {
+                Ok(None)
+            }
+        }
+
+        /// Smt log file, if any.
+        fn log_file<S: AsRef<str>>(
+            &self,
+            name: S,
+            instance: &Instance,
+        ) -> Res<Option<::std::fs::File>> {
+            use std::fs::OpenOptions;
+            if let Some(mut path) = self.log_dir(instance)? {
+                path.push(name.as_ref());
+                path.set_extension("smt2");
+                let file = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(&path)
+                    .chain_err(
+                        || format!("while creating smt log file {}", path.to_string_lossy())
+                    )?;
+                Ok(Some(file))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// Instance and factory configuration.
@@ -121,979 +339,777 @@ impl InstanceConf {
     }
 }
 
-/// Solver configuration.
-pub struct SmtConf {
-    /// Actual solver configuration.
-    conf: SolverConf,
-    /// Smt logging flag.
-    pub log: bool,
-}
-impl SubConf for SmtConf {
-    fn need_out_dir(&self) -> bool {
-        self.log
-    }
-}
-impl SmtConf {
-    /// Actual, `rsmt2` solver configuration.
-    pub fn conf(&self) -> SolverConf {
-        self.conf.clone()
-    }
+make_conf! {
+    /// Preprocessing configuration.
+    PreprocConf {
 
-    /// Spawns a solver.
-    ///
-    /// Performs the solver initialization step given by `common::smt::init`.
-    ///
-    /// If logging is active, will log to `<name>.smt2`.
-    fn internal_spawn<Parser, I>(
-        &self,
-        name: &'static str,
-        parser: Parser,
-        instance: I,
-        preproc: bool,
-    ) -> Res<::rsmt2::Solver<Parser>>
-    where
-        I: AsRef<Instance>,
-    {
-        let mut smt_conf = self.conf.clone();
-        if let Some(timeout) = ::common::conf.until_timeout() {
-            smt_conf.option(format!("-T:{}", timeout.as_secs() + 1));
-        }
-
-        let mut solver = ::rsmt2::Solver::new(smt_conf, parser)?;
-        if let Some(log) = self
-            .log_file(name, instance.as_ref())
-            .chain_err(|| format!("While opening log file for {}", ::common::conf.emph(name)))?
-        {
-            solver.tee(log)?
-        }
-
-        if preproc {
-            ::smt::preproc_init(&mut solver)?
-        } else {
-            ::smt::init(&mut solver, instance)?
-        }
-        Ok(solver)
-    }
-
-    /// Spawns a solver.
-    ///
-    /// Performs the solver initialization step given by `common::smt::init`.
-    ///
-    /// If logging is active, will log to `<name>.smt2`.
-    pub fn spawn<Parser, I>(
-        &self,
-        name: &'static str,
-        parser: Parser,
-        instance: I,
-    ) -> Res<::rsmt2::Solver<Parser>>
-    where
-        I: AsRef<Instance>,
-    {
-        self.internal_spawn(name, parser, instance, false)
-    }
-
-    /// Spawns a preprocessing solver.
-    ///
-    /// Performs the solver initialization step given by `common::smt::init`.
-    ///
-    /// If logging is active, will log to `<name>.smt2`.
-    pub fn preproc_spawn<Parser, I>(
-        &self,
-        name: &'static str,
-        parser: Parser,
-        instance: I,
-    ) -> Res<::rsmt2::Solver<Parser>>
-    where
-        I: AsRef<Instance>,
-    {
-        self.internal_spawn(name, parser, instance, true)
-    }
-
-    /// Smt log dir, if any.
-    fn log_dir(&self, instance: &Instance) -> Res<Option<PathBuf>> {
-        if self.log {
-            let mut path = ::common::conf.out_dir(instance);
-            path.push("solvers");
-            mk_dir(&path)?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Smt log file, if any.
-    fn log_file<S: AsRef<str>>(
-        &self,
-        name: S,
-        instance: &Instance,
-    ) -> Res<Option<::std::fs::File>> {
-        use std::fs::OpenOptions;
-        if let Some(mut path) = self.log_dir(instance)? {
-            path.push(name.as_ref());
-            path.set_extension("smt2");
-            let file = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .create(true)
-                .open(&path)
-                .chain_err(|| format!("while creating smt log file {}", path.to_string_lossy()))?;
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
-    }
-
-    app_fun! {
-        // /// SMT-related arguments.
-        add_args
-        z3_cmd(
-            long "--z3",
-            help "sets the command used to call z3",
-            default "z3",
-            takes_val,
-            val_nb 1,
-        ),
-        smt_log(
-            long "--smt_log",
-            help "(de)activates smt logging to the output directory",
-            long_help "\
-                if active, logs the interactions with *all* the solvers in the output directory\
-            ",
-            validator bool_validator,
-            val_name bool_format,
-            default "no",
-            takes_val,
-            val_nb 1,
-        ),
-    }
-
-    /// Creates itself from some matches.
-    pub fn new(matches: &Matches) -> Self {
-        let z3_cmd = matches
-            .value_of("z3_cmd")
-            .expect("unreachable(out_dir): default is provided")
-            .to_string();
-        let mut conf = SolverConf::z3();
-        conf.cmd(z3_cmd);
-        conf.models();
-
-        let log = bool_of_matches(matches, "smt_log");
-
-        SmtConf { conf, log }
-    }
-}
-
-/// Pre-processing configuration.
-pub struct PreprocConf {
-    /// (De)activates the whole preprocessing.
-    ///
-    /// (De)activates all preprocessors except for basic clause-by-clause simplification.
-    pub active: bool,
-
-    /// Dump all steps of the preprocessing as smt2 systems.
-    pub dump: bool,
-    /// Dump predicate dependency graphs.
-    ///
-    /// The predicate dependency graphs are constructed by [`CfgRed`][cfg red].
-    /// For each of its runs, it will log the dependencies before and after
-    /// reduction.
-    ///
-    /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
-    /// (CfgRed reduction strategy)
-    pub dump_pred_dep: bool,
-
-    /// Allows right-hand side Horn reduction.
-    ///
-    /// Deactivates [`OneRhs`][rhs] and [`SimpleOneRhs`][srhs] if false.
-    ///
-    /// [rhs]: ../../instance/preproc/struct.OneRhs.html
-    /// (OneRhs reduction strategy)
-    /// [srhs]: ../../instance/preproc/struct.SimpleOneRhs.html
-    /// (SimpleOneRhs reduction strategy)
-    pub one_rhs: bool,
-
-    /// Allows left-hand side Horn reduction.
-    ///
-    /// Deactivates [`OneLhs`][lhs] and [`SimpleOneLhs`][slhs] if false.
-    ///
-    /// [lhs]: ../../instance/preproc/struct.OneLhs.html
-    /// (OneLhs reduction strategy)
-    /// [slhs]: ../../instance/preproc/struct.SimpleOneLhs.html
-    /// (SimpleOneLhs reduction strategy)
-    pub one_lhs: bool,
-
-    /// Allows cfg reduction.
-    ///
-    /// (De)activates [`CfgRed`][cfg red].
-    ///
-    /// [cfg red]: ../../instance/preproc/struct.CfgRed.html
-    /// (CfgRed reduction strategy)
-    pub cfg_red: bool,
-
-    /// Allows argument reduction.
-    ///
-    /// (De)activates [`ArgRed`][arg red].
-    ///
-    /// [arg red]: ../../instance/preproc/struct.ArgRed.html
-    /// (ArgRed reduction strategy)
-    pub arg_red: bool,
-
-    /// Reverse unrolling.
-    pub runroll: bool,
-
-    /// Allows positive clever unrolling.
-    ///
-    /// (De)activates [`BiasedUnroll`][unroll] (positive version).
-    ///
-    /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
-    /// (BiasedUnroll strategy)
-    pub pos_unroll: bool,
-
-    /// Allows negative clever unrolling.
-    ///
-    /// (De)activates [`BiasedUnroll`][unroll] (negative version).
-    ///
-    /// [unroll]: ../../instance/preproc/struct.BiasedUnroll.html
-    /// (BiasedUnroll strategy)
-    pub neg_unroll: bool,
-
-    /// Allows clause term pruning.
-    ///
-    /// This is part of the [`Simplify`][simpl] strategy as well as the
-    /// simplification that run on the clauses modified by all reduction
-    /// strategies. This can be expensive as it relies on SMT queries for
-    /// pruning.
-    ///
-    /// [simpl]: ../../instance/preproc/struct.Simplify.html
-    /// (Simplify reduction strategy)
-    pub prune_terms: bool,
-
-    /// Allows strengthening when splitting.
-    pub split_strengthen: bool,
-
-    /// Allows clause sorting when splitting.
-    pub split_sort: bool,
-
-    /// Strengthening by strict clauses.
-    pub strict_neg: bool,
-
-    /// Activates predicates to function reduction
-    pub fun_preds: bool,
-}
-impl SubConf for PreprocConf {
-    fn need_out_dir(&self) -> bool {
-        self.dump && self.active || self.dump_pred_dep
-    }
-}
-impl PreprocConf {
-    /// Instance dump dir.
-    fn log_dir<Path>(&self, sub: Path, instance: &Instance) -> Res<PathBuf>
-    where
-        Path: AsRef<::std::path::Path>,
-    {
-        let mut path = ::common::conf.out_dir(instance);
-        path.push("preproc");
-        path.push(sub);
-        mk_dir(&path)?;
-        Ok(path)
-    }
-
-    /// Instance dump file.
-    pub fn instance_log_file<S: AsRef<str>>(
-        &self,
-        name: S,
-        instance: &Instance,
-    ) -> Res<Option<::std::fs::File>> {
-        use std::fs::OpenOptions;
-        if self.dump && self.active {
-            let mut path = self.log_dir("instances", instance)?;
-            path.push(name.as_ref());
-            path.set_extension("smt2");
-            let file = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .create(true)
-                .open(&path)
-                .chain_err(|| {
-                    format!(
-                        "while creating instance dump file {}",
-                        path.to_string_lossy()
-                    )
-                })?;
-            Ok(Some(file))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Predicate dependency file.
-    pub fn pred_dep_file<S: AsRef<str>>(
-        &self,
-        name: S,
-        instance: &Instance,
-    ) -> Res<Option<(::std::fs::File, ::std::path::PathBuf)>> {
-        use std::fs::OpenOptions;
-        if self.dump_pred_dep {
-            let mut path = self.log_dir("pred_dep", instance)?;
-            path.push(name.as_ref());
-            path.set_extension("gv");
-            let file = OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .create(true)
-                .open(&path)
-                .chain_err(|| {
-                    format!(
-                        "while creating predicade dependency graph file {}",
-                        path.to_string_lossy()
-                    )
-                })?;
-            Ok(Some((file, path)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    app_fun! {
-        /// Adds clap options to a clap `App`.
-        add_args
-
-        preproc(
-            long "--preproc",
-            help "(de)activates pre-processing",
+        preproc, active: bool {
+            help "(De)activates pre-processing.",
             long_help "\
                 If inactive, almost none of the pre-processors will run. Only `simplify` will \
                 run, the pre-processor in charge of simplifying clauses locally. That is, clauses \
-                are looked at one by one, not in relation with each other.\
+                are looked at one by one, not in relation with one another.\
             ",
+            long "--preproc",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        log_preproc(
-            long "--log_preproc",
-            help "(de)activates instance logging during preprocessing",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        log_preproc, log_preproc: bool {
+            help "(De)activates instance logging during preprocessing.",
             long_help "\
                 If active, the instance will be logged in the output directory whenever a \
                 pre-processor runs and modifies it.\
             ",
+            long "--log_preproc",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "no",
-        ),
-        prune_terms(
-            long "--prune_terms",
-            help "(de)activates expensive clause term pruning when simplifying clauses",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        prune_terms, prune_terms: bool {
+            help "(De)activates expensive clause term pruning when simplifying clauses.",
             long_help "\
                 If active, runs an SMT-solver to check atoms one by one for redundancy and \
                 conflicts.\
             ",
+            long "--prune_terms",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "no",
             hidden,
-        ),
-        one_rhs(
-            long "--one_rhs",
-            help "(de)activates one rhs reduction",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        one_rhs, one_rhs: bool {
+            help "(De)activates one rhs reduction.",
             long_help "\
                 If active, predicates that appear as a consequent in exactly one clause will be \
                 replaced by the tail of said clause, when possible. This pre-processor might \
                 introduce quantifiers in the predicates' definitions.\
             ",
+            long "--one_rhs",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        one_lhs(
-            long "--one_lhs",
-            help "(de)activates reduction of predicate appearing in exactly one clause lhs",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        one_lhs, one_lhs: bool {
+            help "(De)activates reduction of predicate appearing in exactly one clause lhs.",
             long_help "\
                 If active, predicates that appear as a consequent in exactly one clause will be \
                 replaced by the definition inferred from said clause, when possible. This \
                 pre-processor might introduce quantifiers in the predicates' definitions.\
             ",
+            long "--one_lhs",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        arg_red(
-            long "--arg_red",
-            help "(de)activates argument reduction",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        arg_red, arg_red: bool {
+            help "(De)activates argument reduction.",
             long_help "\
                 If active, looks for predicate arguments that can be removed without changing the \
                 semantics. Only removes arguments that are irrelevant, similar to a cone of \
                 influence analysis.\
             ",
+            long "--arg_red",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        cfg_red(
-            long "--cfg_red",
-            help "(de)activates control flow graph reduction",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        cfg_red, cfg_red: bool {
+            help "(De)activates control flow graph reduction.",
             long_help "\
                 If active, analyzes the *control flow graph* of the predicates and inlines \
                 predicates that are not involved in loops. This pre-processor might introduce \
                 quantifiers in the predicates' definitions.\
             ",
+            long "--cfg_red",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        log_pred_dep(
-            long "--log_pred_dep",
-            help "(de)activates predicate dependency dumps (cfg_red)",
+        } {
+            |val| bool_of_match(val)
+        }
+
+        log_pred_dep, log_pred_dep: bool {
+            help "(De)activates predicate dependency dumps (cfg_red).",
             long_help "\
                 If active, dumps the dependencies between the predicates as a `dot` graph. If \
                 `dot` is available on your computer, the pdf will be generated automatically. In \
                 addition to the original dependency graph, a new graph is dumped each time a \
                 pre-processor changed the relations between the predicates.\
             ",
+            long "--log_pred_dep",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "no",
-        ),
-        runroll(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        runroll, runroll: bool {
+            help "(De)activates reverse unrolling.",
+            long_help "\
+                If active, predicates appearing in negative clauses will be unrolled in reverse.\
+            ",
             long "--runroll",
-            help "(de)activates reverse unrolling",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "off",
             hidden,
-        ),
-        pos_unroll(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        pos_unroll, pos_unroll: bool {
+            help "(De)activates positive unrolling.",
+            long_help "\
+                If active, predicates appearing in positive clauses will be unrolled if unrolling \
+                them creates positive clauses for predicates that did not appear in positive \
+                clauses yet.\
+            ",
             long "--pos_unroll",
-            help "(de)activates positive unrolling",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        neg_unroll(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        neg_unroll, neg_unroll: bool {
+            help "(De)activates negative unrolling.",
+            long_help "\
+                If active, predicates appearing in negative clauses will be unrolled if unrolling \
+                them creates negative clauses for predicates that did not appear in negative \
+                clauses yet.\
+            ",
             long "--neg_unroll",
-            help "(de)activates negative unrolling",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        split_strengthen(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        split_strengthen, split_strengthen: bool {
+            help "(De)activates strengthening when splitting is active.",
+            long_help "\
+                If active, negative clauses ignored while splitting will be injected in \
+                implication clauses. This strengthens a given split using information from \
+                (currently) ignored negative clauses.\
+            ",
             long "--split_strengthen",
-            help "(de)activates strengthening when splitting is active",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
-        ),
-        split_sort(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        split_sort, split_sort: bool {
+            help "(De)activates clause sorting when splitting is active.",
+            long_help "\
+                If active, hoice will sort the negative clauses before splitting on them. This \
+                is a heuristic and does not give any guarantees as to whether it really improves \
+                solving.\
+            ",
             long "--split_sort",
-            help "(de)activates clause sorting when splitting is active",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
-        ),
-        strict_neg(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        strict_neg, strict_neg: bool {
+            help "(De)activates strengthening by strict negative clauses.",
+            long_help "\
+                If active, hoice will use strict negative clauses (clauses that have only one \
+                predicate application) to infer partial definitions for the predicates. If `pred` \
+                appears in `tail => (pred _)`, then `pred` will be constructed as
+                `tail /\\ <def>` where `<def>` needs to be inferred by hoice.\
+            ",
             long "--strict_neg",
-            help "(de)activates strengthening by strict negative clauses",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
-        fun_preds(
+        } {
+            |val| bool_of_match(val)
+        }
+
+        fun_preds, fun_preds: bool {
+            help "(De)activates predicate-to-function reduction.",
+            long_help "\
+                If active, hoice will attempt to reconstruct some of the predicates as functions. \
+                Only works on horn clauses over datatypes.\
+            ",
             long "--fun_preds",
-            help "(de)activates predicate-to-function reduction",
             takes_val,
             val_name bool_format,
             val_nb 1,
             validator bool_validator,
             default "on",
             hidden,
-        ),
+        } {
+            |val| bool_of_match(val)
+        }
     }
 
-    /// Creates itself from some matches.
-    pub fn new(matches: &Matches) -> Self {
-        let active = bool_of_matches(matches, "preproc");
-        let arg_red = bool_of_matches(matches, "arg_red");
-        let one_rhs = bool_of_matches(matches, "one_rhs");
-        let one_lhs = bool_of_matches(matches, "one_lhs");
-        let cfg_red = bool_of_matches(matches, "cfg_red");
-        let dump = bool_of_matches(matches, "log_preproc");
-        let dump_pred_dep = bool_of_matches(matches, "log_pred_dep");
-        let prune_terms = bool_of_matches(matches, "prune_terms");
-        let runroll = bool_of_matches(matches, "runroll");
-        let pos_unroll = bool_of_matches(matches, "pos_unroll");
-        let neg_unroll = bool_of_matches(matches, "neg_unroll");
-        let split_strengthen = bool_of_matches(matches, "split_strengthen");
-        let split_sort = bool_of_matches(matches, "split_sort");
-        let strict_neg = bool_of_matches(matches, "strict_neg");
-        let fun_preds = bool_of_matches(matches, "fun_preds");
+    impl SubConf for PreprocConf {
+        fn need_out_dir(&self) -> bool {
+            self.log_preproc && self.active || self.log_pred_dep
+        }
+    }
 
-        PreprocConf {
-            dump,
-            dump_pred_dep,
-            active,
-            one_rhs,
-            one_lhs,
-            cfg_red,
-            arg_red,
-            prune_terms,
-            runroll,
-            pos_unroll,
-            neg_unroll,
-            split_strengthen,
-            split_sort,
-            strict_neg,
-            fun_preds,
+    impl PreprocConf {
+        /// Instance dump dir.
+        fn log_dir<Path>(&self, sub: Path, instance: &Instance) -> Res<PathBuf>
+        where
+            Path: AsRef<::std::path::Path>,
+        {
+            let mut path = ::common::conf.out_dir(instance);
+            path.push("preproc");
+            path.push(sub);
+            mk_dir(&path)?;
+            Ok(path)
+        }
+
+        /// Instance dump file.
+        pub fn instance_log_file<S: AsRef<str>>(
+            &self,
+            name: S,
+            instance: &Instance,
+        ) -> Res<Option<::std::fs::File>> {
+            use std::fs::OpenOptions;
+            if self.log_preproc && self.active {
+                let mut path = self.log_dir("instances", instance)?;
+                path.push(name.as_ref());
+                path.set_extension("smt2");
+                let file = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(&path)
+                    .chain_err(|| {
+                        format!(
+                            "while creating instance dump file {}",
+                            path.to_string_lossy()
+                        )
+                    })?;
+                Ok(Some(file))
+            } else {
+                Ok(None)
+            }
+        }
+
+        /// Predicate dependency file.
+        pub fn pred_dep_file<S: AsRef<str>>(
+            &self,
+            name: S,
+            instance: &Instance,
+        ) -> Res<Option<(::std::fs::File, ::std::path::PathBuf)>> {
+            use std::fs::OpenOptions;
+            if self.log_pred_dep {
+                let mut path = self.log_dir("pred_dep", instance)?;
+                path.push(name.as_ref());
+                path.set_extension("gv");
+                let file = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .create(true)
+                    .open(&path)
+                    .chain_err(|| {
+                        format!(
+                            "while creating predicade dependency graph file {}",
+                            path.to_string_lossy()
+                        )
+                    })?;
+                Ok(Some((file, path)))
+            } else {
+                Ok(None)
+            }
         }
     }
 }
 
-/// Ice learner configuration.
-pub struct IceConf {
-    /// Ignore unclassified data when computing entropy.
-    pub simple_gain_ratio: f64,
-    /// Sort predicates.
-    pub sort_preds: f64,
-    /// Randomize qualifiers.
-    pub rand_quals: bool,
-    /// Generate complete transformations for qualifiers.
-    pub complete: bool,
-    /// Biases qualifier selection based on the predicates the qualifier was
-    /// created for.
-    pub qual_bias: bool,
-    /// Activates qualifier printing.
-    pub qual_print: bool,
-    /// Gain above which a qualifier is considered acceptable for splitting data.
-    pub gain_pivot: f64,
-    ///
-    pub gain_pivot_inc: f64,
-    ///
-    pub gain_pivot_mod: usize,
-    /// Same as `gain_pivot` but for qualifier synthesis.
-    pub gain_pivot_synth: Option<f64>,
-    /// Run a learner that does not mine the instance.
-    pub pure_synth: bool,
-    /// Mine conjunction of terms.
-    pub mine_conjs: bool,
-    /// Add synthesized qualifiers.
-    pub add_synth: bool,
-    /// Lockstep for qualifiers.
-    pub qual_step: bool,
-    /// Lockstep for synthesized qualifiers only.
-    pub qual_synth_step: bool,
-}
-impl SubConf for IceConf {
-    fn need_out_dir(&self) -> bool {
-        false
+make_conf! {
+    /// Ice learner configuration.
+    IceConf {
+
+        simple_gain_ratio, simple_gain_ratio: f64 {
+            help "Percent of times simple gain will be used.",
+            long_help "\
+                Percent of times the learner uses *simple* gain instead of the normal gain \
+                function. Simple gain only takes into account positive/negative data, and \
+                ignores unclassified data.\
+            ",
+            long "--simple_gain_ratio",
+            validator int_validator,
+            val_name "int",
+            default "20",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| {
+                let mut value = int_of_match(mtch) as f64 / 100.0;
+                if value < 0.0 {
+                    0.0
+                } else if 1.0 < value {
+                    1.0
+                } else {
+                    value
+                }
+            }
+        }
+
+        sort_preds, sort_preds: f64 {
+            help "Predicate sorting before learning probability.",
+            long_help "\
+                Probability hoice will sort the predicates before it starts learning. Sorting \
+                the predicates based on their learning data is almost always helpful, but \
+                should not be systematic in order to avoid bad biases.\
+            ",
+            long "--sort_preds",
+            validator int_validator,
+            val_name "int",
+            default "40",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| {
+                let mut value = int_of_match(mtch) as f64 / 100.;
+                if value < 0.0 {
+                    0.0
+                } else if 1.0 < value {
+                    1.0
+                } else {
+                    value
+                }
+            }
+        }
+
+        rand_quals, rand_quals: bool {
+            help "Randomizes the qualifiers before gain computation.",
+            long_help "\
+                If active, forces the learner to look at the qualifiers in random order each \
+                time. The goal is to break the bad biases hoice might get when looking at the \
+                qualifiers in the same order everytime.\
+            ",
+            long "--rand_quals",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        complete, complete: bool {
+            help "Generates complete transformations for qualifiers.",
+            long_help "\
+                If active, generates a lot of qualifiers from the start for each predicate. \
+                This might cause an explosion in the number of qualifiers. Probably best to \
+                avoid it on big problems.\
+            ",
+            long "--qual_complete",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        qual_bias, qual_bias: bool {
+            help "Predicate bias for qualifier section.",
+            long_help "\
+                If active, the qualifiers that are generated for a specific predicate will not be \
+                generalized to other predicates. \
+                This might cause an explosion in the number of qualifiers. Probably best to \
+                avoid it on big problems.\
+            ",
+            long "--qual_bias",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        qual_print, qual_print: bool {
+            help "(De)activates qualifier printing.",
+            long_help "\
+                If active, prints all the qualifiers at the beginning of the run and before each \
+                learning step. Used for debugging.\
+            ",
+            long "--qual_print",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        gain_pivot, gain_pivot: f64 {
+            help "Gain in percent above which hoice considers a qualifier satisfactory.",
+            long_help "\
+                Specifies the minimal gain for a qualifier to be considered satisfactory. The \
+                learner evaluates the gain of each qualifier at each decision step, and keeps \
+                the first one that has a gain greater than this value.\n
+                \n\
+                The value is in percent, between 0 and 100.\
+            ",
+            long "--gain_pivot",
+            validator int_validator,
+            val_name "int",
+            default "10",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| {
+                let mut value = int_of_match(mtch) as f64 / 100.0;
+                if value < 0.0 {
+                    0.0
+                } else if 1.0 < value {
+                    1.0
+                } else {
+                    value
+                }
+            }
+        }
+
+        gain_pivot_synth, gain_pivot_synth: Option<f64> {
+            help "Same as `--gain_pivot` but for qualifier synthesis (inactive if > 100)",
+            long_help "\
+                Same as `--gain_pivot` but for qualifier synthesis. If > 100, the learner \
+                considers there is no pivot and it will evaluate all synthesis candidates.\
+            ",
+            long "--gain_pivot_synth",
+            validator int_validator,
+            val_name "int",
+            default "10",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| {
+                let mut value = int_of_match(mtch) as f64 / 100.0;
+                if value < 0.0 {
+                    Some(0.0)
+                } else if 1.0 < value {
+                    None
+                } else {
+                    Some(value)
+                }
+            }
+        }
+
+        gain_pivot_inc, gain_pivot_inc: f64 {
+            help "Increment for the gain pivot.",
+            long_help "\
+                Every `mod` learning step (where `mod` is the `--gain_pivot_mod`), the learner \
+                will increase the gain pivot (`--gain_pivot`) by this value. Inactive if `0`.\
+            ",
+            long "--gain_pivot_inc",
+            validator int_validator,
+            val_name "int",
+            default "0",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| {
+                let mut value = int_of_match(mtch) as f64 / 100.0;
+                if value < 0.0 {
+                    0.0
+                } else if 1.0 < value {
+                    1.0
+                } else {
+                    value
+                }
+            }
+        }
+
+        gain_pivot_mod, gain_pivot_mod: usize {
+                help "Number of learning steps before the gain pivot is increased.",
+                long_help "\
+                    Specifies the number of steps after which the gain pivot is increased \
+                    by the value given by `--gain_pivot_inc`.\
+                ",
+                long "--gain_pivot_mod",
+                validator int_validator,
+                val_name "int",
+                default "100000",
+                takes_val,
+                val_nb 1,
+                hidden,
+        } {
+            |mtch| int_of_match(mtch)
+        }
+
+        pure_synth, pure_synth: bool {
+            help "If true, runs another pure-synthesis learner.",
+            long_help "\
+                If active, another learner will run in addition to the normal one. This \
+                additional learner does not mine for qualifiers: it splits the data by relying \
+                solely on qualifier synthesis.\
+            ",
+            long "--pure_synth",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        add_synth, add_synth: bool {
+            help "Add synthesized qualifiers as normal qualifiers.",
+            long_help "\
+                If active, then whenever a qualifier obtained by synthesis is chosen to split \
+                the data, this qualifier will be added as a regular qualifier for later.\
+            ",
+            long "--add_synth",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        mine_conjs, mine_conjs: bool {
+            help "Mines conjunctions of atoms from clauses.",
+            long_help "\
+                If active, qualifier mining will generate conjunctions using the atoms appearing \
+                in the tail of the clauses.\
+            ",
+            long "--mine_conjs",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        qual_step, qual_step: bool {
+            help "Wait for user input on each (non-synthesis) qualifier.",
+            long_help "\
+                If active, the learner will display the current (non-synthesis) qualifier and its \
+                gain, and wait for user input to keep going.\
+            ",
+            long "--qual_step",
+            validator bool_validator,
+            val_name bool_format,
+            default "off",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        qual_synth_step, qual_synth_step: bool {
+            help "Wait for user input on each synthesis qualifier.",
+            long_help "\
+                If active, the learner will display the current synthesis qualifier and its gain, \
+                and wait for user input to keep going.\
+            ",
+            long "--qual_synth_step",
+            validator bool_validator,
+            val_name bool_format,
+            default "off",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
     }
-}
-impl IceConf {
-    /// Adds clap options to a clap App.
-    pub fn add_args(app: App, mut order: usize) -> App {
-        let mut order = || {
-            order += 1;
-            order
-        };
 
-        app.arg(
-            Arg::with_name("simple_gain_ratio")
-                .long("--simple_gain_ratio")
-                .help("percent of times simple gain will be used")
-                .validator(int_validator)
-                .value_name("int")
-                .default_value("20")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("sort_preds")
-                .long("--sort_preds")
-                .help("predicate sorting before learning probability")
-                .validator(int_validator)
-                .value_name("int")
-                .default_value("40")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order())
-                .hidden(true),
-        ).arg(
-            Arg::with_name("rand_quals")
-                .long("--rand_quals")
-                .help("randomize the qualifiers before gain computation")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order())
-                .hidden(true),
-        ).arg(
-            Arg::with_name("complete")
-                .long("--qual_complete")
-                .help("generate complete transformations for qualifiers")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("qual_bias")
-                .long("--qual_bias")
-                .help("predicate-based bias for qualifier section")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("qual_print")
-                .long("--qual_print")
-                .help("(de)activates qualifier printing")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("gain_pivot")
-                .long("--gain_pivot")
-                .help(
-                    "first qualifier with a gain higher than this value will be used\n\
-                     (between 0 and 100)",
-                ).validator(int_validator)
-                .value_name("int")
-                .default_value("10")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("gain_pivot_synth")
-                .long("--gain_pivot_synth")
-                .help(
-                    "same as `--gain_pivot` but for qualifier synthesis \
-                     (inactive if > 100)",
-                ).validator(int_validator)
-                .value_name("int")
-                .default_value("10")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("gain_pivot_inc")
-                .long("--gain_pivot_inc")
-                .help("undocumented")
-                .validator(int_validator)
-                .value_name("int")
-                .default_value("0")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("gain_pivot_mod")
-                .long("--gain_pivot_mod")
-                .help("undocumented")
-                .validator(int_validator)
-                .value_name("int")
-                .default_value("100000")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("pure_synth")
-                .long("--pure_synth")
-                .help("if true, runs another pure-synthesis learner")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("add_synth")
-                .long("--add_synth")
-                .help("add synthesized qualifiers as normal qualifiers")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("mine_conjs")
-                .long("--mine_conjs")
-                .help("mine conjunctions of atoms from clauses")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("qual_step")
-                .long("--qual_step")
-                .help("lockstep qualifier selection")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("off")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("qual_synth_step")
-                .long("--qual_synth_step")
-                .help("lockstep qualifier selection (synthesis only)")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("off")
-                .takes_value(true)
-                .number_of_values(1)
-                .hidden(true)
-                .display_order(order()),
-        )
-    }
-
-    /// Creates itself from some matches.
-    pub fn new(matches: &Matches) -> Self {
-        let simple_gain_ratio = {
-            let mut value = int_of_matches(matches, "simple_gain_ratio") as f64 / 100.0;
-            if value < 0.0 {
-                0.0
-            } else if 1.0 < value {
-                1.0
-            } else {
-                value
-            }
-        };
-        let sort_preds = {
-            let mut value = int_of_matches(matches, "sort_preds") as f64 / 100.;
-            if value < 0.0 {
-                0.0
-            } else if 1.0 < value {
-                1.0
-            } else {
-                value
-            }
-        };
-
-        let rand_quals = bool_of_matches(matches, "rand_quals");
-
-        let complete = bool_of_matches(matches, "complete");
-        let qual_bias = bool_of_matches(matches, "qual_bias");
-        let qual_print = bool_of_matches(matches, "qual_print");
-        let gain_pivot = {
-            let mut value = int_of_matches(matches, "gain_pivot") as f64 / 100.0;
-            if value < 0.0 {
-                0.0
-            } else if 1.0 < value {
-                1.0
-            } else {
-                value
-            }
-        };
-        let gain_pivot_inc = {
-            let mut value = int_of_matches(matches, "gain_pivot_inc") as f64 / 100.0;
-            if value < 0.0 {
-                0.0
-            } else if 1.0 < value {
-                1.0
-            } else {
-                value
-            }
-        };
-        let gain_pivot_synth = {
-            let mut value = int_of_matches(matches, "gain_pivot_synth") as f64 / 100.0;
-            if value < 0.0 {
-                Some(0.0)
-            } else if 1.0 < value {
-                None
-            } else {
-                Some(value)
-            }
-        };
-        let gain_pivot_mod = int_of_matches(matches, "gain_pivot_mod");
-        let add_synth = bool_of_matches(matches, "add_synth");
-        let pure_synth = bool_of_matches(matches, "pure_synth");
-        let mine_conjs = bool_of_matches(matches, "mine_conjs");
-        let qual_step = bool_of_matches(matches, "qual_step");
-        let qual_synth_step = bool_of_matches(matches, "qual_synth_step");
-
-        IceConf {
-            simple_gain_ratio,
-            sort_preds,
-            rand_quals,
-            complete,
-            qual_bias,
-            qual_print,
-            gain_pivot,
-            gain_pivot_inc,
-            gain_pivot_mod,
-            gain_pivot_synth,
-            pure_synth,
-            mine_conjs,
-            add_synth,
-            qual_step,
-            qual_synth_step,
+    impl SubConf for IceConf {
+        fn need_out_dir(&self) -> bool {
+            false
         }
     }
 }
 
-/// Teacher configuration.
-pub struct TeacherConf {
-    /// Stop before sending data to learner(s).
-    pub step: bool,
-    /// Run the assistant to break implication constraints.
-    pub assistant: bool,
-    /// Try to find implication constraints related to existing samples first.
-    pub bias_cexs: bool,
-    /// Maximize bias: remove all constraints when there are pos/neg cexs.
-    pub max_bias: bool,
-    /// Allow partial samples.
-    pub partial: bool,
-    /// Restart the teacher's solver everytime it's used.
-    pub restart_on_cex: bool,
-}
-impl SubConf for TeacherConf {
-    fn need_out_dir(&self) -> bool {
-        false
+make_conf! {
+    /// Ice learner configuration.
+    TeacherConf {
+
+        teach_step, step: bool {
+            help "Forces the teacher will wait for user input between learning steps.",
+            long_help "\
+                If active, the teacher will stop before *i)* checking the candidates and *ii)* \
+                sending learning data to the learner. Progress will resume when the user says so.\
+            ",
+            long "--teach_step",
+            validator bool_validator,
+            val_name bool_format,
+            default "no",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        assistant, assistant: bool {
+            help "(De)activates breaking implication constraints.",
+            long_help "\
+                If active the assistant will run: it receives (new) implications constraints \
+                from the teacher and attempts to break them. Almost always useful, but might \
+                slow progress down slightly.\
+            ",
+            long "--assistant",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        bias_cexs, bias_cexs: bool {
+            help "(De)activates biased implication constraints.",
+            long_help "\
+                If active, when the teacher checks implication constraint, it will look for \
+                counterexamples that have at least one positive/negative sample.\
+            ",
+            long "--bias_cexs",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        max_bias, max_bias: bool {
+            help "(De)activates a more extreme version of `--bias_cexs`.",
+            long_help "\
+                If active, only considers counterexamples that have no unclassified data when \
+                possible.\
+            ",
+            long "--max_bias",
+            validator bool_validator,
+            val_name bool_format,
+            default "off",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        partial, partial: bool {
+            help "(De)activates partial samples.",
+            long_help "\
+                If active, the teacher is allowed to generate *partial samples*. These are \
+                samples that have unspecified, *don't care* values.\
+            ",
+            long "--partial",
+            validator bool_validator,
+            val_name bool_format,
+            default "on",
+            takes_val,
+            val_nb 1,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
+
+        restart_on_cex, restart_on_cex: bool {
+            help "Restarts the teacher's solver for each counterexample query.",
+            long_help "\
+                If active, the teacher will always restart before checking the learner's \
+                candidates for counterexamples. Note that if the clauses mention datatypes \
+                the solver is always restarted.\
+            ",
+            long "--restart_on_cex",
+            validator bool_validator,
+            val_name bool_format,
+            default "off",
+            takes_val,
+            val_nb 1,
+            hidden,
+        } {
+            |mtch| bool_of_match(mtch)
+        }
     }
-}
-impl TeacherConf {
-    /// Adds clap options to a clap App.
-    pub fn add_args(app: App, mut order: usize) -> App {
-        let mut order = || {
-            order += 1;
-            order
-        };
 
-        app.arg(
-            Arg::with_name("teach_step")
-                .long("--teach_step")
-                .help("forces the teacher to progress incrementally")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("no")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("assistant")
-                .long("--assistant")
-                .help("(de)activate breaking implication constraints")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("bias_cexs")
-                .long("--bias_cexs")
-                .help("(de)activate biased implication constraints")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("max_bias")
-                .long("--max_bias")
-                .help(
-                    "(de)activate constraint pruning when there's at least one \
-                     pos/neg sample",
-                ).validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("off")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order())
-                .hidden(true),
-        ).arg(
-            Arg::with_name("partial")
-                .long("--partial")
-                .help("(de)activate partial samples")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("on")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order()),
-        ).arg(
-            Arg::with_name("restart_on_cex")
-                .long("--restart_on_cex")
-                .help("restart the teacher's solver for each cex query")
-                .validator(bool_validator)
-                .value_name(bool_format)
-                .default_value("off")
-                .takes_value(true)
-                .number_of_values(1)
-                .display_order(order())
-                .hidden(true),
-        )
-    }
-
-    /// Creates itself from some matches.
-    pub fn new(matches: &Matches) -> Self {
-        let step = bool_of_matches(matches, "teach_step");
-        let assistant = bool_of_matches(matches, "assistant");
-        let bias_cexs = bool_of_matches(matches, "bias_cexs");
-        let max_bias = bool_of_matches(matches, "max_bias");
-        let partial = bool_of_matches(matches, "partial");
-        let restart_on_cex = bool_of_matches(matches, "restart_on_cex");
-
-        TeacherConf {
-            step,
-            assistant,
-            bias_cexs,
-            max_bias,
-            partial,
-            restart_on_cex,
+    impl SubConf for TeacherConf {
+        fn need_out_dir(&self) -> bool {
+            false
         }
     }
 }
@@ -1200,8 +1216,8 @@ impl Config {
         app = PreprocConf::add_args(app, &mut 100);
         app = InstanceConf::add_args(app, 200);
         app = SmtConf::add_args(app, &mut 300);
-        app = IceConf::add_args(app, 400);
-        app = TeacherConf::add_args(app, 500);
+        app = IceConf::add_args(app, &mut 400);
+        app = TeacherConf::add_args(app, &mut 500);
         app = Self::add_check_args(app, 600);
 
         let matches = app.get_matches();
@@ -1528,15 +1544,27 @@ pub fn bool_of_str(s: &str) -> Option<bool> {
     }
 }
 
+/// Boolean of a match value.
+pub fn bool_of_match(mtch: &str) -> bool {
+    bool_of_str(mtch).expect("failed to retrieve boolean argument")
+}
+
 /// Boolean of some matches.
 ///
 /// Assumes a default is provided and the input has been validated with
 /// `bool_validator`.
 pub fn bool_of_matches(matches: &Matches, key: &str) -> bool {
-    matches
-        .value_of(key)
-        .and_then(|s| bool_of_str(&s))
-        .expect("failed to retrieve boolean argument")
+    bool_of_match(
+        matches
+            .value_of(key)
+            .unwrap_or_else(|| panic!("could not retrieve value for CLA `{}`", key)),
+    )
+}
+
+/// Integer of a single match.
+pub fn int_of_match(mtch: &str) -> usize {
+    use std::str::FromStr;
+    usize::from_str(mtch).expect("failed to retrieve integer argument")
 }
 
 /// Integer of some matches.
@@ -1544,11 +1572,9 @@ pub fn bool_of_matches(matches: &Matches, key: &str) -> bool {
 /// Assumes a default is provided and the input has been validated with
 /// `bool_validator`.
 pub fn int_of_matches(matches: &Matches, key: &str) -> usize {
-    use std::str::FromStr;
     matches
         .value_of(key)
-        .map(|s| usize::from_str(&s))
-        .expect("failed to retrieve integer argument")
+        .map(|s| int_of_match(&s))
         .expect("failed to retrieve integer argument")
 }
 
