@@ -833,6 +833,17 @@ pub fn app(op: Op, mut args: Vec<Term>) -> Term {
                 "Fatal internal type checking error, \
                 please notify the developer(s)".into()
             ) ;
+            let res: Res<()> = res
+                .chain_err(
+                    || {
+                        let mut res = format!("while type checking ({}", op);
+                        for arg in &args {
+                            res += &format!(" {}", arg)
+                        }
+                        res += ")";
+                        res
+                    }
+                );
             match e {
                 term::TypError::Typ { expected, obtained, index } => res.chain_err(
                     || format!(
