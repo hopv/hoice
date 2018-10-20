@@ -254,11 +254,7 @@ pub fn work_on_split(
             }
         }
 
-        if conf.preproc.active {
-            run(pre_instance, profiler, true)
-        } else {
-            Ok(())
-        }
+        run(pre_instance, profiler, true)
     };
 
     finalize(res, &mut split_instance, profiler)?;
@@ -295,46 +291,52 @@ impl<'a> Reductor<'a> {
     /// Checks the configuration to initialize the pre-processors.
     pub fn new(instance: PreInstance<'a>) -> Res<Self> {
         macro_rules! some_new {
-      ($red:ident if $flag:ident $(and $flags:ident )*) => (
-        some_new! { $red |if| conf.preproc.$flag $( && conf.preproc.$flags )* }
-      ) ;
-      ($red:ident if $flag:ident $(or $flags:ident )*) => (
-        some_new! { $red |if| conf.preproc.$flag $( && conf.preproc.$flags )* }
-      ) ;
-      ($red:ident |if| $cond:expr) => (
-        if $cond {
-          Some( $red::new(& instance) )
-        } else {
-          None
+            ($red:ident if $flag:ident $(and $flags:ident )*) => (
+                some_new! { $red |if| conf.preproc.$flag $( && conf.preproc.$flags )* }
+            ) ;
+            ($red:ident if $flag:ident $(or $flags:ident )*) => (
+                some_new! { $red |if| conf.preproc.$flag $( || conf.preproc.$flags )* }
+            ) ;
+            ($red:ident if $flag:ident and $stuff:expr) => (
+                some_new! { $red |if| conf.preproc.$flag && $stuff }
+            ) ;
+            ($red:ident if $flag:ident or $stuff:expr) => (
+                some_new! { $red |if| conf.preproc.$flag || $stuff }
+            ) ;
+            ($red:ident |if| $cond:expr) => (
+                if $cond {
+                    Some( $red::new(& instance) )
+                } else {
+                    None
+                }
+            ) ;
         }
-      ) ;
-    }
 
         let simplify = Some(Simplify::new(&instance));
-        let arg_red = some_new! { ArgRed if arg_red };
+        let arg_red = some_new! { ArgRed if active and arg_red };
 
         let one_rhs = some_new! {
-          OneRhs if one_rhs and one_rhs_full and reduction
+          OneRhs if active and one_rhs
         };
         let one_lhs = some_new! {
-          OneLhs if one_lhs and one_lhs_full and reduction
+          OneLhs if active and one_lhs
         };
 
-        let cfg_red = some_new! { CfgRed if cfg_red };
+        let cfg_red = some_new! { CfgRed if active and cfg_red };
 
         let biased_unroll = some_new! {
-          BiasedUnroll if pos_unroll or neg_unroll
+          BiasedUnroll if active and (conf.preproc.pos_unroll || conf.preproc.neg_unroll)
         };
         let runroll = some_new! {
-          RUnroll if neg_unroll
+          RUnroll if active and neg_unroll
         };
         let strict_neg = some_new! {
-          StrictNeg if strict_neg
+          StrictNeg if active and strict_neg
         };
         let fun_preds = if !dtyp::one_or_more()? {
             None
         } else {
-            some_new! { FunPreds if fun_preds }
+            some_new! { FunPreds if active and fun_preds }
         };
 
         Ok(Reductor {

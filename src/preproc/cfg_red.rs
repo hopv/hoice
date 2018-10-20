@@ -1296,15 +1296,15 @@ impl RedStrat for CfgRed {
 
             info += self.apply_pred_defs(instance, pred_defs)?;
 
-            if conf.preproc.dump_pred_dep {
-                self.graph.setup(instance);
-                self.graph.check(&instance)?;
-                self.graph.to_dot(
-                    &instance,
-                    format!("{}_pred_dep_reduced", self.cnt),
-                    &to_keep,
-                )?;
-            }
+            // if conf.preproc.log_pred_dep {
+            //     self.graph.setup(instance);
+            //     self.graph.check(&instance)?;
+            //     self.graph.to_dot(
+            //         &instance,
+            //         format!("{}_pred_dep_reduced", self.cnt),
+            //         &to_keep,
+            //     )?;
+            // }
 
             self.cnt += 1;
 

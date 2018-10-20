@@ -100,28 +100,28 @@ impl Op {
         use Op::*;
 
         macro_rules! err {
-      (lft $($lft:tt)*) => (
-        return Err( term::TypError::typ($($lft)*) )
-      ) ;
+            (lft $($lft:tt)*) => (
+                return Err( term::TypError::typ($($lft)*) )
+            ) ;
 
-      (rgt $($lft:tt)*) => (
-        return Err( term::TypError::msg( format!($($lft)*)) )
-      ) ;
+            (rgt $($lft:tt)*) => (
+                return Err( term::TypError::msg( format!($($lft)*)) )
+            ) ;
 
-      (nullary) => (
-        err!(rgt
-          "illegal nullary application of `{}`", self
-        )
-      ) ;
-    }
+            (nullary) => (
+                err!(rgt
+                    "illegal nullary application of `{}`", self
+                )
+            ) ;
+        }
 
         macro_rules! arity_check {
             ( [ $min:tt, . ] => $e:expr ) => {
                 if args.len() < $min {
                     err!(rgt
-                                            "illegal application of `{}` to {} arguments (> {})",
-                                            self, args.len(), $min
-                                          )
+                                        "illegal application of `{}` to {} arguments (> {})",
+                                        self, args.len(), $min
+                                    )
                 } else {
                     $e
                 }
@@ -130,9 +130,9 @@ impl Op {
             ( [ $min:tt, $max:tt ] => $e:expr ) => {
                 if args.len() > $max {
                     err!(rgt
-                                            "illegal application of `{}` to {} arguments (> {})",
-                                            self, args.len(), $max
-                                          )
+                                        "illegal application of `{}` to {} arguments (> {})",
+                                        self, args.len(), $max
+                                    )
                 } else {
                     arity_check!( [ $min, .] => $e )
                 }

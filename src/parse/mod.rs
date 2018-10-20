@@ -2360,9 +2360,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 if self.cxt.term_stack.is_empty() {
                     return Ok(TermTokenRes::NotATerm);
                 } else {
-                    for fun in self.functions.keys() {
-                        println!("- {}", fun)
-                    }
+                    // for fun in self.functions.keys() {
+                    //     println!("- {}", fun)
+                    // }
                     bail!(self.error(pos, format!("unknown identifier (term) `{}`", conf.bad(id))))
                 }
             } else if self.cxt.term_stack.is_empty() {

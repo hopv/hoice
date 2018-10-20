@@ -697,6 +697,9 @@ impl<'a> Deconstructed<'a> {
     fn is_opposite(&self, other: &Self) -> bool {
         if self.trms.len() == other.trms.len() {
             for t_1 in &self.trms {
+                if !t_1.typ().is_arith() {
+                    return false;
+                }
                 let t_1 = &term::u_minus((*t_1).clone());
                 if other.trms.iter().all(|t| *t != t_1) {
                     return false;
@@ -1022,203 +1025,206 @@ macro_rules! simpl_fun {
 // Polymorphic operations.
 
 simpl_fun! {
-  // Equal.
-  fn eql(args) {
-    if args.len() == 2 {
+    // Equal.
+    fn eql(args) {
+        if args.len() == 2 {
 
-      if args[0] == args[1] {
-        return Some(
-          NormRes::Term( term::tru() )
-      )
+            if args[0] == args[1] {
+                return Some(
+                    NormRes::Term( term::tru() )
+                )
 
-      } else if let Some(b) = args[0].bool() {
+            } else if let Some(b) = args[0].bool() {
 
-        return Some(
-          NormRes::Term(
-            if b {
-              args[1].clone()
+                return Some(
+                    NormRes::Term(
+                        if b {
+                            args[1].clone()
+                        } else {
+                            term::not( args[1].clone() )
+                        }
+                    )
+                )
+
+            } else if let Some(b) = args[1].bool() {
+
+                return Some(
+                    NormRes::Term(
+                        if b {
+                            args[0].clone()
+                        } else {
+                            term::not( args[0].clone() )
+                        }
+                    )
+                )
+
+            } else if let (Some(r_1), Some(r_2)) = (
+                args[0].real(), args[1].real()
+            ) {
+
+                return Some(
+                    NormRes::Term( term::bool( r_1 == r_2 ) )
+                )
+
+            } else if let (Some(i_1), Some(i_2)) = (
+                args[0].int(), args[1].int()
+            ) {
+
+                return Some(
+                    NormRes::Term( term::bool( i_1 == i_2 ) )
+                )
+
+            } else if args[0].typ().is_arith() {
+
+                // println!("  (= {} {})", args[0], args[1]) ;
+                if ! args[1].is_zero() {
+                    let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
+                    let typ = rhs.typ() ;
+                    let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
+                        NormRes::App(
+                            typ.clone(), Op::Sub, vec![
+                                NormRes::Term(lhs), NormRes::Term(rhs)
+                            ]
+                        )
+                    } ;
+                    return Some(
+                        NormRes::App(
+                            typ::bool(), Op::Eql, vec![
+                                lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
+                            ]
+                        )
+                    )
+                } else {
+                    // Rhs is zero, now normalize lhs. This is a bit ugly...
+                    let mut u_minus_lhs = term::u_minus(args[0].clone()) ;
+                    if u_minus_lhs.uid() < args[0].uid() {
+                        ::std::mem::swap(& mut args[0], & mut u_minus_lhs)
+                    }
+                }
+
             } else {
-              term::not( args[1].clone() )
+
+                args.sort_unstable();
+
+                // } else if let Some(val) = args[0].val() {
+                //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+                //     if dtyp_args.is_empty() {
+                //       return Some(
+                //         NormRes::Term(
+                //           term::dtyp_tst(
+                //             constructor.into(), args[1].clone()
+                //           )
+                //         )
+                //       )
+                //     }
+                //   }
+                // } else if let Some(val) = args[1].val() {
+                //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+                //     if dtyp_args.is_empty() {
+                //       return Some(
+                //         NormRes::Term(
+                //           term::dtyp_tst(
+                //             constructor.into(), args[0].clone()
+                //           )
+                //         )
+                //       )
+                //     }
+                //   }
             }
-          )
-        )
 
-      } else if let Some(b) = args[1].bool() {
-
-        return Some(
-          NormRes::Term(
-            if b {
-              args[0].clone()
-            } else {
-              term::not( args[0].clone() )
-            }
-          )
-        )
-
-      } else if let (Some(r_1), Some(r_2)) = (
-        args[0].real(), args[1].real()
-      ) {
-
-        return Some(
-          NormRes::Term( term::bool( r_1 == r_2 ) )
-        )
-
-      } else if let (Some(i_1), Some(i_2)) = (
-        args[0].int(), args[1].int()
-      ) {
-
-        return Some(
-          NormRes::Term( term::bool( i_1 == i_2 ) )
-        )
-
-      } else if args[0].typ().is_arith() {
-
-        // println!("  (= {} {})", args[0], args[1]) ;
-        if ! args[1].is_zero() {
-          let (rhs, lhs) = (args.pop().unwrap(), args.pop().unwrap()) ;
-          let typ = rhs.typ() ;
-          let lhs = if lhs.is_zero() { NormRes::Term(rhs) } else {
-            NormRes::App(
-              typ.clone(), Op::Sub, vec![
-                NormRes::Term(lhs), NormRes::Term(rhs)
-              ]
-            )
-          } ;
-          return Some(
-            NormRes::App(
-              typ::bool(), Op::Eql, vec![
-                lhs, NormRes::Term( typ.default_val().to_term().unwrap() )
-              ]
-            )
-          )
         } else {
-          // Rhs is zero, now normalize lhs. This is a bit ugly...
-          let mut u_minus_lhs = term::u_minus(args[0].clone()) ;
-          if u_minus_lhs.uid() < args[0].uid() {
-            ::std::mem::swap(& mut args[0], & mut u_minus_lhs)
-          }
-        }
 
-      // } else if let Some(val) = args[0].val() {
-      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
-      //     if dtyp_args.is_empty() {
-      //       return Some(
-      //         NormRes::Term(
-      //           term::dtyp_tst(
-      //             constructor.into(), args[1].clone()
-      //           )
-      //         )
-      //       )
-      //     }
-      //   }
-      // } else if let Some(val) = args[1].val() {
-      //   if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
-      //     if dtyp_args.is_empty() {
-      //       return Some(
-      //         NormRes::Term(
-      //           term::dtyp_tst(
-      //             constructor.into(), args[0].clone()
-      //           )
-      //         )
-      //       )
-      //     }
-      //   }
-      }
-
-    } else {
-
-      args.sort_unstable() ;
-      let len = args.len() ;
-      let mut args = args.drain(0..) ;
-      let mut conj = vec![] ;
-      if let Some(first) = args.next() {
-        for arg in args {
-          conj.push(
-            NormRes::App(
-              typ::bool(), Op::Eql, vec![
-                NormRes::Term( first.clone() ),
-                NormRes::Term(arg)
-              ]
+            args.sort_unstable() ;
+            let len = args.len() ;
+            let mut args = args.drain(0..) ;
+            let mut conj = vec![] ;
+            if let Some(first) = args.next() {
+                for arg in args {
+                    conj.push(
+                        NormRes::App(
+                            typ::bool(), Op::Eql, vec![
+                                NormRes::Term( first.clone() ),
+                                NormRes::Term(arg)
+                            ]
+                        )
+                    )
+                }
+                if ! conj.is_empty() {
+                    return Some(
+                        NormRes::App(typ::bool(), Op::And, conj)
+                    )
+                }
+            }
+            panic!(
+                "illegal application of `=` to {} (< 2) argument", len
             )
-          )
         }
-        if ! conj.is_empty() {
-          return Some(
-            NormRes::App(typ::bool(), Op::And, conj)
-          )
-        }
-      }
-      panic!(
-        "illegal application of `=` to {} (< 2) argument", len
-      )
-    }
 
-    None
-  } ;
+        None
+    } ;
 
-  // If-then-else.
-  fn ite(args) {
-    arity!("ite" => args, 3) ;
+    // If-then-else.
+    fn ite(args) {
+        arity!("ite" => args, 3) ;
 
-    if let Some(b) = args[0].bool() {
-      let (e, t) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
-      Some(
-        NormRes::Term(
-          if b { t } else { e }
-        )
-      )
-    } else if args[1] == args[2] {
-      Some( // "else" term
-        NormRes::Term( args.pop().unwrap() )
-      )
-    } else if args[1].typ().is_bool()
-    && args[0].dtyp_tst_inspect().is_none() {
-      let (e, t, c) = (
-        args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
-      ) ;
-      Some(
-        NormRes::App(
-          typ::bool(), Op::Or, vec![
-            NormRes::App(
-              typ::bool(), Op::And, vec![
-                NormRes::Term( c.clone() ),
-                NormRes::Term( t ),
-              ]
-            ),
-            NormRes::App(
-              typ::bool(), Op::And, vec![
-                NormRes::Term( term::not(c) ),
-                NormRes::Term( e ),
-              ]
-            ),
-          ]
-        )
-      )
-    } else if let Some(eq_args) = args[0].eq_inspect().cloned() {
-
-      if let Some(val) = eq_args[0].val() {
-        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
-          if dtyp_args.is_empty() {
-            args[0] = term::dtyp_tst(
-              constructor, eq_args[1].clone()
+        if let Some(b) = args[0].bool() {
+            let (e, t) = ( args.pop().unwrap(), args.pop().unwrap() ) ;
+            Some(
+                NormRes::Term(
+                    if b { t } else { e }
+                )
             )
-          }
-        }
-      } else if let Some(val) = eq_args[1].val() {
-        if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
-          if dtyp_args.is_empty() {
-            args[0] = term::dtyp_tst(
-              constructor, eq_args[0].clone()
+        } else if args[1] == args[2] {
+            Some( // "else" term
+                NormRes::Term( args.pop().unwrap() )
             )
-          }
-        }
-      }
+        } else if args[1].typ().is_bool() && args[0].dtyp_tst_inspect().is_none() {
+            let (e, t, c) = (
+                args.pop().unwrap(), args.pop().unwrap(), args.pop().unwrap()
+            ) ;
+            Some(
+                NormRes::App(
+                    typ::bool(), Op::Or, vec![
+                        NormRes::App(
+                            typ::bool(), Op::And, vec![
+                                NormRes::Term( c.clone() ),
+                                NormRes::Term( t ),
+                            ]
+                        ),
+                        NormRes::App(
+                            typ::bool(), Op::And, vec![
+                                NormRes::Term( term::not(c) ),
+                                NormRes::Term( e ),
+                            ]
+                        ),
+                    ]
+                )
+            )
+        } else if let Some(eq_args) = args[0].eq_inspect().cloned() {
 
-      None
-    } else {
-      None
-    }
-  } ;
+            if let Some(val) = eq_args[0].val() {
+                if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+                    if dtyp_args.is_empty() {
+                        args[0] = term::dtyp_tst(
+                            constructor, eq_args[1].clone()
+                        )
+                    }
+                }
+            } else if let Some(val) = eq_args[1].val() {
+                if let Some( (_, constructor, dtyp_args) ) = val.dtyp_inspect() {
+                    if dtyp_args.is_empty() {
+                        args[0] = term::dtyp_tst(
+                            constructor, eq_args[0].clone()
+                        )
+                    }
+                }
+            }
+
+            None
+        } else {
+            None
+        }
+    } ;
 
   // Distinct.
   fn distinct(args) {
