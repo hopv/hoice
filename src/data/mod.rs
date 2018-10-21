@@ -805,9 +805,11 @@ impl Data {
                     profile! { self mark "add cstr", "pre-checks" }
                     profile! { self "trivial constraints" => add 1 }
                     // Positive, constraint is trivial.
+                    log! { @5 "rhs positive, trivial" }
                     return Ok(None);
                 } else if args.set_subsumed(&self.neg[pred]) {
                     // Negative, ignore.
+                    log! { @5 "rhs negative, discarding rhs" }
                     None
                 } else {
                     Some(args)
@@ -832,7 +834,7 @@ impl Data {
                 if args.set_subsumed(&self.pos[pred]) {
                     self.register_raw_sample_dep(pred, &args, &nu_rhs)?;
                     // Is this the last (positive) sample in a `... => false` constraint?
-                    if nu_rhs.is_none() && lhs.is_empty() {
+                    if nu_rhs.is_none() && lhs.is_empty() && nu_lhs.is_empty() {
                         // Then register as negative to record the conflict.
                         self.add_neg(clause, pred, args);
                         unsat!("by `true => false` in constraint (data, prune_cstr)")
