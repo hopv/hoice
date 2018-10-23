@@ -1473,7 +1473,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             bail!(self.error_here("expected Bool sort"))
         }
 
-        let pred_index = instance.push_pred(ident.into(), VarMap::of(sorts));
+        let pred_index = instance.push_pred(ident, VarMap::of(sorts));
         let prev = self.cxt.pred_name_map.insert(ident.into(), pred_index);
         if let Some(prev) = prev {
             bail!(self.error(
@@ -3455,4 +3455,42 @@ pub fn fun_dtyp(s: &str) {
         cxt.parser(s, 0, &Profiler::new()).parse(&mut dummy),
         "while parsing function / datatypes"
     );
+}
+
+/// Parses a test instance corresponding to McCarthy's 91 function.
+pub fn mc_91() -> Instance {
+    let mut instance = Instance::new();
+    let mut cxt = ParserCxt::new();
+    let input = "
+(set-logic HORN)
+(declare-fun mc91 ( Int Int ) Bool)
+(assert (forall ((n Int)) (=> (> n 100) (mc91 n (- n 10)))))
+(assert (forall ((n Int) (t Int) (r Int))
+    (=>
+        (and
+            (<= n 100)
+            (mc91 (+ n 11) t)
+            (mc91 t r)
+        )
+        (mc91 n r)
+    )
+))
+(assert (forall ((n Int) (r Int))
+    (=>
+        (and
+            (<= n 101)
+            (not (= r 91))
+            (mc91 n r)
+        )
+        false
+    )
+))
+    ";
+
+    print_err!(
+        cxt.parser(input, 0, &Profiler::new()).parse(&mut instance),
+        "while parsing mc_91 instance"
+    );
+
+    instance
 }

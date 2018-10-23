@@ -57,6 +57,11 @@ impl From<VarMap<Val>> for RVarVals {
         RVarVals { map }
     }
 }
+impl From<Vec<Val>> for RVarVals {
+    fn from(map: Vec<Val>) -> Self {
+        RVarVals { map: map.into() }
+    }
+}
 impl Evaluator for RVarVals {
     #[inline]
     fn get(&self, var: VarIdx) -> &Val {

@@ -666,8 +666,9 @@ impl Instance {
     }
 
     /// Pushes a new predicate and returns its index.
-    pub fn push_pred(&mut self, name: String, sig: Sig) -> PrdIdx {
+    pub fn push_pred<S: Into<String>>(&mut self, name: S, sig: Sig) -> PrdIdx {
         let idx = self.preds.next_index();
+        let name = name.into();
 
         self.preds.push(Pred::new(name, idx, sig));
 

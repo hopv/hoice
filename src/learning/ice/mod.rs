@@ -327,10 +327,10 @@ impl<'core> IceLearner<'core> {
             }
 
             let data = profile!(
-        |self.core._profiler| wrap {
-          self.data.data_of(pred)
-        } "learning", "data"
-      );
+                |self.core._profiler| wrap {
+                    self.data.data_of(pred)
+                } "learning", "data"
+            );
             self.check_exit()?;
 
             if let Some(term) = self.pred_learn(pred, data, simple)? {
