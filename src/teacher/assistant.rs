@@ -1,7 +1,7 @@
 //! Handles example propagation.
 
 use common::*;
-use data::{Data, Sample};
+use data::{AssData as Data, Sample};
 use var_to::vals::RVarVals;
 
 /// Result of trying to force a sample positive/negative.

@@ -28,6 +28,486 @@ pub use self::constraint::Constraint;
 use self::info::CstrInfo;
 pub use self::sample::Sample;
 
+/// Structure storing learning data manipulated by the assistant.
+pub struct AssData {
+    /// The underlying data.
+    data: Data,
+}
+impl ::std::ops::Deref for AssData {
+    type Target = Data;
+    fn deref(&self) -> &Data {
+        &self.data
+    }
+}
+impl ::std::ops::DerefMut for AssData {
+    fn deref_mut(&mut self) -> &mut Data {
+        &mut self.data
+    }
+}
+
+impl AssData {
+    /// Tautologizes a constraint and removes the links with its samples in
+    /// the map.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let mut data = Data::new(Arc::new(instance));
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     let mut data = data.to_ass_data().expect(
+    ///         "while generating assistant data"
+    ///     ).expect("new constraint but assistant data generation yielded none");
+    ///     data.tautologize(0.into()).expect("while tautologizing #0");
+    ///     println!("{}", data.to_string_info(&()).unwrap());
+    ///     assert! { data.constraints.iter().all(|c| c.is_tautology()) }
+    ///     assert! { data.map().iter().all(|set| set.is_empty()) }
+    /// }
+    /// ```
+    pub fn tautologize(&mut self, idx: CstrIdx) -> Res<()> {
+        self.data.tautologize(idx)
+    }
+}
+
+/// Structure storing learning data manipulated by learners.
+pub struct LrnData {
+    /// The underlying data.
+    data: Data,
+}
+impl ::std::ops::Deref for LrnData {
+    type Target = Data;
+    fn deref(&self) -> &Data {
+        &self.data
+    }
+}
+impl ::std::ops::DerefMut for LrnData {
+    fn deref_mut(&mut self) -> &mut Data {
+        &mut self.data
+    }
+}
+impl LrnData {
+    /// Destroys the learning data, yields the profiler.
+    pub fn destroy(self) -> Profiler {
+        self.data.destroy()
+    }
+
+    /// Adds a positive sample.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let mut data = Data::new(Arc::new(instance)).to_lrn_data();
+    ///     data.add_pos(
+    ///         p_0, var_vals!( (int 1) (int 2) )
+    ///     );
+    ///     data.propagate().expect("while propagating");
+    ///     assert_eq! { data.pos_neg_count(), (1, 0) }
+    /// }
+    /// ```
+    pub fn add_pos(&mut self, pred: PrdIdx, args: VarVals) -> bool {
+        self.data.add_pos_untracked(pred, args)
+    }
+
+    /// Adds a negative example.
+    ///
+    /// Does not track dependencies for unsat proof.
+    ///
+    /// Used by the learner(s).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let mut data = Data::new(Arc::new(instance)).to_lrn_data();
+    ///     data.add_neg(
+    ///         p_0, var_vals!( (int 1) (int 2) )
+    ///     );
+    ///     data.propagate().expect("while propagating");
+    ///     assert_eq! { data.pos_neg_count(), (0, 1) }
+    /// }
+    /// ```
+    pub fn add_neg(&mut self, pred: PrdIdx, args: VarVals) -> bool {
+        self.data.add_neg_untracked(pred, args)
+    }
+
+    /// Sets all the unknown data of a given predicate to `pos`, and
+    /// propagates.
+    ///
+    /// Note that positive and negative samples for the predicates are dropped.
+    ///
+    /// This is only used by learner(s).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let mut instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let p_1: PrdIdx = 1.into();
+    ///     instance.push_pred("dummy", vec![typ::int()].into());
+    ///     let mut data = Data::new(Arc::new(instance));
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
+    ///     ).expect("while adding positive data");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     println!("{}", data.to_string_info(&()).unwrap());
+    ///     assert_eq! {
+    ///         format!("{}", data.to_string_info(&()).unwrap()),
+    ///         "\
+    /// pos (
+    ///   (mc91 3 0)
+    /// ) neg (
+    /// ) constraints (
+    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
+    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    /// ) constraint map(
+    ///   (mc91 7 3) -> 0
+    ///   (mc91 2 102) -> 0 1
+    ///   (mc91 1 101) -> 0 1
+    ///   (dummy 7 3) -> 1
+    /// ) positive examples staged (
+    /// ) negative examples staged (
+    /// ) modded (
+    ///   #0
+    ///   #1
+    /// ) neg (
+    /// )
+    /// \
+    ///         "
+    ///     }
+    ///
+    ///     let mut data = data.to_lrn_data();
+    ///     data.force_pred(p_0, true).expect("during force true");
+    ///     println!("{}", data.to_string_info(&()).unwrap());
+    ///     assert_eq! {
+    ///         format!("{}", data.to_string_info(&()).unwrap()),
+    ///         "\
+    /// pos (
+    ///   (dummy 7 3)
+    /// ) neg (
+    /// ) constraints (
+    /// ) constraint map(
+    /// ) positive examples staged (
+    /// ) negative examples staged (
+    /// ) modded (
+    /// ) neg (
+    /// )
+    /// \
+    ///         "
+    ///     }
+    /// }
+    /// ```
+    pub fn force_pred(&mut self, pred: PrdIdx, pos: bool) -> Res<()> {
+        profile! { self tick "force pred", "pre-checks" }
+        let mut modded_constraints = CstrSet::new();
+        scoped! {
+            let data = &mut self.data;
+            let map = & mut data.map ;
+            let mut constraints = CstrSet::new() ;
+            for (_, cs) in map[pred].drain() {
+                for c in cs {
+                    constraints.insert(c) ;
+                }
+            }
+            for constraint in constraints {
+                let tautology = data.constraints[constraint].force(
+                    pred, pos, |pred, args| Data::tauto_fun(
+                        map, constraint, pred, & args
+                    )
+                ) ? ;
+
+                if tautology {
+                    // Tautology, discard.
+                    data.cstr_info.forget(constraint)
+                } else {
+
+                    match data.constraints[constraint].try_trivial() {
+                        Either::Left((Sample { pred, args }, pos)) => {
+                            // Constraint is trivial: unlink and forget.
+                            if let Some(set) = map[pred].get_mut(& args) {
+                                let was_there = set.remove(& constraint) ;
+                                debug_assert! { was_there }
+                            }
+                            data.cstr_info.forget(constraint) ;
+                            // Stage the consequence of the triviality.
+                            data.staged.add(pred, args, pos) ;
+                        },
+                        Either::Right(false) => {
+                            // Otherwise, the constraint was modified and we're keeping it.
+                            data.cstr_info.register_modded(
+                                constraint, & data.constraints[constraint]
+                            ) ? ;
+                            modded_constraints.insert(constraint) ;
+                        },
+                        Either::Right(true) => unsat!(
+                            "by `true => false` in constraint (data, force_pred)"
+                        ),
+                    }
+                }
+            }
+        }
+
+        self.pos[pred].clear();
+        self.neg[pred].clear();
+
+        for constraint in modded_constraints.drain() {
+            if !self.constraints[constraint].is_tautology() && !self.cstr_useful(constraint)? {
+                self.tautologize(constraint)?
+            }
+        }
+        profile! { self mark "force pred", "pre-checks" }
+
+        profile!(
+            self wrap { self.propagate() }
+            "force pred", "propagate"
+        )?;
+
+        Ok(())
+    }
+
+    /// The projected data for some predicate.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let mut instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let p_1: PrdIdx = 1.into();
+    ///     instance.push_pred("dummy", vec![typ::int()].into());
+    ///     let mut data = Data::new(Arc::new(instance));
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
+    ///     ).expect("while adding positive data");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     println!("{}", data.to_string_info(&()).unwrap());
+    ///     assert_eq! {
+    ///         format!("{}", data.to_string_info(&()).unwrap()),
+    ///         "\
+    /// pos (
+    ///   (mc91 3 0)
+    /// ) neg (
+    /// ) constraints (
+    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
+    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    /// ) constraint map(
+    ///   (mc91 7 3) -> 0
+    ///   (mc91 2 102) -> 0 1
+    ///   (mc91 1 101) -> 0 1
+    ///   (dummy 7 3) -> 1
+    /// ) positive examples staged (
+    /// ) negative examples staged (
+    /// ) modded (
+    ///   #0
+    ///   #1
+    /// ) neg (
+    /// )
+    /// \
+    ///         "
+    ///     }
+    ///
+    ///     let data = data.to_lrn_data();
+    ///     let cdata = data.data_of(p_0);
+    ///     let mut pos: BTreeSet<_> = vec![var_vals!((int 3) (int 0))].into_iter().collect();
+    ///     let mut unc: BTreeSet<_> = vec![
+    ///         var_vals!((int 7) (int 3)),
+    ///         var_vals!((int 1) (int 101)),
+    ///         var_vals!((int 2) (int 102)),
+    ///     ].into_iter().collect();
+    ///     assert! { cdata.neg().is_empty() }
+    ///     for args in cdata.pos() {
+    ///         let was_there = pos.remove(args);
+    ///         assert! { was_there }
+    ///     }
+    ///     assert! { pos.is_empty() }
+    ///     for args in cdata.unc() {
+    ///         let was_there = unc.remove(args);
+    ///         assert! { was_there }
+    ///     }
+    ///     assert! { unc.is_empty() }
+    /// }
+    /// ```
+    pub fn data_of(&self, pred: PrdIdx) -> CData {
+        profile! { self tick "data of" }
+        let unc_set = &self.map[pred];
+        let pos_set = &self.pos[pred];
+        let neg_set = &self.neg[pred];
+        let pos_single_set = &self.pos_single[pred];
+        let neg_single_set = &self.neg_single[pred];
+
+        let (mut pos, mut neg, mut unc, mut pos_single, mut neg_single) = (
+            Vec::with_capacity(pos_set.len()),
+            Vec::with_capacity(neg_set.len()),
+            Vec::with_capacity(unc_set.len()),
+            Vec::with_capacity(pos_single_set.len()),
+            Vec::with_capacity(neg_single_set.len()),
+        );
+
+        for sample in pos_set.iter() {
+            pos.push(sample.clone())
+        }
+        for sample in neg_set.iter() {
+            neg.push(sample.clone())
+        }
+        for (sample, set) in unc_set.iter() {
+            if !set.is_empty() {
+                unc.push(sample.clone())
+            }
+        }
+
+        for sample in pos_single_set {
+            if pos.contains(sample) {
+                pos_single.push(sample.clone())
+            }
+        }
+        for sample in neg_single_set {
+            if neg.contains(sample) {
+                neg_single.push(sample.clone())
+            }
+        }
+
+        profile! { self mark "data of" }
+        CData::new(pos, neg, unc, pos_single, neg_single)
+    }
+
+    /// Applies the classification represented by the data to some projected
+    /// data.
+    ///
+    /// This is used when backtracking in the learner. The assumption is that all
+    /// arguments in `data` are in `self`. That is, there is no subsumption
+    /// checking.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let mut instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let p_1: PrdIdx = 1.into();
+    ///     instance.push_pred("dummy", vec![typ::int()].into());
+    ///     let mut data = Data::new(Arc::new(instance));
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
+    ///     ).expect("while adding positive data");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     println!("{}", data.to_string_info(&()).unwrap());
+    ///     assert_eq! {
+    ///         format!("{}", data.to_string_info(&()).unwrap()),
+    ///         "\
+    /// pos (
+    ///   (mc91 3 0)
+    /// ) neg (
+    /// ) constraints (
+    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
+    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    /// ) constraint map(
+    ///   (mc91 7 3) -> 0
+    ///   (mc91 2 102) -> 0 1
+    ///   (mc91 1 101) -> 0 1
+    ///   (dummy 7 3) -> 1
+    /// ) positive examples staged (
+    /// ) negative examples staged (
+    /// ) modded (
+    ///   #0
+    ///   #1
+    /// ) neg (
+    /// )
+    /// \
+    ///         "
+    ///     }
+    ///
+    ///     let mut data = data.to_lrn_data();
+    ///     let mut cdata = data.data_of(p_0);
+    ///     assert! { cdata.unc().iter().any(|s| s.get() == &r_var_vals!((int 7) (int 3))) }
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding positive data");
+    ///     data.propagate().expect("during propagation");
+    ///     data.classify(p_0, &mut cdata);
+    ///     assert! { cdata.unc().iter().all(|s| s.get() != &r_var_vals!((int 7) (int 3))) }
+    ///     assert! { cdata.pos().iter().any(|s| s.get() == &r_var_vals!((int 7) (int 3))) }
+    /// }
+    /// ```
+    pub fn classify(&self, pred: PrdIdx, data: &mut CData) {
+        profile!{
+          self wrap {
+            data.classify(
+              |sample| if self.pos[pred].contains(sample) {
+                Some(true)
+              } else if self.neg[pred].contains(sample) {
+                Some(false)
+              } else {
+                None
+              }
+            )
+          } "classify"
+        }
+    }
+}
+
 /// Structure manipulating unprojected learning data.
 pub struct Data {
     /// Instance, only used for printing.
@@ -148,6 +628,87 @@ impl Data {
         &self.map
     }
 
+    /// Generates data for the assistant.
+    ///
+    /// Takes all the constraints modified since the last call to this function, and generates
+    /// learning data for the assistant containing only these constraints. Returns `None` if there
+    /// are no modified constraints.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{ common::*, data::Data };
+    /// fn main() {
+    ///     let instance = ::hoice::parse::mc_91();
+    ///     let p_0: PrdIdx = 0.into();
+    ///     let mut data = Data::new(Arc::new(instance));
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
+    ///     ).expect("while adding positive data");
+    ///     // No constraints, no assistant data should be generated.
+    ///     assert! { data.to_ass_data().expect("while generating assistant data").is_none() }
+    ///
+    ///     data.add_data(
+    ///         1.into(), vec![
+    ///             (p_0, r_var_vals!((int 1) (int 101))),
+    ///             (p_0, r_var_vals!((int 2) (int 102))),
+    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
+    ///     ).expect("while adding constraint");
+    ///     // New constraint, there should be some assistant data.
+    ///     let cloned = data.to_ass_data().expect("while generating assistant data").unwrap();
+    ///     assert_eq! { cloned.pos_neg_count(), (0, 0) }
+    ///     assert_eq! { cloned.constraints.len(), 1 }
+    ///
+    ///     // Nothing new since last clone, no assistant data.
+    ///     assert! { data.to_ass_data().expect("while generating assistant data").is_none() }
+    ///
+    ///     data.add_data(
+    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 1) (int 101))))
+    ///     ).expect("while adding positive data");
+    ///     // This positive sample changes the (only) constraint.
+    ///     data.propagate().expect("during propagation");
+    ///     let cloned = data.to_ass_data().expect("while generating assistant data").unwrap();
+    ///     assert_eq! { cloned.pos_neg_count(), (0, 0) }
+    ///     assert_eq! { cloned.constraints.len(), 1 }
+    /// }
+    /// ```
+    pub fn to_ass_data(&mut self) -> Res<Option<AssData>> {
+        let mut data = None;
+        for idx in self.cstr_info.modded() {
+            let constraint = &self.constraints[*idx];
+            if !constraint.is_tautology() {
+                data.get_or_insert_with(|| AssData {
+                    data: Data::new(self.instance.clone()),
+                }).raw_add_cstr(constraint.clone())?;
+            }
+        }
+        self.cstr_info.clear_modded();
+        Ok(data)
+    }
+
+    /// Generates learning data for learners.
+    pub fn to_lrn_data(&self) -> LrnData {
+        let data = Data {
+            instance: self.instance.clone(),
+            pos: self.pos.clone(),
+            neg: self.neg.clone(),
+            constraints: self.constraints.clone(),
+            map: self.map.clone(),
+
+            pos_single: self.pos_single.clone(),
+            neg_single: self.neg_single.clone(),
+
+            staged: self.staged.clone(), // Empty anyway.
+            cstr_info: self.cstr_info.clone(),
+            // graph: None,
+            _profiler: Profiler::new(),
+            entry_points: None,
+        };
+        LrnData { data }
+    }
+
     /// Destroys the data and returns profiling info.
     pub fn destroy(self) -> Profiler {
         let _pos_len = self.pos.iter().fold(0, |acc, samples| acc + samples.len());
@@ -179,67 +740,9 @@ impl Data {
                 .unwrap()
         )
     }
+}
 
-    /// Clones the new/modded constraints to create a new `Data`.
-    ///
-    /// **Clears the set of modified constraints.** Clones the constraints that have been modified
-    /// since the last call to `clone_new_constraints`.
-    ///
-    /// Used to send modified new/modded implications to the assistant.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
-    ///     ).expect("while adding positive data");
-    ///     // No constraints, cloning should yield none.
-    ///     assert! { data.clone_new_constraints().expect("while cloning").is_none() }
-    ///
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     // New constraint, cloning should yield something.
-    ///     let cloned = data.clone_new_constraints().expect("while cloning").unwrap();
-    ///     assert_eq! { cloned.pos_neg_count(), (0, 0) }
-    ///     assert_eq! { cloned.constraints.len(), 1 }
-    ///
-    ///     // Nothing new since last clone, should yield none.
-    ///     assert! { data.clone_new_constraints().expect("while cloning").is_none() }
-    ///
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 1) (int 101))))
-    ///     ).expect("while adding positive data");
-    ///     // This positive sample changes the (only) constraint.
-    ///     data.propagate().expect("during propagation");
-    ///     let cloned = data.clone_new_constraints().expect("while cloning").unwrap();
-    ///     assert_eq! { cloned.pos_neg_count(), (0, 0) }
-    ///     assert_eq! { cloned.constraints.len(), 1 }
-    /// }
-    /// ```
-    pub fn clone_new_constraints(&mut self) -> Res<Option<Data>> {
-        let mut data = None;
-        for idx in self.cstr_info.modded() {
-            let constraint = &self.constraints[*idx];
-            if !constraint.is_tautology() {
-                data.get_or_insert_with(|| Data::new(self.instance.clone()))
-                    .raw_add_cstr(constraint.clone())?;
-            }
-        }
-        self.cstr_info.clear_modded();
-        Ok(data)
-    }
-
+impl Data {
     /// Merges the positive and negative samples in `other` to `self`.
     ///
     /// Returns the number of new positive/negative examples. Used to integrate new pos/neg samples
@@ -264,7 +767,7 @@ impl Data {
     ///             (p_0, r_var_vals!((int 2) (int 102))),
     ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
     ///     ).expect("while adding constraint");
-    ///     let cloned = data.clone_new_constraints().expect("while cloning").unwrap();
+    ///     let cloned = data.to_ass_data().expect("while generating assistant data").unwrap();
     ///
     ///     // These data points break the constraint above.
     ///     data.add_data(
@@ -280,19 +783,19 @@ impl Data {
     ///     assert! { data.constraints.is_empty() }
     /// }
     /// ```
-    pub fn merge_samples(&mut self, other: Data) -> Res<(usize, usize)> {
-        for (pred, samples) in other.pos.into_index_iter() {
+    pub fn merge_samples(&mut self, other: AssData) -> Res<(usize, usize)> {
+        for (pred, samples) in other.data.pos.into_index_iter() {
             for sample in samples {
                 self.staged.add_pos(pred, sample);
             }
         }
-        for (pred, samples) in other.neg.into_index_iter() {
+        for (pred, samples) in other.data.neg.into_index_iter() {
             for sample in samples {
                 self.staged.add_neg(pred, sample);
             }
         }
         if let Some(e) = self.entry_points.as_mut() {
-            if let Some(other) = other.entry_points {
+            if let Some(other) = other.data.entry_points {
                 e.merge(other)
             } else {
                 bail!("failed to merge entry points while merging data samples")
@@ -439,27 +942,7 @@ impl Data {
     /// Adds a positive example.
     ///
     /// Does not track dependencies for unsat proof.
-    ///
-    /// Used by the learner(s).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_pos_untracked(
-    ///         p_0, var_vals!( (int 1) (int 2) )
-    ///     );
-    ///     data.propagate().expect("while propagating");
-    ///     assert_eq! { data.pos_neg_count(), (1, 0) }
-    /// }
-    /// ```
-    pub fn add_pos_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
+    fn add_pos_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
         self.staged.add_pos(pred, args)
     }
 
@@ -474,27 +957,7 @@ impl Data {
     /// Adds a negative example.
     ///
     /// Does not track dependencies for unsat proof.
-    ///
-    /// Used by the learner(s).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_neg_untracked(
-    ///         p_0, var_vals!( (int 1) (int 2) )
-    ///     );
-    ///     data.propagate().expect("while propagating");
-    ///     assert_eq! { data.pos_neg_count(), (0, 1) }
-    /// }
-    /// ```
-    pub fn add_neg_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
+    fn add_neg_untracked(&mut self, pred: PrdIdx, args: VarVals) -> bool {
         self.staged.add_neg(pred, args)
     }
 
@@ -564,30 +1027,7 @@ impl Data {
 
     /// Tautologizes a constraint and removes the links with its samples in
     /// the map.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     data.tautologize(0.into()).expect("while tautologizing #0");
-    ///     println!("{}", data.to_string_info(&()).unwrap());
-    ///     assert! { data.constraints.iter().all(|c| c.is_tautology()) }
-    ///     assert! { data.map().iter().all(|set| set.is_empty()) }
-    /// }
-    /// ```
-    pub fn tautologize(&mut self, constraint: CstrIdx) -> Res<()> {
+    fn tautologize(&mut self, constraint: CstrIdx) -> Res<()> {
         scoped! {
           let map = & mut self.map ;
           self.constraints[constraint].tautologize(
@@ -1224,358 +1664,6 @@ impl Data {
                 Ok(nu_stuff || is_new)
             }
             Either::Right(true) => unsat!("by `true => false` in constraint (data, add_cstr)"),
-        }
-    }
-
-    /// Sets all the unknown data of a given predicate to `pos`, and
-    /// propagates.
-    ///
-    /// Note that positive and negative samples for the predicates are dropped.
-    ///
-    /// This is only used by learner(s).
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let mut instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let p_1: PrdIdx = 1.into();
-    ///     instance.push_pred("dummy", vec![typ::int()].into());
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
-    ///     ).expect("while adding positive data");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     println!("{}", data.to_string_info(&()).unwrap());
-    ///     assert_eq! {
-    ///         format!("{}", data.to_string_info(&()).unwrap()),
-    ///         "\
-    /// pos (
-    ///   (mc91 3 0)
-    /// ) neg (
-    /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
-    /// ) constraint map(
-    ///   (mc91 7 3) -> 0
-    ///   (mc91 2 102) -> 0 1
-    ///   (mc91 1 101) -> 0 1
-    ///   (dummy 7 3) -> 1
-    /// ) positive examples staged (
-    /// ) negative examples staged (
-    /// ) modded (
-    ///   #0
-    ///   #1
-    /// ) neg (
-    /// )
-    /// \
-    ///         "
-    ///     }
-    ///
-    ///     data.force_pred(p_0, true).expect("during force true");
-    ///     println!("{}", data.to_string_info(&()).unwrap());
-    ///     assert_eq! {
-    ///         format!("{}", data.to_string_info(&()).unwrap()),
-    ///         "\
-    /// pos (
-    ///   (dummy 7 3)
-    /// ) neg (
-    /// ) constraints (
-    /// ) constraint map(
-    /// ) positive examples staged (
-    /// ) negative examples staged (
-    /// ) modded (
-    /// ) neg (
-    /// )
-    /// \
-    ///         "
-    ///     }
-    /// }
-    /// ```
-    pub fn force_pred(&mut self, pred: PrdIdx, pos: bool) -> Res<()> {
-        profile! { self tick "force pred", "pre-checks" }
-        let mut modded_constraints = CstrSet::new();
-        scoped! {
-          let map = & mut self.map ;
-          let mut constraints = CstrSet::new() ;
-          for (_, cs) in map[pred].drain() {
-            for c in cs {
-              constraints.insert(c) ;
-            }
-          }
-          for constraint in constraints {
-            let tautology = self.constraints[constraint].force(
-              pred, pos, |pred, args| Self::tauto_fun(
-                map, constraint, pred, & args
-              )
-            ) ? ;
-
-            if tautology {
-              // Tautology, discard.
-              self.cstr_info.forget(constraint)
-            } else {
-
-              match self.constraints[constraint].try_trivial() {
-                Either::Left((Sample { pred, args }, pos)) => {
-                  // Constraint is trivial: unlink and forget.
-                  if let Some(set) = map[pred].get_mut(& args) {
-                    let was_there = set.remove(& constraint) ;
-                    debug_assert! { was_there }
-                  }
-                  self.cstr_info.forget(constraint) ;
-                  // Stage the consequence of the triviality.
-                  self.staged.add(pred, args, pos) ;
-                },
-                Either::Right(false) => {
-                  // Otherwise, the constraint was modified and we're keeping it.
-                  self.cstr_info.register_modded(
-                    constraint, & self.constraints[constraint]
-                  ) ? ;
-                  modded_constraints.insert(constraint) ;
-                },
-                Either::Right(true) => unsat!(
-                  "by `true => false` in constraint (data, force_pred)"
-                ),
-              }
-            }
-          }
-        }
-
-        self.pos[pred].clear();
-        self.neg[pred].clear();
-
-        for constraint in modded_constraints.drain() {
-            if !self.constraints[constraint].is_tautology() && !self.cstr_useful(constraint)? {
-                self.tautologize(constraint)?
-            }
-        }
-        profile! { self mark "force pred", "pre-checks" }
-
-        profile!(
-            self wrap { self.propagate() }
-            "force pred", "propagate"
-        )?;
-
-        Ok(())
-    }
-
-    /// The projected data for some predicate.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let mut instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let p_1: PrdIdx = 1.into();
-    ///     instance.push_pred("dummy", vec![typ::int()].into());
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
-    ///     ).expect("while adding positive data");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     println!("{}", data.to_string_info(&()).unwrap());
-    ///     assert_eq! {
-    ///         format!("{}", data.to_string_info(&()).unwrap()),
-    ///         "\
-    /// pos (
-    ///   (mc91 3 0)
-    /// ) neg (
-    /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
-    /// ) constraint map(
-    ///   (mc91 7 3) -> 0
-    ///   (mc91 2 102) -> 0 1
-    ///   (mc91 1 101) -> 0 1
-    ///   (dummy 7 3) -> 1
-    /// ) positive examples staged (
-    /// ) negative examples staged (
-    /// ) modded (
-    ///   #0
-    ///   #1
-    /// ) neg (
-    /// )
-    /// \
-    ///         "
-    ///     }
-    ///
-    ///     let cdata = data.data_of(p_0);
-    ///     let mut pos: BTreeSet<_> = vec![var_vals!((int 3) (int 0))].into_iter().collect();
-    ///     let mut unc: BTreeSet<_> = vec![
-    ///         var_vals!((int 7) (int 3)),
-    ///         var_vals!((int 1) (int 101)),
-    ///         var_vals!((int 2) (int 102)),
-    ///     ].into_iter().collect();
-    ///     assert! { cdata.neg().is_empty() }
-    ///     for args in cdata.pos() {
-    ///         let was_there = pos.remove(args);
-    ///         assert! { was_there }
-    ///     }
-    ///     assert! { pos.is_empty() }
-    ///     for args in cdata.unc() {
-    ///         let was_there = unc.remove(args);
-    ///         assert! { was_there }
-    ///     }
-    ///     assert! { unc.is_empty() }
-    /// }
-    /// ```
-    pub fn data_of(&self, pred: PrdIdx) -> CData {
-        profile! { self tick "data of" }
-        let unc_set = &self.map[pred];
-        let pos_set = &self.pos[pred];
-        let neg_set = &self.neg[pred];
-        let pos_single_set = &self.pos_single[pred];
-        let neg_single_set = &self.neg_single[pred];
-
-        let (mut pos, mut neg, mut unc, mut pos_single, mut neg_single) = (
-            Vec::with_capacity(pos_set.len()),
-            Vec::with_capacity(neg_set.len()),
-            Vec::with_capacity(unc_set.len()),
-            Vec::with_capacity(pos_single_set.len()),
-            Vec::with_capacity(neg_single_set.len()),
-        );
-
-        for sample in pos_set.iter() {
-            pos.push(sample.clone())
-        }
-        for sample in neg_set.iter() {
-            neg.push(sample.clone())
-        }
-        for (sample, set) in unc_set.iter() {
-            if !set.is_empty() {
-                unc.push(sample.clone())
-            }
-        }
-
-        for sample in pos_single_set {
-            if pos.contains(sample) {
-                pos_single.push(sample.clone())
-            }
-        }
-        for sample in neg_single_set {
-            if neg.contains(sample) {
-                neg_single.push(sample.clone())
-            }
-        }
-
-        profile! { self mark "data of" }
-        CData::new(pos, neg, unc, pos_single, neg_single)
-    }
-
-    /// Applies the classification represented by the data to some projected
-    /// data.
-    ///
-    /// This is used when backtracking in the learner. The assumption is that all
-    /// arguments in `data` are in `self`. That is, there is no subsumption
-    /// checking.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// #[macro_use]
-    /// extern crate hoice;
-    /// use hoice::{ common::*, data::Data };
-    /// fn main() {
-    ///     let mut instance = ::hoice::parse::mc_91();
-    ///     let p_0: PrdIdx = 0.into();
-    ///     let p_1: PrdIdx = 1.into();
-    ///     instance.push_pred("dummy", vec![typ::int()].into());
-    ///     let mut data = Data::new(Arc::new(instance));
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 3) (int 0))))
-    ///     ).expect("while adding positive data");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     data.add_data(
-    ///         1.into(), vec![
-    ///             (p_0, r_var_vals!((int 1) (int 101))),
-    ///             (p_0, r_var_vals!((int 2) (int 102))),
-    ///         ], Some((p_1, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding constraint");
-    ///     println!("{}", data.to_string_info(&()).unwrap());
-    ///     assert_eq! {
-    ///         format!("{}", data.to_string_info(&()).unwrap()),
-    ///         "\
-    /// pos (
-    ///   (mc91 3 0)
-    /// ) neg (
-    /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
-    /// ) constraint map(
-    ///   (mc91 7 3) -> 0
-    ///   (mc91 2 102) -> 0 1
-    ///   (mc91 1 101) -> 0 1
-    ///   (dummy 7 3) -> 1
-    /// ) positive examples staged (
-    /// ) negative examples staged (
-    /// ) modded (
-    ///   #0
-    ///   #1
-    /// ) neg (
-    /// )
-    /// \
-    ///         "
-    ///     }
-    ///
-    ///     let mut cdata = data.data_of(p_0);
-    ///     assert! { cdata.unc().iter().any(|s| s.get() == &r_var_vals!((int 7) (int 3))) }
-    ///     data.add_data(
-    ///         0.into(), vec![], Some((p_0, r_var_vals!((int 7) (int 3))))
-    ///     ).expect("while adding positive data");
-    ///     data.propagate().expect("during propagation");
-    ///     data.classify(p_0, &mut cdata);
-    ///     assert! { cdata.unc().iter().all(|s| s.get() != &r_var_vals!((int 7) (int 3))) }
-    ///     assert! { cdata.pos().iter().any(|s| s.get() == &r_var_vals!((int 7) (int 3))) }
-    /// }
-    /// ```
-    pub fn classify(&self, pred: PrdIdx, data: &mut CData) {
-        profile!{
-          self wrap {
-            data.classify(
-              |sample| if self.pos[pred].contains(sample) {
-                Some(true)
-              } else if self.neg[pred].contains(sample) {
-                Some(false)
-              } else {
-                None
-              }
-            )
-          } "classify"
         }
     }
 

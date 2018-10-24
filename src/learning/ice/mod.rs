@@ -6,7 +6,7 @@ use common::{
     var_to::vals::VarValsMap,
     *,
 };
-use data::Data;
+use data::LrnData;
 
 pub mod data;
 pub mod quals;
@@ -23,7 +23,7 @@ unsafe impl Send for Launcher {}
 
 impl Launcher {
     /// Launches an smt learner.
-    pub fn launch(core: &MsgCore, instance: Arc<Instance>, data: Data, mine: bool) -> Res<()> {
+    pub fn launch(core: &MsgCore, instance: Arc<Instance>, data: LrnData, mine: bool) -> Res<()> {
         let mut learner = IceLearner::new(&core, instance, data, mine)
             .chain_err(|| "while creating ice learner")?;
         let res = learner.run();
@@ -33,7 +33,7 @@ impl Launcher {
 }
 
 impl Learner for Launcher {
-    fn run(&self, core: MsgCore, instance: Arc<Instance>, data: Data, mine: bool) {
+    fn run(&self, core: MsgCore, instance: Arc<Instance>, data: LrnData, mine: bool) {
         match Self::launch(&core, instance, data, mine) {
             Ok(()) => core.exit(),
             Err(e) => core.err(e),
@@ -58,7 +58,7 @@ pub struct IceLearner<'core> {
     /// Synthesizer.
     synth_sys: PrdMap<SynthSys>,
     /// Current data.
-    data: Data,
+    data: LrnData,
     /// Solver used to check if the constraints are respected.
     solver: Solver<()>,
     /// Learner core.
@@ -100,7 +100,7 @@ impl<'core> IceLearner<'core> {
     pub fn new(
         core: &'core MsgCore,
         instance: Arc<Instance>,
-        data: Data,
+        data: LrnData,
         mine: bool, // synth_solver: Slver
     ) -> Res<Self> {
         let solver = conf.solver.spawn("ice_learner", (), &instance)?;
@@ -244,7 +244,7 @@ impl<'core> IceLearner<'core> {
     /// Looks for a classifier.
     ///
     /// Returns `None` if asked to exit.
-    pub fn learn(&mut self, mut data: Data) -> Res<Option<Candidates>> {
+    pub fn learn(&mut self, mut data: LrnData) -> Res<Option<Candidates>> {
         use rand::Rng;
 
         ::std::mem::swap(&mut data, &mut self.data);
@@ -663,11 +663,11 @@ impl<'core> IceLearner<'core> {
         |self.core._profiler| wrap {
           if pos {
             for unc in unc {
-              self.data.add_pos_untracked(pred, unc) ;
+              self.data.add_pos(pred, unc) ;
             }
           } else {
             for unc in unc {
-              self.data.add_neg_untracked(pred, unc) ;
+              self.data.add_neg(pred, unc) ;
             }
           }
           self.data.propagate()

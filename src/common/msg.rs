@@ -5,7 +5,7 @@ use std::sync::mpsc::channel;
 
 use common::{profiling::Profiler, *};
 
-use data::Data;
+use data::{AssData, LrnData};
 
 /// Sender / receiver pair alias type.
 pub type Channel<T> = (Sender<T>, Receiver<T>);
@@ -49,7 +49,7 @@ pub enum MsgKind {
     /// Some candidates, from learners.
     Cands(Candidates),
     /// Some samples from the assistant.
-    Samples(Box<Data>),
+    Samples(Box<AssData>),
     /// A message.
     Msg(String),
     /// An error.
@@ -83,8 +83,8 @@ impl From<Candidates> for MsgKind {
         MsgKind::Cands(cands)
     }
 }
-impl From<Data> for MsgKind {
-    fn from(data: Data) -> MsgKind {
+impl From<AssData> for MsgKind {
+    fn from(data: AssData) -> MsgKind {
         MsgKind::Samples(Box::new(data))
     }
 }
@@ -133,7 +133,7 @@ impl Msg {
         }
     }
     /// Creates a samples message.
-    pub fn samples(id: Id, samples: Data) -> Self {
+    pub fn samples(id: Id, samples: AssData) -> Self {
         debug_assert! { id.is_assistant() }
         Msg {
             id,
@@ -152,7 +152,7 @@ pub enum FromTeacher {
     /// Exit message.
     Exit,
     /// Learning data.
-    Data(Box<Data>),
+    Data(Box<LrnData>),
 }
 impl FromTeacher {
     /// Channel from the teacher.
@@ -235,7 +235,7 @@ impl MsgCore {
     }
 
     /// Sends some samples.
-    pub fn send_samples(&self, samples: Data) -> Res<()> {
+    pub fn send_samples(&self, samples: AssData) -> Res<()> {
         if self.sender.send(Msg::samples(self.id, samples)).is_ok() {
             Ok(())
         } else {
@@ -310,7 +310,7 @@ impl MsgCore {
     }
 
     /// Receives some data from the teacher.
-    pub fn recv(&self) -> Res<Data> {
+    pub fn recv(&self) -> Res<LrnData> {
         match self.recver.recv() {
             Ok(FromTeacher::Exit) => bail!(ErrorKind::Exit),
             Ok(FromTeacher::Data(data)) => Ok(*data),
@@ -326,7 +326,7 @@ pub trait Learner: Sync + Send {
     ///
     /// The boolean flag `mine` specifies whether the learner should mine the
     /// instance, typically for qualifiers.
-    fn run(&self, MsgCore, Arc<Instance>, Data, mine: bool);
+    fn run(&self, MsgCore, Arc<Instance>, LrnData, mine: bool);
     /// Short description of the learner.
     fn description(&self, mine: bool) -> String;
 }
@@ -334,7 +334,7 @@ pub trait Learner: Sync + Send {
 /// Messages from assistant.
 pub enum FromAssistant {
     /// Positive and negative samples.
-    Samples(Box<Data>),
+    Samples(Box<AssData>),
     /// Message.
     Msg(String),
     /// Error.
@@ -349,7 +349,7 @@ unsafe impl Send for FromAssistant {}
 /// Messages to the assistant.
 pub enum ToAssistant {
     /// Implication constraints.
-    Samples(Box<Data>),
+    Samples(Box<AssData>),
     /// Exit message.
     Exit,
 }
@@ -385,7 +385,7 @@ impl AssistantCore {
 
     /// Sends some samples to the teacher. Returns `false` iff sending fails,
     /// **meaning the teacher is disconnected**.
-    pub fn send_samples(&self, samples: Data) -> bool {
+    pub fn send_samples(&self, samples: AssData) -> bool {
         self.sender
             .send(FromAssistant::Samples(Box::new(samples)))
             .is_ok()
@@ -452,7 +452,7 @@ impl AssistantCore {
     /// Returns `None` if an exit message was received.
     ///
     /// Error if disconnected.
-    pub fn recv(&self) -> Res<Option<Data>> {
+    pub fn recv(&self) -> Res<Option<AssData>> {
         match self.recver.recv() {
             Ok(ToAssistant::Samples(data)) => Ok(Some(*data)),
             Ok(ToAssistant::Exit) => Ok(None),

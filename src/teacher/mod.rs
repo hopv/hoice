@@ -310,14 +310,14 @@ impl<'a> Teacher<'a> {
     /// Runs the assistant (if any) on the current data.
     pub fn run_assistant(&mut self) -> Res<()> {
         if let Some(assistant) = self.assistant.as_mut() {
-            profile! { self tick "assistant" }
-            if let Some(mut data) = self.data.clone_new_constraints()? {
+            if let Some(mut data) = self.data.to_ass_data()? {
+                profile! { self tick "assistant" }
                 assistant.break_implications(&mut data)?;
                 let (_nu_pos, _nu_neg) = self.data.merge_samples(data)?;
+                profile! { self mark "assistant" }
                 profile! { self "assistant pos useful" => add _nu_pos }
                 profile! { self "assistant neg useful" => add _nu_neg }
             }
-            profile! { self mark "assistant" }
         }
         Ok(())
     }
@@ -370,7 +370,7 @@ impl<'a> Teacher<'a> {
             let index = self.learners.next_index();
             let name = learner.description(mine);
             let instance = self.instance.clone();
-            let data = self.data.clone();
+            let data = self.data.to_lrn_data();
             let (to_learner, learner_recv) = FromTeacher::channel();
             ::std::thread::Builder::new()
                 .name(name.clone())
@@ -400,7 +400,7 @@ impl<'a> Teacher<'a> {
         for &(ref sender, ref name, _) in self.learners.iter() {
             if let Some(sender) = sender.as_ref() {
                 if sender
-                    .send(FromTeacher::Data(Box::new(self.data.clone())))
+                    .send(FromTeacher::Data(Box::new(self.data.to_lrn_data())))
                     .is_err()
                 {
                     warn!("learner `{}` is dead...", name)
@@ -420,7 +420,7 @@ impl<'a> Teacher<'a> {
         let (ref sender, ref name, _) = self.learners[learner];
         let alive = if let Some(sender) = sender.as_ref() {
             sender
-                .send(FromTeacher::Data(Box::new(self.data.clone())))
+                .send(FromTeacher::Data(Box::new(self.data.to_lrn_data())))
                 .is_ok()
         } else {
             false
