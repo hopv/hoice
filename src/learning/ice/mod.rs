@@ -620,59 +620,47 @@ impl<'core> IceLearner<'core> {
             .chain_err(|| format!("while checking possibility of assuming {}", polarity()))?
         {
             if_verb! {
-              let mut s = format!(
-                "  no more {} data, force_legal check ok\n  \
-                forcing {} unclassifieds positive...",
-                if pos { "positive" } else { "negative" }, data.unc().len()
-              ) ;
+                let mut s = format!(
+                    "  no more {} data, force_legal check ok\n  \
+                    forcing {} unclassifieds positive...",
+                    if pos { "positive" } else { "negative" }, data.unc().len()
+                ) ;
 
-              // let mut and_args = vec![] ;
-              // for (term, pos) in & branch {
-              //   let term = term.clone() ;
-              //   let term = if * pos {
-              //     term
-              //   } else {
-              //     term::not(term)
-              //   } ;
-              //   and_args.push(term)
-              // }
-              // s.push_str(& format!("\n  {}", term::and(and_args))) ;
-
-              if_debug! {
-                s = format!("{}\n  data:", s) ;
-                s = format!("{}\n    pos {{", s) ;
-                for sample in data.pos() {
-                  s = format!("{}\n      {}", s, sample)
+                if_debug! {
+                    s = format!("{}\n  data:", s) ;
+                    s = format!("{}\n    pos {{", s) ;
+                    for sample in data.pos() {
+                        s = format!("{}\n      {}", s, sample)
+                    }
+                    s = format!("{}\n    }} neg {{", s) ;
+                    for sample in data.neg() {
+                        s = format!("{}\n      {}", s, sample)
+                    }
+                    s = format!("{}\n    }} unc {{", s) ;
+                    for sample in data.unc() {
+                        s = format!("{}\n      {}", s, sample)
+                    }
+                    s = format!("{}\n    }}", s) ;
                 }
-                s = format!("{}\n    }} neg {{", s) ;
-                for sample in data.neg() {
-                  s = format!("{}\n      {}", s, sample)
-                }
-                s = format!("{}\n    }} unc {{", s) ;
-                for sample in data.unc() {
-                  s = format!("{}\n      {}", s, sample)
-                }
-                s = format!("{}\n    }}", s) ;
-              }
-              msg! { self => s }
+                msg! { self => s }
             }
 
             let (_, _, unc) = data.destroy();
 
             profile!(
-        |self.core._profiler| wrap {
-          if pos {
-            for unc in unc {
-              self.data.add_pos(pred, unc) ;
-            }
-          } else {
-            for unc in unc {
-              self.data.add_neg(pred, unc) ;
-            }
-          }
-          self.data.propagate()
-        } "learning", "data"
-      )?;
+                |self.core._profiler| wrap {
+                    if pos {
+                        for unc in unc {
+                            self.data.add_pos(pred, unc) ;
+                        }
+                    } else {
+                        for unc in unc {
+                            self.data.add_neg(pred, unc) ;
+                        }
+                    }
+                    self.data.propagate()
+                } "learning", "data"
+            )?;
 
             Ok(None)
         } else {

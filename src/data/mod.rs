@@ -5,12 +5,6 @@
 //! classifies unclassified data as pos/neg. The learner might also classify all the unknown data
 //! for a single predicate as pos/neg.
 //!
-//! # TODO
-//!
-//! - create a special type for the learner that wraps (?) a [`Data`] to separate learner- and
-//!   teacher-specific features
-//! - do the same for the assistant (?)
-//!
 //! [`Data`]: struct.Data.html (Data struct)
 
 use common::{
@@ -39,13 +33,31 @@ impl ::std::ops::Deref for AssData {
         &self.data
     }
 }
-impl ::std::ops::DerefMut for AssData {
-    fn deref_mut(&mut self) -> &mut Data {
-        &mut self.data
-    }
-}
 
 impl AssData {
+    /// Adds new learning data.
+    ///
+    /// Direct call to [`Data::add_data`].
+    ///
+    /// [`Data::add_data`]: struct.Data.html#method.add_data (add_data function for Data)
+    pub fn add_data(
+        &mut self,
+        clause: ClsIdx,
+        lhs: Vec<(PrdIdx, RVarVals)>,
+        rhs: Option<(PrdIdx, RVarVals)>,
+    ) -> Res<bool> {
+        self.data.add_data(clause, lhs, rhs)
+    }
+
+    /// Propagates the positive and negative samples.
+    ///
+    /// Direct call to [`Data::propagate`].
+    ///
+    /// [`Data::propagate`]: struct.Data.html#method.propagate (propagate function for Data)
+    pub fn propagate(&mut self) -> Res<(usize, usize)> {
+        self.data.propagate()
+    }
+
     /// Tautologizes a constraint and removes the links with its samples in
     /// the map.
     ///
@@ -90,15 +102,32 @@ impl ::std::ops::Deref for LrnData {
         &self.data
     }
 }
-impl ::std::ops::DerefMut for LrnData {
-    fn deref_mut(&mut self) -> &mut Data {
-        &mut self.data
-    }
-}
 impl LrnData {
     /// Destroys the learning data, yields the profiler.
     pub fn destroy(self) -> Profiler {
         self.data.destroy()
+    }
+
+    /// Adds new learning data.
+    ///
+    /// Direct call to [`Data::add_data`].
+    ///
+    /// [`Data::add_data`]: struct.Data.html#method.add_data (add_data function for Data)
+    pub fn add_data(
+        &mut self,
+        clause: ClsIdx,
+        lhs: Vec<(PrdIdx, RVarVals)>,
+        rhs: Option<(PrdIdx, RVarVals)>,
+    ) -> Res<bool> {
+        self.data.add_data(clause, lhs, rhs)
+    }
+    /// Propagates the positive and negative samples.
+    ///
+    /// Direct call to [`Data::propagate`].
+    ///
+    /// [`Data::propagate`]: struct.Data.html#method.propagate (propagate function for Data)
+    pub fn propagate(&mut self) -> Res<(usize, usize)> {
+        self.data.propagate()
     }
 
     /// Adds a positive sample.
@@ -282,12 +311,14 @@ impl LrnData {
             }
         }
 
-        self.pos[pred].clear();
-        self.neg[pred].clear();
+        self.data.pos[pred].clear();
+        self.data.neg[pred].clear();
 
         for constraint in modded_constraints.drain() {
-            if !self.constraints[constraint].is_tautology() && !self.cstr_useful(constraint)? {
-                self.tautologize(constraint)?
+            if !self.data.constraints[constraint].is_tautology()
+                && !self.data.cstr_useful(constraint)?
+            {
+                self.data.tautologize(constraint)?
             }
         }
         profile! { self mark "force pred", "pre-checks" }
@@ -681,7 +712,8 @@ impl Data {
             if !constraint.is_tautology() {
                 data.get_or_insert_with(|| AssData {
                     data: Data::new(self.instance.clone()),
-                }).raw_add_cstr(constraint.clone())?;
+                }).data
+                .raw_add_cstr(constraint.clone())?;
             }
         }
         self.cstr_info.clear_modded();
