@@ -27,6 +27,15 @@ lazy_static! {
         });
 }
 
+/// Usual sort on terms, but makes sure function applications are last.
+fn arg_cmp(t_1: &Term, t_2: &Term) -> Ordering {
+    match (t_1.fun_inspect().is_some(), t_2.fun_inspect().is_some()) {
+        (true, true) | (false, false) => t_1.cmp(t_2),
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+    }
+}
+
 /// Result of a simplification check between two terms.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SimplRes {
@@ -1276,7 +1285,7 @@ simpl_fun! {
     }
 
     vec_simpl(args, true) ;
-    args.sort_unstable();
+    args.sort_unstable_by(arg_cmp);
 
     if args.is_empty() {
       Some(
@@ -1317,7 +1326,7 @@ simpl_fun! {
     }
 
     vec_simpl(args, false) ;
-    args.sort_unstable();
+    args.sort_unstable_by(arg_cmp);
 
     if args.is_empty() {
       Some(

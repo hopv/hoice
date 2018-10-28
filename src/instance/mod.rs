@@ -1585,7 +1585,6 @@ impl Instance {
           }
           log! { @6 "{}", s }
         }
-
         data.add_data(clause_idx, antecedents, consequent)
     }
 

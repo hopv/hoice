@@ -556,14 +556,18 @@ impl FunDef {
     }
 
     /// Checks that all branches are exclusive and exhaustive.
-    pub fn check_branches(&self, instance: &mut PreInstance) -> Res<bool> {
-        let res = self.inner_check_branches(instance)?;
+    pub fn check_branches(&self, instance: &mut PreInstance, check_exhaustive: bool) -> Res<bool> {
+        let res = self.inner_check_branches(instance, check_exhaustive)?;
         instance.reset_solver()?;
         Ok(res)
     }
 
     /// Checks that all branches are exclusive and exhaustive.
-    fn inner_check_branches(&self, instance: &mut PreInstance) -> Res<bool> {
+    fn inner_check_branches(
+        &self,
+        instance: &mut PreInstance,
+        check_exhaustive: bool,
+    ) -> Res<bool> {
         macro_rules! solver {
             () => {
                 instance.solver()
@@ -607,32 +611,40 @@ impl FunDef {
             solver!().de_actlit(actlit)?
         }
 
-        log! { @3 | "all branches are exclusive, checking they're exhaustive" }
+        log! { @3 | "all branches are exclusive" }
 
-        solver!().comment_args(format_args!(
-            "checking branches for {} are exhaustive",
-            self.name
-        ))?;
+        if check_exhaustive {
+            log! { @3 | "checking they're exhaustive" }
 
-        for branch in &self.branches {
-            let conj = smt::TermConj::new(branch.guard.iter());
-            solver!().assert_with(&conj, false)?;
-        }
+            solver!().comment_args(format_args!(
+                "checking branches for {} are exhaustive",
+                self.name
+            ))?;
 
-        let not_exhaustive = solver!().check_sat()?;
+            for branch in &self.branches {
+                let conj = smt::TermConj::new(branch.guard.iter());
+                solver!().assert_with(&conj, false)?;
+            }
 
-        if not_exhaustive {
-            log! { @3 | "branches are not exhaustive" }
-            return Ok(false);
-        } else {
-            log! { @3 | "branches are exhaustive" }
+            let not_exhaustive = solver!().check_sat()?;
+
+            if not_exhaustive {
+                log! { @3 | "branches are not exhaustive" }
+                return Ok(false);
+            } else {
+                log! { @3 | "branches are exhaustive" }
+            }
         }
 
         Ok(true)
     }
 
     /// Finalizes the function definition.
-    pub fn finalize(mut self, instance: &mut PreInstance) -> Res<Option<Fun>> {
+    pub fn finalize(
+        mut self,
+        instance: &mut PreInstance,
+        check_exhaustive: bool,
+    ) -> Res<Option<Fun>> {
         if self.typ.is_arith() {
             let (zero, one) = if self.typ.is_int() {
                 (term::int(0), term::int(1))
@@ -665,7 +677,7 @@ impl FunDef {
         }
 
         let okay = self
-            .check_branches(instance)
+            .check_branches(instance, check_exhaustive)
             .chain_err(|| "while checking branches")?;
 
         if !okay {
@@ -709,7 +721,12 @@ impl FunDef {
             let mut nu_def = if let Some(def) = def {
                 term::ite(cond, branch.value, def)
             } else {
-                branch.value
+                if !check_exhaustive {
+                    debug_assert! { self.typ.is_bool() }
+                    term::ite(cond, branch.value, term::fls())
+                } else {
+                    branch.value
+                }
             };
             def = Some(nu_def)
         }
@@ -871,7 +888,7 @@ impl FunPreds {
             };
         }
 
-        let fun = if let Some(fun) = fun_def.finalize(instance)? {
+        let fun = if let Some(fun) = fun_def.finalize(instance, !use_all_args)? {
             fun
         } else {
             abort!()
@@ -1031,13 +1048,13 @@ impl RedStrat for FunPreds {
                     info += red_info;
                     break;
                 } else {
-                    // let res = FunPreds::reduce_pred(instance, pred, true)?;
-                    // // pause("to resume fun_preds", & Profiler::new()) ;
-                    // if let Some(red_info) = res {
-                    //     new_stuff = true;
-                    //     info += red_info;
-                    //     break;
-                    // }
+                    let res = FunPreds::reduce_pred(instance, pred, true)?;
+                    // pause("to resume fun_preds", & Profiler::new()) ;
+                    if let Some(red_info) = res {
+                        new_stuff = true;
+                        info += red_info;
+                        break;
+                    }
                     ()
                 }
             }
