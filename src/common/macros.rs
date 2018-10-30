@@ -54,7 +54,6 @@ macro_rules! unsat {
 #[macro_export]
 macro_rules! unknown {
   ($($stuff:tt)*) => ({
-    log! { @info "unknown" } ;
     log! { @debug $($stuff)* } ;
     bail!($crate::errors::ErrorKind::Unknown)
   }) ;

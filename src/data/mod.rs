@@ -46,7 +46,10 @@ impl AssData {
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<bool> {
-        self.data.add_data(clause, lhs, rhs)
+        profile! { self tick "add_data" }
+        let res = self.data.add_data(clause, lhs, rhs);
+        profile! { self mark "add_data" }
+        res
     }
 
     /// Propagates the positive and negative samples.
@@ -55,7 +58,10 @@ impl AssData {
     ///
     /// [`Data::propagate`]: struct.Data.html#method.propagate (propagate function for Data)
     pub fn propagate(&mut self) -> Res<(usize, usize)> {
-        self.data.propagate()
+        profile! { self tick "propagate" }
+        let res = self.data.propagate();
+        profile! { self mark "propagate" }
+        res
     }
 
     /// Tautologizes a constraint and removes the links with its samples in
@@ -87,7 +93,10 @@ impl AssData {
     /// }
     /// ```
     pub fn tautologize(&mut self, idx: CstrIdx) -> Res<()> {
-        self.data.tautologize(idx)
+        profile! { self tick "tautologize" }
+        let res = self.data.tautologize(idx);
+        profile! { self mark "tautologize" }
+        res
     }
 }
 
@@ -119,7 +128,10 @@ impl LrnData {
         lhs: Vec<(PrdIdx, RVarVals)>,
         rhs: Option<(PrdIdx, RVarVals)>,
     ) -> Res<bool> {
-        self.data.add_data(clause, lhs, rhs)
+        profile! { self tick "add data" }
+        let res = self.data.add_data(clause, lhs, rhs);
+        profile! { self mark "add data" }
+        res
     }
     /// Propagates the positive and negative samples.
     ///
@@ -127,7 +139,10 @@ impl LrnData {
     ///
     /// [`Data::propagate`]: struct.Data.html#method.propagate (propagate function for Data)
     pub fn propagate(&mut self) -> Res<(usize, usize)> {
-        self.data.propagate()
+        profile! { self tick "propagate" }
+        let res = self.data.propagate();
+        profile! { self mark "propagate" }
+        res
     }
 
     /// Adds a positive sample.
@@ -150,7 +165,10 @@ impl LrnData {
     /// }
     /// ```
     pub fn add_pos(&mut self, pred: PrdIdx, args: VarVals) -> bool {
-        self.data.add_pos_untracked(pred, args)
+        profile! { self tick "add pos" }
+        let res = self.data.add_pos_untracked(pred, args);
+        profile! { self mark "add pos" }
+        res
     }
 
     /// Adds a negative example.
@@ -177,7 +195,10 @@ impl LrnData {
     /// }
     /// ```
     pub fn add_neg(&mut self, pred: PrdIdx, args: VarVals) -> bool {
-        self.data.add_neg_untracked(pred, args)
+        profile! { self tick "add neg" }
+        let res = self.data.add_neg_untracked(pred, args);
+        profile! { self mark "add neg" }
+        res
     }
 
     /// Sets all the unknown data of a given predicate to `pos`, and
@@ -321,12 +342,12 @@ impl LrnData {
                 self.data.tautologize(constraint)?
             }
         }
-        profile! { self mark "force pred", "pre-checks" }
 
         profile!(
             self wrap { self.propagate() }
             "force pred", "propagate"
         )?;
+        profile! { self mark "force pred", "pre-checks" }
 
         Ok(())
     }
@@ -652,6 +673,11 @@ impl Data {
             _profiler: Profiler::new(),
             entry_points,
         }
+    }
+
+    /// Accessor for the profiler.
+    pub fn profiler(&self) -> &Profiler {
+        &self._profiler
     }
 
     /// Accessor for the map from samples to constraints.
@@ -1530,7 +1556,11 @@ impl Data {
           )
         }
 
-        self.add_cstr(clause, lhs, rhs)
+        profile! {
+            self wrap {
+                self.add_cstr(clause, lhs, rhs)
+            } "add cstr"
+        }
     }
 
     /// Prunes the lhs and the rhs of a constraint.

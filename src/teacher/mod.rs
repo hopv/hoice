@@ -851,7 +851,12 @@ impl<'a> Teacher<'a> {
                 instance.non_strict_neg_clauses().len()
             }
             for clause in instance.non_strict_neg_clauses() {
-                handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, true))?
+                handle_clause_res!(self.get_cexs_of_clause(
+                    cands,
+                    *clause,
+                    &mut map,
+                    conf.teacher.bias_cexs
+                ))?
             }
         }
 
@@ -862,7 +867,12 @@ impl<'a> Teacher<'a> {
             }
 
             for clause in instance.imp_clauses() {
-                handle_clause_res!(self.get_cexs_of_clause(cands, *clause, &mut map, true))?
+                handle_clause_res!(self.get_cexs_of_clause(
+                    cands,
+                    *clause,
+                    &mut map,
+                    conf.teacher.bias_cexs
+                ))?
             }
         }
 

@@ -187,29 +187,19 @@ impl Error {
         false
     }
 
-    /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
-    pub fn is_smt_unknown(&self) -> bool {
-        match *self.kind() {
-            ErrorKind::SmtError(::rsmt2::errors::ErrorKind::Unknown) => true,
-            _ => false,
-        }
-    }
-
     /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
     ///
     /// [unknown]: enum.ErrorKind.html#variant.Unknown
     /// (ErrorKind's Unknown variant)
     pub fn is_unknown(&self) -> bool {
-        if self.is_smt_unknown() {
-            true
-        } else {
-            for err in self.iter() {
-                if err.description() == consts::err::unknown_desc {
-                    return true;
-                }
+        for err in self.iter() {
+            if err.description() == consts::err::unknown_desc
+                || err.description() == ::rsmt2::errors::ErrorKind::Unknown.description()
+            {
+                return true;
             }
-            false
         }
+        false
     }
 
     /// Returns the clause explaining an unsat result if any.
