@@ -1,4 +1,4 @@
-//! Contains stuff related to ICE's projected data representation.
+//! Contains types related to ICE's projected data representation.
 
 use common::*;
 use data::{Data, Sample};

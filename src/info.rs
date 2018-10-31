@@ -109,6 +109,10 @@ impl Pred {
         }
     }
 
+    /// The current signature of the predicate.
+    pub fn sig(&self) -> &Sig {
+        &self.sig
+    }
     /// The original signature of the predicate, as it was declared.
     pub fn original_sig(&self) -> &Sig {
         &self.original_sig

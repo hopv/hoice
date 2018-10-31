@@ -101,6 +101,7 @@ impl AssData {
 }
 
 /// Structure storing learning data manipulated by learners.
+#[derive(Debug, Clone)]
 pub struct LrnData {
     /// The underlying data.
     data: Data,
