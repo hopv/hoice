@@ -1,9 +1,54 @@
 //! ICE learner.
 //!
-//! The ICE learner implements the learning from [the original paper].
+//! The ICE learner implements the learning from [the original paper]. The learner is meant to run
+//! in parallel alongside the teacher. It receives [`LrnData`] from the teacher from which it
+//! constructs candidates for all predicates mentioned.
+//!
+//! # Data Projection
+//!
+//! The first step towards producing candidates is to project the learning onto the different
+//! predicates. The learner stores the learning data received from the teacher so that it can
+//! remember the constraints between unclassified data points. The projection yields a [`CData`]
+//! for each predicate.
+//!
+//! Next, the learner decides which predicate to handle first. This is based on the number of
+//! classified/unclassified data available for each predicate and uses [`cmp_data_metrics`]. This
+//! step is not systematic, it only triggers a certain percent of the times, controlled by
+//! [`IceConf`]'s [`sort_preds`] field. This is yet another mechanism to break the bias introduced
+//! by sorting the predicates.
+//!
+//! # Learning a Single Candidate
+//!
+//! Once it has chosen a predicate to work on, the learner breaks the corresponding `CData` into a
+//! decision tree by repeatedly choosing qualifiers. These choices are based on either the notion
+//! of gain introduced in [the original paper], or the pure ICE version of gain that ignores
+//! unclassified data when it makes sense. This last gain computation technique is called `simple`
+//! gain in the code. Simple gain triggers when legal (there is positive *and* negative data),
+//! under some probability specified by [`IceConf`]'s [`simple_gain_ratio`] field.
+//!
+//! Given the original projected data for some predicate, then after the first split there is
+//! usually more than one sub-(split-)data the learner can work on. The learner decides which one
+//! it will look at next by using a criteria similar to the one used to select which predicate to
+//! run on first ([`cmp_data_metrics`]).
+//!
+//! If no qualifier can split the current `CData`, the learner runs [synthesis] to create new ones.
+//!
+//! # Sending Candidates
+//!
+//! Once it has created a candidate for each predicate, the learner aggregates everything and sends
+//! it to the teacher. It then waits for more learning data or an exit message.
 //!
 //! [the original paper]: https://link.springer.com/chapter/10.1007/978-3-319-89960-2_20
 //! (Original higher-order ICE framework)
+//! [`LrnData`]: ../../data/LrnData (LrnData struct)
+//! [`CData`]: data/struct.CData.html (CData struct)
+//! [`IceConf`]: ../../common/config/struct.IceConf.html (IceConf struct)
+//! [`sort_preds`]: ../../common/config/struct.IceConf.html#structfield.sort_preds
+//! (sort_pred field for IceConf)
+//! [`simple_gain_ratio`]: ../../common/config/struct.IceConf.html#structfield.simple_gain_ratio
+//! (simple_gain_ratio field for IceConf)
+//! [synthesis]: synth/index.html (ICE's synth module)
+//! [`cmp_data_metrics`]: ../../common/fn.cmp_data_metrics.html (cmp_data_metrics function)
 
 use common::{
     msg::*,
@@ -1004,8 +1049,6 @@ impl<'core> IceLearner<'core> {
 impl<'core> IceLearner<'core> {
     /// Looks for a qualifier. Requires a mutable `self` in case it needs to
     /// synthesize a qualifier.
-    ///
-    /// Does **not** blacklist the qualifier it returns.
     ///
     /// Be careful when modifying this function as it as a (tail-)recursive call.
     /// The recursive call is logically guaranteed not cause further calls and
