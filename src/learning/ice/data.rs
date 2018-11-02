@@ -4,6 +4,8 @@ use common::*;
 use data::{Data, Sample};
 
 /// Projected data to classify.
+///
+/// Used by the learner to reason on a single predicate.
 #[derive(Clone)]
 pub struct CData {
     /// Positive samples.
@@ -12,7 +14,7 @@ pub struct CData {
     neg: Vec<VarVals>,
     /// Unclassified samples.
     unc: Vec<VarVals>,
-    /// Total number of samples.
+    /// Total number of samples. It's a float to make gain computation straightforward.
     len: f64,
     /// Positive samples with a single known value.
     pos_single: Vec<VarVals>,
@@ -59,6 +61,8 @@ impl CData {
     }
 
     /// Pops a single sample.
+    ///
+    /// A single sample is a sample or arity `> 1` with all its values unknown but one.
     pub fn pop_single_sample(&mut self) -> Option<VarVals> {
         let res = self.pos_single.pop();
         if res.is_some() {
@@ -598,11 +602,11 @@ impl EntropyBuilder {
         if res.is_nan() {
             bail!(format!(
                 "entropy is NaN :(
-  num  : {}
-  den  : {}
-  proba: {}
-  pos  : {}
-  neg  : {}",
+    num  : {}
+    den  : {}
+    proba: {}
+    pos  : {}
+    neg  : {}",
                 self.num, self.den, proba, pos, neg
             ))
         }

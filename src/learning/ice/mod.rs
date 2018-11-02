@@ -61,6 +61,8 @@ pub type Branch = Vec<(Term, bool)>;
 ///
 /// The ICE learner receives learning data from the teacher and builds a decision tree for each
 /// predicate, which yields candidates for the predicates that respect the learning data.
+///
+/// [`MsgCore`]: ../../common/msg/struct.MsgCore.html (MsgCore struct)
 pub struct IceLearner<'core> {
     /// Arc to the instance.
     pub instance: Arc<Instance>,
@@ -583,6 +585,98 @@ impl<'core> IceLearner<'core> {
         Ok(Some(term::or(or_args)))
     }
 
+    /// Prepares the solver to check that constraints are respected.
+    ///
+    /// Returns `true` if a contradiction was found.
+    ///
+    /// - **does not** reset the solver or clean declaration memory (must be done before sending
+    ///   previous candidates)
+    /// - **defines** pos (neg) data as `true` (`false`)
+    /// - **declares** samples that neither pos nor neg
+    /// - asserts constraints
+    pub fn setup_solver(&mut self) -> Res<bool> {
+        // Positive data.
+        self.solver.comment("Positive data:")?;
+        for (pred, set) in self.data.pos.index_iter() {
+            for sample in set.iter() {
+                let is_new = self.dec_mem[pred].insert(sample.uid());
+                debug_assert!(is_new);
+                self.solver.define_const(
+                    &SmtSample::new(pred, sample),
+                    typ::bool().get(),
+                    &"true",
+                )?
+            }
+        }
+        // Negative data.
+        self.solver.comment("Negative data:")?;
+        for (pred, set) in self.data.neg.index_iter() {
+            for sample in set.iter() {
+                let is_new = self.dec_mem[pred].insert(sample.uid());
+                if !is_new {
+                    // Contradiction found.
+                    return Ok(true);
+                }
+                self.solver.define_const(
+                    &SmtSample::new(pred, sample),
+                    typ::bool().get(),
+                    &"false",
+                )?
+            }
+        }
+
+        self.solver
+            .comment("Sample declarations for constraints:")?;
+        // Declare all samples used in constraints.
+        for (pred, map) in self.data.map().index_iter() {
+            // if let Some(term) = self.instance.term_of(pred) {
+            //   if term.is_true() {
+            //     self.solver.comment(
+            //       & format!(
+            //         "Predicate {} is forced to be `true`:", self.instance[pred]
+            //       )
+            //     ) ? ;
+            //     for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
+            //       let uid = sample.uid() ;
+            //       if ! self.dec_mem[pred].contains(& uid) {
+            //         let _ = self.dec_mem[pred].insert(uid) ;
+            //         self.solver.define_fun(
+            //           & SmtSample(pred, sample), & args, & Typ::Bool, & "true", & ()
+            //         ) ?
+            //       }
+            //     }
+            //   } else {
+            //     bail!(
+            //       "predicate {} is forced to {}, unsupported for now",
+            //       self.instance[pred], term
+            //     )
+            //   }
+            // } else {
+            for (sample, _) in map.iter() {
+                let uid = sample.uid();
+                if !self.dec_mem[pred].contains(&uid) {
+                    let _ = self.dec_mem[pred].insert(uid);
+                    self.solver
+                        .declare_const(&SmtSample::new(pred, sample), &typ::RTyp::Bool)?
+                }
+            }
+            // }
+        }
+
+        self.solver.comment("Constraints:")?;
+        // Assert all constraints.
+        for constraint in self.data.constraints.iter() {
+            if !constraint.is_tautology() {
+                self.solver.assert(&SmtConstraint::new(constraint))?
+            }
+        }
+
+        Ok(false)
+    }
+}
+
+/// Functions dealing with forcing some data to positive/negative.
+impl<'core> IceLearner<'core> {
     /// Tries to force some data to positive/negative for some predicate.
     ///
     /// Input `pos` specifies whether the data should be forced positive or negative.
@@ -713,6 +807,201 @@ impl<'core> IceLearner<'core> {
         }
     }
 
+    /// Checks whether assuming some data as positive (if `pos` is true, negative otherwise) is
+    /// legal.
+    ///
+    /// Used by [`try_force_all`].
+    ///
+    /// **NB**: if assuming the data positive / negative is legal, the data will be forced to be
+    /// positive / negative in the solver automatically. Otherwise, the solver is put back in the
+    /// same state it was before.
+    ///
+    /// [`try_force_all`]: #method.try_force_all (try_force_all function)
+    fn force_legal(&mut self, pred: PrdIdx, unc: &[VarVals], pos: bool) -> Res<bool> {
+        if unc.is_empty() {
+            return Ok(true);
+        }
+        profile!{ self tick "learning", "smt", "legal" }
+
+        // Wrap actlit and increment counter.
+        let samples = SmtActSamples::new(&mut self.solver, pred, unc, pos)?;
+        self.solver.assert(&samples)?;
+
+        let legal = if self.solver.check_sat_act(Some(&samples.actlit))? {
+            profile!{ self mark "learning", "smt", "legal" }
+            true
+        } else {
+            profile!{ self mark "learning", "smt", "legal" }
+            false
+        };
+
+        samples.force(&mut self.solver, legal)?;
+
+        Ok(legal)
+    }
+
+    /// Checks whether assuming **all** the unclassified data from a predicate as `pos` is legal.
+    ///
+    /// **NB**: if assuming the data positive / negative is legal, the data will be forced to be
+    /// positive / negative in the solver automatically. Otherwise, the solver is put back in the
+    /// same state it was before the call.
+    ///
+    /// # Examples
+    ///
+    /// Forcing data to positive.
+    ///
+    /// ```rust
+    /// use std::sync::mpsc::channel;
+    /// use hoice::{ learning::ice::IceLearner, common::*, data::Data, var_to::vals::RVarVals };
+    /// let ((s_1, _), (_, r_2)) = (channel(), channel());
+    /// let core = msg::MsgCore::new_learner(0.into(), s_1, r_2);
+    /// let instance = Arc::new( ::hoice::parse::mc_91() );
+    /// let pred: PrdIdx = 0.into();
+    /// let mut data = Data::new( instance.clone() );
+    ///
+    /// // Adding sample `(mc_91 0 0)` as positive.
+    /// data.add_data(0.into(), vec![], Some((
+    ///     pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///         (0.into(), (), val::int(0)), (1.into(), (), val::int(0))
+    ///     ], false).unwrap()
+    /// ))).expect("while adding first positive sample");
+    /// // Adding `(mc_91 1 0) => (mc_91 0 1)`.
+    /// data.add_data(
+    ///     0.into(), vec![
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(1)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap())
+    ///     ], Some((
+    ///         pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(0)), (1.into(), (), val::int(1))
+    ///         ], false).unwrap()
+    ///     ))
+    /// ).expect("while adding first implication");
+    /// let lrn_data = data.to_lrn_data();
+    /// let mut learner = IceLearner::new(
+    ///     &core, instance.clone(), lrn_data.clone(), true
+    /// ).expect("while creating learner");
+    /// learner.setup_solver().unwrap();
+    /// assert! {
+    ///     learner.force_if_legal(pred, true).expect(
+    ///         "during first try force all"
+    ///     ) // Success.
+    /// }
+    ///
+    /// // Adding `(mc_91 1 0) and (mc_91 2 0) => false`.
+    /// data.add_data(
+    ///     0.into(), vec![
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(1)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap()),
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(2)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap()),
+    ///     ], None
+    /// ).expect("while adding second implication");
+    /// let lrn_data = data.to_lrn_data();
+    /// let mut learner = IceLearner::new(
+    ///     &core, instance, lrn_data.clone(), true
+    /// ).expect("while creating learner");
+    /// learner.setup_solver().unwrap();
+    /// assert! {
+    ///     !learner.force_if_legal(pred, true).expect(
+    ///         "during second try force all"
+    ///     ) // Failed.
+    /// }
+    /// ```
+    ///
+    /// Forcing data to negative.
+    ///
+    ///
+    /// ```rust
+    /// use std::sync::mpsc::channel;
+    /// use hoice::{ learning::ice::IceLearner, common::*, data::Data, var_to::vals::RVarVals };
+    /// let ((s_1, _), (_, r_2)) = (channel(), channel());
+    /// let core = msg::MsgCore::new_learner(0.into(), s_1, r_2);
+    /// let instance = Arc::new( ::hoice::parse::mc_91() );
+    /// let pred: PrdIdx = 0.into();
+    /// let mut data = Data::new( instance.clone() );
+    ///
+    /// // Adding sample `(mc_91 0 0)` as negative.
+    /// data.add_data(0.into(), vec![(
+    ///     pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///         (0.into(), (), val::int(0)), (1.into(), (), val::int(0))
+    ///     ], false).unwrap()
+    /// )], None).expect("while adding first positive sample");
+    /// // Adding `(mc_91 1 0) and (mc_91 2 0) => false`.
+    /// data.add_data(
+    ///     0.into(), vec![
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(1)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap()),
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(2)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap()),
+    ///     ], None
+    /// ).expect("while adding first implication");
+    /// let lrn_data = data.to_lrn_data();
+    /// let mut learner = IceLearner::new(
+    ///     &core, instance.clone(), lrn_data.clone(), true
+    /// ).expect("while creating learner");
+    /// learner.setup_solver().unwrap();
+    /// assert! {
+    ///     learner.force_if_legal(pred, false).expect(
+    ///         "during first try force all"
+    ///     ) // Success.
+    /// }
+    ///
+    /// // Adding `(mc_91 1 0) => (mc_91 0 1)`.
+    /// data.add_data(
+    ///     0.into(), vec![
+    ///         (pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(1)), (1.into(), (), val::int(0)),
+    ///         ], false).unwrap())
+    ///     ], Some((
+    ///         pred, RVarVals::of_pred_model(instance[pred].sig(), vec![
+    ///             (0.into(), (), val::int(0)), (1.into(), (), val::int(1))
+    ///         ], false).unwrap()
+    ///     ))
+    /// ).expect("while adding second implication");
+    /// let lrn_data = data.to_lrn_data();
+    /// let mut learner = IceLearner::new(
+    ///     &core, instance, lrn_data.clone(), true
+    /// ).expect("while creating learner");
+    /// learner.setup_solver().unwrap();
+    /// assert! {
+    ///     learner.force_if_legal(pred, false).expect(
+    ///         "during second try force all"
+    ///     ) // Failed.
+    /// }
+    /// ```
+    pub fn force_if_legal(&mut self, pred: PrdIdx, pos: bool) -> Res<bool> {
+        profile!{ self tick "learning", "smt", "all legal" }
+        let unc = &self.data.map()[pred];
+        if unc.is_empty() {
+            profile!{ self mark "learning", "smt", "all legal" }
+            return Ok(true);
+        }
+
+        // Wrap actlit.
+        let samples = SmtActSamples::new(&mut self.solver, pred, unc, pos)?;
+        self.solver.assert(&samples)?;
+
+        let legal = if self.solver.check_sat_act(Some(&samples.actlit))? {
+            profile!{ self mark "learning", "smt", "all legal" }
+            true
+        } else {
+            profile!{ self mark "learning", "smt", "all legal" }
+            false
+        };
+
+        samples.force(&mut self.solver, legal)?;
+
+        Ok(legal)
+    }
+}
+
+/// Functions dealing with qualifier selection.
+impl<'core> IceLearner<'core> {
     /// Looks for a qualifier. Requires a mutable `self` in case it needs to
     /// synthesize a qualifier.
     ///
@@ -1089,154 +1378,6 @@ impl<'core> IceLearner<'core> {
         }
 
         Ok(Some(()))
-    }
-
-    /// Checks whether assuming some data as positive (if `pos` is true, negative otherwise) is
-    /// legal.
-    ///
-    /// **NB**: if assuming the data positive / negative is legal, the data will be forced to be
-    /// positive / negative in the solver automatically. Otherwise, the actlit is deactivated.
-    pub fn force_legal(&mut self, pred: PrdIdx, unc: &[VarVals], pos: bool) -> Res<bool> {
-        if unc.is_empty() {
-            return Ok(true);
-        }
-        profile!{ self tick "learning", "smt", "legal" }
-
-        // Wrap actlit and increment counter.
-        let samples = SmtActSamples::new(&mut self.solver, pred, unc, pos)?;
-        self.solver.assert(&samples)?;
-
-        let legal = if self.solver.check_sat_act(Some(&samples.actlit))? {
-            profile!{ self mark "learning", "smt", "legal" }
-            true
-        } else {
-            profile!{ self mark "learning", "smt", "legal" }
-            false
-        };
-
-        samples.force(&mut self.solver, legal)?;
-
-        Ok(legal)
-    }
-
-    /// Checks whether assuming **all** the unclassified data from a predicate as
-    /// `pos` is legal.
-    ///
-    /// **NB**: if assuming the data positive / negative is legal, the data will
-    /// be forced to be positive / negative in the solver automatically.
-    /// Otherwise, the actlit is deactivated (`assert (not <actlit>)`).
-    pub fn force_if_legal(&mut self, pred: PrdIdx, pos: bool) -> Res<bool> {
-        profile!{ self tick "learning", "smt", "all legal" }
-        let unc = &self.data.map()[pred];
-        if unc.is_empty() {
-            profile!{ self mark "learning", "smt", "all legal" }
-            return Ok(true);
-        }
-
-        // Wrap actlit and increment counter.
-        let samples = SmtActSamples::new(&mut self.solver, pred, unc, pos)?;
-        self.solver.assert(&samples)?;
-
-        let legal = if self.solver.check_sat_act(Some(&samples.actlit))? {
-            profile!{ self mark "learning", "smt", "all legal" }
-            true
-        } else {
-            profile!{ self mark "learning", "smt", "all legal" }
-            false
-        };
-
-        samples.force(&mut self.solver, legal)?;
-
-        Ok(legal)
-    }
-
-    /// Sets the solver to check that constraints are respected.
-    ///
-    /// Returns `true` if a contradiction was found.
-    ///
-    /// - **does not** reset the solver or clean declaration memory (must be
-    ///   done before sending previous candidates)
-    /// - **defines** pos (neg) data as `true` (`false`)
-    /// - **declares** samples that neither pos nor neg
-    /// - asserts constraints
-    pub fn setup_solver(&mut self) -> Res<bool> {
-        // Positive data.
-        self.solver.comment("Positive data:")?;
-        for (pred, set) in self.data.pos.index_iter() {
-            for sample in set.iter() {
-                let is_new = self.dec_mem[pred].insert(sample.uid());
-                debug_assert!(is_new);
-                self.solver.define_const(
-                    &SmtSample::new(pred, sample),
-                    typ::bool().get(),
-                    &"true",
-                )?
-            }
-        }
-        // Negative data.
-        self.solver.comment("Negative data:")?;
-        for (pred, set) in self.data.neg.index_iter() {
-            for sample in set.iter() {
-                let is_new = self.dec_mem[pred].insert(sample.uid());
-                if !is_new {
-                    // Contradiction found.
-                    return Ok(true);
-                }
-                self.solver.define_const(
-                    &SmtSample::new(pred, sample),
-                    typ::bool().get(),
-                    &"false",
-                )?
-            }
-        }
-
-        self.solver
-            .comment("Sample declarations for constraints:")?;
-        // Declare all samples used in constraints.
-        for (pred, map) in self.data.map().index_iter() {
-            // if let Some(term) = self.instance.term_of(pred) {
-            //   if term.is_true() {
-            //     self.solver.comment(
-            //       & format!(
-            //         "Predicate {} is forced to be `true`:", self.instance[pred]
-            //       )
-            //     ) ? ;
-            //     for (sample, _) in map.read().map_err(corrupted_err)?.iter() {
-            //       let uid = sample.uid() ;
-            //       if ! self.dec_mem[pred].contains(& uid) {
-            //         let _ = self.dec_mem[pred].insert(uid) ;
-            //         self.solver.define_fun(
-            //           & SmtSample(pred, sample), & args, & Typ::Bool, & "true", & ()
-            //         ) ?
-            //       }
-            //     }
-            //   } else {
-            //     bail!(
-            //       "predicate {} is forced to {}, unsupported for now",
-            //       self.instance[pred], term
-            //     )
-            //   }
-            // } else {
-            for (sample, _) in map.iter() {
-                let uid = sample.uid();
-                if !self.dec_mem[pred].contains(&uid) {
-                    let _ = self.dec_mem[pred].insert(uid);
-                    self.solver
-                        .declare_const(&SmtSample::new(pred, sample), &typ::RTyp::Bool)?
-                }
-            }
-            // }
-        }
-
-        self.solver.comment("Constraints:")?;
-        // Assert all constraints.
-        for constraint in self.data.constraints.iter() {
-            if !constraint.is_tautology() {
-                self.solver.assert(&SmtConstraint::new(constraint))?
-            }
-        }
-
-        Ok(false)
     }
 }
 
