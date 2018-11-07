@@ -1,6 +1,10 @@
 //! Handles instance splitting.
 //!
-//! Used to reason separately on each positive/negative clause.
+//! Used to reason separately on each negative clause. When splitting is active and the instance,
+//! *after pre-processing*, has more than one negative clause, then splitting will generate one
+//! sub-instance per negative clause. Negative clauses that have been removed are injected in
+//! non-negative clauses to strengthen the instance: this avoids losing too much information when
+//! dropping some negative clauses.
 
 use common::*;
 use unsat_core::UnsatRes;
@@ -9,11 +13,13 @@ use unsat_core::UnsatRes;
 ///
 /// Returns
 ///
-/// - a partial model if the instance is sat
-/// - `None` if not in `infer` mode
-/// - an error of `Unsat` if unsat
+/// - a model if the instance is sat,
+/// - `None` if not in `infer` mode,
+/// - an [`UnsatRes`] if unsat.
 ///
 /// Assumes the instance is **already pre-processed**.
+///
+/// [`UnsatRes`]: ../unsat_core/enum.UnsatRes.html (UnsatRes struct)
 pub fn work(
     real_instance: &Arc<Instance>,
     _profiler: &Profiler,
@@ -76,7 +82,7 @@ pub fn work(
 }
 
 /// Runs on a pre-processed instance.
-pub fn run_on(
+fn run_on(
     _profiler: &Profiler,
     mut instance: Arc<Instance>,
     model: &ConjCandidates,
@@ -117,7 +123,7 @@ pub fn run_on(
 }
 
 /// Adds a model for a subinstance to a partial model.
-pub fn add_submodel(instance: &Arc<Instance>, model: &mut ConjCandidates, submodel: Model) {
+fn add_submodel(instance: &Arc<Instance>, model: &mut ConjCandidates, submodel: Model) {
     for (pred, tterms) in submodel {
         if !instance[pred].is_defined() {
             let conj = model.entry(pred).or_insert_with(|| vec![]);
@@ -138,7 +144,7 @@ pub fn add_submodel(instance: &Arc<Instance>, model: &mut ConjCandidates, submod
 }
 
 /// Runs the teacher on an instance.
-pub fn run_teacher(instance: Arc<Instance>, model: &ConjCandidates) -> Res<TeachRes> {
+fn run_teacher(instance: Arc<Instance>, model: &ConjCandidates) -> Res<TeachRes> {
     let teacher_profiler = Profiler::new();
     let solve_res = ::teacher::start_class(instance, model, &teacher_profiler);
     print_stats("teacher", teacher_profiler);
@@ -146,7 +152,7 @@ pub fn run_teacher(instance: Arc<Instance>, model: &ConjCandidates) -> Res<Teach
 }
 
 /// Creates new instances by splitting positive/negative clauses.
-pub struct Splitter {
+struct Splitter {
     /// The instance we're working on.
     instance: Arc<Instance>,
     /// Clauses to look at separately.

@@ -12,7 +12,6 @@ use common::{
     *,
 };
 use learning::ice::data::CData;
-// use unsat_core::sample_graph::SampleGraph ;
 
 pub mod constraint;
 mod info;
@@ -584,10 +583,6 @@ pub struct Data {
     staged: Staged,
     /// Constraint info.
     cstr_info: CstrInfo,
-    // /// Sample dependency graph for unsat cores extraction.
-    // ///
-    // /// Different from `None` iff `conf.unsat_cores()`
-    // graph: Option<SampleGraph>,
     /// Profiler.
     _profiler: Profiler,
     /// Entry point tracker.
@@ -666,11 +661,6 @@ impl Data {
             cstr_info: CstrInfo::new(),
             pos_single,
             neg_single,
-            // graph: if track_samples {
-            //   Some( SampleGraph::new() )
-            // } else {
-            //   None
-            // },
             _profiler: Profiler::new(),
             entry_points,
         }

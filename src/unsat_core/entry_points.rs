@@ -1,6 +1,18 @@
-//! Entry point extraction data.
+//! Entry point extraction.
 //!
-//! Keeps track of the dependencies between positive samples.
+//! Keeps track of the dependencies between positive samples. When unsat proof production is
+//! active, the [learning data] will maintain an [`EntryPoints` tracker]. From this tracker, if a
+//! conflict is discovered, one can extract the actual unsat proof in the form of entry points.
+//!
+//! *Entry points* are samples for (some of) the positive clauses of the instance that lead to the
+//! conflict. This only makes sense if the instance corresponds to a (deterministic) program. That
+//! is, it is possible to execute the program from the entry points to find the conflict again. To
+//! put differently, there is no non-deterministic choices to make: *e.g.* there never is two
+//! clauses that can be activated at the same time using the same samples (arguments for a
+//! predicate application).
+//!
+//! [learning data]: ../../data/index.html (learning data module)
+//! [`EntryPoints` tracker]: struct.EntryPoints.html (EntryPoints struct)
 
 use common::*;
 use data::sample::Sample;
@@ -13,7 +25,7 @@ pub type SampleMap<T> = BTreeMap<Sample, T>;
 /// Type of the solver used for reconstruction.
 type Slvr = Solver<smt::FullParser>;
 
-/// Entry point extraction type.
+/// Entry point extraction structure.
 #[derive(Debug, Clone, Default)]
 pub struct EntryPoints {
     /// Real positive samples.

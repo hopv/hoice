@@ -1,10 +1,4 @@
 //! Hashconsed concrete values.
-//!
-//! Values can be automatically created (using `into`) to
-//!
-//! - `Val::B` from `bool`
-//! - `Val::I` from `Int`, `usize`, `isize`, `u32`, `i32`, `u64`, `i64`
-//! - `Val::N` from `()`
 
 use hashconsing::HConsed;
 

@@ -1,27 +1,20 @@
-//! Unsat core extraction.
+//! Unsat core and proof extraction.
 //!
-//! Currently inactive.
+//! Right now, only unsat proof in the form of [`entry_points`] is active.
+//!
+//! [`entry_points`]: entry_points/index.html (entry_points module)
 
 use common::*;
 
 pub mod entry_points;
-pub mod sample_graph;
+mod sample_graph;
 
 pub use self::entry_points::Entry;
-
-pub use self::sample_graph::SampleGraph;
-// use self::sample_graph::UnsatProof;
 
 /// An unsat result.
 pub enum UnsatRes {
     /// Unsat cores were not active.
     None,
-    // /// A sample dependency graph: raw result from teacher.
-    // Graph(SampleGraph),
-    // /// A proof, obtained from a graph.
-    // Proof(UnsatProof),
-    // /// An unsat result from a single clause.
-    // Clause(ClsIdx),
     /// Some entry points.
     Entry(Entry),
 }
