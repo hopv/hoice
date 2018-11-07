@@ -60,8 +60,8 @@ impl_fmt!{
 
 /// Stores information about a predicate.
 ///
-/// In particular, stores the link between the current signature and the original signature of a
-/// predicate, so that going from one to the other is possible (easy).
+/// In particular, and perhaps most importantly, stores the link between the current signature and
+/// the original signature of a predicate, so that going from one to the other is possible (easy).
 #[derive(Debug, Clone)]
 pub struct Pred {
     /// Name of the predicate. Should never be changed.
@@ -273,6 +273,74 @@ impl Pred {
     ///
     /// In `debug`, checks that `map` is type-safe: forall `i`, `new_sig[i] ==
     /// self.original_sig[map[i]]`. Also checks that `new_sig` and `map` have the same length.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use hoice::{ common::*, info::Pred };
+    /// let sig: VarMap<_> = vec![ typ::int(), typ::bool() ].into();
+    /// let mut pred = Pred::new("pred", 0.into(), sig.clone());
+    /// // New signature drops the first argument of the original signature.
+    /// let nu_sig: VarMap<_> = vec![ typ::bool() ].into();
+    /// // First variable of the new signature maps to the second (index 1) variable of the
+    /// // original signature.
+    /// let map: VarMap<VarIdx> = vec![ 1.into() ].into();
+    /// pred.set_sig(nu_sig, map);
+    /// ```
+    ///
+    /// Ill-typed.
+    ///
+    /// ```rust, should_panic
+    /// use hoice::{ common::*, info::Pred };
+    /// let sig: VarMap<_> = vec![ typ::int(), typ::bool() ].into();
+    /// let mut pred = Pred::new("pred", 0.into(), sig.clone());
+    /// // New signature drops the first argument of the original signature.
+    /// let nu_sig: VarMap<_> = vec![ typ::bool() ].into();
+    /// // First variable of the new signature maps to the first (index 0) variable of the
+    /// // original signature.
+    /// let map: VarMap<VarIdx> = vec![ 0.into() ].into();
+    /// // Panic: ill-typed
+    /// pred.set_sig(nu_sig, map);
+    /// ```
+    ///
+    /// Arity mismatch (map is too long).
+    ///
+    /// ```rust, should_panic
+    /// use hoice::{ common::*, info::Pred };
+    /// let sig: VarMap<_> = vec![ typ::int(), typ::bool() ].into();
+    /// let mut pred = Pred::new("pred", 0.into(), sig.clone());
+    /// // New signature drops the first argument of the original signature.
+    /// let nu_sig: VarMap<_> = vec![ typ::bool() ].into();
+    /// // Map to original signature is too long compared to new signature.
+    /// let map: VarMap<VarIdx> = vec![ 0.into(), 1.into() ].into();
+    /// // Panic: arity mismatch
+    /// pred.set_sig(nu_sig, map);
+    /// ```
+    ///
+    /// Arity mismatch (map is too short).
+    ///
+    /// ```rust, should_panic
+    /// use hoice::{ common::*, info::Pred };
+    /// let sig: VarMap<_> = vec![ typ::int(), typ::bool() ].into();
+    /// let mut pred = Pred::new("pred", 0.into(), sig.clone());
+    /// let nu_sig: VarMap<_> = vec![ typ::bool() ].into();
+    /// // Map to original signature is too short compared to new signature.
+    /// let map: VarMap<VarIdx> = vec![].into();
+    /// // Panic: arity mismatch
+    /// pred.set_sig(nu_sig, map);
+    /// ```
+    ///
+    /// Arity mismatch (new signature is longer).
+    ///
+    /// ```rust, should_panic
+    /// use hoice::{ common::*, info::Pred };
+    /// let sig: VarMap<_> = vec![ typ::int(), typ::bool() ].into();
+    /// let mut pred = Pred::new("pred", 0.into(), sig.clone());
+    /// let nu_sig: VarMap<_> = vec![ typ::int(), typ::bool(), typ::int() ].into();
+    /// let map: VarMap<VarIdx> = vec![ 0.into(), 1.into(), 0.into() ].into();
+    /// // Panic: new signature is too long
+    /// pred.set_sig(nu_sig, map);
+    /// ```
     pub fn set_sig(&mut self, new_sig: Sig, map: VarMap<VarIdx>) {
         self.sig = new_sig;
         self.original_sig_map = map;
@@ -415,8 +483,18 @@ impl Pred {
     }
 
     /// Checks its invariant hold. Inactive in release.
+    ///
+    /// Generally speaking, the invariants checked by this function should be respected by
+    /// construction. In fact, this function runs after most non-trivial changes to values of this
+    /// type.
     #[cfg(debug_assertions)]
     pub fn check(&self) -> Res<()> {
+        if self.sig.len() > self.original_sig.len() {
+            bail!(
+                "current signature is longer than original signature for {}",
+                conf.bad(&self.name)
+            )
+        }
         if self.sig.len() != self.original_sig_map.len() {
             bail!(
                 "signature and sig map to original signature differ in length for {}",
