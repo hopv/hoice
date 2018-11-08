@@ -1077,6 +1077,108 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
     }
 
+    /// Parses a recursive function declaration.
+    fn define_fun_rec(&mut self, instance: &Instance) -> Res<bool> {
+        if !self.word_opt(keywords::cmd::def_fun_rec) {
+            return Ok(false);
+        }
+
+        use fun::FunSig;
+
+        self.functions.clear();
+
+        let mut funs: Vec<(FunSig, Pos, _)> = vec![];
+
+        self.ws_cmt();
+
+        let (pos, name) = self
+            .ident()
+            .chain_err(|| "at the start of the function declaration")?;
+        self.ws_cmt();
+
+        self.ws_cmt();
+        self.tag("(")
+            .chain_err(|| format!("opening function `{}`'s arguments", conf.emph(name)))?;
+        self.ws_cmt();
+
+        let mut args = VarInfos::new();
+        let mut arg_map = BTreeMap::new();
+
+        // Parse the signature of this function.
+        while !self.tag_opt(")") {
+            self.tag("(")?;
+            self.ws_cmt();
+
+            let (pos, arg_name) = self.ident().chain_err(|| {
+                format!(
+                    "in function `{}`'s signature (argument name)",
+                    conf.emph(name)
+                )
+            })?;
+            self.ws_cmt();
+
+            let sort = self.sort().chain_err(|| {
+                format!(
+                    "for argument `{}` of function `{}`",
+                    conf.emph(arg_name),
+                    conf.emph(name)
+                )
+            })?;
+
+            let idx = args.next_index();
+            args.push(VarInfo::new(arg_name, sort, idx));
+
+            if arg_map.insert(arg_name, idx).is_some() {
+                bail!(self.error(
+                    pos,
+                    format!(
+                        "found two arguments named `{}` \
+                         in function `{}`'s declaration",
+                        conf.bad(arg_name),
+                        conf.emph(name)
+                    )
+                ))
+            }
+
+            self.ws_cmt();
+            self.tag(")").chain_err(|| {
+                format!(
+                    "closing argument `{}` of function `{}`",
+                    conf.emph(arg_name),
+                    conf.emph(name)
+                )
+            })?;
+            self.ws_cmt()
+        }
+
+        self.ws_cmt();
+        let typ = self
+            .sort()
+            .chain_err(|| format!("sort of function `{}`", conf.emph(name)))?;
+
+        let fun = FunSig::new(name, args, typ);
+        fun::register_sig(fun.clone())?;
+
+        let prev = self
+            .functions
+            .insert(name, (fun.sig.clone(), fun.typ.clone()));
+        if prev.is_some() {
+            bail!(self.error(
+                pos,
+                format!("attempting to redefine function {}", conf.bad(&name)),
+            ))
+        }
+        debug_assert! { prev.is_none() }
+
+        funs.push((fun, pos, arg_map));
+
+        self.ws_cmt();
+
+        self.parse_rec_fun_defs(instance, funs)?;
+
+        Ok(true)
+    }
+
     /// Parses some recursive function declarations.
     fn define_funs_rec(&mut self, instance: &Instance) -> Res<bool> {
         if !self.word_opt(keywords::cmd::def_funs_rec) {
@@ -1199,6 +1301,23 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             .chain_err(|| "opening the list of function definitions")?;
         self.ws_cmt();
 
+        self.parse_rec_fun_defs(instance, funs)?;
+
+        self.ws_cmt();
+        self.tag(")")
+            .chain_err(|| "closing the list of function definitions")?;
+
+        Ok(true)
+    }
+
+    /// Parses some definitions for some (recursive) functions.
+    ///
+    /// Registers the functions when successful.
+    fn parse_rec_fun_defs(
+        &mut self,
+        instance: &Instance,
+        funs: Vec<(fun::FunSig, Pos, BTreeMap<&'s str, VarIdx>)>,
+    ) -> Res<()> {
         // Parse all definitions.
         for (mut fun, pos, var_map) in funs {
             let def = if let Some(term) = self
@@ -1226,11 +1345,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             fun::new(def).chain_err(|| self.error(pos, "while registering this function"))?;
         }
 
-        self.ws_cmt();
-        self.tag(")")
-            .chain_err(|| "closing the list of function definitions")?;
-
-        Ok(true)
+        Ok(())
     }
 
     /// Parses a datatype constructor.
@@ -3323,6 +3438,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             } else if self.set_logic()?
                 || self.pred_dec(instance)?
                 || self.define_fun(instance)?
+                || self.define_fun_rec(instance)?
                 || self.define_funs_rec(instance)?
                 || self.assert(instance)?
                 || self.dtyp_dec_item()?
