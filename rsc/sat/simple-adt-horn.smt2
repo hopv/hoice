@@ -1,7 +1,7 @@
 (set-logic HORN)
 
-(declare-datatypes () (
-  (Pair (P (left Int) (right Bool)) )
+(declare-datatypes ((Pair 0)) (
+  ((P (left Int) (right Bool)))
 ) )
 
 (declare-fun I1 (Pair) Bool)

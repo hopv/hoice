@@ -1296,7 +1296,7 @@ impl Instance {
         pref: &str,
         model: ConjModelRef,
     ) -> Res<()> {
-        fun::write_all(w, pref, false)?;
+        fun::write_for_model(w, pref, &model)?;
 
         for defs in model {
             if defs.is_empty() {

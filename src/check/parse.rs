@@ -499,17 +499,30 @@ impl<'a> InParser<'a> {
             return Ok(false);
         }
         self.ws_cmt();
-        let pred = self
+        let name = self
             .ident()
             .chain_err(|| "while parsing predicate identifier")?;
         self.ws_cmt();
         let args = self.args().chain_err(|| "while parsing arguments")?;
         self.ws_cmt();
-        self.tag("Bool")?;
+        let typ = self.sexpr()?;
         self.ws_cmt();
-        let body = Some(self.sexpr().chain_err(|| "while parsing body")?);
+        let body = self.sexpr().chain_err(|| "while parsing body")?;
         self.ws_cmt();
-        self.pred_defs.push(PredDef { pred, args, body });
+        if typ == "|Bool|" {
+            self.pred_defs.push(PredDef {
+                pred: name,
+                args,
+                body: Some(body),
+            })
+        } else {
+            self.fun_defs.push(FunDef {
+                name,
+                args,
+                typ,
+                body,
+            })
+        }
 
         Ok(true)
     }

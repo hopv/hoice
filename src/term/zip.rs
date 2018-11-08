@@ -145,6 +145,14 @@ impl<T> Accumulator<T> for Vec<T> {
         self.push(elem)
     }
 }
+impl<T: Ord> Accumulator<T> for BTreeSet<T> {
+    fn new_empty(_: usize) -> Self {
+        BTreeSet::new()
+    }
+    fn push(&mut self, elem: T) {
+        self.insert(elem);
+    }
+}
 impl Accumulator<()> for () {
     fn new_empty(_: usize) -> Self {}
     fn push(&mut self, _: ()) {}

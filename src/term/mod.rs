@@ -636,6 +636,46 @@ impl RTerm {
         false
     }
 
+    /// Collects all functions mentioned by a term.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        use self::zip::*;
+        zip_with(
+            &self.to_hcons(),
+            &::std::cell::RefCell::new(set),
+            |set, term| {
+                if let Some((name, _)) = term.fun_inspect() {
+                    set.borrow_mut().insert(name.clone());
+                }
+                Ok(Some(())) as Res<Option<()>>
+            },
+            |_, _| Ok(()),
+            |set, zip_op, _, _: ()| {
+                if let ZipOp::Fun(name) = zip_op {
+                    set.borrow_mut().insert(name.clone());
+                    ()
+                }
+                Ok(ZipDoTotal::Upp { yielded: () })
+            },
+            |set, mut frame| {
+                if let ZipFrame {
+                    thing: ZipOp::Fun(name),
+                    ..
+                } = frame
+                {
+                    set.borrow_mut().insert(name.clone());
+                }
+
+                let nu_term = frame.rgt_args.next().expect(
+                    "illegal call to `partial_op`: \
+                     empty `rgt_args` (has_fun_app_or_adt)",
+                );
+                Ok(ZipDo::Trm { nu_term, frame })
+            },
+        ).expect("error in `collect_funs`: entered unreachable code");
+
+        ()
+    }
+
     /// Returns true if the term mentions a function.
     ///
     /// # Examples

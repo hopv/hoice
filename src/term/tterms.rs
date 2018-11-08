@@ -71,6 +71,17 @@ impl TTerm {
             None
         }
     }
+
+    /// Collects all the functions mentioned in a TTerm.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        match self {
+            TTerm::T(term) => term.collect_funs(set),
+            TTerm::P { args, .. } => for arg in args.iter() {
+                arg.collect_funs(set)
+            },
+        }
+    }
+
     /// If the top term is simply a term, returns that term.
     #[inline]
     pub fn term(&self) -> Option<&Term> {
@@ -292,6 +303,20 @@ impl TTermSet {
             len += argss.len()
         }
         len
+    }
+
+    /// Collects all the functions mentioned in a TTerm.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        for term in &self.terms {
+            term.collect_funs(set)
+        }
+        for (_, argss) in &self.preds {
+            for args in argss {
+                for arg in args.iter() {
+                    arg.collect_funs(set)
+                }
+            }
+        }
     }
 
     /// Terms.
@@ -711,6 +736,29 @@ impl TTerms {
             }
             TTerms::Dnf { ref mut disj } => for &mut (_, ref mut tterms) in disj {
                 tterms.remove_vars(to_keep)
+            },
+        }
+    }
+
+    /// Collects all the functions mentioned in some TTerms.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        match self {
+            TTerms::True | TTerms::False => (),
+            TTerms::Conj { tterms, .. } => tterms.collect_funs(set),
+            TTerms::Disj {
+                tterms, neg_preds, ..
+            } => {
+                tterms.collect_funs(set);
+                for (_, argss) in neg_preds {
+                    for args in argss {
+                        for arg in args.iter() {
+                            arg.collect_funs(set)
+                        }
+                    }
+                }
+            }
+            TTerms::Dnf { disj } => for (_, tterm_set) in disj {
+                tterm_set.collect_funs(set)
             },
         }
     }
