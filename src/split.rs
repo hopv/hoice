@@ -162,10 +162,10 @@ struct Splitter {
     /// `Right(once)` means that this splitting is inactive, and `next_instance`
     /// will return `self.instance` if `! once` and `None` otherwise.
     clauses: Either<Vec<ClsIdx>, bool>,
-    /// Total number of clauses considered.
-    clause_count: usize,
     /// Negative clauses for which we already have a solution.
     prev_clauses: ClsSet,
+    /// Total number of clauses considered.
+    _clause_count: usize,
     /// Profiler.
     _profiler: Option<Profiler>,
 }
@@ -173,7 +173,7 @@ struct Splitter {
 impl Splitter {
     /// Constructor.
     pub fn new(instance: Arc<Instance>) -> Self {
-        let (clauses, clause_count) = if conf.split && instance.neg_clauses().len() > 1 {
+        let (clauses, _clause_count) = if conf.split && instance.neg_clauses().len() > 1 {
             // We want the predicates that appear in the most lhs last (since
             // we're popping).
             let mut clauses: Vec<_> = instance
@@ -263,7 +263,7 @@ impl Splitter {
         Splitter {
             instance,
             clauses,
-            clause_count,
+            _clause_count,
             prev_clauses: ClsSet::new(),
             _profiler: None,
         }
@@ -278,11 +278,12 @@ impl Splitter {
 
     /// Returns the next clause to split on, the number of clauses already
     /// treated and the total number of clauses to handle if active.
+    #[cfg(not(feature = "bench"))]
     pub fn info(&self) -> Option<(ClsIdx, usize, usize)> {
         match self.clauses {
             Either::Left(ref clauses) => {
                 if let Some(clause) = clauses.last() {
-                    let total = self.clause_count;
+                    let total = self._clause_count;
                     let count = total - clauses.len();
                     Some((*clause, count, total))
                 } else {

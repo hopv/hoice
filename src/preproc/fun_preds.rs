@@ -333,6 +333,7 @@ impl<'a> BranchBuilder<'a> {
 /// Log functions.
 impl<'a> BranchBuilder<'a> {
     #[allow(dead_code)]
+    #[cfg(not(feature = "bench"))]
     fn log_guard(&self) {
         log! { @4 |=> "  guard:" }
         for term in &self.guard {
@@ -340,6 +341,7 @@ impl<'a> BranchBuilder<'a> {
         }
     }
     #[allow(dead_code)]
+    #[cfg(not(feature = "bench"))]
     fn log_calls(&self) {
         log! { @4 |=> "  rec calls:" }
         for (var, term) in &self.calls {
@@ -347,6 +349,7 @@ impl<'a> BranchBuilder<'a> {
         }
     }
     #[allow(dead_code)]
+    #[cfg(not(feature = "bench"))]
     fn log_subst(&self) {
         log! { @4 |=> "  subst:" }
         for (var, term) in &self.subst {
