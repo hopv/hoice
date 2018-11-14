@@ -646,7 +646,7 @@ impl RTerm {
                 if let Some((name, _)) = term.fun_inspect() {
                     set.borrow_mut().insert(name.clone());
                 }
-                Ok(Some(())) as Res<Option<()>>
+                Ok(None) as Res<Option<()>>
             },
             |_, _| Ok(()),
             |set, zip_op, _, _: ()| {
