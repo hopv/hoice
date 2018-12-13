@@ -1,5 +1,4 @@
-use common::*;
-use data::Constraint;
+use crate::{common::*, data::Constraint};
 
 /// Maintains information about the constraints.
 #[derive(Clone)]

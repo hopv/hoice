@@ -234,13 +234,13 @@ macro_rules! log_debug {
 macro_rules! warn {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     println!(
-      "; {}", ::common::conf.sad("|===| Warning:")
+      "; {}", $crate::common::conf.sad("|===| Warning:")
     ) ;
     $(
-      print!("; {} ", ::common::conf.sad("|")) ;
+      print!("; {} ", $crate::common::conf.sad("|")) ;
       println!( $str $(, $args)* ) ;
     )*
-    println!("; {}", ::common::conf.sad("|===|"))
+    println!("; {}", $crate::common::conf.sad("|===|"))
   }) ;
 }
 

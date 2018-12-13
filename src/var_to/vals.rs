@@ -4,11 +4,11 @@ use std::cmp::Ordering;
 
 use hashconsing::{HConsed, HashConsign};
 
-use common::*;
+use crate::common::*;
 
-new_consign! {
-  /// Term factory.
-  let factory = consign(conf.instance.term_capa) for RVarVals ;
+hashconsing::new_consign! {
+    /// Term factory.
+    let factory = consign(conf.instance.term_capa) for RVarVals ;
 }
 
 /// Creates hashconsed arguments.
@@ -36,10 +36,10 @@ pub struct RVarVals {
     map: VarMap<Val>,
 }
 
-impl_fmt! {
-  RVarVals(self, fmt) {
-    self.map.fmt(fmt)
-  }
+mylib::impl_fmt! {
+    RVarVals(self, fmt) {
+        self.map.fmt(fmt)
+    }
 }
 impl ::std::ops::Deref for RVarVals {
     type Target = VarMap<Val>;
@@ -109,7 +109,7 @@ impl RVarVals {
 
     /// Constructor from a model.
     pub fn of_model<T>(
-        info: &VarMap<::info::VarInfo>,
+        info: &VarMap<crate::info::VarInfo>,
         model: Vec<(VarIdx, T, Val)>,
         partial: bool,
     ) -> Res<Self> {
@@ -122,7 +122,8 @@ impl RVarVals {
                     } else {
                         info.typ.default_val()
                     }
-                }).collect(),
+                })
+                .collect(),
         };
         for (var, _, val) in model {
             slf[var] = val.cast(&info[var].typ)?;
@@ -141,7 +142,8 @@ impl RVarVals {
                     } else {
                         typ.default_val()
                     }
-                }).collect(),
+                })
+                .collect(),
         };
         for (var, _, val) in model {
             slf[var] = val.cast(&sig[var])?;
@@ -150,7 +152,7 @@ impl RVarVals {
     }
 
     /// Evaluates some arguments and yields the resulting `VarMap`.
-    pub fn apply_to(&self, args: &VarMap<::term::Term>) -> ::errors::Res<Self> {
+    pub fn apply_to(&self, args: &VarMap<Term>) -> Res<Self> {
         let mut res = Self::with_capacity(args.len());
         for arg in args {
             res.push(arg.eval(self)?)

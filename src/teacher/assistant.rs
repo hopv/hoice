@@ -1,8 +1,10 @@
 //! Handles example propagation.
 
-use common::*;
-use data::{AssData as Data, Sample};
-use var_to::vals::RVarVals;
+use crate::{
+    common::*,
+    data::{AssData as Data, Sample},
+    var_to::vals::RVarVals,
+};
 
 /// Result of trying to force a sample positive/negative.
 pub enum ForceRes {
@@ -257,6 +259,10 @@ impl Assistant {
         profile! { self "constraints received" => add data.constraints.len() }
 
         'all_constraints: for cstr in CstrRange::zero_to(data.constraints.len()) {
+            log! { @3
+                "trying to break\n{}",
+                data.constraints[cstr].to_string_info(self.instance.preds()).unwrap()
+            }
             // Can happen because of simplifications when propagating.
             if cstr > data.constraints.len() {
                 break;
@@ -282,8 +288,20 @@ impl Assistant {
                     // Discard the constraint, regardless of what will happen.
                     profile! { self tick "data" }
                     data.tautologize(cstr)?;
+                    if pos.len() > 0 {
+                        log! { @4 "discovered {} positive samples", pos.len() }
+                        for _sample in &pos {
+                            log! { @4 "  {} {}", self.instance[_sample.0], &_sample.1 }
+                        }
+                    }
                     for (pred, args, clause) in pos.drain(0..) {
                         data.add_data(clause, vec![], Some((pred, args)))?;
+                    }
+                    if neg.len() > 0 {
+                        log! { @4 "discovered {} negative samples", neg.len() }
+                        for _sample in &neg {
+                            log! { @4 "  {} {}", self.instance[_sample.0], &_sample.1 }
+                        }
                     }
                     for (pred, args, clause) in neg.drain(0..) {
                         data.add_data(clause, vec![(pred, args)], None)?;

@@ -57,7 +57,7 @@
 
 use hashconsing::*;
 
-use common::*;
+use crate::common::*;
 
 #[macro_use]
 mod op;
@@ -671,7 +671,8 @@ impl RTerm {
                 );
                 Ok(ZipDo::Trm { nu_term, frame })
             },
-        ).expect("error in `collect_funs`: entered unreachable code");
+        )
+        .expect("error in `collect_funs`: entered unreachable code");
 
         ()
     }
@@ -810,10 +811,9 @@ impl RTerm {
                 ZipFrame {
                     thing: ZipOp::Fun(name),
                     ..
-                }
-                    if fun::get(name)
-                        .expect("inconsistent function application: unknown function")
-                        .is_recursive() =>
+                } if fun::get(name)
+                    .expect("inconsistent function application: unknown function")
+                    .is_recursive() =>
                 {
                     Err(())
                 }
@@ -979,11 +979,13 @@ impl RTerm {
             let mut term = match curr {
                 RTerm::Var(_, idx) => term::var(*idx, nu_typ),
 
-                RTerm::Cst(val) => if let Ok(val) = val.cast(&nu_typ) {
-                    factory::cst(val)
-                } else {
-                    return Ok(None);
-                },
+                RTerm::Cst(val) => {
+                    if let Ok(val) = val.cast(&nu_typ) {
+                        factory::cst(val)
+                    } else {
+                        return Ok(None);
+                    }
+                }
 
                 RTerm::App { op, args, .. } => term::app(*op, args.clone()),
 
@@ -1625,64 +1627,72 @@ impl RTerm {
             |_| Ok(None),
             |zip_null| match zip_null {
                 ZipNullary::Cst(val) => Ok(cst(val.clone())),
-                ZipNullary::Var(typ, var) => if let Some(term) = map.var_get(var) {
-                    debug_assert_eq! { typ, & term.typ() }
-                    changed = true;
-                    Ok(term)
-                } else if total {
-                    Err(())
-                } else {
-                    Ok(term::var(var, typ.clone()))
-                },
+                ZipNullary::Var(typ, var) => {
+                    if let Some(term) = map.var_get(var) {
+                        debug_assert_eq! { typ, & term.typ() }
+                        changed = true;
+                        Ok(term)
+                    } else if total {
+                        Err(())
+                    } else {
+                        Ok(term::var(var, typ.clone()))
+                    }
+                }
             },
             |zip_op, typ, mut acc| {
                 let yielded = match zip_op {
                     ZipOp::Op(op) => term::app(op, acc),
                     ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
 
-                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
+                    ZipOp::Slc(name) => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal application of datatype selector {} to {} arguments",
+                                    conf.bad(name),
+                                    acc.len() + 1
+                                )
+                            }
+                            term::dtyp_slc(typ.clone(), name.clone(), kid)
+                        } else {
                             panic!(
-                                "illegal application of datatype selector {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
+                                "illegal application of datatype selector {} to 0 arguments",
+                                conf.bad(name)
                             )
                         }
-                        term::dtyp_slc(typ.clone(), name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype selector {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
+                    }
 
-                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
+                    ZipOp::Tst(name) => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal application of datatype tester {} to {} arguments",
+                                    conf.bad(name),
+                                    acc.len() + 1
+                                )
+                            }
+                            term::dtyp_tst(name.clone(), kid)
+                        } else {
                             panic!(
-                                "illegal application of datatype tester {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
+                                "illegal application of datatype tester {} to 0 arguments",
+                                conf.bad(name)
                             )
                         }
-                        term::dtyp_tst(name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype tester {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
+                    }
 
-                    ZipOp::CArray => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
-                            panic!(
-                                "illegal constant array application to {} arguments",
-                                acc.len() + 1
-                            )
+                    ZipOp::CArray => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal constant array application to {} arguments",
+                                    acc.len() + 1
+                                )
+                            }
+                            term::cst_array(typ.clone(), kid)
+                        } else {
+                            panic!("illegal constant array application to 0 arguments")
                         }
-                        term::cst_array(typ.clone(), kid)
-                    } else {
-                        panic!("illegal constant array application to 0 arguments")
-                    },
+                    }
                     ZipOp::Fun(name) => term::fun(name.clone(), acc),
                 };
 
@@ -1838,7 +1848,7 @@ impl RTerm {
     where
         F: FnMut(&RTerm),
     {
-        use RTerm::*;
+        use self::RTerm::*;
         let mut stack = vec![self];
 
         while let Some(term) = stack.pop() {
@@ -2078,49 +2088,55 @@ impl RTerm {
                     ZipOp::Op(op) => term::app(op, acc),
                     ZipOp::New(name) => term::dtyp_new(typ.clone(), name.clone(), acc),
 
-                    ZipOp::Slc(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
+                    ZipOp::Slc(name) => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal application of datatype selector {} to {} arguments",
+                                    conf.bad(name),
+                                    acc.len() + 1
+                                )
+                            }
+                            term::dtyp_slc(typ.clone(), name.clone(), kid)
+                        } else {
                             panic!(
-                                "illegal application of datatype selector {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
+                                "illegal application of datatype selector {} to 0 arguments",
+                                conf.bad(name)
                             )
                         }
-                        term::dtyp_slc(typ.clone(), name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype selector {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
+                    }
 
-                    ZipOp::Tst(name) => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
+                    ZipOp::Tst(name) => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal application of datatype tester {} to {} arguments",
+                                    conf.bad(name),
+                                    acc.len() + 1
+                                )
+                            }
+                            term::dtyp_tst(name.clone(), kid)
+                        } else {
                             panic!(
-                                "illegal application of datatype tester {} to {} arguments",
-                                conf.bad(name),
-                                acc.len() + 1
+                                "illegal application of datatype tester {} to 0 arguments",
+                                conf.bad(name)
                             )
                         }
-                        term::dtyp_tst(name.clone(), kid)
-                    } else {
-                        panic!(
-                            "illegal application of datatype tester {} to 0 arguments",
-                            conf.bad(name)
-                        )
-                    },
+                    }
 
-                    ZipOp::CArray => if let Some(kid) = acc.pop() {
-                        if !acc.is_empty() {
-                            panic!(
-                                "illegal constant array application to {} arguments",
-                                acc.len() + 1
-                            )
+                    ZipOp::CArray => {
+                        if let Some(kid) = acc.pop() {
+                            if !acc.is_empty() {
+                                panic!(
+                                    "illegal constant array application to {} arguments",
+                                    acc.len() + 1
+                                )
+                            }
+                            term::cst_array(typ.clone(), kid)
+                        } else {
+                            panic!("illegal constant array application to 0 arguments")
                         }
-                        term::cst_array(typ.clone(), kid)
-                    } else {
-                        panic!("illegal constant array application to 0 arguments")
-                    },
+                    }
                     ZipOp::Fun(name) => term::fun(name.clone(), acc),
                 };
 
@@ -2568,19 +2584,23 @@ impl RTerm {
                         stack.push((vec![term], " ", ")"))
                     }
 
-                    DTypNew { name, args, .. } => if args.is_empty() {
-                        write!(w, "{}", name)?
-                    } else {
-                        write!(w, "({}", name)?;
-                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
-                    },
+                    DTypNew { name, args, .. } => {
+                        if args.is_empty() {
+                            write!(w, "{}", name)?
+                        } else {
+                            write!(w, "({}", name)?;
+                            stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                        }
+                    }
 
-                    Fun { name, args, .. } => if args.is_empty() {
-                        write!(w, "{}", name)?
-                    } else {
-                        write!(w, "({}", name)?;
-                        stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
-                    },
+                    Fun { name, args, .. } => {
+                        if args.is_empty() {
+                            write!(w, "{}", name)?
+                        } else {
+                            write!(w, "({}", name)?;
+                            stack.push((args.iter().rev().map(|t| t.get()).collect(), " ", ")"))
+                        }
+                    }
                 }
             } else {
                 w.write_all(end.as_bytes())?
@@ -2591,7 +2611,7 @@ impl RTerm {
     }
 }
 
-impl_fmt!{
+mylib::impl_fmt! {
   RTerm(self, fmt) {
     let mut buf = Vec::with_capacity(250) ;
     self.write(& mut buf, |w, var| var.default_write(w)).expect(
@@ -2604,11 +2624,15 @@ impl_fmt!{
   }
 }
 impl<'a> PebcakFmt<'a> for RTerm {
-    type Info = &'a VarMap<::info::VarInfo>;
+    type Info = &'a VarMap<crate::info::VarInfo>;
     fn pebcak_err(&self) -> ErrorKind {
         "during term pebcak formatting".into()
     }
-    fn pebcak_io_fmt<W: Write>(&self, w: &mut W, vars: &'a VarMap<::info::VarInfo>) -> IoRes<()> {
+    fn pebcak_io_fmt<W: Write>(
+        &self,
+        w: &mut W,
+        vars: &'a VarMap<crate::info::VarInfo>,
+    ) -> IoRes<()> {
         self.write(w, |w, var| w.write_all(vars[var].as_bytes()))
     }
 }

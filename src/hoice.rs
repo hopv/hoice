@@ -10,22 +10,23 @@
 #![doc(test(attr(deny(warnings))))]
 #![allow(non_upper_case_globals)]
 
-extern crate lazy_static;
-#[macro_use]
-extern crate mylib;
-#[macro_use]
-extern crate error_chain;
-#[macro_use]
-extern crate clap;
-extern crate ansi_term as ansi;
-#[macro_use]
-extern crate hashconsing;
-extern crate atty;
-extern crate either;
-extern crate libc;
-extern crate num;
-extern crate rand;
-extern crate rsmt2;
+// extern crate lazy_static;
+// #[macro_use]
+// extern crate mylib;
+// #[macro_use]
+// extern crate error_chain;
+// #[macro_use]
+// extern crate clap;
+// extern crate ansi_term as ansi;
+// #[macro_use]
+// extern crate hashconsing;
+// extern crate atty;
+// extern crate either;
+// extern crate libc;
+// extern crate num;
+// extern crate rand;
+// extern crate rand_xorshift;
+// extern crate rsmt2;
 
 #[macro_use]
 pub mod common;
@@ -46,8 +47,8 @@ pub mod unsat_core;
 pub mod val;
 pub mod var_to;
 
-use common::*;
-use instance::Instance;
+use crate::common::*;
+use crate::instance::Instance;
 
 /// Parses command-line arguments and works.
 pub fn work() -> Res<()> {
@@ -57,7 +58,7 @@ pub fn work() -> Res<()> {
 
         // Are we in check mode?
         if let Some(output_file) = conf.check_file() {
-            return ::check::do_it(file_path, output_file);
+            return check::do_it(file_path, output_file);
         }
 
         // Not in check mode, open file
@@ -95,7 +96,7 @@ pub fn read_and_work<R: ::std::io::Read>(
     stop_on_check: bool,
     stop_on_err: bool,
 ) -> Res<(Option<ConjModel>, Instance)> {
-    use parse::ItemRead;
+    use crate::parse::{ItemRead, ParserCxt};
 
     let profiler = Profiler::new();
 
@@ -103,7 +104,7 @@ pub fn read_and_work<R: ::std::io::Read>(
     // String buffer.
     let buf = &mut String::with_capacity(2000);
     // Parser context.
-    let mut parser_cxt = ::parse::ParserCxt::new();
+    let mut parser_cxt = ParserCxt::new();
     // Line offset of the parser.
     let mut line_off = 0;
     // Instance.
@@ -122,15 +123,15 @@ pub fn read_and_work<R: ::std::io::Read>(
     let mut original_instance = None;
 
     'parse_work: loop {
-        use parse::Parsed;
+        use crate::parse::Parsed;
 
-        profile!{ |profiler| tick "parsing" }
+        profile! { |profiler| tick "parsing" }
 
         buf.clear();
         let lines_parsed = reader.read_item(buf).chain_err(|| "while reading input")?;
 
         if lines_parsed == 0 && file_input {
-            profile!{ |profiler| mark "parsing" }
+            profile! { |profiler| mark "parsing" }
             break 'parse_work;
         }
         let parse_res = parser_cxt
@@ -147,12 +148,12 @@ pub fn read_and_work<R: ::std::io::Read>(
                 }
                 // error = true ;
                 print_err(&e);
-                profile!{ |profiler| mark "parsing" }
+                profile! { |profiler| mark "parsing" }
                 continue 'parse_work;
             }
         };
 
-        profile!{ |profiler| mark "parsing" }
+        profile! { |profiler| mark "parsing" }
 
         match parse_res {
             // Check-sat on unsat instance?
@@ -181,18 +182,20 @@ pub fn read_and_work<R: ::std::io::Read>(
                   } "top preproc"
                 } {
                     Ok(()) => (),
-                    Err(e) => if e.is_timeout() {
-                        println!("timeout");
-                        print_stats("top", profiler);
-                        ::std::process::exit(0)
-                    } else if e.is_unknown() {
-                        println!("unknown");
-                        continue;
-                    } else if e.is_unsat() {
-                        unsat = Some(unsat_core::UnsatRes::None)
-                    } else {
-                        bail!(e)
-                    },
+                    Err(e) => {
+                        if e.is_timeout() {
+                            println!("timeout");
+                            print_stats("top", profiler);
+                            ::std::process::exit(0)
+                        } else if e.is_unknown() {
+                            println!("unknown");
+                            continue;
+                        } else if e.is_unsat() {
+                            unsat = Some(unsat_core::UnsatRes::None)
+                        } else {
+                            bail!(e)
+                        }
+                    }
                 }
                 print_stats("top preproc", preproc_profiler);
 
@@ -202,7 +205,7 @@ pub fn read_and_work<R: ::std::io::Read>(
                     if !maybe_model.is_unsat() {
                         println!("sat")
                     } else {
-                        use unsat_core::UnsatRes;
+                        use crate::unsat_core::UnsatRes;
                         println!("unsat");
                         unsat = Some(if instance.proofs() {
                             UnsatRes::empty_entry()
@@ -268,35 +271,43 @@ pub fn read_and_work<R: ::std::io::Read>(
             Parsed::GetUnsatCore => println!("unsupported"),
 
             // Print unsat core if available.
-            Parsed::GetProof => if let Some(unsat_res) = unsat.as_ref() {
-                if let Err(e) = original_instance
-                    .as_ref()
-                    .ok_or::<Error>(
-                        "unable to retrieve original instance for proof reconstruction".into(),
-                    ).and_then(|original| {
-                        unsat_res
-                            .write_proof(&mut stdout(), &instance, original)
-                            .chain_err(|| "while writing unsat proof")
-                    }) {
-                    print_err(&e)
+            Parsed::GetProof => {
+                if let Some(unsat_res) = unsat.as_ref() {
+                    if let Err(e) = original_instance
+                        .as_ref()
+                        .ok_or::<Error>(
+                            "unable to retrieve original instance for proof reconstruction".into(),
+                        )
+                        .and_then(|original| {
+                            unsat_res
+                                .write_proof(&mut stdout(), &instance, original)
+                                .chain_err(|| "while writing unsat proof")
+                        })
+                    {
+                        print_err(&e)
+                    }
+                } else {
+                    print_err(&"no unsat proof available".into())
                 }
-            } else {
-                print_err(&"no unsat proof available".into())
-            },
+            }
 
             // Print model if available.
-            Parsed::GetModel => if let Some(model) = model.as_mut() {
-                // Simplify model before writing it.
-                // instance.simplify_pred_defs(model) ? ;
-                let stdout = &mut stdout();
-                instance.write_model(&model, stdout)?
-            } else {
-                bail!("no model available")
-            },
+            Parsed::GetModel => {
+                if let Some(model) = model.as_mut() {
+                    // Simplify model before writing it.
+                    // instance.simplify_pred_defs(model) ? ;
+                    let stdout = &mut stdout();
+                    instance.write_model(&model, stdout)?
+                } else {
+                    bail!("no model available")
+                }
+            }
 
-            Parsed::Items => if instance.print_success() {
-                println!("success")
-            },
+            Parsed::Items => {
+                if instance.print_success() {
+                    println!("success")
+                }
+            }
 
             Parsed::Reset => {
                 parser_cxt.reset();
@@ -304,11 +315,13 @@ pub fn read_and_work<R: ::std::io::Read>(
                 model = None
             }
 
-            Parsed::Eof => if stop_on_check {
-                bail!("reached <eof> without reading a check-sat...")
-            } else {
-                ()
-            },
+            Parsed::Eof => {
+                if stop_on_check {
+                    bail!("reached <eof> without reading a check-sat...")
+                } else {
+                    ()
+                }
+            }
 
             Parsed::Exit => break 'parse_work,
         }

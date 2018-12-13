@@ -4,7 +4,7 @@
 //!
 //! [`entry_points`]: entry_points/index.html (entry_points module)
 
-use common::*;
+use crate::common::*;
 
 pub mod entry_points;
 mod sample_graph;

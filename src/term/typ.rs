@@ -2,10 +2,9 @@
 
 use hashconsing::{HConsed, HashConsign};
 
-use common::*;
-use dtyp::TPrmMap;
+use crate::{common::*, dtyp::TPrmMap};
 
-new_consign! {
+hashconsing::new_consign! {
   /// Type factory.
   let factory = consign(conf.instance.term_capa) for RTyp ;
 }
@@ -138,9 +137,11 @@ impl RTyp {
                     stack.push(src.get());
                     stack.push(tgt.get())
                 }
-                RTyp::DTyp { prms, .. } => for typ in prms {
-                    stack.push(typ.get())
-                },
+                RTyp::DTyp { prms, .. } => {
+                    for typ in prms {
+                        stack.push(typ.get())
+                    }
+                }
                 RTyp::Int | RTyp::Real | RTyp::Bool => (),
             }
         }
@@ -170,14 +171,16 @@ impl RTyp {
     /// Checks a type is legal.
     pub fn check(&self) -> Res<()> {
         match self {
-            RTyp::DTyp { dtyp, prms } => if dtyp.prms.len() != prms.len() {
-                bail!(
-                    "datatype {} expects {} parameters, found {}",
-                    conf.emph(&dtyp.name),
-                    dtyp.prms.len(),
-                    prms.len()
-                )
-            },
+            RTyp::DTyp { dtyp, prms } => {
+                if dtyp.prms.len() != prms.len() {
+                    bail!(
+                        "datatype {} expects {} parameters, found {}",
+                        conf.emph(&dtyp.name),
+                        dtyp.prms.len(),
+                        prms.len()
+                    )
+                }
+            }
             RTyp::Unk | RTyp::Array { .. } | RTyp::Int | RTyp::Real | RTyp::Bool => (),
         }
         Ok(())
@@ -233,13 +236,15 @@ impl RTyp {
                         dtyp: dtyp_2,
                         prms: prms_2,
                     },
-                ) => if dtyp_1.name == dtyp_2.name {
-                    for (t_1, t_2) in prms_1.iter().zip(prms_2.iter()) {
-                        stack.push((t_1, t_2))
+                ) => {
+                    if dtyp_1.name == dtyp_2.name {
+                        for (t_1, t_2) in prms_1.iter().zip(prms_2.iter()) {
+                            stack.push((t_1, t_2))
+                        }
+                    } else {
+                        return false;
                     }
-                } else {
-                    return false;
-                },
+                }
 
                 (RTyp::Int, _)
                 | (RTyp::Real, _)
@@ -305,38 +310,42 @@ impl RTyp {
                         dtyp: dtyp_2,
                         prms: prms_2,
                     },
-                ) => if dtyp_1.name == dtyp_2.name && prms_1.len() == prms_2.len() {
-                    debug_assert_eq! { prms_1.len(), prms_2.len() }
+                ) => {
+                    if dtyp_1.name == dtyp_2.name && prms_1.len() == prms_2.len() {
+                        debug_assert_eq! { prms_1.len(), prms_2.len() }
 
-                    let mut prms = prms_1.iter().zip(prms_2.iter());
+                        let mut prms = prms_1.iter().zip(prms_2.iter());
 
-                    if let Some((l, r)) = prms.next() {
-                        lft = l;
-                        rgt = r;
+                        if let Some((l, r)) = prms.next() {
+                            lft = l;
+                            rgt = r;
 
-                        stack.push(Frame::DTyp(
-                            dtyp_1.clone(),
-                            Vec::with_capacity(prms_1.len()).into(),
-                            prms,
-                        ));
+                            stack.push(Frame::DTyp(
+                                dtyp_1.clone(),
+                                Vec::with_capacity(prms_1.len()).into(),
+                                prms,
+                            ));
 
-                        continue 'go_down;
+                            continue 'go_down;
+                        } else {
+                            lft.clone()
+                        }
                     } else {
-                        lft.clone()
+                        return None;
                     }
-                } else {
-                    return None;
-                },
+                }
 
                 (RTyp::Int, _)
                 | (RTyp::Real, _)
                 | (RTyp::Bool, _)
                 | (RTyp::Array { .. }, _)
-                | (RTyp::DTyp { .. }, _) => if lft == rgt {
-                    lft.clone()
-                } else {
-                    return None;
-                },
+                | (RTyp::DTyp { .. }, _) => {
+                    if lft == rgt {
+                        lft.clone()
+                    } else {
+                        return None;
+                    }
+                }
             };
 
             'go_up: loop {
@@ -457,7 +466,7 @@ impl ::rsmt2::print::Sort2Smt for RTyp {
     }
 }
 
-impl_fmt!{
+mylib::impl_fmt! {
   RTyp(self, fmt) {
     let mut stack = vec![ (vec![self].into_iter(), "", "") ] ;
 

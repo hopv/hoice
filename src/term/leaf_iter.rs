@@ -2,7 +2,7 @@
 
 use std::slice::Iter;
 
-use common::*;
+use crate::common::*;
 
 /// Iterator over all the leaves in a term.
 pub struct LeafIter<'a> {
@@ -33,7 +33,7 @@ impl<'a> Iterator for LeafIter<'a> {
             } else {
                 loop {
                     // Something in the stack?
-                    if let Some(mut iter) = self.stack.last_mut() {
+                    if let Some(iter) = self.stack.last_mut() {
                         // Is there something in `iter`?
                         if let Some(term) = iter.next() {
                             // Use that
@@ -59,7 +59,7 @@ impl<'a> Iterator for LeafIter<'a> {
                 }
             };
 
-            use term::RTerm::*;
+            use crate::term::RTerm::*;
 
             'go_down: loop {
                 let next = match *current {

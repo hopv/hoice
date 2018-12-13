@@ -1,6 +1,6 @@
 //! Let bindings module.
 
-use common::*;
+use crate::common::*;
 
 /// Stores let bindings.
 ///

@@ -1,7 +1,9 @@
 //! One rhs module.
 
-use common::*;
-use preproc::{utils::ExtractRes, PreInstance, RedStrat};
+use crate::{
+    common::*,
+    preproc::{utils::ExtractRes, PreInstance, RedStrat},
+};
 
 /// Works on predicates that appear in only one rhs.
 ///

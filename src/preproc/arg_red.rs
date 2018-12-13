@@ -1,7 +1,9 @@
 //! Argument reduction.
 
-use common::*;
-use preproc::{PreInstance, RedStrat};
+use crate::{
+    common::*,
+    preproc::{PreInstance, RedStrat},
+};
 
 /// Argument reduction.
 ///
@@ -230,7 +232,7 @@ impl ArgReductor {
         let mut res = PrdHMap::new();
         for (pred, vars) in ::std::mem::replace(&mut self.keep, PrdMap::new()).into_index_iter() {
             if !instance[pred].is_defined() {
-                let mut prev = res.insert(pred, vars);
+                let prev = res.insert(pred, vars);
                 debug_assert! { prev.is_none() }
             }
         }

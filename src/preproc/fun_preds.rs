@@ -7,10 +7,12 @@
 //!
 //! [`map_invert`]: (fn.map_invert.html) (map_invert function)
 
-use common::*;
-use fun::FunSig;
-use info::VarInfo;
-use preproc::{Clause, PreInstance, RedStrat};
+use crate::{
+    common::*,
+    fun::FunSig,
+    info::VarInfo,
+    preproc::{Clause, PreInstance, RedStrat},
+};
 
 /// A branch in the definition of a function.
 #[derive(Clone, Debug)]
@@ -34,14 +36,25 @@ impl FunBranch {
         index: usize,
     ) -> Res<Option<Self>> {
         let fun_args_len = fun_sig.len();
-        let (last, fresh) = if fun_args_len == rhs_args.len() {
-            (None, rhs_args.len().into())
+        let (last, fresh, res_idx) = if fun_args_len == rhs_args.len() {
+            let last: VarIdx = fun_args_len.into();
+            let res_idx: VarIdx = (fun_args_len - 1).into();
+            (None, last, res_idx)
         } else {
-            let last: VarIdx = (rhs_args.len() - 1).into();
-            let mut fresh = last;
+            let mut fresh: VarIdx = fun_args_len.into();
+            let res_idx = fresh;
             fresh.inc();
-            (Some(last), fresh)
+            (Some(res_idx), fresh, res_idx)
         };
+
+        // println!(
+        //     "last: {}, fresh: {}, res_idx: {}",
+        //     last.as_ref()
+        //         .map(|idx| format!("{}", idx.default_str()))
+        //         .unwrap_or("none".into()),
+        //     fresh,
+        //     res_idx
+        // );
 
         if_log! { @4
             log! { @4 |=>
@@ -79,6 +92,7 @@ impl FunBranch {
             fun_typ,
             fun_name,
             last,
+            res_idx,
             fresh,
             guard,
             subst,
@@ -98,10 +112,12 @@ impl FunBranch {
             .map(|argss| argss.iter().collect())
             .unwrap_or_else(Vec::new);
 
+        // println!("lhs");
         let okay = builder.work_on_lhs(&mut lhs_argss)?;
         if !okay {
             return Ok(None);
         }
+        // println!("done");
 
         if_log! { @4
             log! { @4 |=> "lhs inversion successful" };
@@ -110,6 +126,7 @@ impl FunBranch {
             builder.log_calls();
         }
 
+        // println!("subst");
         for term in lhs_terms {
             if let Some((term, _)) = term.subst_total(&builder.subst) {
                 builder.guard.insert(term);
@@ -118,6 +135,7 @@ impl FunBranch {
                 return Ok(None);
             }
         }
+        // println!("done");
 
         if_log! { @4
             log! { @4 |=> "lhs terms substitution successful" }
@@ -139,7 +157,9 @@ impl FunBranch {
 
         log! { @4 | "value extraction successful: {}", value }
 
+        // println!("potential invariants");
         builder.potential_invariants(invars);
+        // println!("done");
 
         if_log! { @4
             log! { @4 |=> "potential invariant extraction successful" }
@@ -179,6 +199,8 @@ struct BranchBuilder<'a> {
     fun_typ: &'a Typ,
     /// Name of the function.
     fun_name: &'a str,
+    /// Index of the result. Used to generate invariants.
+    res_idx: VarIdx,
     /// The index of the last variable if we are not working on all the arguments. None otherwise.
     ///
     /// If none, then we are reconstructing the predicate itself. Otherwise, we are reconstructing
@@ -217,9 +239,11 @@ impl<'a> BranchBuilder<'a> {
         let calls = &mut self.calls;
         let fun_typ = &self.fun_typ;
         let index = self.index;
+        let res_idx = self.res_idx;
 
         guard.retain(|term| {
             let term_vars = term::vars(&term);
+
             let mut vars = vec![];
 
             for var in term_vars {
@@ -230,10 +254,8 @@ impl<'a> BranchBuilder<'a> {
 
             if vars.len() == 1 {
                 let var = vars[0];
-                invar_subst.insert(var, term::var(0, (*fun_typ).clone()));
-                let (invar, _) = term
-                    .subst_total(&invar_subst)
-                    .expect("total substitution cannot fail du to previous checks");
+                invar_subst.insert(var, term::var(res_idx, (*fun_typ).clone()));
+                let (invar, _) = term.subst(&invar_subst);
                 invars
                     .entry(invar)
                     .or_insert_with(Vec::new)
@@ -267,6 +289,7 @@ impl<'a> BranchBuilder<'a> {
                 } else {
                     // Create new binding.
                     let fresh = self.get_fresh();
+                    // println!("fresh: {}", fresh);
                     let prev = self.calls.insert(fresh, $call);
                     debug_assert! { prev.is_none() }
                     fresh
@@ -278,24 +301,36 @@ impl<'a> BranchBuilder<'a> {
             let prev_len = lhs_argss.len();
             let mut failed: Res<_> = Ok(false);
 
+            // println!();
+
             lhs_argss.retain(|args| {
                 for arg in &args[0..self.args_len] {
-                    if let Some((arg, _)) = arg.subst_total(&self.subst) {
-                        nu_args.push(arg)
+                    if let Some((nu_arg, _)) = arg.subst_total(&self.subst) {
+                        // println!("  {} -> {}", arg, nu_arg);
+                        nu_args.push(nu_arg);
                     } else {
+                        // println!("skip");
                         nu_args.clear();
                         return true;
                     }
                 }
                 let nu_args = ::std::mem::replace(&mut nu_args, Vec::with_capacity(self.args_len));
 
+                // println!("fun app 1");
                 let fun_app = term::fun(self.fun_name, nu_args);
                 let fun_app_var = register_call!(fun_app);
+                // println!("fun app 2");
                 let fun_app = term::var(fun_app_var, self.fun_typ.clone());
+                // println!("done");
 
                 let okay = if let Some(last) = self.last.as_ref() {
                     let last = *last;
-                    map_invert(&args[last], fun_app, &mut self.subst, &mut self.guard)
+                    // println!("map_invert ({})", last);
+                    // println!("  {} ({})", args[last], args[last].typ());
+                    // println!("  {} ({})", fun_app, fun_app.typ());
+                    let res = map_invert(&args[last], fun_app, &mut self.subst, &mut self.guard);
+                    // println!("done");
+                    res
                 } else {
                     self.value.get_or_insert_with(Vec::new).push(fun_app);
                     Ok(true)
@@ -363,6 +398,8 @@ impl<'a> BranchBuilder<'a> {
 struct FunDef {
     /// Predicate this function is for.
     pred: PrdIdx,
+    /// Index of the result. Used to represent invariants.
+    res_idx: VarIdx,
     /// Function name.
     name: String,
     /// Function signature.
@@ -390,12 +427,13 @@ struct FunDef {
 
 impl FunDef {
     /// Creates an empty function definition.
-    pub fn new(pred: PrdIdx, name: String, sig: VarInfos, typ: Typ) -> Self {
+    pub fn new(pred: PrdIdx, name: String, sig: VarInfos, typ: Typ, res_idx: VarIdx) -> Self {
         FunDef {
             pred,
             name,
             sig,
             typ,
+            res_idx,
             branches: Vec::new(),
             candidate_invars: TermMap::new(),
             invars: TermSet::new(),
@@ -457,13 +495,14 @@ impl FunDef {
             ))?;
         }
 
-        let mut subst = VarMap::with_capacity(1);
+        let mut subst = VarHMap::with_capacity(1);
 
         'check_invariants: for (invariant, backtrack) in self.candidate_invars.drain() {
             solver!().comment_args(format_args!("checking candidate invariant {}", invariant))?;
 
             macro_rules! backtrack {
                 () => {{
+                    log! { @3 | "  not an invariant: {}", invariant }
                     for (index, term) in backtrack {
                         self.branches[index].guard.insert(term);
                     }
@@ -481,15 +520,19 @@ impl FunDef {
 
                 // Target invariant (negated).
                 let neg_objective = {
-                    debug_assert! { subst.is_empty() }
-                    subst.push(branch!().value.clone());
-
-                    let invariant = invariant
-                        .subst_total(&subst)
-                        .expect("cannot fail by construction")
-                        .0;
-
-                    subst.clear();
+                    let invariant = if self.sig.len() < instance[self.pred].sig().len() {
+                        subst.insert(self.res_idx, branch!().value.clone());
+                        // println!("subst ({}):", self.res_idx);
+                        // for (key, val) in &subst {
+                        //     println!("  {} -> {}", key.default_str(), val)
+                        // }
+                        // println!("{}", invariant);
+                        let res = invariant.clone().subst(&subst).0;
+                        subst.clear();
+                        res
+                    } else {
+                        invariant.clone()
+                    };
 
                     match invariant.bool() {
                         Some(true) => continue 'all_branches,
@@ -520,13 +563,30 @@ impl FunDef {
                 if !branch!().calls.is_empty() {
                     solver!().comment("recursion hypotheses")?;
 
-                    for (var, _) in &branch!().calls {
-                        debug_assert! { subst.is_empty() }
-                        subst.push(term::var(*var, self.typ.clone()));
+                    for (var, term) in &branch!().calls {
+                        if let Some((_, args)) = term.fun_inspect() {
+                            let mut var: VarIdx = 0.into();
+                            for arg in args {
+                                subst.insert(var, arg.clone());
+                                var.inc()
+                            }
+                        } else {
+                            bail!("ill-formed function reconstruction context")
+                        }
+                        if self.sig.len() < instance[self.pred].sig().len() {
+                            subst.insert(self.res_idx, term::var(*var, self.typ.clone()));
+                        }
+                        // println!("subst:");
+                        // for (key, val) in &subst {
+                        //     println!("  {} -> {}", key.default_str(), val)
+                        // }
+                        // println!("{}", invariant);
                         let invariant = invariant
+                            .clone()
                             .subst_total(&subst)
                             .expect("cannot fail by construction")
                             .0;
+
                         subst.clear();
 
                         solver!().assert(&smt::SmtTerm::new(&invariant))?
@@ -541,7 +601,6 @@ impl FunDef {
                 instance.reset_solver()?;
 
                 if sat {
-                    log! { @3 | "  not an invariant: {}", invariant }
                     backtrack!()
                 }
             }
@@ -648,31 +707,49 @@ impl FunDef {
         instance: &mut PreInstance,
         check_exhaustive: bool,
     ) -> Res<Option<Fun>> {
-        if self.typ.is_arith() {
-            let (zero, one) = if self.typ.is_int() {
-                (term::int(0), term::int(1))
-            } else {
-                (
-                    term::real((0.into(), 1.into())),
-                    term::real((1.into(), 1.into())),
-                )
-            };
+        // println!("candidates:");
+        crate::learning::ice::quals::NuQuals::mine_sig(instance[self.pred].sig(), |candidate| {
+            // println!("  {}", candidate);
+            // println!("candidate ({}): {}", candidate, self.res_idx.default_str());
+            if term::vars(&candidate).contains(&self.res_idx) {
+                // println!("  adding it");
+                self.candidate_invars
+                    .entry(candidate.clone())
+                    .or_insert_with(Vec::new);
+                self.candidate_invars
+                    .entry(term::not(candidate))
+                    .or_insert_with(Vec::new);
+                ()
+            }
+            Ok(())
+        })?;
+        // println!("done");
+        // if self.typ.is_arith() {
+        //     let (zero, one) = if self.typ.is_int() {
+        //         (term::int(0), term::int(1))
+        //     } else {
+        //         (
+        //             term::real((0.into(), 1.into())),
+        //             term::real((1.into(), 1.into())),
+        //         )
+        //     };
 
-            let term = term::var(0, self.typ.clone());
+        //     let term = term::var(0, self.typ.clone());
 
-            let t = term::ge(term.clone(), zero.clone());
-            self.candidate_invars.entry(t).or_insert_with(Vec::new);
-            let t = term::le(term.clone(), zero.clone());
-            self.candidate_invars.entry(t).or_insert_with(Vec::new);
+        //     let t = term::ge(term.clone(), zero.clone());
+        //     self.candidate_invars.entry(t).or_insert_with(Vec::new);
+        //     let t = term::le(term.clone(), zero.clone());
+        //     self.candidate_invars.entry(t).or_insert_with(Vec::new);
 
-            let t = term::ge(term.clone(), one.clone());
-            self.candidate_invars.entry(t).or_insert_with(Vec::new);
-            let t = term::le(term.clone(), term::u_minus(one.clone()));
-            self.candidate_invars.entry(t).or_insert_with(Vec::new);
-        }
-
+        //     let t = term::ge(term.clone(), one.clone());
+        //     self.candidate_invars.entry(t).or_insert_with(Vec::new);
+        //     let t = term::le(term.clone(), term::u_minus(one.clone()));
+        //     self.candidate_invars.entry(t).or_insert_with(Vec::new);
+        // }
+        // println!("checking invariants");
         self.check_invariants(instance)
             .chain_err(|| "while checking the invariants")?;
+        // println!("done");
 
         let invs = self.invars.len();
         if invs > 0 {
@@ -699,19 +776,37 @@ impl FunDef {
 
         let mut invs = Vec::with_capacity(self.invars.len());
         if !self.invars.is_empty() {
-            let subst: VarMap<_> = vec![term::fun(
-                self.name.clone(),
-                self.sig
-                    .into_iter()
-                    .map(|info| term::var(info.idx, info.typ))
-                    .collect(),
-            )].into();
+            let mut subst = VarHMap::new();
+            if self.sig.len() < instance[self.pred].sig().len() {
+                subst.insert(
+                    self.res_idx,
+                    term::fun(
+                        self.name.clone(),
+                        self.sig
+                            .clone()
+                            .into_iter()
+                            .map(|info| term::var(info.idx, info.typ))
+                            .collect(),
+                    ),
+                );
+            }
 
             for inv in self.invars {
-                let inv = inv
-                    .subst_total(&subst)
-                    .expect("cannot fail by construction")
-                    .0;
+                // println!("subst:");
+                // for (key, val) in subst.iter() {
+                //     println!("  {} -> {}", key.default_str(), val)
+                // }
+                // println!("inv: {}", inv);
+                let inv = if self.sig.len() == instance[self.pred].sig().len() {
+                    let mut args: Vec<Term> = Vec::with_capacity(self.sig.len()).into();
+                    for info in &self.sig {
+                        args.push(term::var(info.idx, info.typ.clone()))
+                    }
+                    let fun_app = term::fun(self.name.clone(), args);
+                    term::implies(fun_app, inv)
+                } else {
+                    inv.subst(&subst).0
+                };
 
                 invs.push(inv);
             }
@@ -721,7 +816,7 @@ impl FunDef {
         let mut def = None;
         for branch in self.branches.into_iter().rev() {
             let cond = term::and(branch.guard.into_iter().collect());
-            let mut nu_def = if let Some(def) = def {
+            let nu_def = if let Some(def) = def {
                 term::ite(cond, branch.value, def)
             } else {
                 if !check_exhaustive {
@@ -843,11 +938,16 @@ impl FunPreds {
             let var_info = VarInfo::new(idx.default_str(), typ.clone(), idx);
             var_infos.push(var_info)
         }
-        let last: Option<VarIdx> = if use_all_args {
-            None
-        } else {
-            Some((instance[pred].sig.len() - 1).into())
-        };
+        let res_idx: VarIdx = (instance[pred].sig.len() - 1).into();
+        let last: Option<VarIdx> = if use_all_args { None } else { Some(res_idx) };
+
+        // println!(
+        //     "last: {}, res_idx: {}",
+        //     last.as_ref()
+        //         .map(|idx| format!("{}", idx.default_str()))
+        //         .unwrap_or("none".into()),
+        //     res_idx
+        // );
 
         let pred_fun_name = make_fun_name(&instance[pred].name).chain_err(|| {
             format!(
@@ -875,7 +975,13 @@ impl FunPreds {
             }};
         }
 
-        let mut fun_def = FunDef::new(pred, pred_fun_name.clone(), var_infos, pred_fun_typ);
+        let mut fun_def = FunDef::new(
+            pred,
+            pred_fun_name.clone(),
+            var_infos,
+            pred_fun_typ,
+            res_idx,
+        );
 
         for clause in instance.clauses_of(pred).1 {
             let clause = *clause;
@@ -886,7 +992,7 @@ impl FunPreds {
             fun_def = if let Some(new) = fun_def.register_clause(&instance[clause])? {
                 new
             } else {
-                log!{ @3 | "clause registration failed" }
+                log! { @3 | "clause registration failed" }
                 abort!()
             };
         }
@@ -987,10 +1093,10 @@ impl RedStrat for FunPreds {
                     if instance[*clause].has_fun_apps() {
                         has_fun_apps = true
                     }
-                    if instance[*clause].has_fun_apps() {
-                        // println!("  recursive function");
-                        continue 'all_preds;
-                    }
+                    // if instance[*clause].has_fun_apps() {
+                    //     // println!("  recursive function");
+                    //     continue 'all_preds;
+                    // }
                 }
                 // }
 
@@ -1000,7 +1106,7 @@ impl RedStrat for FunPreds {
                         .iter()
                         .filter(|typ| typ.is_dtyp())
                         .count()
-                        > 1
+                        != 1
                 {
                     // println!("  more than one dtyp arg");
                     continue 'all_preds;
@@ -1040,9 +1146,9 @@ impl RedStrat for FunPreds {
             }
 
             while let Some((pred, _)) = self.to_inline.pop() {
-                if instance.active_pred_count() <= 1 {
-                    return Ok(info);
-                }
+                // if instance.active_pred_count() <= 1 {
+                //     return Ok(info);
+                // }
 
                 let res = FunPreds::reduce_pred(instance, pred, false)?;
                 // pause("to resume fun_preds", & Profiler::new()) ;

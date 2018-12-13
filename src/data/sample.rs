@@ -1,4 +1,4 @@
-use common::{var_to::vals::VarValsSet, *};
+use crate::common::{var_to::vals::VarValsSet, *};
 
 /// A sample is some values for a predicate.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -49,8 +49,8 @@ impl<'a> PebcakFmt<'a> for Sample {
         write!(w, ")")
     }
 }
-impl_fmt!{
-  Sample(self, fmt) {
-    write!(fmt, "p_{} {}", self.pred, self.args)
-  }
+mylib::impl_fmt! {
+    Sample(self, fmt) {
+        write!(fmt, "p_{} {}", self.pred, self.args)
+    }
 }

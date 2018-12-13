@@ -3,11 +3,11 @@
 
 use hashconsing::{HConsed, HashConsign};
 
-use common::*;
+use crate::common::*;
 
-new_consign! {
-  /// Term factory.
-  let factory = consign(conf.instance.term_capa / 10) for VarMap<Term> ;
+hashconsing::new_consign! {
+    /// Term factory.
+    let factory = consign(conf.instance.term_capa / 10) for VarMap<Term> ;
 }
 
 /// Hashconsed arguments for predicate applications.

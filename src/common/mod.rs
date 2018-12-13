@@ -1,7 +1,11 @@
 //! Base types and functions.
 
+use clap::crate_version;
+use mylib::impl_fmt;
+
 pub use std::{
     collections::{BTreeMap, BTreeSet},
+    io::stdout,
     io::{
         Result as IoRes, {Read, Write},
     },
@@ -11,36 +15,30 @@ pub use std::{
     },
 };
 
-pub use rand::prng::XorShiftRng as Rng;
-
-pub use mylib::common::hash::*;
-
+pub use either::Either;
+pub use error_chain::bail;
 pub use hashconsing::{coll::*, HashConsed, HashConsign};
-
+pub use lazy_static::lazy_static;
+pub use mylib::common::hash::*;
+pub use num::{One, Signed, Zero};
+pub use rand_xorshift::XorShiftRng as Rng;
 pub use rsmt2::{actlit::Actlit, print::Expr2Smt, SmtRes, Solver};
 
-pub use num::{One, Signed, Zero};
-
-pub use either::Either;
-
-pub use errors::*;
-pub use term;
-pub use term::{typ, Op, Quant, RTerm, TTerm, TTermSet, TTerms, Term, Typ};
-
-pub use dtyp;
-pub use dtyp::DTyp;
-
-pub use val;
-pub use val::Val;
-
-pub use fun;
-pub use fun::Fun;
-
-pub use var_to;
-pub use var_to::{vals::SubsumeExt, VarTerms, VarVals};
-
-pub use common::consts::keywords;
-pub use instance::{Clause, Instance};
+pub use crate::{
+    common::consts::keywords,
+    dtyp,
+    dtyp::DTyp,
+    errors::*,
+    fun,
+    fun::Fun,
+    instance::{Clause, Instance},
+    term,
+    term::{typ, Op, Quant, RTerm, TTerm, TTermSet, TTerms, Term, Typ},
+    val,
+    val::Val,
+    var_to,
+    var_to::{vals::SubsumeExt, VarTerms, VarVals},
+};
 
 mod wrappers;
 
@@ -58,12 +56,12 @@ pub use self::config::*;
 pub use self::profiling::{CanPrint, Profiler};
 pub use self::wrappers::*;
 
-lazy_static!{
-  /// Configuration from clap.
-  pub static ref conf: Config = Config::clap() ;
-  static ref version_string: String = crate_version!().into() ;
-  /// Version with revision info.
-  pub static ref version: & 'static str = & version_string ;
+lazy_static! {
+    /// Configuration from clap.
+    pub static ref conf: Config = Config::clap();
+    static ref version_string: String = crate_version!().into();
+    /// Version with revision info.
+    pub static ref version: & 'static str = & version_string;
 }
 
 // |===| Helpers.
@@ -74,9 +72,6 @@ pub trait Discard: Sized {
     fn discard(self) {}
 }
 impl<T> Discard for T {}
-
-/// Stdout.
-pub use std::io::stdout;
 
 /// Prints the stats if asked. Does nothing in bench mode.
 #[cfg(feature = "bench")]
@@ -106,10 +101,10 @@ pub fn pause(s: &str, _profiler: &Profiler) {
     println!();
     println!("; {} {}...", conf.emph("press return"), s);
     let _ = profile!(
-    |_profiler| wrap {
-      ::std::io::stdin().read_line(& mut dummy)
-    } "waiting for user input"
-  );
+      |_profiler| wrap {
+        ::std::io::stdin().read_line(& mut dummy)
+      } "waiting for user input"
+    );
 }
 
 /// Notifies the user through a message and reads a line from stdin.
@@ -235,7 +230,7 @@ pub type PredApps = PrdHMap<var_to::terms::VarTermsSet>;
 /// Predicate application alias type extension.
 pub trait PredAppsExt {
     /// Insert a predicate application. Returns true if the application is new.
-    fn insert_pred_app(&mut self, PrdIdx, VarTerms) -> bool;
+    fn insert_pred_app(&mut self, pred: PrdIdx, args: VarTerms) -> bool;
 }
 impl PredAppsExt for PredApps {
     fn insert_pred_app(&mut self, pred: PrdIdx, args: VarTerms) -> bool {
@@ -246,9 +241,9 @@ impl PredAppsExt for PredApps {
 }
 
 /// Predicate information.
-pub type Preds = PrdMap<::info::Pred>;
+pub type Preds = PrdMap<crate::info::Pred>;
 /// Variable information.
-pub type VarInfos = VarMap<::info::VarInfo>;
+pub type VarInfos = VarMap<crate::info::VarInfo>;
 
 /// Maps predicates to optional terms.
 pub type Candidates = PrdMap<Option<Term>>;
@@ -259,7 +254,7 @@ pub enum TeachRes {
     /// A model.
     Model(Candidates),
     /// An unsat result.
-    Unsat(::unsat_core::UnsatRes),
+    Unsat(crate::unsat_core::UnsatRes),
 }
 
 /// Quantified variables for a top term.
@@ -358,11 +353,11 @@ pub type Cexs = ClsHMap<Vec<BCex>>;
 #[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Signature {
     /// Type of a variable.
-    fn get(&self, VarIdx) -> Typ;
+    fn get(&self, var: VarIdx) -> Typ;
     /// Length of the signature.
     fn len(&self) -> usize;
 }
-impl Signature for VarMap<::info::VarInfo> {
+impl Signature for VarMap<crate::info::VarInfo> {
     fn len(&self) -> usize {
         VarMap::len(self)
     }
@@ -446,9 +441,9 @@ where
 }
 
 /// Something that can be evaluated to a boolean.
-pub trait CanBEvaled: ::std::fmt::Display {
+pub trait CanBEvaled: std::fmt::Display {
     /// Evaluates self.
-    fn evaluate<E>(&self, &E) -> Res<Option<bool>>
+    fn evaluate<E>(&self, e: &E) -> Res<Option<bool>>
     where
         E: Evaluator;
 }
@@ -532,7 +527,7 @@ impl From<(usize, usize, usize)> for RedInfo {
         }
     }
 }
-impl ::std::ops::AddAssign for RedInfo {
+impl std::ops::AddAssign for RedInfo {
     fn add_assign(
         &mut self,
         RedInfo {
@@ -548,7 +543,7 @@ impl ::std::ops::AddAssign for RedInfo {
         self.args_rmed += args_rmed
     }
 }
-impl_fmt!{
+impl_fmt! {
   RedInfo(self, fmt) {
     write!(
       fmt, "\
@@ -565,7 +560,7 @@ pub trait PebcakFmt<'a> {
     /// Info needed.
     type Info;
     /// User-friendly formatting.
-    fn pebcak_io_fmt<Writer: Write>(&self, &mut Writer, Self::Info) -> IoRes<()>;
+    fn pebcak_io_fmt<Writer: Write>(&self, w: &mut Writer, i: Self::Info) -> IoRes<()>;
     /// Error specific to the implementor.
     fn pebcak_err(&self) -> ErrorKind;
     /// User-friendly formatting.
@@ -579,7 +574,7 @@ pub trait PebcakFmt<'a> {
     {
         let mut v = vec![];
         self.pebcak_fmt(&mut v, i)?;
-        ::std::str::from_utf8(&v)
+        std::str::from_utf8(&v)
             .chain_err(|| self.pebcak_err())
             .map(|s| f(s))
     }
@@ -635,7 +630,7 @@ impl VarIndexed<Term> for VarHMap<(VarIdx, Typ)> {
         self.get(&var).map(|&(v, ref t)| term::var(v, t.clone()))
     }
 }
-impl VarIndexed<Term> for VarMap<::parse::PTTerms> {
+impl VarIndexed<Term> for VarMap<crate::parse::PTTerms> {
     #[inline]
     fn var_get(&self, var: VarIdx) -> Option<Term> {
         if self.len() < *var {
@@ -718,7 +713,7 @@ impl Luby {
             self.max_pow += 1
         }
         let mut res: Int = 2.into();
-        res = ::num::pow::pow(res, self.pow);
+        res = num::pow::pow(res, self.pow);
         self.pow += 1;
         res
     }
@@ -822,7 +817,7 @@ where
     pub fn next_combination(&mut self) -> Option<&Vec<Iter::Item>> {
         let mut res = None;
 
-        if let Some(mut current) = ::std::mem::replace(&mut self.current, None) {
+        if let Some(mut current) = std::mem::replace(&mut self.current, None) {
             self.next.clear();
 
             // Construct result, easy part.

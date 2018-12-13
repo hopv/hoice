@@ -1,8 +1,10 @@
 //! Types to store information about predicates and clause/function variables.
 
+use std::fmt;
+
 use rsmt2::print::{Sort2Smt, Sym2Smt};
 
-use common::*;
+use crate::common::*;
 
 /// Variable info for clauses or function definitions.
 #[derive(Clone, Debug)]
@@ -52,10 +54,10 @@ impl Sort2Smt for VarInfo {
         self.typ.get().sort_to_smt2(w)
     }
 }
-impl_fmt!{
-  VarInfo(self, fmt) {
-    fmt.write_str(& self.name)
-  }
+mylib::impl_fmt! {
+    VarInfo(self, fmt) {
+        fmt.write_str(& self.name)
+    }
 }
 
 /// Stores information about a predicate.
@@ -553,7 +555,6 @@ impl Pred {
     }
 }
 
-use std::fmt;
 impl fmt::Display for Pred {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "{}", self.name)

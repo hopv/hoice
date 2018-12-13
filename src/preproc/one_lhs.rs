@@ -1,7 +1,9 @@
 //! One lhs module.
 
-use common::*;
-use preproc::{utils::ExtractRes, PreInstance, RedStrat};
+use crate::{
+    common::*,
+    preproc::{utils::ExtractRes, PreInstance, RedStrat},
+};
 
 /// Tries to reduce predicates that appear as an antecedent in exactly one
 /// clause.
@@ -82,7 +84,7 @@ impl OneLhs {
         _pred_app: &Option<PredApp>,
         _tterms: &TTermSet,
     ) {
-        if_log!{ @4
+        if_log! { @4
           let mut s = "(".to_string() ;
 
           if ! _quantfed.is_empty() {

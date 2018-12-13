@@ -108,7 +108,7 @@
 
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
-use common::*;
+use crate::common::*;
 
 /// A hashconsed function.
 pub type Fun = Arc<RFun>;
@@ -179,11 +179,10 @@ pub fn retrieve_sig(fun: &str) -> Res<FunSig> {
 /// Accesses the signature of a function, if any.
 ///
 /// Used to type-check function calls.
-pub fn sig_do<F, T>(fun: &str, mut f: F) -> Result<T, ::errors::TypError>
+pub fn sig_do<F, T>(fun: &str, mut f: F) -> Result<T, TypError>
 where
-    F: for<'a> FnMut(&'a FunSig) -> Result<T, ::errors::TypError>,
+    F: for<'a> FnMut(&'a FunSig) -> Result<T, TypError>,
 {
-    use errors::TypError;
     if let Ok(defs) = factory.read() {
         if let Some(def) = defs.get(fun) {
             return f(&def.info);
@@ -412,7 +411,7 @@ fn write_groups<W: Write>(
     invariants: bool,
     groups: Vec<Vec<Fun>>,
 ) -> Res<()> {
-    for mut group in groups {
+    for group in groups {
         if group.len() == 1 {
             let fun = &group[0];
 
@@ -815,7 +814,7 @@ pub mod test {
             return ();
         }
 
-        ::parse::fun_dtyp(&format!(
+        crate::parse::fun_dtyp(&format!(
             "\
             (define-funs-rec
               (

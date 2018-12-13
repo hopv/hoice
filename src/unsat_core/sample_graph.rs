@@ -4,14 +4,15 @@
 
 use std::borrow::Borrow;
 
-use common::{
-    // smt::FullParser as Parser,
-    // var_to::vals::{ VarValsMap, VarValsSet },
-    var_to::vals::VarValsMap,
-    *,
+use crate::{
+    common::{
+        // smt::FullParser as Parser,
+        // var_to::vals::{ VarValsMap, VarValsSet },
+        var_to::vals::VarValsMap,
+        *,
+    },
+    unsat_core::*,
 };
-
-use unsat_core::*;
 
 /// Maps term arguments to concrete ones.
 pub type TArgMap = HConMap<VarTerms, VarVals>;
@@ -45,7 +46,7 @@ impl Polarity {
         self.pos
     }
 }
-impl_fmt! {
+mylib::impl_fmt! {
   Polarity(self, fmt) {
     fmt.write_str( if self.pos { "+" } else { "-" } )
   }

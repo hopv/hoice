@@ -3,9 +3,10 @@
 use std::cell::RefCell;
 use std::sync::mpsc::channel;
 
-use common::{profiling::Profiler, *};
-
-use data::{AssData, LrnData};
+use crate::{
+    common::{profiling::Profiler, *},
+    data::{AssData, LrnData},
+};
 
 /// Sender / receiver pair alias type.
 pub type Channel<T> = (Sender<T>, Receiver<T>);
@@ -326,7 +327,7 @@ pub trait Learner: Sync + Send {
     ///
     /// The boolean flag `mine` specifies whether the learner should mine the
     /// instance, typically for qualifiers.
-    fn run(&self, MsgCore, Arc<Instance>, LrnData, mine: bool);
+    fn run(&self, core: MsgCore, instance: Arc<Instance>, data: LrnData, mine: bool);
     /// Short description of the learner.
     fn description(&self, mine: bool) -> String;
 }

@@ -14,8 +14,7 @@
 //! [learning data]: ../../data/index.html (learning data module)
 //! [`EntryPoints` tracker]: struct.EntryPoints.html (EntryPoints struct)
 
-use common::*;
-use data::sample::Sample;
+use crate::{common::*, data::sample::Sample};
 
 /// Set of samples.
 pub type SampleSet = BTreeSet<Sample>;
@@ -180,7 +179,7 @@ impl EntryPoints {
             .remove(&sample)
             .unwrap_or_else(SampleSet::new);
 
-        use var_to::vals::SubsumeExt;
+        use crate::var_to::vals::SubsumeExt;
         let mut real_dep = None;
         for s in &self.real_pos_samples {
             if s.pred == dep.pred && s.args.subsumes(&dep.args) {
@@ -199,8 +198,10 @@ impl EntryPoints {
                         format!(
                             "trying to register dependency to unknown positive sample ({})",
                             dep
-                        ).into()
-                    })?.iter()
+                        )
+                        .into()
+                    })?
+                    .iter()
                     .cloned(),
             )
         }
@@ -326,7 +327,8 @@ impl EntryPoints {
                 format!(
                     "trying to recover entry points for unknown sample ({})",
                     sample
-                ).into()
+                )
+                .into()
             })
     }
 }
@@ -427,7 +429,8 @@ impl<'a> Reconstr<'a> {
                     .rhs()
                     .expect("positive clauses necessarily have a RHS")
                     .0
-            }).collect();
+            })
+            .collect();
         let mut safe_preds = PrdSet::new();
         let mut fp = false;
         while !fp {
@@ -810,7 +813,7 @@ impl<'a> Reconstr<'a> {
         }
 
         'all_branches: while let Some(mut to_do) = self.to_do.pop() {
-            if_log ! { @3
+            if_log! { @3
                 log! { @3 |=> "to_do {} other branch(es):", self.to_do.len() }
                 for sample in &to_do {
                     log! { @3 |=> "  ({} {})", self.instance[sample.pred], sample.args }

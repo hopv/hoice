@@ -6,8 +6,8 @@
 //! non-negative clauses to strengthen the instance: this avoids losing too much information when
 //! dropping some negative clauses.
 
-use common::*;
-use unsat_core::UnsatRes;
+use crate::common::*;
+use crate::unsat_core::UnsatRes;
 
 /// Splits the instance if asked to do so, and solves it.
 ///
@@ -52,9 +52,9 @@ pub fn work(
         }
         profile! { |_profiler| "sub-system(s)" => add 1 }
 
-        let mut instance = match preproc_res {
+        let instance = match preproc_res {
             Either::Left(instance) => instance,
-            Either::Right(MaybeModel::Unsat) => unsat!{
+            Either::Right(MaybeModel::Unsat) => unsat! {
               "by preprocessing"
             },
             Either::Right(MaybeModel::Model(this_model)) => {
@@ -102,10 +102,10 @@ fn run_on(
     }
 
     let res = profile!(
-    |_profiler| wrap {
-      run_teacher(instance.clone(), & model)
-    } "solving"
-  )?;
+      |_profiler| wrap {
+        run_teacher(instance.clone(), & model)
+      } "solving"
+    )?;
 
     match res {
         TeachRes::Model(candidates) => {
@@ -146,7 +146,7 @@ fn add_submodel(instance: &Arc<Instance>, model: &mut ConjCandidates, submodel: 
 /// Runs the teacher on an instance.
 fn run_teacher(instance: Arc<Instance>, model: &ConjCandidates) -> Res<TeachRes> {
     let teacher_profiler = Profiler::new();
-    let solve_res = ::teacher::start_class(instance, model, &teacher_profiler);
+    let solve_res = crate::teacher::start_class(instance, model, &teacher_profiler);
     print_stats("teacher", teacher_profiler);
     solve_res
 }
@@ -209,7 +209,8 @@ impl Splitter {
                             -(**c as isize)
                         },
                     )
-                }).collect();
+                })
+                .collect();
 
             clauses.sort_unstable_by(|&(c_1, count_1), &(c_2, count_2)| {
                 if instance[c_1].is_strict_neg() && !instance[c_2].is_strict_neg() {
@@ -248,7 +249,8 @@ impl Splitter {
                                 //   } else {
                                 //     Some(c)
                                 //   }
-                ).collect();
+                )
+                .collect();
 
             let len = clauses.len();
             if len <= 1 {
@@ -300,27 +302,31 @@ impl Splitter {
         _prof: &Profiler,
     ) -> Res<Option<Either<Arc<Instance>, MaybeModel<Model>>>> {
         match self.clauses {
-            Either::Left(ref mut clauses) => if let Some(clause) = clauses.pop() {
-                let profiler = Profiler::new();
-                let preproc_res = profile! (
-          |_prof| wrap {
-            preproc(
-              self.instance.as_ref(), clause, & self.prev_clauses, & profiler
-            )
-          } "sub-preproc"
-        )?;
-                self.prev_clauses.insert(clause);
-                self._profiler = Some(profiler);
-                Ok(Some(preproc_res.map_left(Arc::new)))
-            } else {
-                Ok(None)
-            },
-            Either::Right(ref mut once) => if *once {
-                Ok(None)
-            } else {
-                *once = true;
-                Ok(Some(Either::Left(self.instance.clone())))
-            },
+            Either::Left(ref mut clauses) => {
+                if let Some(clause) = clauses.pop() {
+                    let profiler = Profiler::new();
+                    let preproc_res = profile! (
+                      |_prof| wrap {
+                        preproc(
+                          self.instance.as_ref(), clause, & self.prev_clauses, & profiler
+                        )
+                      } "sub-preproc"
+                    )?;
+                    self.prev_clauses.insert(clause);
+                    self._profiler = Some(profiler);
+                    Ok(Some(preproc_res.map_left(Arc::new)))
+                } else {
+                    Ok(None)
+                }
+            }
+            Either::Right(ref mut once) => {
+                if *once {
+                    Ok(None)
+                } else {
+                    *once = true;
+                    Ok(Some(Either::Left(self.instance.clone())))
+                }
+            }
         }
     }
 }
@@ -342,7 +348,7 @@ fn preproc(
       instance[clause].rhs().is_none()
     }
 
-    let instance = ::preproc::work_on_split(instance, clause, prev_clauses, profiler)?;
+    let instance = crate::preproc::work_on_split(instance, clause, prev_clauses, profiler)?;
 
     if let Some(maybe_model) = instance.is_trivial_model()? {
         Ok(Either::Right(maybe_model))

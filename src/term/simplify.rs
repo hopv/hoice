@@ -4,12 +4,9 @@
 //!
 //! - a lot of collection cloning could be avoided in this module
 
-pub use std::cmp::Ordering;
-use std::ops::Deref;
+pub use std::{cmp::Ordering, ops::Deref};
 
-use term::factory::NormRes;
-
-use common::*;
+use crate::{common::*, term::factory::NormRes};
 
 lazy_static! {
     /// Solver used to check term simplification.
@@ -146,7 +143,7 @@ impl SimplRes {
     }
 }
 
-impl_fmt! {
+mylib::impl_fmt! {
     SimplRes(self, fmt) {
         match self {
             SimplRes::None => write!(fmt, "none"),
@@ -236,7 +233,8 @@ where
                     &format!(
                         "{} simplification failure",
                         if conj { "conjunction" } else { "disjunction" }
-                    ).into(),
+                    )
+                    .into(),
                 );
                 panic!("internal error")
             }
@@ -359,27 +357,35 @@ where
     }
 
     match (lhs.bool(), rhs.bool()) {
-        (Some(true), _) => if conj {
-            return SimplRes::lt();
-        } else {
-            return SimplRes::tru();
-        },
-        (_, Some(true)) => if conj {
-            return SimplRes::gt();
-        } else {
-            return SimplRes::tru();
-        },
+        (Some(true), _) => {
+            if conj {
+                return SimplRes::lt();
+            } else {
+                return SimplRes::tru();
+            }
+        }
+        (_, Some(true)) => {
+            if conj {
+                return SimplRes::gt();
+            } else {
+                return SimplRes::tru();
+            }
+        }
 
-        (Some(false), _) => if conj {
-            return SimplRes::fls();
-        } else {
-            return SimplRes::lt();
-        },
-        (_, Some(false)) => if conj {
-            return SimplRes::fls();
-        } else {
-            return SimplRes::gt();
-        },
+        (Some(false), _) => {
+            if conj {
+                return SimplRes::fls();
+            } else {
+                return SimplRes::lt();
+            }
+        }
+        (_, Some(false)) => {
+            if conj {
+                return SimplRes::fls();
+            } else {
+                return SimplRes::gt();
+            }
+        }
 
         (None, None) => (),
     }
@@ -834,7 +840,8 @@ where
                     lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (same op)",
                     ),
-                ).invert_if(!conj)
+                )
+                .invert_if(!conj)
             }
 
             (Op::Le, Op::Le) | (Op::Lt, Op::Lt) => {
@@ -842,7 +849,8 @@ where
                     lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (same op)",
                     ),
-                ).invert_if(conj)
+                )
+                .invert_if(conj)
             }
 
             // Almost the same operator.
@@ -857,7 +865,8 @@ where
                 } else {
                     return SimplRes::Cmp(lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (diff op)",
-                    )).invert_if(!conj);
+                    ))
+                    .invert_if(!conj);
                 }
             }
 
@@ -873,127 +882,164 @@ where
                 } else {
                     return SimplRes::Cmp(lhs_cst.get().compare(&rhs_cst).expect(
                         "error during comparison unwrapping in term simplification (diff op)",
-                    )).invert_if(conj);
+                    ))
+                    .invert_if(conj);
                 }
             }
 
             (Op::Eql, Op::Ge) | (Op::Eql, Op::Gt) => match lhs_cst.get().compare(&rhs_cst) {
-                Some(Less) => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::None;
-                },
-                Some(Equal) if rhs_op == Op::Gt => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
-                },
+                Some(Less) => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::None;
+                    }
+                }
+                Some(Equal) if rhs_op == Op::Gt => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
+                    }
+                }
                 Some(Equal) | Some(Greater) => return SimplRes::gt().invert_if(!conj),
                 None => unreachable!(),
             },
 
             (Op::Eql, Op::Le) | (Op::Eql, Op::Lt) => match lhs_cst.get().compare(&rhs_cst) {
-                Some(Greater) => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::None;
-                },
-                Some(Equal) if rhs_op == Op::Lt => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::Yields(term::le(lhs_trm.into_term(), term::cst(lhs_cst)));
-                },
+                Some(Greater) => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::None;
+                    }
+                }
+                Some(Equal) if rhs_op == Op::Lt => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::Yields(term::le(lhs_trm.into_term(), term::cst(lhs_cst)));
+                    }
+                }
                 Some(Equal) | Some(Less) => return SimplRes::gt().invert_if(!conj),
                 None => unreachable!(),
             },
 
             (Op::Ge, Op::Eql) | (Op::Gt, Op::Eql) => match rhs_cst.get().compare(&lhs_cst) {
-                Some(Less) => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::None;
-                },
-                Some(Equal) if lhs_op == Op::Gt => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
-                },
+                Some(Less) => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::None;
+                    }
+                }
+                Some(Equal) if lhs_op == Op::Gt => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
+                    }
+                }
                 Some(Equal) | Some(Greater) => return SimplRes::lt().invert_if(!conj),
                 None => unreachable!(),
             },
 
             (Op::Le, Op::Eql) | (Op::Lt, Op::Eql) => match rhs_cst.get().compare(&lhs_cst) {
-                Some(Greater) => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::None;
-                },
-                Some(Equal) if lhs_op == Op::Gt => if conj {
-                    return SimplRes::fls();
-                } else {
-                    return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
-                },
+                Some(Greater) => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::None;
+                    }
+                }
+                Some(Equal) if lhs_op == Op::Gt => {
+                    if conj {
+                        return SimplRes::fls();
+                    } else {
+                        return SimplRes::Yields(term::ge(lhs_trm.into_term(), term::cst(lhs_cst)));
+                    }
+                }
                 Some(Equal) | Some(Less) => return SimplRes::lt().invert_if(!conj),
                 None => unreachable!(),
             },
 
             (Op::Ge, Op::Le) | (Op::Gt, Op::Le) | (Op::Ge, Op::Lt) | (Op::Gt, Op::Lt) => {
                 match lhs_cst.get().compare(&rhs_cst) {
-                    Some(Less) => if conj {
-                        return SimplRes::None;
-                    } else {
-                        return SimplRes::tru();
-                    },
+                    Some(Less) => {
+                        if conj {
+                            return SimplRes::None;
+                        } else {
+                            return SimplRes::tru();
+                        }
+                    }
                     Some(Equal) if conj && (lhs_op == Op::Gt || rhs_op == Op::Lt) => {
                         return SimplRes::fls()
                     }
-                    Some(Equal) => if conj {
-                        return SimplRes::Yields(term::eq(lhs_trm.into_term(), term::cst(lhs_cst)));
-                    } else {
-                        return SimplRes::tru();
-                    },
-                    Some(Greater) => if conj {
-                        return SimplRes::fls();
-                    } else {
-                        return SimplRes::None;
-                    },
+                    Some(Equal) => {
+                        if conj {
+                            return SimplRes::Yields(term::eq(
+                                lhs_trm.into_term(),
+                                term::cst(lhs_cst),
+                            ));
+                        } else {
+                            return SimplRes::tru();
+                        }
+                    }
+                    Some(Greater) => {
+                        if conj {
+                            return SimplRes::fls();
+                        } else {
+                            return SimplRes::None;
+                        }
+                    }
                     None => unreachable!(),
                 }
             }
 
             (Op::Le, Op::Ge) | (Op::Le, Op::Gt) | (Op::Lt, Op::Ge) | (Op::Lt, Op::Gt) => {
                 match lhs_cst.get().compare(&rhs_cst) {
-                    Some(Greater) => if conj {
-                        return SimplRes::None;
-                    } else {
-                        return SimplRes::tru();
-                    },
+                    Some(Greater) => {
+                        if conj {
+                            return SimplRes::None;
+                        } else {
+                            return SimplRes::tru();
+                        }
+                    }
                     Some(Equal) if conj && (lhs_op == Op::Lt || rhs_op == Op::Gt) => {
                         return SimplRes::fls()
                     }
-                    Some(Equal) => if conj {
-                        return SimplRes::Yields(term::eq(lhs_trm.into_term(), term::cst(lhs_cst)));
-                    } else if lhs_op == Op::Lt && rhs_op == Op::Gt {
-                        return SimplRes::None;
-                    } else {
-                        return SimplRes::tru();
-                    },
-                    Some(Less) => if conj {
-                        return SimplRes::fls();
-                    } else {
-                        return SimplRes::None;
-                    },
+                    Some(Equal) => {
+                        if conj {
+                            return SimplRes::Yields(term::eq(
+                                lhs_trm.into_term(),
+                                term::cst(lhs_cst),
+                            ));
+                        } else if lhs_op == Op::Lt && rhs_op == Op::Gt {
+                            return SimplRes::None;
+                        } else {
+                            return SimplRes::tru();
+                        }
+                    }
+                    Some(Less) => {
+                        if conj {
+                            return SimplRes::fls();
+                        } else {
+                            return SimplRes::None;
+                        }
+                    }
                     None => unreachable!(),
                 }
             }
 
-            (Op::Eql, Op::Eql) => if rhs_cst.equal(&lhs_cst) {
-                return SimplRes::eq();
-            } else if conj {
-                return SimplRes::fls();
-            } else {
-                return SimplRes::None;
-            },
+            (Op::Eql, Op::Eql) => {
+                if rhs_cst.equal(&lhs_cst) {
+                    return SimplRes::eq();
+                } else if conj {
+                    return SimplRes::fls();
+                } else {
+                    return SimplRes::None;
+                }
+            }
 
             _ => (),
         }

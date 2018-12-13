@@ -7,11 +7,13 @@
 //!
 //! [`Data`]: struct.Data.html (Data struct)
 
-use common::{
-    var_to::vals::{RVarVals, VarValsMap, VarValsSet},
-    *,
+use crate::{
+    common::{
+        var_to::vals::{RVarVals, VarValsMap, VarValsSet},
+        *,
+    },
+    learning::ice::data::CData,
 };
-use learning::ice::data::CData;
 
 pub mod constraint;
 mod info;
@@ -544,7 +546,7 @@ impl LrnData {
     /// }
     /// ```
     pub fn classify(&self, pred: PrdIdx, data: &mut CData) {
-        profile!{
+        profile! {
           self wrap {
             data.classify(
               |sample| if self.pos[pred].contains(sample) {
@@ -586,7 +588,7 @@ pub struct Data {
     /// Profiler.
     _profiler: Profiler,
     /// Entry point tracker.
-    entry_points: Option<::unsat_core::entry_points::EntryPoints>,
+    entry_points: Option<crate::unsat_core::entry_points::EntryPoints>,
 }
 
 impl Clone for Data {
@@ -645,7 +647,7 @@ impl Data {
         // let track_samples = instance.track_samples() ;
 
         let entry_points = if instance.proofs() {
-            Some(::unsat_core::entry_points::EntryPoints::new())
+            Some(crate::unsat_core::entry_points::EntryPoints::new())
         } else {
             None
         };
@@ -729,7 +731,8 @@ impl Data {
             if !constraint.is_tautology() {
                 data.get_or_insert_with(|| AssData {
                     data: Data::new(self.instance.clone()),
-                }).data
+                })
+                .data
                 .raw_add_cstr(constraint.clone())?;
             }
         }
@@ -833,12 +836,15 @@ impl Data {
     /// }
     /// ```
     pub fn merge_samples(&mut self, other: AssData) -> Res<(usize, usize)> {
+        let (mut nu_pos, mut nu_neg) = (0, 0);
         for (pred, samples) in other.data.pos.into_index_iter() {
+            nu_pos += samples.len();
             for sample in samples {
                 self.staged.add_pos(pred, sample);
             }
         }
         for (pred, samples) in other.data.neg.into_index_iter() {
+            nu_neg += samples.len();
             for sample in samples {
                 self.staged.add_neg(pred, sample);
             }
@@ -850,7 +856,8 @@ impl Data {
                 bail!("failed to merge entry points while merging data samples")
             }
         }
-        self.propagate()
+        self.propagate()?;
+        Ok((nu_pos, nu_neg))
     }
 
     /// Checks whether a constraint is useful.
@@ -1063,7 +1070,8 @@ impl Data {
                 let was_there = set.remove(&constraint);
                 remove = set.is_empty();
                 was_there
-            }).unwrap_or(false);
+            })
+            .unwrap_or(false);
         if !was_there {
             bail!("tautology treatment failed: unknown arguments {}", args)
         }
@@ -1170,7 +1178,7 @@ impl Data {
     ///     }
     /// }
     /// ```
-    pub fn get_unsat_proof(&mut self) -> Res<::unsat_core::UnsatRes> {
+    pub fn get_unsat_proof(&mut self) -> Res<crate::unsat_core::UnsatRes> {
         self.propagate()?;
         for (pred, samples) in self.pos.index_iter() {
             for sample in samples {
@@ -1186,7 +1194,7 @@ impl Data {
                         } else {
                             None
                         };
-                        return Ok(::unsat_core::UnsatRes::new(entry_points));
+                        return Ok(crate::unsat_core::UnsatRes::new(entry_points));
                     }
                 }
             }
@@ -1325,7 +1333,8 @@ impl Data {
                             constraint
                                 .force_sample(pred, &args, pos, |pred, args| {
                                     Self::tauto_fun(map, constraint_idx, pred, &args)
-                                }).chain_err(|| "in propagate")?
+                                })
+                                .chain_err(|| "in propagate")?
                         };
 
                         if tautology {
@@ -1527,16 +1536,18 @@ impl Data {
                 }
             }
 
-            None => if lhs.len() == 1 {
-                // Negative sample.
-                let (pred, sample) = lhs.pop().expect("failed pop on vector of length 1");
-                debug_assert_eq! { lhs.len(), 0 }
-                let new = self.add_raw_neg(clause, pred, sample);
-                return Ok(new);
-            } else {
-                // Constraint.
-                None
-            },
+            None => {
+                if lhs.len() == 1 {
+                    // Negative sample.
+                    let (pred, sample) = lhs.pop().expect("failed pop on vector of length 1");
+                    debug_assert_eq! { lhs.len(), 0 }
+                    let new = self.add_raw_neg(clause, pred, sample);
+                    return Ok(new);
+                } else {
+                    // Constraint.
+                    None
+                }
+            }
         };
 
         // Only reachable if we're not adding a pos/neg sample, or the input isn't
@@ -1777,7 +1788,7 @@ impl Data {
 
         // Constraints are consistent with map.
         for (idx, constraint) in self.constraints.index_iter() {
-            constraint_map!{
+            constraint_map! {
               constraint => |prd, sample| {
                 if ! self.map[prd].get(sample).map(
                   |set| set.contains(& idx)

@@ -66,13 +66,10 @@
 //! [`ParserCxt`]: struct.ParserCxt.html (ParserCxt struct)
 //! [`TermFrame`]: struct.TermFrame.html (TermFrame struct)
 
-use common::*;
-use info::VarInfo;
+use crate::{common::*, consts::keywords, info::VarInfo};
 
 mod ptterms;
 pub use self::ptterms::*;
-
-use consts::keywords;
 
 /// Result yielded by the parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +91,7 @@ pub enum Parsed {
     /// End of file.
     Eof,
 }
-impl_fmt! {
+mylib::impl_fmt! {
     Parsed(self, fmt) {
         write!(fmt, "{:?}", self)
     }
@@ -691,14 +688,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         is_first = false;
                     }
                 }
-                bail!(
-                    self.error(
-                        ident_start_pos,
-                        "expected `|` closing this quoted identifier, \
-                         found eof"
-                            .to_string()
-                    )
-                )
+                bail!(self.error(
+                    ident_start_pos,
+                    "expected `|` closing this quoted identifier, \
+                     found eof"
+                        .to_string()
+                ))
             } else if char.is_alphabetic() || id_special_chars.contains(&char) {
                 while let Some(char) = self.next() {
                     if !(char.is_alphanumeric() || id_special_chars.contains(&char)) {
@@ -919,7 +914,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         &mut self,
         type_params: Option<&BTreeMap<&'s str, dtyp::TPrmIdx>>,
     ) -> Res<Option<dtyp::PartialTyp>> {
-        use dtyp::PartialTyp;
+        use crate::dtyp::PartialTyp;
 
         // Compound type under construction.
         //
@@ -1019,59 +1014,69 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 // }
 
                 match stack.pop() {
-                    Some(CTyp::Array { pos }) => if let Some(src) = typ {
-                        stack.push(CTyp::ArraySrc { pos, src });
-                        // Need to parse the domain now.
-                        continue 'go_down;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected index sort"))?
-                    },
-
-                    Some(CTyp::ArraySrc { pos, src }) => if let Some(tgt) = typ {
-                        typ = Some(PartialTyp::Array(Box::new(src), Box::new(tgt)));
-
-                        // Parse closing paren.
-                        self.ws_cmt();
-                        if !self.tag_opt(")") {
-                            let err: Error =
-                                self.error(pos, "while parsing this array sort").into();
-                            Err(err).chain_err(|| {
-                                self.error(current_pos, "expected expected closing paren")
-                            })?
+                    Some(CTyp::Array { pos }) => {
+                        if let Some(src) = typ {
+                            stack.push(CTyp::ArraySrc { pos, src });
+                            // Need to parse the domain now.
+                            continue 'go_down;
+                        } else {
+                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
+                                .chain_err(|| self.error(current_pos, "expected index sort"))?
                         }
+                    }
 
-                        continue 'go_up;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected domain sort"))?
-                    },
+                    Some(CTyp::ArraySrc { pos, src }) => {
+                        if let Some(tgt) = typ {
+                            typ = Some(PartialTyp::Array(Box::new(src), Box::new(tgt)));
+
+                            // Parse closing paren.
+                            self.ws_cmt();
+                            if !self.tag_opt(")") {
+                                let err: Error =
+                                    self.error(pos, "while parsing this array sort").into();
+                                Err(err).chain_err(|| {
+                                    self.error(current_pos, "expected expected closing paren")
+                                })?
+                            }
+
+                            continue 'go_up;
+                        } else {
+                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
+                                .chain_err(|| self.error(current_pos, "expected domain sort"))?
+                        }
+                    }
 
                     Some(CTyp::DTyp {
                         name,
                         pos,
                         mut typs,
-                    }) => if let Some(t) = typ {
-                        typs.push(t);
-                        self.ws_cmt();
-                        if self.tag_opt(")") {
-                            typ = Some(PartialTyp::DTyp(name.into(), pos, typs));
-                            continue 'go_up;
+                    }) => {
+                        if let Some(t) = typ {
+                            typs.push(t);
+                            self.ws_cmt();
+                            if self.tag_opt(")") {
+                                typ = Some(PartialTyp::DTyp(name.into(), pos, typs));
+                                continue 'go_up;
+                            } else {
+                                stack.push(CTyp::DTyp { name, pos, typs });
+                                continue 'go_down;
+                            }
                         } else {
-                            stack.push(CTyp::DTyp { name, pos, typs });
-                            continue 'go_down;
-                        }
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this datatype sort").into())
+                            Err::<_, Error>(
+                                self.error(pos, "while parsing this datatype sort").into(),
+                            )
                             .chain_err(|| self.error(current_pos, "expected sort"))?
-                    },
+                        }
+                    }
 
-                    None => if typ.is_none() {
-                        self.backtrack_to(start_pos);
-                        return Ok(None);
-                    } else {
-                        return Ok(typ);
-                    },
+                    None => {
+                        if typ.is_none() {
+                            self.backtrack_to(start_pos);
+                            return Ok(None);
+                        } else {
+                            return Ok(typ);
+                        }
+                    }
                 }
             }
         }
@@ -1083,7 +1088,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             return Ok(false);
         }
 
-        use fun::FunSig;
+        use crate::fun::FunSig;
 
         self.functions.clear();
 
@@ -1185,7 +1190,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             return Ok(false);
         }
 
-        use fun::FunSig;
+        use crate::fun::FunSig;
 
         self.functions.clear();
 
@@ -1278,7 +1283,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         .error(
                             pos,
                             format!("found two functions named `{}`", conf.bad(name)),
-                        ).into();
+                        )
+                        .into();
                     bail!(e.chain_err(|| self.error(*other_pos, "first appearance")))
                 }
             }
@@ -1319,7 +1325,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         funs: Vec<(fun::FunSig, Pos, BTreeMap<&'s str, VarIdx>)>,
     ) -> Res<()> {
         // Parse all definitions.
-        for (mut fun, pos, var_map) in funs {
+        for (fun, pos, var_map) in funs {
             let def = if let Some(term) = self
                 .term_opt(&fun.sig, &var_map, instance)
                 .chain_err(|| {
@@ -1327,7 +1333,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         "while parsing definition (term) for function `{}`",
                         conf.emph(&fun.name)
                     )
-                }).chain_err(|| self.error(pos, "declared here"))?
+                })
+                .chain_err(|| self.error(pos, "declared here"))?
             {
                 self.ws_cmt();
                 // Success.
@@ -1338,7 +1345,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     .error_here(format!(
                         "expected definition (term) for function `{}`",
                         conf.emph(fun.name)
-                    )).into();
+                    ))
+                    .into();
                 bail!(e.chain_err(|| self.error(pos, "declared here")))
             };
 
@@ -1545,7 +1553,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         "while parsing the declaration for datatype `{}`",
                         conf.emph(&dtyp.name)
                     )
-                }).chain_err(|| self.error(dtyps_pos[index], "declared here"))?;
+                })
+                .chain_err(|| self.error(dtyps_pos[index], "declared here"))?;
             self.ws_cmt();
             final_dtyps.push(dtyp)
         }
@@ -1945,26 +1954,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 expected,
                 obtained,
                 index,
-            }) => if let Some(exp) = expected {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected an expression of sort {}, found {}", exp, obtained
-                    )
-                  )
-                  => self.error(op_pos, "in this operator application")
+            }) => {
+                if let Some(exp) = expected {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected an expression of sort {}, found {}", exp, obtained
+                        )
+                      )
+                      => self.error(op_pos, "in this operator application")
+                    }
+                } else {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected the expression starting here has sort {} \
+                          which is illegal", obtained
+                        )
+                      )
+                      => self.error(op_pos, "in this operator application")
+                    }
                 }
-            } else {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected the expression starting here has sort {} \
-                      which is illegal", obtained
-                    )
-                  )
-                  => self.error(op_pos, "in this operator application")
-                }
-            },
+            }
             Err(TypError::Msg(blah)) => bail!(self.error(op_pos, blah)),
         }
     }
@@ -2165,8 +2176,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         args_pos: &[Pos],
         args: Vec<Term>,
     ) -> Res<(Term, Pos)> {
-        use errors::TypError;
-
         match term::try_fun(name, args) {
             Ok(term) => Ok((term, name_pos)),
 
@@ -2174,26 +2183,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 expected,
                 obtained,
                 index,
-            }) => if let Some(exp) = expected {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected an expression of sort {}, found {}", exp, obtained
-                    )
-                  )
-                  => self.error(name_pos, "in this function application")
+            }) => {
+                if let Some(exp) = expected {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected an expression of sort {}, found {}", exp, obtained
+                        )
+                      )
+                      => self.error(name_pos, "in this function application")
+                    }
+                } else {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected the expression starting here has sort {} \
+                          which is illegal", obtained
+                        )
+                      )
+                      => self.error(name_pos, "in this function application")
+                    }
                 }
-            } else {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected the expression starting here has sort {} \
-                      which is illegal", obtained
-                    )
-                  )
-                  => self.error(name_pos, "in this function application")
-                }
-            },
+            }
 
             Err(TypError::Msg(blah)) => {
                 let e: Error = blah.into();
@@ -2217,76 +2228,100 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     fn op_opt(&mut self) -> Res<Option<Op>> {
         let start_pos = self.pos();
         let res = match self.next() {
-            Some("a") => if self.word_opt("nd") {
-                Some(Op::And)
-            } else {
-                None
-            },
-            Some("o") => if self.word_opt("r") {
-                Some(Op::Or)
-            } else {
-                None
-            },
-            Some("n") => if self.word_opt("ot") {
-                Some(Op::Not)
-            } else {
-                None
-            },
-            Some("i") => if self.word_opt("te") {
-                Some(Op::Ite)
-            } else {
-                None
-            },
-            Some("m") => if self.word_opt("od") {
-                Some(Op::Mod)
-            } else if self.word_opt("atch") {
-                bail!("unsupported `{}` operator", conf.bad("match"))
-            } else {
-                None
-            },
-            Some("r") => if self.word_opt("em") {
-                Some(Op::Rem)
-            } else {
-                None
-            },
-            Some("d") => if self.word_opt("iv") {
-                Some(Op::IDiv)
-            } else if self.word_opt("istinct") {
-                Some(Op::Distinct)
-            } else {
-                None
-            },
-            Some("t") => if self.word_opt("o_int") {
-                Some(Op::ToInt)
-            } else if self.word_opt("o_real") {
-                Some(Op::ToReal)
-            } else {
-                None
-            },
+            Some("a") => {
+                if self.word_opt("nd") {
+                    Some(Op::And)
+                } else {
+                    None
+                }
+            }
+            Some("o") => {
+                if self.word_opt("r") {
+                    Some(Op::Or)
+                } else {
+                    None
+                }
+            }
+            Some("n") => {
+                if self.word_opt("ot") {
+                    Some(Op::Not)
+                } else {
+                    None
+                }
+            }
+            Some("i") => {
+                if self.word_opt("te") {
+                    Some(Op::Ite)
+                } else {
+                    None
+                }
+            }
+            Some("m") => {
+                if self.word_opt("od") {
+                    Some(Op::Mod)
+                } else if self.word_opt("atch") {
+                    bail!("unsupported `{}` operator", conf.bad("match"))
+                } else {
+                    None
+                }
+            }
+            Some("r") => {
+                if self.word_opt("em") {
+                    Some(Op::Rem)
+                } else {
+                    None
+                }
+            }
+            Some("d") => {
+                if self.word_opt("iv") {
+                    Some(Op::IDiv)
+                } else if self.word_opt("istinct") {
+                    Some(Op::Distinct)
+                } else {
+                    None
+                }
+            }
+            Some("t") => {
+                if self.word_opt("o_int") {
+                    Some(Op::ToInt)
+                } else if self.word_opt("o_real") {
+                    Some(Op::ToReal)
+                } else {
+                    None
+                }
+            }
 
-            Some("s") => if self.word_opt("tore") {
-                Some(Op::Store)
-            } else if self.word_opt("elect") {
-                Some(Op::Select)
-            } else {
-                None
-            },
+            Some("s") => {
+                if self.word_opt("tore") {
+                    Some(Op::Store)
+                } else if self.word_opt("elect") {
+                    Some(Op::Select)
+                } else {
+                    None
+                }
+            }
 
-            Some("=") => if self.tag_opt(">") {
-                Some(Op::Impl)
-            } else {
-                Some(Op::Eql)
-            },
-            Some(">") => if self.tag_opt("=") {
-                Some(Op::Ge)
-            } else {
-                Some(Op::Gt)
-            },
-            Some("<") => if self.tag_opt("=") {
-                Some(Op::Le)
-            } else {
-                Some(Op::Lt)
-            },
+            Some("=") => {
+                if self.tag_opt(">") {
+                    Some(Op::Impl)
+                } else {
+                    Some(Op::Eql)
+                }
+            }
+            Some(">") => {
+                if self.tag_opt("=") {
+                    Some(Op::Ge)
+                } else {
+                    Some(Op::Gt)
+                }
+            }
+            Some("<") => {
+                if self.tag_opt("=") {
+                    Some(Op::Le)
+                } else {
+                    Some(Op::Lt)
+                }
+            }
             Some("+") => Some(Op::Add),
             Some("-") => Some(Op::Sub),
             Some("*") => Some(Op::Mul),
@@ -2658,8 +2693,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 self.error(
                     name_pos,
                     format!("in this `define-fun` for {}", conf.emph(name)),
-                ).into(),
-            ).chain_err(|| self.error(body_pos, "body is ill typed"))
+                )
+                .into(),
+            )
+            .chain_err(|| self.error(body_pos, "body is ill typed"))
             .chain_err(|| {
                 self.error(
                     sort_pos,
@@ -2673,7 +2710,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
 
         if let Some(term) = body.to_term()? {
-            use fun::FunSig;
+            use crate::fun::FunSig;
             let fun = FunSig::new(name, var_info, out_sort).into_fun(term);
             let _ = fun::new(fun)
                 .chain_err(|| self.error(name_pos, "while registering this function"))?;

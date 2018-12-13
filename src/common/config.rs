@@ -5,20 +5,18 @@
 
 use std::path::PathBuf;
 
+use ansi_term::{Colour, Style};
+use clap::{crate_authors, crate_name, Arg};
+use error_chain::bail;
 use rsmt2::SmtConf as SolverConf;
 
-use ansi::{Colour, Style};
-use clap::Arg;
-
-use common::mk_dir;
-use errors::*;
-use instance::Instance;
+use crate::{common::mk_dir, errors::*, instance::Instance};
 
 /// Creates a function adding arguments to a `::clap::App`.
 macro_rules! app_fun {
     // Internal rules.
     (@app $app:expr, $order:expr =>) => ($app);
-    (@app $app:expr, $order:expr =>
+    (@app $app:expr, $o7rder:expr =>
         , $($tail:tt)*
     ) => (
         app_fun!(@app $app, $order => $($tail)*)
@@ -171,12 +169,12 @@ make_conf! {
                 conf
             }
         }
-        smt_log, log: bool {
+        log_smt, log: bool {
             help "(De)activates smt logging to the output directory.",
             long_help "\
                 If active, logs the interactions with *all* the solvers in the output directory.\
             ",
-            long "--smt_log",
+            long "--log_smt",
             validator bool_validator,
             val_name bool_format,
             default "no",
@@ -215,22 +213,22 @@ make_conf! {
             I: AsRef<Instance>,
         {
             let mut smt_conf = self.conf.clone();
-            if let Some(timeout) = ::common::conf.until_timeout() {
+            if let Some(timeout) = crate::common::conf.until_timeout() {
                 smt_conf.option(format!("-T:{}", timeout.as_secs() + 1));
             }
 
             let mut solver = ::rsmt2::Solver::new(smt_conf, parser)?;
             if let Some(log) = self
                 .log_file(name, instance.as_ref())
-                .chain_err(|| format!("While opening log file for {}", ::common::conf.emph(name)))?
+                .chain_err(|| format!("While opening log file for {}", crate::common::conf.emph(name)))?
             {
                 solver.tee(log)?
             }
 
             if preproc {
-                ::smt::preproc_init(&mut solver)?
+                crate::smt::preproc_init(&mut solver)?
             } else {
-                ::smt::init(&mut solver, instance)?
+                crate::smt::init(&mut solver, instance)?
             }
             Ok(solver)
         }
@@ -272,7 +270,7 @@ make_conf! {
         /// Smt log dir, if any.
         fn log_dir(&self, instance: &Instance) -> Res<Option<PathBuf>> {
             if self.log {
-                let mut path = ::common::conf.out_dir(instance);
+                let mut path = crate::common::conf.out_dir(instance);
                 path.push("solvers");
                 mk_dir(&path)?;
                 Ok(Some(path))
@@ -619,7 +617,7 @@ make_conf! {
         where
             Path: AsRef<::std::path::Path>,
         {
-            let mut path = ::common::conf.out_dir(instance);
+            let mut path = crate::common::conf.out_dir(instance);
             path.push("preproc");
             path.push(sub);
             mk_dir(&path)?;
@@ -703,7 +701,7 @@ make_conf! {
             val_nb 1,
         } {
             |mtch| {
-                let mut value = int_of_match(mtch) as f64 / 100.0;
+                let value = int_of_match(mtch) as f64 / 100.0;
                 if value < 0.0 {
                     0.0
                 } else if 1.0 < value {
@@ -730,7 +728,7 @@ make_conf! {
             hidden,
         } {
             |mtch| {
-                let mut value = int_of_match(mtch) as f64 / 100.;
+                let value = int_of_match(mtch) as f64 / 100.;
                 if value < 0.0 {
                     0.0
                 } else if 1.0 < value {
@@ -828,7 +826,7 @@ make_conf! {
             hidden,
         } {
             |mtch| {
-                let mut value = int_of_match(mtch) as f64 / 100.0;
+                let value = int_of_match(mtch) as f64 / 100.0;
                 if value < 0.0 {
                     0.0
                 } else if 1.0 < value {
@@ -854,7 +852,7 @@ make_conf! {
             hidden,
         } {
             |mtch| {
-                let mut value = int_of_match(mtch) as f64 / 100.0;
+                let value = int_of_match(mtch) as f64 / 100.0;
                 if value < 0.0 {
                     Some(0.0)
                 } else if 1.0 < value {
@@ -880,7 +878,7 @@ make_conf! {
             hidden,
         } {
             |mtch| {
-                let mut value = int_of_match(mtch) as f64 / 100.0;
+                let value = int_of_match(mtch) as f64 / 100.0;
                 if value < 0.0 {
                     0.0
                 } else if 1.0 < value {
@@ -1307,28 +1305,31 @@ impl Config {
         };
 
         app.author(crate_authors!())
-            .version(*::common::version)
+            .version(*crate::common::version)
             .about("ICE engine for systems described as Horn Clauses.")
             .arg(
                 Arg::with_name("input file")
                     .help("sets the input file to use")
                     .index(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("verb")
                     .short("-v")
                     .help("increases verbosity")
                     .takes_value(false)
                     .multiple(true)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("quiet")
                     .short("-q")
                     .help("decreases verbosity")
                     .takes_value(false)
                     .multiple(true)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("color")
                     .long("--color")
                     .short("-c")
@@ -1339,7 +1340,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("out_dir")
                     .long("--out_dir")
                     .short("-o")
@@ -1349,7 +1351,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("stats")
                     .long("--stats")
                     .short("-s")
@@ -1360,7 +1363,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("infer")
                     .long("--infer")
                     .short("-i")
@@ -1371,7 +1375,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("timeout")
                     .long("--timeout")
                     .short("-t")
@@ -1382,7 +1387,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("split")
                     .long("--split")
                     .help("reason on each negative clause separately")
@@ -1392,7 +1398,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("split_step")
                     .long("--split_step")
                     .help("pause between negative clauses in split mode")
@@ -1402,7 +1409,8 @@ impl Config {
                     .takes_value(true)
                     .number_of_values(1)
                     .display_order(order()),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("term_simpl")
                     .long("--term_simpl")
                     .help("level of term simplification between 0 and 3")
@@ -1413,7 +1421,8 @@ impl Config {
                     .number_of_values(1)
                     .display_order(order())
                     .hidden(true),
-            ).arg(
+            )
+            .arg(
                 Arg::with_name("check_simpl")
                     .long("--check_simpl")
                     .help("if true, check all simplifications")
@@ -1442,7 +1451,8 @@ impl Config {
                 .takes_value(true)
                 .number_of_values(1)
                 .display_order(order()),
-        ).arg(
+        )
+        .arg(
             Arg::with_name("check_eld")
                 .long("--check_eld")
                 .help("if `check` is active, expect eldarica-style result")
@@ -1593,14 +1603,16 @@ pub fn int_validator(s: String) -> Result<(), String> {
 pub fn bounded_int_validator(s: String, lo: usize, hi: usize) -> Result<(), String> {
     use std::str::FromStr;
     match usize::from_str(&s) {
-        Ok(val) => if lo <= val && val <= hi {
-            Ok(())
-        } else {
-            Err(format!(
-                "expected a value between {} and {}, got `{}`",
-                lo, hi, val
-            ))
-        },
+        Ok(val) => {
+            if lo <= val && val <= hi {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected a value between {} and {}, got `{}`",
+                    lo, hi, val
+                ))
+            }
+        }
         Err(_) => Err(format!("expected an integer, got `{}`", s)),
     }
 }

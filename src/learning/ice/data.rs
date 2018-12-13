@@ -1,7 +1,9 @@
 //! Contains types related to ICE's projected data representation.
 
-use common::*;
-use data::{Data, Sample};
+use crate::{
+    common::*,
+    data::{Data, Sample},
+};
 
 /// Projected data to classify.
 ///

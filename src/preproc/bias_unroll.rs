@@ -1,9 +1,11 @@
 //! Bias unrolling module.
 
-use common::*;
-use preproc::{
-    utils::{ExtractRes, ExtractionCxt},
-    PreInstance, RedStrat,
+use crate::{
+    common::*,
+    preproc::{
+        utils::{ExtractRes, ExtractionCxt},
+        PreInstance, RedStrat,
+    },
 };
 
 type NegDef = (Quantfed, TermSet);
@@ -419,12 +421,14 @@ impl BiasedUnroll {
         let mut count = 0;
         for clause in instance.clauses_of(pred).0 {
             let clause = &instance[*clause];
-            if clause.lhs_preds().len() == 1 && clause.rhs().is_none() && clause
-                .lhs_preds()
-                .iter()
-                .next()
-                .map(|(_, argss)| argss.len() == 1)
-                .unwrap_or(false)
+            if clause.lhs_preds().len() == 1
+                && clause.rhs().is_none()
+                && clause
+                    .lhs_preds()
+                    .iter()
+                    .next()
+                    .map(|(_, argss)| argss.len() == 1)
+                    .unwrap_or(false)
             {
                 self.retrieve_neg_def(instance, extractor, pred, clause)?;
                 count += 1
@@ -522,20 +526,20 @@ impl BiasedUnroll {
             {
                 let mut clause = instance[rhs_clause].clone();
 
-                let mut lhs_preds: Vec<_> = clause.drain_lhs_preds().collect();
+                let lhs_preds: Vec<_> = clause.drain_lhs_preds().collect();
                 let mut map = Vec::with_capacity(lhs_preds.len());
 
-                for (pred, argss) in &lhs_preds {
+                for (pred, argss) in lhs_preds {
                     let mut arg_map = Vec::with_capacity(argss.len());
 
-                    if let Some(defs) = self.pos_defs.get(pred) {
+                    if let Some(defs) = self.pos_defs.get(&pred) {
                         for args in argss {
                             arg_map.push((args, 0))
                         }
 
                         map.push((pred, defs, arg_map))
                     } else {
-                        bail!("no definition for {} (positive, lhs)", instance[*pred])
+                        bail!("no definition for {} (positive, lhs)", instance[pred])
                     }
                 }
 

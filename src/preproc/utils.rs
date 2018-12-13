@@ -1,9 +1,8 @@
 //! Helper types and functions for preprocessing.
 
-use common::*;
+use crate::{common::*, var_to::terms::VarTermsSet};
 
 use super::{PreInstance, RedStrat};
-use var_to::terms::VarTermsSet;
 
 /// Result of extracting the terms for a predicate application in a clause.
 #[derive(Clone, PartialEq, Eq)]
@@ -340,7 +339,7 @@ impl ExtractionCxt {
         (lhs_terms, lhs_preds): (&TermSet, &'a PredApps),
         (pred, args): (PrdIdx, &VarTerms),
     ) -> Res<ExtractRes<(TTermSet, VarSet, Option<&'a VarTermsSet>)>> {
-        log!{ @5 "terms of lhs part" }
+        log! { @5 "terms of lhs part" }
 
         let (terms, mut app_vars) =
             if let Some(res) = self.terms_of_app(var_info, instance, pred, args)? {
@@ -372,7 +371,7 @@ impl ExtractionCxt {
             match self.terms_of_pred_apps(var_info, lhs_preds, &mut tterms, pred, &mut app_vars)? {
                 TExtractRes::Success(res) => res,
                 TExtractRes::Failed => {
-                    log!{ @5 "qualifiers required for lhs pred apps, failing" }
+                    log! { @5 "qualifiers required for lhs pred apps, failing" }
                     return Ok(ExtractRes::Failed);
                 }
             };
@@ -414,7 +413,7 @@ impl ExtractionCxt {
         rhs: Option<(PrdIdx, &VarTerms)>,
         (pred, args): (PrdIdx, &VarTerms),
     ) -> Res<ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>> {
-        log!{ @4
+        log! { @4
           "terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
         }
 
@@ -563,52 +562,52 @@ pub enum TExtractRes<T> {
 /// Dumps the instance if asked to do so.
 pub fn register_stats(instance: &Instance, _profiler: &Profiler, count: usize) -> Res<()> {
     preproc_dump!(
-    instance =>
-      format!("preproc_{:0>4}_original_instance", count),
-      "Instance before pre-processing."
-  )?;
-    profile!{
-      |_profiler|
+        instance =>
+            format!("preproc_{:0>4}_original_instance", count),
+            "Instance before pre-processing."
+    )?;
+    profile! {
+        |_profiler|
         "clause count original" => add instance.clauses().len()
     }
-    profile!{
-      |_profiler|
+    profile! {
+        |_profiler|
         "nl clause count original" => add {
-          let mut count = 0 ;
-          'clause_iter: for clause in instance.clauses() {
-            for (_, argss) in clause.lhs_preds() {
-              if argss.len() > 1 {
-                count += 1 ;
-                continue 'clause_iter
-              }
+            let mut count = 0 ;
+            'clause_iter: for clause in instance.clauses() {
+                for (_, argss) in clause.lhs_preds() {
+                    if argss.len() > 1 {
+                        count += 1 ;
+                        continue 'clause_iter
+                    }
+                }
             }
-          }
-          count
+            count
         }
     }
-    profile!{
-      |_profiler|
-        "pred count original" => add {
-          let mut count = 0 ;
-          for pred in instance.pred_indices() {
-            if ! instance[pred].is_defined() {
-              count += 1
+    profile! {
+        |_profiler|
+            "pred count original" => add {
+                let mut count = 0 ;
+                for pred in instance.pred_indices() {
+                    if ! instance[pred].is_defined() {
+                        count += 1
+                    }
+                }
+                count
             }
-          }
-          count
-        }
     }
-    profile!{
-      |_profiler|
-        "arg count original" => add {
-          let mut args = 0 ;
-          for info in instance.preds() {
-            if ! instance[info.idx].is_defined() {
-              args += info.sig.len()
+    profile! {
+        |_profiler|
+            "arg count original" => add {
+                let mut args = 0 ;
+                for info in instance.preds() {
+                    if ! instance[info.idx].is_defined() {
+                        args += info.sig.len()
+                    }
+                }
+                args
             }
-          }
-          args
-        }
     }
 
     Ok(())
@@ -623,27 +622,27 @@ pub fn register_info(
     count: usize,
 ) -> Res<()> {
     preproc_dump!(
-    instance =>
-    format!("preproc_{:0>4}_{}", count, preproc),
-    format!("Instance after running `{}`.", preproc)
-  )?;
+      instance =>
+      format!("preproc_{:0>4}_{}", count, preproc),
+      format!("Instance after running `{}`.", preproc)
+    )?;
 
-    profile!{
+    profile! {
       |_profiler| format!(
         "{:>10}   pred red", preproc
       ) => add _red_info.preds
     }
-    profile!{
+    profile! {
       |_profiler| format!(
         "{:>10} clause red", preproc
       ) => add _red_info.clauses_rmed
     }
-    profile!{
+    profile! {
       |_profiler| format!(
         "{:>10} clause add", preproc
       ) => add _red_info.clauses_added
     }
-    profile!{
+    profile! {
       |_profiler| format!(
         "{:>10}    arg red", preproc
       ) => add _red_info.args_rmed
@@ -657,16 +656,16 @@ pub fn register_info(
 /// Registers the final info, after preprocessing.
 pub fn register_final_stats(instance: &Instance, _profiler: &Profiler) -> Res<()> {
     preproc_dump!(
-    instance =>
-      "preproc_0000_fixed_point",
-      "Instance after reaching preproc fixed-point."
-  )?;
+      instance =>
+        "preproc_0000_fixed_point",
+        "Instance after reaching preproc fixed-point."
+    )?;
 
-    profile!{
+    profile! {
       |_profiler|
         "clause count    final" => add instance.clauses().len()
     }
-    profile!{
+    profile! {
       |_profiler|
         "nl clause count    final" => add {
           let mut count = 0 ;
@@ -682,7 +681,7 @@ pub fn register_final_stats(instance: &Instance, _profiler: &Profiler) -> Res<()
         }
     }
 
-    profile!{
+    profile! {
       |_profiler|
         "pred count    final" => add {
           let mut count = 0 ;
@@ -695,7 +694,7 @@ pub fn register_final_stats(instance: &Instance, _profiler: &Profiler) -> Res<()
         }
     }
 
-    profile!{
+    profile! {
       |_profiler|
         "arg count    final" => add {
           let mut args = 0 ;
@@ -740,6 +739,7 @@ pub fn check_solved(instance: &mut PreInstance, _profiler: &Profiler) -> Res<boo
               |_profiler| tick "preproc", "final simplify"
             }
             // Check remaining clauses, maybe some of them are unsat.
+            // println!("simplify all ({})", instance.clauses().len());
             match instance.simplify_all() {
                 Ok(_) => (),
                 Err(ref e) if e.is_unsat() => instance.set_unsat(),
