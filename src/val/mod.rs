@@ -1,18 +1,12 @@
 //! Hashconsed concrete values.
-//!
-//! Values can be automatically created (using `into`) to
-//!
-//! - `Val::B` from `bool`
-//! - `Val::I` from `Int`, `usize`, `isize`, `u32`, `i32`, `u64`, `i64`
-//! - `Val::N` from `()`
 
 use hashconsing::HConsed;
 
-use common::*;
+use crate::common::*;
 
-new_consign! {
-  /// Value factory.
-  let factory = consign(conf.instance.term_capa) for RVal ;
+hashconsing::new_consign! {
+    /// Value factory.
+    let factory = consign(conf.instance.term_capa) for RVal ;
 }
 
 /// A hash-consed type.
@@ -368,9 +362,10 @@ impl RVal {
                 ref vals,
                 ..
             } => {
-                default.is_known() && vals
-                    .iter()
-                    .all(|(cond, val)| cond.is_known() && val.is_known())
+                default.is_known()
+                    && vals
+                        .iter()
+                        .all(|(cond, val)| cond.is_known() && val.is_known())
             }
             _ => true,
         }
@@ -414,8 +409,9 @@ impl RVal {
 
     /// Attempts to cast a value.
     pub fn cast(&self, typ: &Typ) -> Res<Val> {
+        use crate::term::typ::RTyp;
         use num::One;
-        use term::typ::RTyp;
+
         if &self.typ() == typ {
             return Ok(new(self.clone()));
         }
@@ -439,11 +435,13 @@ impl RVal {
                     ref args,
                 },
                 _,
-            ) => if let Some(typ) = vtyp.merge(typ) {
-                Ok(dtyp_new(typ, name.clone(), args.clone()))
-            } else {
-                bail!("Cannot cast value {} to type {}", self, typ)
-            },
+            ) => {
+                if let Some(typ) = vtyp.merge(typ) {
+                    Ok(dtyp_new(typ, name.clone(), args.clone()))
+                } else {
+                    bail!("Cannot cast value {} to type {}", self, typ)
+                }
+            }
 
             (val, typ) => bail!("Cannot cast value {} to type {}", val, typ),
         }
@@ -516,15 +514,17 @@ impl RVal {
         use num::One;
         match self {
             RVal::I(ref i) => Ok(Some(i.clone())),
-            RVal::R(ref r) => if r.denom().abs() == Int::one() {
-                Ok(Some(if r.denom().is_negative() {
-                    -r.numer()
+            RVal::R(ref r) => {
+                if r.denom().abs() == Int::one() {
+                    Ok(Some(if r.denom().is_negative() {
+                        -r.numer()
+                    } else {
+                        r.numer().clone()
+                    }))
                 } else {
-                    r.numer().clone()
-                }))
-            } else {
-                bail!("expected integer value, found rational {}", r)
-            },
+                    bail!("expected integer value, found rational {}", r)
+                }
+            }
             RVal::N(ref typ) if typ == &typ::int() => Ok(None),
             RVal::N(ref typ) => bail!("expected integer value, got no-value of type {}", typ),
             _ => bail!("expected integer value, found value of type {}", self.typ()),
@@ -551,11 +551,11 @@ impl RVal {
     }
 
     /// Transforms a value into a term.
-    pub fn to_term(&self) -> Option<::term::Term> {
+    pub fn to_term(&self) -> Option<Term> {
         match self {
-            RVal::I(ref i) => Some(::term::int(i.clone())),
-            RVal::R(ref r) => Some(::term::real(r.clone())),
-            RVal::B(b) => Some(::term::bool(*b)),
+            RVal::I(ref i) => Some(term::int(i.clone())),
+            RVal::R(ref r) => Some(term::real(r.clone())),
+            RVal::B(b) => Some(term::bool(*b)),
             RVal::N(_) => None,
             RVal::Array {
                 ref idx_typ,
@@ -770,11 +770,13 @@ impl RVal {
             },
 
             RVal::R(ref lft) => match other.to_real()? {
-                None => if lft.is_zero() {
-                    Ok(real(Rat::new(0.into(), 1.into())))
-                } else {
-                    Ok(none(typ::real()))
-                },
+                None => {
+                    if lft.is_zero() {
+                        Ok(real(Rat::new(0.into(), 1.into())))
+                    } else {
+                        Ok(none(typ::real()))
+                    }
+                }
                 Some(rgt) => Ok(real(lft * rgt)),
             },
             ref lft => bail!("expected arith values, found {} and {}", lft, other),
@@ -1270,7 +1272,8 @@ impl RVal {
                         } else {
                             None
                         }
-                    }).collect();
+                    })
+                    .collect();
 
                 let (idx_typ, default) = (idx_typ.clone(), default.clone());
                 if default != val {
@@ -1286,18 +1289,20 @@ impl RVal {
                 };
             }
 
-            RVal::N(ref typ) => if let Some((i, v)) = typ.array_inspect() {
-                debug_assert_eq! { & idx.typ(), i }
-                debug_assert_eq! { & val.typ(), v }
-                let vals = vec![(idx, val)];
-                return RVal::Array {
-                    idx_typ: i.clone(),
-                    default: v.default_val(),
-                    vals,
-                };
-            } else {
-                ()
-            },
+            RVal::N(ref typ) => {
+                if let Some((i, v)) = typ.array_inspect() {
+                    debug_assert_eq! { & idx.typ(), i }
+                    debug_assert_eq! { & val.typ(), v }
+                    let vals = vec![(idx, val)];
+                    return RVal::Array {
+                        idx_typ: i.clone(),
+                        default: v.default_val(),
+                        vals,
+                    };
+                } else {
+                    ()
+                }
+            }
 
             _ => (),
         }
@@ -1390,12 +1395,14 @@ impl RVal {
                 return default.clone();
             }
 
-            RVal::N(ref typ) => if let Some((i, v)) = typ.array_inspect() {
-                debug_assert_eq! { i, & idx.typ() }
-                return none(v.clone());
-            } else {
-                ()
-            },
+            RVal::N(ref typ) => {
+                if let Some((i, v)) = typ.array_inspect() {
+                    debug_assert_eq! { i, & idx.typ() }
+                    return none(v.clone());
+                } else {
+                    ()
+                }
+            }
 
             _ => (),
         }
@@ -1447,7 +1454,7 @@ impl RVal {
     }
 }
 
-impl_fmt!{
+mylib::impl_fmt! {
   RVal(self, fmt) {
 
     let mut stack = vec![ Either::Left( (false, self) ) ] ;

@@ -1,8 +1,6 @@
 //! Contains the clause structure for encapsulation.
 
-use common::*;
-use info::VarInfo;
-use var_to::terms::VarTermsSet;
+use crate::{common::*, info::VarInfo, var_to::terms::VarTermsSet};
 
 /// Creates a clause.
 ///
@@ -143,13 +141,15 @@ impl Clause {
     #[inline]
     pub fn lhs_insert(&mut self, tterm: TTerm) -> bool {
         match tterm {
-            TTerm::T(term) => if let Some(true) = term.bool() {
-                false
-            } else {
-                let is_new = self.insert_term(term);
-                self.terms_changed = self.terms_changed || is_new;
-                is_new
-            },
+            TTerm::T(term) => {
+                if let Some(true) = term.bool() {
+                    false
+                } else {
+                    let is_new = self.insert_term(term);
+                    self.terms_changed = self.terms_changed || is_new;
+                    is_new
+                }
+            }
             TTerm::P { pred, args } => {
                 let is_new = self.insert_pred_app(pred, args);
                 self.preds_changed = self.preds_changed || is_new;
@@ -230,7 +230,7 @@ impl Clause {
     {
         if let Some(&mut (ref mut pred, ref mut args)) = self.rhs.as_mut() {
             self.preds_changed = true;
-            let (nu_pred, mut nu_args) = f(*pred, args);
+            let (nu_pred, nu_args) = f(*pred, args);
             *args = nu_args;
             *pred = nu_pred
         }
@@ -360,8 +360,8 @@ impl Clause {
 
     /// Removes all redundant terms from `lhs_terms`.
     fn prune(&mut self) {
+        use crate::term::simplify::SimplRes::*;
         use std::cmp::Ordering::*;
-        use term::simplify::SimplRes::*;
 
         let mut to_rmv: Option<TermSet> = Option::None;
         let mut to_add: Option<TermSet> = Option::None;
@@ -636,8 +636,8 @@ impl Clause {
     ///
     /// Removes the terms from `set` that are implied (strictly) by `term`.
     fn clever_insert(mut term: Term, set: &mut TermSet) -> bool {
+        use crate::term::simplify::SimplRes::*;
         use std::cmp::Ordering::*;
-        use term::simplify::SimplRes::*;
 
         let mut redundant = false;
         let mut rmed_stuff = false;
@@ -709,12 +709,14 @@ impl Clause {
     /// - no rhs
     /// - only one predicate application
     pub fn is_strict_neg(&self) -> bool {
-        self.rhs.is_none() && self.lhs_preds.len() == 1 && self
-            .lhs_preds()
-            .iter()
-            .next()
-            .map(|(_, argss)| argss.len() == 1)
-            .unwrap_or(false)
+        self.rhs.is_none()
+            && self.lhs_preds.len() == 1
+            && self
+                .lhs_preds()
+                .iter()
+                .next()
+                .map(|(_, argss)| argss.len() == 1)
+                .unwrap_or(false)
     }
 
     /// True if the same predicate application appears both in the lhs and the
@@ -1091,7 +1093,8 @@ impl Clause {
                 &mut map
             } else {
                 &mut cst_map
-            }.entry(arg.clone())
+            }
+            .entry(arg.clone())
             .or_insert_with(|| term::var(clause.vars.next_index(), arg.typ()))
             .clone();
 

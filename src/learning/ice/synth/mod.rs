@@ -5,7 +5,7 @@
 //! - document the workflow
 //! - factor code between the synthesizers (`eq_synth` etc.)
 
-use common::*;
+use crate::common::*;
 
 #[macro_use]
 pub mod helpers;
@@ -38,7 +38,13 @@ pub trait TheoSynth {
     fn increment(&mut self);
 
     /// Synthesizes qualifiers.
-    fn synth<F>(&mut self, F, &VarVals, &mut TermVals, &Profiler) -> Res<bool>
+    fn synth<F>(
+        &mut self,
+        f: F,
+        sample: &VarVals,
+        seeds: &mut TermVals,
+        prof: &Profiler,
+    ) -> Res<bool>
     where
         F: FnMut(Term) -> Res<bool>;
 
@@ -47,7 +53,7 @@ pub trait TheoSynth {
     /// Adds them to the input term to value map.
     ///
     /// [`TermVals`]: type.TermVals.html (TermVals type)
-    fn project(&self, &VarVals, &Typ, &mut TermVals) -> Res<()>;
+    fn project(&self, sample: &VarVals, typ: &Typ, seeds: &mut TermVals) -> Res<()>;
 }
 
 use self::adt::AdtSynth;
@@ -86,16 +92,18 @@ impl SynthSys {
                 typ::RTyp::Int => set!(int),
                 typ::RTyp::Real => set!(real),
 
-                typ::RTyp::DTyp { .. } => if adt.iter().all(|adt| adt.typ() != typ) {
-                    let synth = AdtSynth::new(typ.clone());
-                    if synth.can_project_to_int() {
-                        set!(int)
+                typ::RTyp::DTyp { .. } => {
+                    if adt.iter().all(|adt| adt.typ() != typ) {
+                        let synth = AdtSynth::new(typ.clone());
+                        if synth.can_project_to_int() {
+                            set!(int)
+                        }
+                        if synth.can_project_to_real() {
+                            set!(real)
+                        }
+                        adt.push(synth)
                     }
-                    if synth.can_project_to_real() {
-                        set!(real)
-                    }
-                    adt.push(synth)
-                },
+                }
 
                 typ::RTyp::Bool | typ::RTyp::Array { .. } | typ::RTyp::Unk => (),
             }
@@ -167,29 +175,29 @@ impl SynthSys {
                 self.cross_synth.clear();
 
                 if let Some(real_synth) = self.real.as_mut() {
-                    profile!{
+                    profile! {
                       |_profiler| tick "learning", "qual", "synthesis", "int project"
                     }
                     let res = real_synth.project(sample, int_synth.typ(), &mut self.cross_synth);
-                    profile!{
+                    profile! {
                       |_profiler| mark "learning", "qual", "synthesis", "int project"
                     }
                     res?
                 }
                 for adt_synth in &mut self.adt {
-                    profile!{
+                    profile! {
                       |_profiler| tick "learning", "qual", "synthesis", "adt project"
                     }
                     let res = adt_synth.project(sample, int_synth.typ(), &mut self.cross_synth);
-                    profile!{
+                    profile! {
                       |_profiler| mark "learning", "qual", "synthesis", "adt project"
                     }
                     res?
                 }
 
-                profile!{ |_profiler| tick "learning", "qual", "synthesis", "int" }
+                profile! { |_profiler| tick "learning", "qual", "synthesis", "int" }
                 let done = int_synth.synth(&mut f, sample, &mut self.cross_synth, _profiler);
-                profile!{ |_profiler| mark "learning", "qual", "synthesis", "int" }
+                profile! { |_profiler| mark "learning", "qual", "synthesis", "int" }
                 if done? {
                     return Ok(true);
                 }
@@ -210,27 +218,27 @@ impl SynthSys {
 
                 if let Some(int_synth) = self.int.as_mut() {
                     profile! (
-            |_profiler| wrap {
-              int_synth.project(
-                sample, real_synth.typ(), & mut self.cross_synth
-              )
-            } "learning", "qual", "synthesis", "int project"
-          )?
+                      |_profiler| wrap {
+                        int_synth.project(
+                          sample, real_synth.typ(), & mut self.cross_synth
+                        )
+                      } "learning", "qual", "synthesis", "int project"
+                    )?
                 }
                 for adt_synth in &mut self.adt {
-                    profile!{
+                    profile! {
                       |_profiler| tick "learning", "qual", "synthesis", "adt project"
                     }
                     let res = adt_synth.project(sample, real_synth.typ(), &mut self.cross_synth);
-                    profile!{
+                    profile! {
                       |_profiler| mark "learning", "qual", "synthesis", "adt project"
                     }
                     res?
                 }
 
-                profile!{ |_profiler| tick "learning", "qual", "synthesis", "real" }
+                profile! { |_profiler| tick "learning", "qual", "synthesis", "real" }
                 let done = real_synth.synth(&mut f, sample, &mut self.cross_synth, _profiler);
-                profile!{ |_profiler| mark "learning", "qual", "synthesis", "real" }
+                profile! { |_profiler| mark "learning", "qual", "synthesis", "real" }
                 if done? {
                     return Ok(true);
                 }
@@ -251,27 +259,27 @@ impl SynthSys {
 
                 if let Some(int_synth) = self.int.as_mut() {
                     profile! (
-            |_profiler| wrap {
-              int_synth.project(
-                sample, adt_synth.typ(), & mut self.cross_synth
-              )
-            } "learning", "qual", "synthesis", "real project"
-          )?
+                      |_profiler| wrap {
+                        int_synth.project(
+                          sample, adt_synth.typ(), & mut self.cross_synth
+                        )
+                      } "learning", "qual", "synthesis", "real project"
+                    )?
                 }
                 if let Some(real_synth) = self.real.as_mut() {
-                    profile!{
+                    profile! {
                       |_profiler| tick "learning", "qual", "synthesis", "int project"
                     }
                     let res = real_synth.project(sample, adt_synth.typ(), &mut self.cross_synth);
-                    profile!{
+                    profile! {
                       |_profiler| mark "learning", "qual", "synthesis", "int project"
                     }
                     res?
                 }
 
-                profile!{ |_profiler| tick "learning", "qual", "synthesis", "adt" }
+                profile! { |_profiler| tick "learning", "qual", "synthesis", "adt" }
                 let done = adt_synth.synth(&mut f, sample, &mut self.cross_synth, _profiler);
-                profile!{ |_profiler| mark "learning", "qual", "synthesis", "adt" }
+                profile! { |_profiler| mark "learning", "qual", "synthesis", "adt" }
                 if done? {
                     return Ok(true);
                 }

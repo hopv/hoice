@@ -1,7 +1,6 @@
 //! ADT qualifier synthesis.
 
-use common::*;
-use fun::Functions;
+use crate::{common::*, fun::Functions};
 
 use super::{TermVals, TheoSynth};
 

@@ -1,10 +1,12 @@
 //! A pre-instance wraps an instance for preprocessing.
 
-use common::{
-    smt::{ClauseTrivialExt, SmtImpl},
-    *,
+use crate::{
+    common::{
+        smt::{ClauseTrivialExt, SmtImpl},
+        *,
+    },
+    preproc::utils::ExtractionCxt,
 };
-use preproc::utils::ExtractionCxt;
 
 /// Performs a checksat.
 macro_rules! check_sat {
@@ -217,11 +219,10 @@ impl<'a> PreInstance<'a> {
                 let force = if self.instance.pred_to_clauses[pred].1.is_empty() {
                     // Only appears as an antecedent.
                     Some(false)
-                } else if self.instance.pred_to_clauses[pred].0.is_empty() || self
-                    .instance
-                    .pred_to_clauses[pred]
-                    .1
-                    .is_superset(&self.instance.pred_to_clauses[pred].0)
+                } else if self.instance.pred_to_clauses[pred].0.is_empty()
+                    || self.instance.pred_to_clauses[pred]
+                        .1
+                        .is_superset(&self.instance.pred_to_clauses[pred].0)
                 {
                     // Only appears as a consequent.
                     // ||
@@ -714,7 +715,7 @@ impl<'a> PreInstance<'a> {
         if let Some(res) = res? {
             Ok(res)
         } else {
-            log!{ @3
+            log! { @3
                 "unsat because of {}",
                 self.instance[clause_idx].to_string_info(self.instance.preds()).unwrap()
             }
@@ -759,7 +760,7 @@ impl<'a> PreInstance<'a> {
     /// Checks that the positive and negative constraints are respected. Returns
     /// `true` if they are, *i.e.* the definitions are a legal model, and `false`
     /// otherwise.
-    pub fn force_all_preds<Defs>(&mut self, defs: Defs) -> Res<(bool, RedInfo)>
+    pub fn force_all_preds<Defs>(&mut self, defs: Defs, universal: bool) -> Res<(bool, RedInfo)>
     where
         Defs: IntoIterator<Item = (PrdIdx, Dnf)>,
     {
@@ -773,12 +774,25 @@ impl<'a> PreInstance<'a> {
             log! { @4 "  forcing (1) {}", self[pred] }
             let def = TTerms::dnf(
                 def.into_iter()
-                    .map(|(quantfed, conj)| (Quant::exists(quantfed), conj))
+                    .map(|(quantfed, conj)| {
+                        (
+                            if universal {
+                                Quant::forall(quantfed)
+                            } else {
+                                Quant::exists(quantfed)
+                            },
+                            conj,
+                        )
+                    })
                     .collect(),
             );
             debug_assert! { !self.instance[pred].is_defined() }
             self.instance.preds[pred].set_def(def)?
         }
+
+        // Check if instance is unsat before dropping clauses.
+        self.finalize()?;
+        let is_sat = self.check_pred_defs()?;
 
         // Drop all clauses.
         log_debug! { "  unlinking all predicates" }
@@ -809,8 +823,6 @@ impl<'a> PreInstance<'a> {
             }
         }
 
-        let is_sat = self.check_pred_defs()?;
-
         self.instance.clauses.clear();
 
         Ok((is_sat, info))
@@ -830,7 +842,8 @@ impl<'a> PreInstance<'a> {
                         write!(w, " {}", arg)?
                     }
                     write!(w, ")")
-                }).chain_err(|| "while dumping top terms during error on `force_pred`")?;
+                })
+                .chain_err(|| "while dumping top terms during error on `force_pred`")?;
             bail!(
                 "trying to force predicate {} twice\n{}",
                 conf.sad(&self.instance[pred].name),
@@ -1086,7 +1099,10 @@ impl<'a> PreInstance<'a> {
     /// # Used by
     ///
     /// - sub instance generation, when splitting on one clause
-    pub fn extend_pred_left(&mut self, preds: &PrdHMap<::preproc::PredExtension>) -> Res<RedInfo> {
+    pub fn extend_pred_left(
+        &mut self,
+        preds: &PrdHMap<crate::preproc::PredExtension>,
+    ) -> Res<RedInfo> {
         self.check("before `extend_pred_left`")?;
 
         // let mut tterm_set = TTermSet::new() ;
@@ -1543,7 +1559,7 @@ impl<'a> PreInstance<'a> {
 
         log! { @debug "adding {} clauses", to_add.len() }
 
-        for mut clause in to_add {
+        for clause in to_add {
             if let Some(index) = self.instance.push_clause(clause)? {
                 let mut simplinfo = self.simplify_clause(index)?;
                 if simplinfo.clauses_rmed > 0 {
@@ -1615,7 +1631,7 @@ impl<'a> PreInstance<'a> {
             }
         }
 
-        for mut clause in to_add {
+        for clause in to_add {
             log! { @4
                 "adding clause {}", clause.to_string_info(& self.preds).unwrap()
             }
@@ -1782,6 +1798,92 @@ impl<'a> PreInstance<'a> {
         Ok(info)
     }
 
+    /// Checks whether some partial definitions for the predicate constitute a model.
+    pub fn check_pred_partial_defs<'b, I>(&mut self, defs: I) -> Res<bool>
+    where
+        I: Iterator<Item = (PrdIdx, &'b Vec<(Quantfed, Term)>)> + Clone,
+    {
+        self.solver.comment("checking partial definitions")?;
+
+        let (instance, solver) = (&self.instance, &mut self.solver);
+        for (_idx, clause) in instance.clauses().index_iter() {
+            log! { @5 "checking clause #{}", _idx }
+            solver.comment_args(format_args! { "checking clause #{}", _idx })?;
+
+            for (pred, def) in defs.clone() {
+                write!(solver, "(define-fun {} (", instance[pred])?;
+                for (var, typ) in instance[pred].sig().index_iter() {
+                    write!(solver, " ({} {})", var.default_str(), typ)?
+                }
+                writeln!(solver, " ) Bool")?;
+
+                if def.len() > 1 {
+                    write!(solver, "  (and ")?
+                }
+
+                for (q, t) in def {
+                    write!(solver, " ")?;
+                    if !q.is_empty() {
+                        write!(solver, "(forall (")?;
+                        for (var, typ) in q {
+                            write!(solver, " ({} {})", var.default_str(), typ)?
+                        }
+                        write!(solver, " ) ")?
+                    }
+
+                    t.write(solver, |w, var| write!(w, "{}", var.default_str()))?;
+
+                    if !q.is_empty() {
+                        write!(solver, ")")?
+                    }
+                }
+
+                if def.len() > 1 {
+                    write!(solver, "  )")?
+                }
+
+                writeln!(solver, ")")?
+            }
+
+            clause.declare(solver)?;
+            let actlit = solver.get_actlit()?;
+            write!(solver, "(assert (=> ")?;
+            actlit.expr_to_smt2(solver, ())?;
+            write!(solver, " (not")?;
+            clause.qf_write(
+                solver,
+                |w, v| write!(w, "{}", v.idx.default_str()),
+                |w, pred, args, bindings| {
+                    if args.is_empty() {
+                        write!(w, "{}", instance[pred])
+                    } else {
+                        write!(w, "({}", instance[pred])?;
+                        for arg in args.iter() {
+                            write!(w, " ")?;
+                            arg.write_with(w, |w, v| write!(w, "{}", v.default_str()), bindings)?
+                        }
+                        write!(w, ")")
+                    }
+                },
+                2,
+            )?;
+            writeln!(solver, ")))")?;
+
+            let sat = solver.check_sat_act_or_unk(&[actlit])?;
+
+            if sat.is_none() {
+                log! { @4 "got unknown while checking partial definitions" }
+            }
+
+            crate::smt::preproc_reset(solver)?;
+
+            if sat != Some(false) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Checks the predicates' definition verify the current instance.
     ///
     /// Returns `true` if they work (sat).
@@ -1794,11 +1896,14 @@ impl<'a> PreInstance<'a> {
             bail!("can't check predicate definitions, some predicates are not defined")
         }
 
+        let _ = self.simplify_all()?;
+
         let set = PrdSet::new();
         self.instance.finalize()?;
-        for pred_info in self.instance.preds() {
-            let pred = pred_info.idx;
-            log! { @4 | "definining {}", self[pred] }
+        for pred in self.instance.sorted_forced_terms() {
+            let pred = *pred;
+            let pred_info = &self.instance[pred];
+            log! { @4 | "definining {}", pred_info }
 
             let sig: Vec<_> = pred_info
                 .sig
@@ -1833,12 +1938,12 @@ impl<'a> PreInstance<'a> {
                 }
             }
             self.solver
-                .assert_with(clause, &(false, &set, &set, &self.instance.preds))?;
+                .assert_with(clause, &(true, &set, &set, &self.instance.preds))?;
 
             let sat = check_sat!(self);
 
             self.solver.pop(1)?;
-            if sat {
+            if !sat {
                 return Ok(false);
             }
         }
@@ -1992,9 +2097,11 @@ impl ClauseSimplifier {
                 }
 
                 let vars = term::vars(&term);
-                if vars.contains(&var) || self.var_set.contains(&var) || term::vars(&term)
-                    .into_iter()
-                    .any(|v| v == var || self.subst.get(&v).is_some())
+                if vars.contains(&var)
+                    || self.var_set.contains(&var)
+                    || term::vars(&term)
+                        .into_iter()
+                        .any(|v| v == var || self.subst.get(&v).is_some())
                 {
                     skip!()
                 }

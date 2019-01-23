@@ -1,9 +1,11 @@
 //! Module in charge of constructing an analyzing the graph of dependencies
 //! between predicates.
 
-use common::*;
-use preproc::{utils, utils::ExtractionCxt, PreInstance, RedStrat};
-use var_to::terms::VarTermsSet;
+use crate::{
+    common::*,
+    preproc::{utils, utils::ExtractionCxt, PreInstance, RedStrat},
+    var_to::terms::VarTermsSet,
+};
 
 /// Result of a DNF merge.
 struct MergeRes {
@@ -1214,10 +1216,10 @@ impl CfgRed {
             info += instance.force_dnf_left(pred, def)?;
 
             preproc_dump!(
-        instance =>
-          format!("after_force_dnf_left_on_{}", pred),
-          "Instance after reaching preproc fixed-point."
-      )?;
+              instance =>
+                format!("after_force_dnf_left_on_{}", pred),
+                "Instance after reaching preproc fixed-point."
+            )?;
         }
 
         Ok(info)
@@ -1284,7 +1286,7 @@ impl RedStrat for CfgRed {
             }
 
             if pred_defs.len() == instance.active_pred_count() {
-                let (is_sat, this_info) = instance.force_all_preds(pred_defs)?;
+                let (is_sat, this_info) = instance.force_all_preds(pred_defs, false)?;
                 info += this_info;
                 if !is_sat {
                     unsat!("by preprocessing (all predicates resolved but unsat)")

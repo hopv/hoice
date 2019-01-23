@@ -1,6 +1,6 @@
 //! Terms built by the parser before constructing the actual terms.
 
-use common::*;
+use crate::common::*;
 
 /// Boolean combination of top terms used by the parser.
 #[derive(Clone)]
@@ -154,35 +154,41 @@ impl PTTerms {
 
         'go_down: loop {
             tterms = match tterms {
-                PTTerms::And(mut args) => if let Some(first) = args.pop() {
-                    tterms = first;
-                    args.reverse();
-                    let done = Vec::with_capacity(args.len() + 1);
-                    stack.push(Frame::Or(args, done));
-                    continue 'go_down;
-                } else {
-                    bail!("nullary conjunction")
-                },
+                PTTerms::And(mut args) => {
+                    if let Some(first) = args.pop() {
+                        tterms = first;
+                        args.reverse();
+                        let done = Vec::with_capacity(args.len() + 1);
+                        stack.push(Frame::Or(args, done));
+                        continue 'go_down;
+                    } else {
+                        bail!("nullary conjunction")
+                    }
+                }
 
-                PTTerms::Or(mut args) => if let Some(first) = args.pop() {
-                    tterms = first;
-                    args.reverse();
-                    let done = Vec::with_capacity(args.len() + 1);
-                    stack.push(Frame::And(args, done));
-                    continue 'go_down;
-                } else {
-                    bail!("nullary disjunction")
-                },
+                PTTerms::Or(mut args) => {
+                    if let Some(first) = args.pop() {
+                        tterms = first;
+                        args.reverse();
+                        let done = Vec::with_capacity(args.len() + 1);
+                        stack.push(Frame::And(args, done));
+                        continue 'go_down;
+                    } else {
+                        bail!("nullary disjunction")
+                    }
+                }
 
                 PTTerms::NTTerm(tt) => PTTerms::TTerm(tt),
 
-                PTTerms::TTerm(tt) => if tt.is_true() {
-                    PTTerms::tterm(TTerm::fls())
-                } else if tt.is_false() {
-                    PTTerms::tterm(TTerm::tru())
-                } else {
-                    PTTerms::NTTerm(tt)
-                },
+                PTTerms::TTerm(tt) => {
+                    if tt.is_true() {
+                        PTTerms::tterm(TTerm::fls())
+                    } else if tt.is_false() {
+                        PTTerms::tterm(TTerm::tru())
+                    } else {
+                        PTTerms::NTTerm(tt)
+                    }
+                }
             };
 
             'go_up: loop {
@@ -226,16 +232,22 @@ impl PTTerms {
 
         while let Some(ptterm) = to_do.pop() {
             match *ptterm {
-                PTTerms::And(ref args) => for arg in args {
-                    to_do.push(arg)
-                },
-                PTTerms::Or(ref args) => for arg in args {
-                    to_do.push(arg)
-                },
+                PTTerms::And(ref args) => {
+                    for arg in args {
+                        to_do.push(arg)
+                    }
+                }
+                PTTerms::Or(ref args) => {
+                    for arg in args {
+                        to_do.push(arg)
+                    }
+                }
                 PTTerms::NTTerm(_) => (),
-                PTTerms::TTerm(ref term) => if term.pred().is_some() {
-                    return false;
-                },
+                PTTerms::TTerm(ref term) => {
+                    if term.pred().is_some() {
+                        return false;
+                    }
+                }
             }
         }
 
@@ -254,13 +266,15 @@ impl PTTerms {
 
                 for ptt in ptterms {
                     match ptt {
-                        PTTerms::TTerm(tt) => if let TTerm::T(term) = tt {
-                            lhs.push(TTerm::T(term::not(term)))
-                        } else if rhs.is_none() {
-                            rhs = Some(vec![tt])
-                        } else {
-                            bail!("ill-formed horn clause (or, 1)")
-                        },
+                        PTTerms::TTerm(tt) => {
+                            if let TTerm::T(term) = tt {
+                                lhs.push(TTerm::T(term::not(term)))
+                            } else if rhs.is_none() {
+                                rhs = Some(vec![tt])
+                            } else {
+                                bail!("ill-formed horn clause (or, 1)")
+                            }
+                        }
 
                         PTTerms::NTTerm(tt) => lhs.push(tt),
 
@@ -278,11 +292,13 @@ impl PTTerms {
                                             positive_preds.push(tterm)
                                         }
                                     },
-                                    ptt => if let Some(term) = ptt.to_term()? {
-                                        tts.push(TTerm::T(term::not(term)))
-                                    } else {
-                                        bail!("ill-formed horn clause (or, 2)")
-                                    },
+                                    ptt => {
+                                        if let Some(term) = ptt.to_term()? {
+                                            tts.push(TTerm::T(term::not(term)))
+                                        } else {
+                                            bail!("ill-formed horn clause (or, 2)")
+                                        }
+                                    }
                                 }
                             }
                             if let Some(pos_preds) = positive_preds {
@@ -399,16 +415,20 @@ impl PTTerms {
                         bail!("illegal nullary conjunction")
                     }
                 }
-                PTTerms::TTerm(ref tterm) => if let Some(term) = tterm.term() {
-                    term.clone()
-                } else {
-                    return Ok(None);
-                },
-                PTTerms::NTTerm(ref tterm) => if let Some(term) = tterm.term() {
-                    term::not(term.clone())
-                } else {
-                    return Ok(None);
-                },
+                PTTerms::TTerm(ref tterm) => {
+                    if let Some(term) = tterm.term() {
+                        term.clone()
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                PTTerms::NTTerm(ref tterm) => {
+                    if let Some(term) = tterm.term() {
+                        term::not(term.clone())
+                    } else {
+                        return Ok(None);
+                    }
+                }
             };
 
             'go_up: loop {

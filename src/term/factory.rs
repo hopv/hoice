@@ -2,19 +2,21 @@
 
 use hashconsing::HashConsign;
 
-use common::*;
-use term::{Op, RTerm, Term};
+use crate::{
+    common::*,
+    term::{Op, RTerm, Term},
+};
 
-new_consign! {
-  /// Term factory.
-  let factory = consign(conf.instance.term_capa) for RTerm ;
+hashconsing::new_consign! {
+    /// Term factory.
+    let factory = consign(conf.instance.term_capa) for RTerm ;
 }
 
 lazy_static! {
-  /// Cache for terms' variables.
-  static ref var_cache: RwLock< TermMap<VarSet> > = RwLock::new(
-    TermMap::with_capacity( conf.instance.term_capa )
-  ) ;
+    /// Cache for terms' variables.
+    static ref var_cache: RwLock< TermMap<VarSet> > = RwLock::new(
+        TermMap::with_capacity( conf.instance.term_capa )
+    ) ;
 }
 
 /// Scans a term to extract the variables that appear in it.
@@ -776,7 +778,7 @@ where
 /// }
 /// ```
 #[inline]
-pub fn try_fun<S>(name: S, mut args: Vec<Term>) -> Result<Term, ::errors::TypError>
+pub fn try_fun<S>(name: S, mut args: Vec<Term>) -> Result<Term, TypError>
 where
     S: Into<String>,
 {
@@ -808,7 +810,8 @@ where
             }
         }
         Ok(info.typ.clone())
-    }).map(|typ| {
+    })
+    .map(|typ| {
         let term = factory.mk(RTerm::new_fun(typ, name, args));
         if all_args_constant {
             if let Ok(val) = term.eval(&()) {
@@ -1521,7 +1524,7 @@ pub enum NormRes {
 
 /// Normalizes an operation application.
 fn normalize_app(mut op: Op, mut args: Vec<Term>, typ: Typ) -> NormRes {
-    use term::simplify;
+    use crate::term::simplify;
 
     // println!() ;
     // print!("({}", op) ;

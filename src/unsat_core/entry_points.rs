@@ -1,9 +1,20 @@
-//! Entry point extraction data.
+//! Entry point extraction.
 //!
-//! Keeps track of the dependencies between positive samples.
+//! Keeps track of the dependencies between positive samples. When unsat proof production is
+//! active, the [learning data] will maintain an [`EntryPoints` tracker]. From this tracker, if a
+//! conflict is discovered, one can extract the actual unsat proof in the form of entry points.
+//!
+//! *Entry points* are samples for (some of) the positive clauses of the instance that lead to the
+//! conflict. This only makes sense if the instance corresponds to a (deterministic) program. That
+//! is, it is possible to execute the program from the entry points to find the conflict again. To
+//! put differently, there is no non-deterministic choices to make: *e.g.* there never is two
+//! clauses that can be activated at the same time using the same samples (arguments for a
+//! predicate application).
+//!
+//! [learning data]: ../../data/index.html (learning data module)
+//! [`EntryPoints` tracker]: struct.EntryPoints.html (EntryPoints struct)
 
-use common::*;
-use data::sample::Sample;
+use crate::{common::*, data::sample::Sample};
 
 /// Set of samples.
 pub type SampleSet = BTreeSet<Sample>;
@@ -13,13 +24,24 @@ pub type SampleMap<T> = BTreeMap<Sample, T>;
 /// Type of the solver used for reconstruction.
 type Slvr = Solver<smt::FullParser>;
 
-/// Entry point extraction type.
+/// Entry point extraction structure.
+///
+/// This type distinguishes two kinds of positive samples: *real* ones and the rest. A *real*
+/// positive sample is a sample obtained directly from a positive clause.
+///
+/// For instance, say that we have positive Horn clause `n = 2 => P(n)` (1) and `n >= 0 /\ P(n) =>
+/// P(n+1)` (2). Then `P(2)` is a real positive sample by (1). Say at some point we get the
+/// implication constraint `P(2) => P(3)`: we know right away that `P(3)` has to be positive since
+/// `P(2)` is. But `P(3)` is not a *real* positive sample: it does not come directly from a
+/// positive clause.
+///
+/// This structures remembers the real positive samples, and has a map associating a non-real
+/// positive sample `P(s)` to the real positive samples that led to classifying `P(s)` as positive.
 #[derive(Debug, Clone, Default)]
 pub struct EntryPoints {
     /// Real positive samples.
     real_pos_samples: SampleSet,
-    /// Maps RHS of implication constraints to the real positive samples they are known to depend
-    /// on this far.
+    /// Maps positive samples that are not real to the real positive samples to infer them.
     pos_sample_map: SampleMap<SampleSet>,
 }
 
@@ -32,14 +54,13 @@ impl EntryPoints {
         }
     }
 
-    /// Merges with another entry point tracker.
-    pub fn merge(&mut self, other: Self) {
-        for sample in other.real_pos_samples {
-            self.real_pos_samples.insert(sample);
-        }
-        for (sample, set) in other.pos_sample_map {
-            self.pos_sample_map.entry(sample).or_insert(set);
-        }
+    /// Accessor for real positive samples.
+    pub fn real_pos_set(&self) -> &SampleSet {
+        &self.real_pos_samples
+    }
+    /// Accessor for the map from samples to real positive samples.
+    pub fn map(&self) -> &SampleMap<SampleSet> {
+        &self.pos_sample_map
     }
 
     /// String representation.
@@ -59,18 +80,106 @@ impl EntryPoints {
     }
 
     /// Registers a positive sample.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{
+    ///     common::*, unsat_core::entry_points::EntryPoints, data::sample::Sample,
+    ///     var_vals
+    /// } ;
+    ///
+    /// # fn main() {
+    /// let mut entry = EntryPoints::new();
+    /// let pred: PrdIdx = 0.into();
+    /// let s_1 = &Sample::new(pred, var_vals!( (int 1) (bool true) ));
+    /// entry.register(s_1.clone());
+    /// let s_2 = &Sample::new(pred, var_vals!( (int 7) (bool true) ));
+    /// entry.register(s_2.clone());
+    /// assert_eq! { entry.real_pos_set().len(), 2 }
+    /// assert! { entry.real_pos_set().contains(s_1) }
+    /// assert! { entry.real_pos_set().contains(s_2) }
+    /// # }
+    /// ```
     pub fn register(&mut self, sample: Sample) {
         self.real_pos_samples.insert(sample);
     }
 
     /// Registers a dependency between the RHS of an implication constraint and a positive sample.
+    ///
+    /// Fails if the dependency sample (second argument) is unknown (see below).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{
+    ///     common::*, unsat_core::entry_points::EntryPoints, data::sample::Sample,
+    ///     var_vals
+    /// } ;
+    ///
+    /// # fn main() {
+    /// let mut entry = EntryPoints::new();
+    /// let pred: PrdIdx = 0.into();
+    /// let s_1 = &Sample::new(pred, var_vals!( (int 1) (bool true) ));
+    /// entry.register(s_1.clone());
+    ///
+    /// let s_2 = &Sample::new(pred, var_vals!( (int 7) (bool true) ));
+    /// entry.register_dep(s_2.clone(), s_1).unwrap();
+    /// assert_eq! { entry.real_pos_set().len(), 1 }
+    /// assert! { entry.real_pos_set().contains(s_1) }
+    /// {
+    ///     let s_2_dep = entry.map().get(s_2).unwrap();
+    ///     assert_eq! { s_2_dep.len(), 1 }
+    ///     assert! { s_2_dep.contains(s_1) }
+    /// }
+    ///
+    /// let s_3 = &Sample::new(pred, var_vals!( (int 42) (bool false) ));
+    /// entry.register_dep(s_3.clone(), s_2).unwrap();
+    /// assert_eq! { entry.real_pos_set().len(), 1 }
+    /// assert! { entry.real_pos_set().contains(s_1) }
+    /// {
+    ///     let s_3_dep = entry.map().get(s_3).unwrap();
+    ///     assert_eq! { s_3_dep.len(), 1 }
+    ///     assert! { s_3_dep.contains(s_1) }
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// Failure on inexistent real positive sample.
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{
+    ///     common::*, unsat_core::entry_points::EntryPoints, data::sample::Sample,
+    ///     var_vals
+    /// } ;
+    ///
+    /// # fn main() {
+    /// let mut entry = EntryPoints::new();
+    /// let pred: PrdIdx = 0.into();
+    /// let s_1 = &Sample::new(pred, var_vals!( (int 1) (bool true) ));
+    ///
+    /// let s_2 = &Sample::new(pred, var_vals!( (int 7) (bool true) ));
+    /// if let Err(e) = entry.register_dep(s_2.clone(), s_1) {
+    ///     assert_eq! {
+    ///         format!("{}", e),
+    ///         "trying to register dependency to unknown positive sample (p_0 1 true)"
+    ///     }
+    /// } else { panic!("should have failed") }
+    /// # }
+    /// ```
     pub fn register_dep(&mut self, sample: Sample, dep: &Sample) -> Res<()> {
         let mut set = self
             .pos_sample_map
             .remove(&sample)
             .unwrap_or_else(SampleSet::new);
 
-        use var_to::vals::SubsumeExt;
+        use crate::var_to::vals::SubsumeExt;
         let mut real_dep = None;
         for s in &self.real_pos_samples {
             if s.pred == dep.pred && s.args.subsumes(&dep.args) {
@@ -88,9 +197,11 @@ impl EntryPoints {
                     .ok_or_else::<Error, _>(|| {
                         format!(
                             "trying to register dependency to unknown positive sample ({})",
-                            sample
-                        ).into()
-                    })?.iter()
+                            dep
+                        )
+                        .into()
+                    })?
+                    .iter()
                     .cloned(),
             )
         }
@@ -100,7 +211,110 @@ impl EntryPoints {
         Ok(())
     }
 
+    /// Merges with another entry point tracker.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{
+    ///     common::*, unsat_core::entry_points::EntryPoints, data::sample::Sample,
+    ///     var_vals
+    /// } ;
+    ///
+    /// # fn main() {
+    /// let mut entry = EntryPoints::new();
+    /// let pred: PrdIdx = 0.into();
+    /// let s_1 = &Sample::new(pred, var_vals!( (int 1) (bool true) ));
+    /// entry.register(s_1.clone());
+    /// let s_1_1 = &Sample::new(pred, var_vals!( (int 11) (bool true) ));
+    /// entry.register(s_1_1.clone());
+    ///
+    /// let s_2 = &Sample::new(pred, var_vals!( (int 7) (bool true) ));
+    /// entry.register_dep(s_2.clone(), s_1).unwrap();
+    ///
+    /// let s_3 = &Sample::new(pred, var_vals!( (int 42) (bool false) ));
+    /// entry.register_dep(s_3.clone(), s_2).unwrap();
+    /// entry.register_dep(s_3.clone(), s_1_1).unwrap();
+    ///
+    /// let mut entry_2 = EntryPoints::new();
+    /// entry_2.register(s_1.clone());
+    /// let s_4 = &Sample::new(pred, var_vals!( (int 0) (bool false) ));
+    /// entry_2.register(s_4.clone());
+    /// let s_5 = &Sample::new(pred, var_vals!( (int 0) (bool false) ));
+    /// entry_2.register_dep(s_5.clone(), s_4).unwrap();
+    /// entry_2.register_dep(s_5.clone(), s_1).unwrap();
+    ///
+    /// entry.merge(entry_2);
+    /// let mut instance = Instance::new();
+    /// instance.push_pred("p_0", vec![typ::int(), typ::bool()].into());
+    ///
+    /// assert_eq! {
+    ///     format!("{}", entry.to_string(&instance)), "\
+    /// real_pos_samples:
+    ///   (p_0 1 true)
+    ///   (p_0 11 true)
+    ///   (p_0 0 false)
+    /// pos_sample_map:
+    ///   (p_0 7 true)
+    ///   -> (p_0 1 true)
+    ///   (p_0 42 false)
+    ///   -> (p_0 1 true)
+    ///   -> (p_0 11 true)
+    ///   (p_0 0 false)
+    ///   -> (p_0 1 true)
+    ///   -> (p_0 0 false)\
+    ///     "
+    /// }
+    /// # }
+    /// ```
+    pub fn merge(&mut self, other: Self) {
+        for sample in other.real_pos_samples {
+            self.real_pos_samples.insert(sample);
+        }
+        for (sample, set) in other.pos_sample_map {
+            self.pos_sample_map.entry(sample).or_insert(set);
+        }
+    }
+
     /// Retrieves the real positive samples corresponding to a sample.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[macro_use]
+    /// extern crate hoice;
+    /// use hoice::{
+    ///     common::*, unsat_core::entry_points::EntryPoints, data::sample::Sample,
+    ///     var_vals
+    /// } ;
+    ///
+    /// # fn main() {
+    /// let mut entry = EntryPoints::new();
+    /// let pred: PrdIdx = 0.into();
+    /// let s_1 = &Sample::new(pred, var_vals!( (int 1) (bool true) ));
+    /// entry.register(s_1.clone());
+    /// // s_1 is positive
+    /// let s_1_1 = &Sample::new(pred, var_vals!( (int 11) (bool true) ));
+    /// entry.register(s_1_1.clone());
+    /// // s_1_1 is positive
+    ///
+    /// let s_2 = &Sample::new(pred, var_vals!( (int 7) (bool true) ));
+    /// entry.register_dep(s_2.clone(), s_1).unwrap();
+    /// // s_1 => s_2, hence the "positiveness" of s_2 depends on s_1
+    ///
+    /// let s_3 = &Sample::new(pred, var_vals!( (int 42) (bool false) ));
+    /// entry.register_dep(s_3.clone(), s_2).unwrap();
+    /// // s_2 => s_3, hence the "positiveness" of s_3 depends on s_2 which depends on s_1
+    /// entry.register_dep(s_3.clone(), s_1_1).unwrap();
+    /// // s_1_1 => s_3, hence the "positiveness" of s_3 depends on s_1_1
+    /// let s_3_dep = entry.entry_points_of(s_3).expect("while retrieving s_3's entry points");
+    /// assert_eq! { s_3_dep.samples.len(), 2 }
+    /// assert! { s_3_dep.samples.contains(s_1) }
+    /// assert! { s_3_dep.samples.contains(s_1_1) }
+    /// # }
+    /// ```
     pub fn entry_points_of(&self, sample: &Sample) -> Res<Entry> {
         if self.real_pos_samples.contains(sample) {
             let samples: SampleSet = vec![sample.clone()].into_iter().collect();
@@ -113,7 +327,8 @@ impl EntryPoints {
                 format!(
                     "trying to recover entry points for unknown sample ({})",
                     sample
-                ).into()
+                )
+                .into()
             })
     }
 }
@@ -171,17 +386,10 @@ impl Entry {
     }
 }
 
-// /// Result of looking for antecedents for a positive sample.
-// enum AnteRes {
-//     /// No antecedent, the sample can be derived from a positive clause.
-//     Positive,
-//     /// List of conjunction of antecedents leading to this sample.
-//     Ante(Vec<SampleSet>),
-//     /// Positive sample cannot be derived.
-//     Dead,
-// }
-
 /// Entry point reconstructor.
+///
+/// Handles the difference between the instance hoice worked on and found a conflict for, and the
+/// original ones so that the entry points are in terms of the user's instance.
 struct Reconstr<'a> {
     /// Predicates that are safe to inline: they are defined in the instance mention only other
     /// defined predicates.
@@ -221,7 +429,8 @@ impl<'a> Reconstr<'a> {
                     .rhs()
                     .expect("positive clauses necessarily have a RHS")
                     .0
-            }).collect();
+            })
+            .collect();
         let mut safe_preds = PrdSet::new();
         let mut fp = false;
         while !fp {
@@ -604,7 +813,7 @@ impl<'a> Reconstr<'a> {
         }
 
         'all_branches: while let Some(mut to_do) = self.to_do.pop() {
-            if_log ! { @3
+            if_log! { @3
                 log! { @3 |=> "to_do {} other branch(es):", self.to_do.len() }
                 for sample in &to_do {
                     log! { @3 |=> "  ({} {})", self.instance[sample.pred], sample.args }

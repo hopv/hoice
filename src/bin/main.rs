@@ -1,8 +1,5 @@
 //! Entry point for the binary.
 
-extern crate hoice;
-// extern crate libc;
-
 use hoice::common::*;
 
 // /// Renices the process group.
@@ -29,7 +26,8 @@ fn main() {
                  or specify a different z3 command with option `{}`",
                 conf.emph(&conf.solver.conf().get_cmd()),
                 conf.emph("--z3")
-            ).into(),
+            )
+            .into(),
             _ => errs,
         };
         print_err(&errs);

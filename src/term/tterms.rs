@@ -1,9 +1,6 @@
 //! Top-term-related types.
 
-use common::*;
-use var_to::terms::VarTermsSet;
-
-use term::*;
+use crate::{common::*, term::*, var_to::terms::VarTermsSet};
 
 /// Top term, as they appear in clauses.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -71,6 +68,19 @@ impl TTerm {
             None
         }
     }
+
+    /// Collects all the functions mentioned in a TTerm.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        match self {
+            TTerm::T(term) => term.collect_funs(set),
+            TTerm::P { args, .. } => {
+                for arg in args.iter() {
+                    arg.collect_funs(set)
+                }
+            }
+        }
+    }
+
     /// If the top term is simply a term, returns that term.
     #[inline]
     pub fn term(&self) -> Option<&Term> {
@@ -168,11 +178,13 @@ impl TTerm {
                     args: new_args.into(),
                 })
             }
-            TTerm::T(ref term) => if let Some((term, _)) = term.subst_total(map) {
-                Ok(TTerm::T(term))
-            } else {
-                bail!("total substitution failed (term)")
-            },
+            TTerm::T(ref term) => {
+                if let Some((term, _)) = term.subst_total(map) {
+                    Ok(TTerm::T(term))
+                } else {
+                    bail!("total substitution failed (term)")
+                }
+            }
         }
     }
 
@@ -206,7 +218,7 @@ impl TTerm {
         self.write(w, |w, var| var.default_write(w), write_prd)
     }
 }
-impl_fmt!{
+mylib::impl_fmt! {
   TTerm(self, fmt) {
     match * self {
       TTerm::P { pred, ref args } => {
@@ -292,6 +304,20 @@ impl TTermSet {
             len += argss.len()
         }
         len
+    }
+
+    /// Collects all the functions mentioned in a TTerm.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        for term in &self.terms {
+            term.collect_funs(set)
+        }
+        for (_, argss) in &self.preds {
+            for args in argss {
+                for arg in args.iter() {
+                    arg.collect_funs(set)
+                }
+            }
+        }
     }
 
     /// Terms.
@@ -521,11 +547,11 @@ impl ::std::cmp::PartialOrd for TTermSet {
                 break;
             }
         }
-        check_none!{}
+        check_none! {}
 
         // Part of what happens in this loop is explained below.
         for (pred, argss) in &self.preds {
-            check_none!{}
+            check_none! {}
             if let Some(ass) = other.preds.get(pred) {
                 if !argss.is_subset(ass) {
                     le = false
@@ -664,11 +690,7 @@ impl TTerms {
                 ref tterms,
                 ref neg_preds,
                 ..
-            }
-                if !tterms.preds.is_empty() || !neg_preds.is_empty() =>
-            {
-                None
-            }
+            } if !tterms.preds.is_empty() || !neg_preds.is_empty() => None,
             TTerms::Disj { ref tterms, .. } => {
                 Some(term::or(tterms.terms().iter().cloned().collect()))
             }
@@ -709,9 +731,36 @@ impl TTerms {
                 tterms.remove_vars(to_keep);
                 remove_vars_from_pred_apps(neg_preds, to_keep)
             }
-            TTerms::Dnf { ref mut disj } => for &mut (_, ref mut tterms) in disj {
-                tterms.remove_vars(to_keep)
-            },
+            TTerms::Dnf { ref mut disj } => {
+                for &mut (_, ref mut tterms) in disj {
+                    tterms.remove_vars(to_keep)
+                }
+            }
+        }
+    }
+
+    /// Collects all the functions mentioned in some TTerms.
+    pub fn collect_funs(&self, set: &mut BTreeSet<String>) {
+        match self {
+            TTerms::True | TTerms::False => (),
+            TTerms::Conj { tterms, .. } => tterms.collect_funs(set),
+            TTerms::Disj {
+                tterms, neg_preds, ..
+            } => {
+                tterms.collect_funs(set);
+                for (_, argss) in neg_preds {
+                    for args in argss {
+                        for arg in args.iter() {
+                            arg.collect_funs(set)
+                        }
+                    }
+                }
+            }
+            TTerms::Dnf { disj } => {
+                for (_, tterm_set) in disj {
+                    tterm_set.collect_funs(set)
+                }
+            }
         }
     }
 
@@ -807,7 +856,8 @@ impl TTerms {
             quant,
             tterms,
             neg_preds,
-        }.simplify()
+        }
+        .simplify()
     }
     /// Constructs a disjunction from a positive application and some negated top
     /// terms.
@@ -846,9 +896,11 @@ impl TTerms {
         let mut res = vec![];
         match self {
             TTerms::True | TTerms::False => (),
-            TTerms::Conj { tterms, .. } => if !tterms.preds().is_empty() {
-                res.push(tterms.preds())
-            },
+            TTerms::Conj { tterms, .. } => {
+                if !tterms.preds().is_empty() {
+                    res.push(tterms.preds())
+                }
+            }
             TTerms::Disj {
                 tterms, neg_preds, ..
             } => {
@@ -859,11 +911,13 @@ impl TTerms {
                     res.push(neg_preds)
                 }
             }
-            TTerms::Dnf { disj } => for (_, tterms) in disj {
-                if !tterms.preds().is_empty() {
-                    res.push(tterms.preds())
+            TTerms::Dnf { disj } => {
+                for (_, tterms) in disj {
+                    if !tterms.preds().is_empty() {
+                        res.push(tterms.preds())
+                    }
                 }
-            },
+            }
         }
         res
     }
@@ -874,9 +928,11 @@ impl TTerms {
         match *self {
             TTerms::True | TTerms::False => (),
 
-            TTerms::Conj { ref tterms, .. } => for pred in tterms.preds.keys() {
-                res.insert(*pred);
-            },
+            TTerms::Conj { ref tterms, .. } => {
+                for pred in tterms.preds.keys() {
+                    res.insert(*pred);
+                }
+            }
             TTerms::Disj {
                 ref tterms,
                 ref neg_preds,
@@ -890,11 +946,13 @@ impl TTerms {
                 }
             }
 
-            TTerms::Dnf { ref disj } => for &(_, ref tterms) in disj {
-                for pred in tterms.preds.keys() {
-                    res.insert(*pred);
+            TTerms::Dnf { ref disj } => {
+                for &(_, ref tterms) in disj {
+                    for pred in tterms.preds.keys() {
+                        res.insert(*pred);
+                    }
                 }
-            },
+            }
         }
 
         res
@@ -920,7 +978,8 @@ impl TTerms {
                     Ok(TTerms::Conj {
                         quant: conj.0,
                         tterms: conj.1,
-                    }.simplify())
+                    }
+                    .simplify())
                 } else {
                     Ok(TTerms::dnf(vec![(quant, tterms), conj]))
                 }
@@ -1168,11 +1227,13 @@ impl TTerms {
                 }
                 match nu_disj.len() {
                     0 => TTerms::fls(),
-                    1 => if let Some((quant, tterms)) = nu_disj.pop() {
-                        TTerms::Conj { quant, tterms }
-                    } else {
-                        unreachable!()
-                    },
+                    1 => {
+                        if let Some((quant, tterms)) = nu_disj.pop() {
+                            TTerms::Conj { quant, tterms }
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     _ => TTerms::Dnf { disj: nu_disj },
                 }
             }
@@ -1261,7 +1322,8 @@ impl TTerms {
                     quant,
                     tterms,
                     neg_preds,
-                }.simplify()
+                }
+                .simplify()
             }
 
             TTerms::Dnf { disj } => {

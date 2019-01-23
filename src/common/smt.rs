@@ -7,11 +7,13 @@ use rsmt2::{
     print::*,
 };
 
-use common::{
-    var_to::vals::{VarValsMap, VarValsSet},
-    *,
+use crate::{
+    common::{
+        var_to::vals::{VarValsMap, VarValsSet},
+        *,
+    },
+    data::Constraint,
 };
-use data::Constraint;
 
 /// Initial setup for a solver.
 ///
@@ -727,7 +729,7 @@ impl FullParser {
         let mut postponed = Vec::new();
 
         let mut instance = Instance::new();
-        let mut context = ::parse::ParserCxt::new();
+        let mut context = crate::parse::ParserCxt::new();
         let dummy_profiler = Profiler::new();
 
         let mut stuck;
@@ -739,15 +741,19 @@ impl FullParser {
                 match var {
                     FPVar::Var(var) => match val {
                         FPVal::Val(val) => res.push((var, typ, val)),
-                        FPVal::FunToArray(fun) => if let Some((sig, def)) = fun_defs.get(&fun) {
-                            debug_assert_eq! { sig.len(), 1 }
-                            let idx_type = sig.iter().next().unwrap();
-                            let array = val::array_of_fun(idx_type.clone(), def)
-                                .chain_err(|| "while recovering array from function definition")?;
-                            res.push((var, typ, array))
-                        } else {
-                            postponed.push((FPVar::Var(var), sig, typ, FPVal::FunToArray(fun)))
-                        },
+                        FPVal::FunToArray(fun) => {
+                            if let Some((sig, def)) = fun_defs.get(&fun) {
+                                debug_assert_eq! { sig.len(), 1 }
+                                let idx_type = sig.iter().next().unwrap();
+                                let array =
+                                    val::array_of_fun(idx_type.clone(), def).chain_err(|| {
+                                        "while recovering array from function definition"
+                                    })?;
+                                res.push((var, typ, array))
+                            } else {
+                                postponed.push((FPVar::Var(var), sig, typ, FPVal::FunToArray(fun)))
+                            }
+                        }
                         FPVal::FunDef(def) => bail!(
                             "inconsistent model, \
                              normal variable {} associated to function definition {}",
@@ -757,12 +763,9 @@ impl FullParser {
                     },
 
                     FPVar::Sym(name) => {
-                        use info::VarInfo;
+                        use crate::info::VarInfo;
 
-                        let (mut nu_sig, mut var_infos): (
-                            VarMap<Typ>,
-                            VarMap<_>,
-                        ) = (
+                        let (mut nu_sig, mut var_infos): (VarMap<Typ>, VarMap<_>) = (
                             VarMap::with_capacity(sig.len()),
                             VarMap::with_capacity(sig.len()),
                         );
@@ -779,10 +782,7 @@ impl FullParser {
 
                         if let Ok(Some(mut term)) = match val {
                             FPVal::FunDef(ref fun) => {
-                                let mut var_hmap: BTreeMap<
-                                    &str,
-                                    VarIdx,
-                                > = BTreeMap::new();
+                                let mut var_hmap: BTreeMap<&str, VarIdx> = BTreeMap::new();
 
                                 for (idx, info) in var_infos.index_iter() {
                                     let prev = var_hmap.insert(&info.name, idx);
@@ -817,7 +817,7 @@ impl FullParser {
                             let prev = instance.add_define_fun(
                                 name.clone(),
                                 var_infos,
-                                ::parse::PTTerms::tterm(TTerm::T(term.clone())),
+                                crate::parse::PTTerms::tterm(TTerm::T(term.clone())),
                             );
                             debug_assert! { prev.is_none() }
                             let prev = fun_defs.insert(name, (nu_sig, term));
@@ -865,7 +865,7 @@ impl<'a> IdentParser<FPVar, Typ, &'a str> for FullParser {
         }
     }
     fn parse_type(self, input: &'a str) -> SmtRes<Typ> {
-        match ::parse::sort_opt(input) {
+        match crate::parse::sort_opt(input) {
             Ok(Some(s)) => Ok(s),
             _ => Err(format!("unexpected type `{}`", input).into()),
         }
@@ -880,7 +880,7 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, &'a str> for FullParser {
         _params: &[(FPVar, Typ)],
         _out: &Typ,
     ) -> SmtRes<FPVal> {
-        let mut cxt = ::parse::ParserCxt::new();
+        let mut cxt = crate::parse::ParserCxt::new();
         let dummy_profiler = Profiler::new();
         let mut parser = cxt.parser(input, 0, &dummy_profiler);
 
@@ -944,7 +944,8 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, &'a str> for FullParser {
             && {
                 parser.ws_cmt();
                 parser.tag_opt("as-array")
-            } {
+            }
+        {
             // Try function to array conversion.
 
             debug_assert! { ! negated }
@@ -973,7 +974,7 @@ impl<'a> ModelParser<FPVar, Typ, FPVal, &'a str> for FullParser {
 /// Extends a solver so that it's able to check clause triviality.
 pub trait ClauseTrivialExt {
     /// Checks whether a clause is trivial.
-    fn is_clause_trivial(&mut self, &mut Clause) -> Res<Option<bool>>;
+    fn is_clause_trivial(&mut self, clause: &mut Clause) -> Res<Option<bool>>;
 }
 
 impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {

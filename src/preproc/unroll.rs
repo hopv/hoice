@@ -1,9 +1,11 @@
 //! Bias unrolling module.
 
-use common::*;
-use preproc::{
-    utils::{ExtractRes, ExtractionCxt},
-    PreInstance, RedStrat,
+use crate::{
+    common::*,
+    preproc::{
+        utils::{ExtractRes, ExtractionCxt},
+        PreInstance, RedStrat,
+    },
 };
 
 // /// Unrolls positive constraints once.
@@ -195,7 +197,7 @@ impl RUnroll {
                 insert!(pred, Quant::exists(q), terms)
             }
             ExtractRes::SuccessFalse => {
-                let mut set = TermSet::new();
+                let set = TermSet::new();
                 insert!(pred, None, set)
             }
             ExtractRes::Failed => log! {

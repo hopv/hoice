@@ -1,7 +1,7 @@
 //! Qualifier synthesis in the theory of reals.
 
 use super::{helpers::n_term_arith_synth, TermVals, TheoSynth};
-use common::*;
+use crate::common::*;
 
 /// Real qualifier synthesizer.
 pub struct RealSynth {
@@ -59,29 +59,29 @@ impl TheoSynth for RealSynth {
         self.done = false;
         match self.expressivity {
             0 => profile!(
-        |_profiler| wrap {
-          let done = n_term_arith_synth(
-            sample, others, & self.typ, 1, & mut f
-          ) ? ;
-          if ! done {
-            n_term_arith_synth(sample, others, & self.typ, 2, f)
-          } else {
-            Ok(true)
-          }
-        } "learning", "qual", "synthesis", "real", "level 0"
-      ),
+              |_profiler| wrap {
+                let done = n_term_arith_synth(
+                  sample, others, & self.typ, 1, & mut f
+                ) ? ;
+                if ! done {
+                  n_term_arith_synth(sample, others, & self.typ, 2, f)
+                } else {
+                  Ok(true)
+                }
+              } "learning", "qual", "synthesis", "real", "level 0"
+            ),
 
             1 => profile!(
-        |_profiler| wrap {
-          non_lin_real_synth(sample, others, f)
-        } "learning", "qual", "synthesis", "real", "level 1"
-      ),
+              |_profiler| wrap {
+                non_lin_real_synth(sample, others, f)
+              } "learning", "qual", "synthesis", "real", "level 1"
+            ),
 
             n if n < 3 => profile!(
-        |_profiler| wrap {
-          n_term_arith_synth(sample, others, & self.typ, n + 1, f)
-        } "learning", "qual", "synthesis", "real", "level n > 1"
-      ),
+              |_profiler| wrap {
+                n_term_arith_synth(sample, others, & self.typ, n + 1, f)
+              } "learning", "qual", "synthesis", "real", "level n > 1"
+            ),
 
             _ => {
                 self.done = true;

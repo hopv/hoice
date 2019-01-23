@@ -1,7 +1,9 @@
 (set-logic HORN)
 
-(declare-datatypes () (
-  (Lst nil (cons (head Int) (tail Lst)))
+(declare-datatypes ((Lst 1)) (
+    (par (T) (
+      nil (cons (head T) (tail (Lst T))))
+    )
 ) )
 
 
@@ -14,16 +16,16 @@
 
 ; Post-condition.
 (declare-fun
-  rev_pst ( Lst Lst Lst ) Bool
+  rev_pst ( (Lst Int) (Lst Int) (Lst Int) ) Bool
 )
 ; Terminal case.
 (assert
-  (forall ( (acc Lst) )
+  (forall ( (acc (Lst Int)) )
     (rev_pst acc nil acc)
 ) )
 ; Recursive case.
 (assert
-  (forall ( (acc Lst) (lst Lst) (res Lst) )
+  (forall ( (acc (Lst Int)) (lst (Lst Int)) (res (Lst Int)) )
   (=>
     (and
       (not (= lst nil))
@@ -45,7 +47,7 @@
 
 ; Post-condition.
 (declare-fun
-  srt_pst ( Lst Bool ) Bool
+  srt_pst ( (Lst Int) Bool ) Bool
 )
 ; Terminal cases.
 (assert
@@ -57,7 +59,7 @@
   (srt_pst (cons hd nil) true)
 ) )
 (assert
-  (forall ( (lst Lst) )
+  (forall ( (lst (Lst Int)) )
   (=>
     (and
       (not (= lst nil))
@@ -69,7 +71,7 @@
 ) )
 ; Recursive case.
 (assert
-  (forall ( (lst Lst) (res Bool) )
+  (forall ( (lst (Lst Int)) (res Bool) )
   (=>
     (and
       (not (= lst nil))
@@ -90,7 +92,7 @@
 ;   | nil | _ :: nil => ()
 ;   | _ => assert false
 (assert
-  (forall ( (lst1 Lst) (lst2 Lst) )
+  (forall ( (lst1 (Lst Int)) (lst2 (Lst Int)) )
   (=>
     (and
       (rev_pst nil lst1 lst2)

@@ -9,7 +9,7 @@
 #[allow(unused_imports)]
 use std::time::{Duration, Instant};
 
-use common::*;
+use crate::common::*;
 
 /// Extends duration with a pretty printing.
 pub trait DurationExt {
@@ -162,7 +162,7 @@ impl ProfileTree {
                             scope_str.push_str("::");
                             scope_str.push_str(s)
                         }
-                        warn!{
+                        warn! {
                           "no duration for scope {}, setting to sum of branches",
                           conf.emph(& scope_str)
                         }
@@ -185,7 +185,7 @@ pub trait CanPrint {
     /// True if at least one value is not `0`.
     fn has_non_zero(&self) -> bool;
     /// Debug print (multi-line).
-    fn print<S>(&self, S)
+    fn print<S>(&self, s: S)
     where
         S: Into<String>;
 }

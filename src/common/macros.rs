@@ -54,7 +54,6 @@ macro_rules! unsat {
 #[macro_export]
 macro_rules! unknown {
   ($($stuff:tt)*) => ({
-    log! { @info "unknown" } ;
     log! { @debug $($stuff)* } ;
     bail!($crate::errors::ErrorKind::Unknown)
   }) ;
@@ -235,13 +234,13 @@ macro_rules! log_debug {
 macro_rules! warn {
   ( $( $str:expr $(, $args:expr)* $(,)* );* ) => ({
     println!(
-      "; {}", ::common::conf.sad("|===| Warning:")
+      "; {}", $crate::common::conf.sad("|===| Warning:")
     ) ;
     $(
-      print!("; {} ", ::common::conf.sad("|")) ;
+      print!("; {} ", $crate::common::conf.sad("|")) ;
       println!( $str $(, $args)* ) ;
     )*
-    println!("; {}", ::common::conf.sad("|===|"))
+    println!("; {}", $crate::common::conf.sad("|===|"))
   }) ;
 }
 
@@ -528,4 +527,42 @@ mod test {
             assert!(res)
         }};
     }
+}
+
+/// Creates some values for some variables.
+///
+/// Used in tests.
+#[macro_export]
+macro_rules! r_var_vals {
+    (@make($vec:expr) (int $e:expr) $($tail:tt)*) => ({
+        $vec.push( $crate::val::int($e) );
+        r_var_vals!(@make($vec) $($tail)*)
+    });
+    (@make($vec:expr) (real $e:expr) $($tail:tt)*) => ({
+        $vec.push( $crate::val::real_of($e as f64) );
+        r_var_vals!(@make($vec) $($tail)*)
+    });
+    (@make($vec:expr) (bool $e:expr) $($tail:tt)*) => ({
+        $vec.push( $crate::val::bool($e) );
+        r_var_vals!(@make($vec) $($tail)*)
+    });
+    (@make($vec:expr) ($e:expr) $($tail:tt)*) => ({
+        $vec.push( $e );
+        r_var_vals!(@make($vec) $($tail)*)
+    });
+    (@make($vec:expr)) => (());
+    ($($stuff:tt)*) => ({
+        let mut vec = vec![];
+        r_var_vals! { @make(vec) $($stuff)* }
+        let vals: $crate::var_to::vals::RVarVals = vec.into();
+        vals
+    });
+}
+/// Creates some values for some variables (hash-consed).
+#[macro_export]
+macro_rules! var_vals {
+    ($($stuff:tt)*) => ({
+        let r_var_vals = r_var_vals!($($stuff)*);
+        $crate::var_to::vals::new(r_var_vals)
+    });
 }

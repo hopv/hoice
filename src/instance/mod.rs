@@ -1,9 +1,6 @@
 //! Actual instance structure.
 
-use common::*;
-use data::Data;
-use info::*;
-use var_to::terms::VarTermsSet;
+use crate::{common::*, data::Data, info::*, var_to::terms::VarTermsSet};
 
 mod clause;
 mod pre_instance;
@@ -124,7 +121,7 @@ pub struct Instance {
     split: Option<ClsIdx>,
 
     /// Define-funs parsed.
-    define_funs: BTreeMap<String, (VarInfos, ::parse::PTTerms)>,
+    define_funs: BTreeMap<String, (VarInfos, crate::parse::PTTerms)>,
 
     /// Maps **original** clause indexes to their optional name.
     old_names: ClsHMap<String>,
@@ -306,12 +303,12 @@ impl Instance {
         &mut self,
         name: S,
         sig: VarInfos,
-        body: ::parse::PTTerms,
-    ) -> Option<(VarInfos, ::parse::PTTerms)> {
+        body: crate::parse::PTTerms,
+    ) -> Option<(VarInfos, crate::parse::PTTerms)> {
         self.define_funs.insert(name.into(), (sig, body))
     }
     /// Retrieves a define fun.
-    pub fn get_define_fun(&self, name: &str) -> Option<&(VarInfos, ::parse::PTTerms)> {
+    pub fn get_define_fun(&self, name: &str) -> Option<&(VarInfos, crate::parse::PTTerms)> {
         self.define_funs.get(name)
     }
 
@@ -356,7 +353,8 @@ impl Instance {
                     preds.extend(tterms.preds())
                 }
                 (pred, preds, conj)
-            }).collect();
+            })
+            .collect();
         let mut cnt;
         let mut changed;
         while !tmp.is_empty() {
@@ -666,8 +664,9 @@ impl Instance {
     }
 
     /// Pushes a new predicate and returns its index.
-    pub fn push_pred(&mut self, name: String, sig: Sig) -> PrdIdx {
+    pub fn push_pred<S: Into<String>>(&mut self, name: S, sig: Sig) -> PrdIdx {
         let idx = self.preds.next_index();
+        let name = name.into();
 
         self.preds.push(Pred::new(name, idx, sig));
 
@@ -720,7 +719,7 @@ impl Instance {
         clauses.sort_unstable_by(|c_1, c_2| c_2.cmp(c_1));
         let mut prev = None;
         for clause in clauses.drain(0..) {
-            log!{ @6 "forgetting {}", self[clause].to_string_info(&self.preds).unwrap() }
+            log! { @6 "forgetting {}", self[clause].to_string_info(&self.preds).unwrap() }
             if prev == Some(clause) {
                 continue;
             }
@@ -870,10 +869,12 @@ impl Instance {
             }
         }
 
-        if clause.lhs_preds().is_empty() && clause.rhs().is_none() && clause
-            .lhs_terms()
-            .iter()
-            .any(|term| term.has_fun_app_or_adt())
+        if clause.lhs_preds().is_empty()
+            && clause.rhs().is_none()
+            && clause
+                .lhs_terms()
+                .iter()
+                .any(|term| term.has_fun_app_or_adt())
         {
             self.add_side_clause(clause)?;
             return Ok(None);
@@ -1295,7 +1296,7 @@ impl Instance {
         pref: &str,
         model: ConjModelRef,
     ) -> Res<()> {
-        fun::write_all(w, pref, false)?;
+        fun::write_for_model(w, pref, &model)?;
 
         for defs in model {
             if defs.is_empty() {
@@ -1432,7 +1433,7 @@ impl Instance {
             // Consider the rhs of the clause negative, and all lhs applications
             // positive except this one.
             Bias::NuRgt(pred, args) => {
-                use var_to::terms::VarTermsSet;
+                use crate::var_to::terms::VarTermsSet;
                 debug_assert! { clause.lhs_preds().get(& pred).is_some() }
                 debug_assert! {
                   clause.lhs_preds().get(& pred).unwrap().contains(& args)
@@ -1486,14 +1487,12 @@ impl Instance {
         // Force non-values in the cex if we're dealing with a constraint, not a
         // sample.
         if (
-      // Positive sample?
-      lhs.is_empty() && rhs.is_some()
-    ) || (
-      // Negative sample?
-      lhs.len() == 1 && lhs.iter().all(
-        |(_, argss)| argss.len() == 1
-      ) && rhs.is_none()
-    ) {
+            // Positive sample?
+            lhs.is_empty() && rhs.is_some()
+        ) || (
+            // Negative sample?
+            lhs.len() == 1 && lhs.iter().all(|(_, argss)| argss.len() == 1) && rhs.is_none()
+        ) {
             // We're generating a sample. Still need to force variables that appear
             // more than once in arguments.
             for (_, argss) in lhs {
@@ -1541,7 +1540,7 @@ impl Instance {
         // Evaluates some arguments for a predicate.
         macro_rules! eval {
             ($args:expr) => {{
-                use var_to::vals::RVarVals;
+                use crate::var_to::vals::RVarVals;
                 let mut sample = RVarVals::with_capacity($args.len());
                 for arg in $args.get() {
                     let val = arg.eval(&cex)?;
@@ -1584,7 +1583,6 @@ impl Instance {
           }
           log! { @6 "{}", s }
         }
-
         data.add_data(clause_idx, antecedents, consequent)
     }
 

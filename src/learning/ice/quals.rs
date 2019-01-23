@@ -58,7 +58,7 @@
 
 // use hashconsing::* ;
 
-use common::*;
+use crate::common::*;
 
 /// Extracts qualifier-related information from a predicate application.
 fn qual_info_of(
@@ -186,9 +186,9 @@ fn qual_of_terms<F: FnMut(Term) -> Res<()>>(
             if term_args[0].typ().is_arith() && term_args[0].typ() == othr_args[0].typ() {
                 let nu_lhs = term::add(vec![term_args[0].clone(), othr_args[0].clone()]);
 
-                let mut old_vars_1 = term::vars(&term_args[0]);
-                let mut old_vars_2 = term::vars(&othr_args[0]);
-                let mut nu_vars = term::vars(&nu_lhs);
+                let old_vars_1 = term::vars(&term_args[0]);
+                let old_vars_2 = term::vars(&othr_args[0]);
+                let nu_vars = term::vars(&nu_lhs);
 
                 let use_qual = clause_count < 35
                     || (nu_vars.len() <= 2)
@@ -359,12 +359,14 @@ fn apply_mappings(
                     Some((Op::Or, terms))
                     | Some((Op::And, terms))
                     | Some((Op::Not, terms))
-                    | Some((Op::Impl, terms)) => for term in terms {
-                        subterms.push(term);
-                        if let Some(term) = qual_of_term(term, &map) {
-                            quals.insert(term, pred)?;
+                    | Some((Op::Impl, terms)) => {
+                        for term in terms {
+                            subterms.push(term);
+                            if let Some(term) = qual_of_term(term, &map) {
+                                quals.insert(term, pred)?;
+                            }
                         }
-                    },
+                    }
 
                     // Some( (Op::Eql, terms) ) |
                     // Some( (Op::Distinct, terms) ) => if terms.iter().all(
@@ -379,9 +381,11 @@ fn apply_mappings(
                     // } else if let Some( (qual, true) ) = subterm.subst_total(& map) {
                     //   all_terms!().insert(qual) ;
                     // },
-                    _ => if let Some((qual, true)) = subterm.subst_total(&map) {
-                        all_terms!(insert(qual));
-                    },
+                    _ => {
+                        if let Some((qual, true)) = subterm.subst_total(&map) {
+                            all_terms!(insert(qual));
+                        }
+                    }
                 }
             }
         }
@@ -450,6 +454,121 @@ pub struct NuQuals {
     rng: Rng,
 }
 impl NuQuals {
+    /// Mines a signature.
+    pub fn mine_sig<F>(sig: &Sig, mut qual_do: F) -> Res<()>
+    where
+        F: FnMut(Term) -> Res<()>,
+    {
+        let mut prev: TypMap<VarSet> = TypMap::new();
+
+        let sig = sig.index_iter();
+
+        for (var, typ) in sig {
+            if let Some(vars) = prev.get(typ) {
+                for v in vars {
+                    qual_do(term::eq(
+                        term::var(*v, typ.clone()),
+                        term::var(var, typ.clone()),
+                    ))?
+                }
+            }
+
+            scoped! {
+              prev.entry( typ.clone() ).or_insert_with(VarSet::new).insert(var) ;
+            }
+
+            // println!("looking at {}: {}", var.default_str(), typ);
+
+            match **typ {
+                typ::RTyp::Int => {
+                    qual_do(term::ge(term::var(var, typ.clone()), term::int(0)))?;
+                    qual_do(term::le(term::var(var, typ.clone()), term::int(0)))?;
+                    qual_do(term::eq(term::var(var, typ.clone()), term::int(0)))?;
+                    // quals.insert(
+                    //   term::ge( term::var(var, typ.clone()),
+                    //   term::int(1) ),
+                    //   pred_info.idx
+                    // ) ? ;
+                    // quals.insert(
+                    //   term::le( term::var(var, typ.clone()),
+                    //   term::int(1) ),
+                    //   pred_info.idx
+                    // ) ? ;
+                    // quals.insert(
+                    //   term::eq( term::var(var, typ.clone()),
+                    //   term::int(1) ),
+                    //   pred_info.idx
+                    // ) ? ;
+                }
+
+                typ::RTyp::Real => {
+                    qual_do(term::ge(
+                        term::var(var, typ.clone()),
+                        term::real(Rat::from_integer(0.into())),
+                    ))?;
+                    qual_do(term::le(
+                        term::var(var, typ.clone()),
+                        term::real(Rat::from_integer(0.into())),
+                    ))?;
+                    qual_do(term::eq(
+                        term::var(var, typ.clone()),
+                        term::real(Rat::from_integer(0.into())),
+                    ))?;
+                    // quals.insert(
+                    //   term::ge(
+                    //     term::var(var, typ.clone()),
+                    //     term::real(Rat::from_integer(1.into()))
+                    //   ),
+                    //   pred_info.idx
+                    // ) ? ;
+                    // quals.insert(
+                    //   term::le(
+                    //     term::var(var, typ.clone()),
+                    //     term::real(Rat::from_integer(1.into()))
+                    //   ),
+                    //   pred_info.idx
+                    // ) ? ;
+                    // quals.insert(
+                    //   term::eq(
+                    //     term::var(var, typ.clone()),
+                    //     term::real(Rat::from_integer(1.into()))
+                    //   ),
+                    //   pred_info.idx
+                    // ) ? ;
+                }
+
+                typ::RTyp::Bool => {
+                    let var = term::bool_var(var);
+                    qual_do(var)?
+                }
+
+                typ::RTyp::Array { .. } => {
+                    qual_do(term::eq(term::var(var, typ.clone()), typ.default_term()))?
+                }
+
+                typ::RTyp::DTyp { ref dtyp, .. } => {
+                    for name in dtyp.news.keys() {
+                        qual_do(term::dtyp_tst(name.clone(), term::var(var, typ.clone())))?
+                    }
+                    let functions = fun::Functions::new(typ.clone());
+                    for fun in functions.from_typ {
+                        if fun.typ.is_bool() {
+                            qual_do(term::fun(
+                                fun.name.clone(),
+                                vec![term::var(var, typ.clone())],
+                            ))?
+                        }
+                    }
+                }
+
+                typ::RTyp::Unk => bail!("unexpected unknown type"),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Constructor.
     pub fn new(instance: &Arc<Instance>, mine: bool) -> Res<Self> {
         use rand::SeedableRng;
 
@@ -462,8 +581,6 @@ impl NuQuals {
             instance: instance.clone(),
             rng: Rng::from_seed([42; 16]),
         };
-
-        let mut prev: TypMap<VarSet> = TypMap::new();
 
         if mine {
             'all_preds: for pred_info in instance.preds() {
@@ -499,136 +616,10 @@ impl NuQuals {
                 //   }
                 // ) ? ;
 
-                let mut sig = pred_info.sig.index_iter();
-                prev.clear();
-
-                for (var, typ) in sig {
-                    if let Some(vars) = prev.get(typ) {
-                        for v in vars {
-                            quals.insert(
-                                term::eq(term::var(*v, typ.clone()), term::var(var, typ.clone())),
-                                pred_info.idx,
-                            )?;
-                        }
-                    }
-
-                    scoped! {
-                      prev.entry( typ.clone() ).or_insert_with(VarSet::new).insert(var) ;
-                    }
-
-                    match **typ {
-                        typ::RTyp::Int => {
-                            quals.insert(
-                                term::ge(term::var(var, typ.clone()), term::int(0)),
-                                pred_info.idx,
-                            )?;
-                            quals.insert(
-                                term::le(term::var(var, typ.clone()), term::int(0)),
-                                pred_info.idx,
-                            )?;
-                            quals.insert(
-                                term::eq(term::var(var, typ.clone()), term::int(0)),
-                                pred_info.idx,
-                            )?;
-                            // quals.insert(
-                            //   term::ge( term::var(var, typ.clone()),
-                            //   term::int(1) ),
-                            //   pred_info.idx
-                            // ) ? ;
-                            // quals.insert(
-                            //   term::le( term::var(var, typ.clone()),
-                            //   term::int(1) ),
-                            //   pred_info.idx
-                            // ) ? ;
-                            // quals.insert(
-                            //   term::eq( term::var(var, typ.clone()),
-                            //   term::int(1) ),
-                            //   pred_info.idx
-                            // ) ? ;
-                        }
-
-                        typ::RTyp::Real => {
-                            quals.insert(
-                                term::ge(
-                                    term::var(var, typ.clone()),
-                                    term::real(Rat::from_integer(0.into())),
-                                ),
-                                pred_info.idx,
-                            )?;
-                            quals.insert(
-                                term::le(
-                                    term::var(var, typ.clone()),
-                                    term::real(Rat::from_integer(0.into())),
-                                ),
-                                pred_info.idx,
-                            )?;
-                            quals.insert(
-                                term::eq(
-                                    term::var(var, typ.clone()),
-                                    term::real(Rat::from_integer(0.into())),
-                                ),
-                                pred_info.idx,
-                            )?;
-                            // quals.insert(
-                            //   term::ge(
-                            //     term::var(var, typ.clone()),
-                            //     term::real(Rat::from_integer(1.into()))
-                            //   ),
-                            //   pred_info.idx
-                            // ) ? ;
-                            // quals.insert(
-                            //   term::le(
-                            //     term::var(var, typ.clone()),
-                            //     term::real(Rat::from_integer(1.into()))
-                            //   ),
-                            //   pred_info.idx
-                            // ) ? ;
-                            // quals.insert(
-                            //   term::eq(
-                            //     term::var(var, typ.clone()),
-                            //     term::real(Rat::from_integer(1.into()))
-                            //   ),
-                            //   pred_info.idx
-                            // ) ? ;
-                        }
-
-                        typ::RTyp::Bool => {
-                            let var = term::bool_var(var);
-                            quals.insert(var.clone(), pred_info.idx)?;
-                            quals.insert(var, pred_info.idx)?;
-                        }
-
-                        typ::RTyp::Array { .. } => {
-                            quals.insert(
-                                term::eq(term::var(var, typ.clone()), typ.default_term()),
-                                pred_info.idx,
-                            )?;
-                        }
-
-                        typ::RTyp::DTyp { ref dtyp, .. } => {
-                            for name in dtyp.news.keys() {
-                                quals.insert(
-                                    term::dtyp_tst(name.clone(), term::var(var, typ.clone())),
-                                    pred_info.idx,
-                                )?;
-                            }
-                            let functions = fun::Functions::new(typ.clone());
-                            for fun in functions.from_typ {
-                                if fun.typ.is_bool() {
-                                    quals.insert(
-                                        term::fun(
-                                            fun.name.clone(),
-                                            vec![term::var(var, typ.clone())],
-                                        ),
-                                        pred_info.idx,
-                                    )?;
-                                }
-                            }
-                        }
-
-                        typ::RTyp::Unk => bail!("unexpected unknown type"),
-                    }
-                }
+                NuQuals::mine_sig(instance[pred_info.idx].sig(), |qual| {
+                    quals.insert(qual, pred_info.idx)?;
+                    Ok(())
+                })?
             }
 
             mine_instance(instance, &mut quals).chain_err(|| "during qualifier mining")?
@@ -699,8 +690,6 @@ impl NuQuals {
     where
         Crit: FnMut(&Term) -> Res<Option<f64>>,
     {
-        use rand::Rng;
-
         let var_bias = if let Some(sample) = bias {
             let mut set = VarSet::new();
             for (var, val) in sample.index_iter() {
@@ -731,10 +720,12 @@ impl NuQuals {
                 } else {
                     Some(terms)
                 }
-            }).collect();
+            })
+            .collect();
 
         if conf.ice.rand_quals {
             quals.sort_unstable_by(|_, _| {
+                use rand::Rng;
                 if 0.5 < rng.gen() {
                     ::std::cmp::Ordering::Greater
                 } else {

@@ -1,10 +1,12 @@
 //! Handles counterexample bias for the teacher.
 
-use common::{smt::DisjArgs, *};
-use data::Data;
-use var_to::{
-    terms::{VarTermsMap, VarTermsSet},
-    vals::VarValsSet,
+use crate::{
+    common::{smt::DisjArgs, *},
+    data::Data,
+    var_to::{
+        terms::{VarTermsMap, VarTermsSet},
+        vals::VarValsSet,
+    },
 };
 
 /// Solver.
@@ -66,10 +68,11 @@ impl CexBias {
         if !self.lhs_actlits.is_empty()
             && clause!().rhs().is_some()
             && (
-      // Skip if we're only generating biased check-sat and there are
-      // applications without any positive data.
-      ! bias_only || self.lhs_non_pos.is_empty()
-    ) {
+                // Skip if we're only generating biased check-sat and there are
+                // applications without any positive data.
+                !bias_only || self.lhs_non_pos.is_empty()
+            )
+        {
             self.bias_left(_profiler, solver, &mut actlits, bias_only)?
         }
 

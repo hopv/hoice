@@ -14,7 +14,9 @@
 //! [`ErrorKind::Unknown`]: enum.ErrorKind.html#variant.Unknown (Unknown variant of ErrorKind)
 //! [`chain`]: struct.Error.html#method.chain (chain function over Error)
 
-use common::*;
+use error_chain::*;
+
+use crate::common::*;
 
 /// A term type-checking error.
 ///
@@ -40,7 +42,8 @@ pub enum TypError {
         index: usize,
     },
 }
-impl_fmt! {
+
+mylib::impl_fmt! {
     TypError(self, fmt) {
         match self {
             TypError::Msg(s) => write!(fmt, "{}", s),
@@ -56,6 +59,7 @@ impl_fmt! {
         }
     }
 }
+
 impl TypError {
     /// Message constructor.
     pub fn msg<S: Into<String>>(s: S) -> Self {
@@ -87,7 +91,7 @@ pub struct ParseErrorData {
     /// whoever constructed the error.
     pub line: Option<usize>,
 }
-impl_fmt!{
+mylib::impl_fmt! {
   ParseErrorData(self, fmt) {
     let line_str = if let Some(line) = self.line {
       format!("{} ", line)
@@ -119,7 +123,7 @@ impl_fmt!{
   }
 }
 
-error_chain!{
+error_chain::error_chain! {
     types {
         Error, ErrorKind, ResultExt, Res ;
     }
@@ -187,29 +191,19 @@ impl Error {
         false
     }
 
-    /// True if the kind of the error is [`ErrorKind::SmtError::Unknown`].
-    pub fn is_smt_unknown(&self) -> bool {
-        match *self.kind() {
-            ErrorKind::SmtError(::rsmt2::errors::ErrorKind::Unknown) => true,
-            _ => false,
-        }
-    }
-
     /// True if the kind of the error is [`ErrorKind::Unknown`][unknown].
     ///
     /// [unknown]: enum.ErrorKind.html#variant.Unknown
     /// (ErrorKind's Unknown variant)
     pub fn is_unknown(&self) -> bool {
-        if self.is_smt_unknown() {
-            true
-        } else {
-            for err in self.iter() {
-                if err.description() == consts::err::unknown_desc {
-                    return true;
-                }
+        for err in self.iter() {
+            if err.description() == consts::err::unknown_desc
+                || err.description() == ::rsmt2::errors::ErrorKind::Unknown.description()
+            {
+                return true;
             }
-            false
         }
+        false
     }
 
     /// Returns the clause explaining an unsat result if any.

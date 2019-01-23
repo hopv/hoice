@@ -66,13 +66,10 @@
 //! [`ParserCxt`]: struct.ParserCxt.html (ParserCxt struct)
 //! [`TermFrame`]: struct.TermFrame.html (TermFrame struct)
 
-use common::*;
-use info::VarInfo;
+use crate::{common::*, consts::keywords, info::VarInfo};
 
 mod ptterms;
 pub use self::ptterms::*;
-
-use consts::keywords;
 
 /// Result yielded by the parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +91,7 @@ pub enum Parsed {
     /// End of file.
     Eof,
 }
-impl_fmt! {
+mylib::impl_fmt! {
     Parsed(self, fmt) {
         write!(fmt, "{:?}", self)
     }
@@ -691,14 +688,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         is_first = false;
                     }
                 }
-                bail!(
-                    self.error(
-                        ident_start_pos,
-                        "expected `|` closing this quoted identifier, \
-                         found eof"
-                            .to_string()
-                    )
-                )
+                bail!(self.error(
+                    ident_start_pos,
+                    "expected `|` closing this quoted identifier, \
+                     found eof"
+                        .to_string()
+                ))
             } else if char.is_alphabetic() || id_special_chars.contains(&char) {
                 while let Some(char) = self.next() {
                     if !(char.is_alphanumeric() || id_special_chars.contains(&char)) {
@@ -919,7 +914,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         &mut self,
         type_params: Option<&BTreeMap<&'s str, dtyp::TPrmIdx>>,
     ) -> Res<Option<dtyp::PartialTyp>> {
-        use dtyp::PartialTyp;
+        use crate::dtyp::PartialTyp;
 
         // Compound type under construction.
         //
@@ -1019,62 +1014,174 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 // }
 
                 match stack.pop() {
-                    Some(CTyp::Array { pos }) => if let Some(src) = typ {
-                        stack.push(CTyp::ArraySrc { pos, src });
-                        // Need to parse the domain now.
-                        continue 'go_down;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected index sort"))?
-                    },
-
-                    Some(CTyp::ArraySrc { pos, src }) => if let Some(tgt) = typ {
-                        typ = Some(PartialTyp::Array(Box::new(src), Box::new(tgt)));
-
-                        // Parse closing paren.
-                        self.ws_cmt();
-                        if !self.tag_opt(")") {
-                            let err: Error =
-                                self.error(pos, "while parsing this array sort").into();
-                            Err(err).chain_err(|| {
-                                self.error(current_pos, "expected expected closing paren")
-                            })?
+                    Some(CTyp::Array { pos }) => {
+                        if let Some(src) = typ {
+                            stack.push(CTyp::ArraySrc { pos, src });
+                            // Need to parse the domain now.
+                            continue 'go_down;
+                        } else {
+                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
+                                .chain_err(|| self.error(current_pos, "expected index sort"))?
                         }
+                    }
 
-                        continue 'go_up;
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
-                            .chain_err(|| self.error(current_pos, "expected domain sort"))?
-                    },
+                    Some(CTyp::ArraySrc { pos, src }) => {
+                        if let Some(tgt) = typ {
+                            typ = Some(PartialTyp::Array(Box::new(src), Box::new(tgt)));
+
+                            // Parse closing paren.
+                            self.ws_cmt();
+                            if !self.tag_opt(")") {
+                                let err: Error =
+                                    self.error(pos, "while parsing this array sort").into();
+                                Err(err).chain_err(|| {
+                                    self.error(current_pos, "expected expected closing paren")
+                                })?
+                            }
+
+                            continue 'go_up;
+                        } else {
+                            Err::<_, Error>(self.error(pos, "while parsing this array sort").into())
+                                .chain_err(|| self.error(current_pos, "expected domain sort"))?
+                        }
+                    }
 
                     Some(CTyp::DTyp {
                         name,
                         pos,
                         mut typs,
-                    }) => if let Some(t) = typ {
-                        typs.push(t);
-                        self.ws_cmt();
-                        if self.tag_opt(")") {
-                            typ = Some(PartialTyp::DTyp(name.into(), pos, typs));
-                            continue 'go_up;
+                    }) => {
+                        if let Some(t) = typ {
+                            typs.push(t);
+                            self.ws_cmt();
+                            if self.tag_opt(")") {
+                                typ = Some(PartialTyp::DTyp(name.into(), pos, typs));
+                                continue 'go_up;
+                            } else {
+                                stack.push(CTyp::DTyp { name, pos, typs });
+                                continue 'go_down;
+                            }
                         } else {
-                            stack.push(CTyp::DTyp { name, pos, typs });
-                            continue 'go_down;
-                        }
-                    } else {
-                        Err::<_, Error>(self.error(pos, "while parsing this datatype sort").into())
+                            Err::<_, Error>(
+                                self.error(pos, "while parsing this datatype sort").into(),
+                            )
                             .chain_err(|| self.error(current_pos, "expected sort"))?
-                    },
+                        }
+                    }
 
-                    None => if typ.is_none() {
-                        self.backtrack_to(start_pos);
-                        return Ok(None);
-                    } else {
-                        return Ok(typ);
-                    },
+                    None => {
+                        if typ.is_none() {
+                            self.backtrack_to(start_pos);
+                            return Ok(None);
+                        } else {
+                            return Ok(typ);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// Parses a recursive function declaration.
+    fn define_fun_rec(&mut self, instance: &Instance) -> Res<bool> {
+        if !self.word_opt(keywords::cmd::def_fun_rec) {
+            return Ok(false);
+        }
+
+        use crate::fun::FunSig;
+
+        self.functions.clear();
+
+        let mut funs: Vec<(FunSig, Pos, _)> = vec![];
+
+        self.ws_cmt();
+
+        let (pos, name) = self
+            .ident()
+            .chain_err(|| "at the start of the function declaration")?;
+        self.ws_cmt();
+
+        self.ws_cmt();
+        self.tag("(")
+            .chain_err(|| format!("opening function `{}`'s arguments", conf.emph(name)))?;
+        self.ws_cmt();
+
+        let mut args = VarInfos::new();
+        let mut arg_map = BTreeMap::new();
+
+        // Parse the signature of this function.
+        while !self.tag_opt(")") {
+            self.tag("(")?;
+            self.ws_cmt();
+
+            let (pos, arg_name) = self.ident().chain_err(|| {
+                format!(
+                    "in function `{}`'s signature (argument name)",
+                    conf.emph(name)
+                )
+            })?;
+            self.ws_cmt();
+
+            let sort = self.sort().chain_err(|| {
+                format!(
+                    "for argument `{}` of function `{}`",
+                    conf.emph(arg_name),
+                    conf.emph(name)
+                )
+            })?;
+
+            let idx = args.next_index();
+            args.push(VarInfo::new(arg_name, sort, idx));
+
+            if arg_map.insert(arg_name, idx).is_some() {
+                bail!(self.error(
+                    pos,
+                    format!(
+                        "found two arguments named `{}` \
+                         in function `{}`'s declaration",
+                        conf.bad(arg_name),
+                        conf.emph(name)
+                    )
+                ))
+            }
+
+            self.ws_cmt();
+            self.tag(")").chain_err(|| {
+                format!(
+                    "closing argument `{}` of function `{}`",
+                    conf.emph(arg_name),
+                    conf.emph(name)
+                )
+            })?;
+            self.ws_cmt()
+        }
+
+        self.ws_cmt();
+        let typ = self
+            .sort()
+            .chain_err(|| format!("sort of function `{}`", conf.emph(name)))?;
+
+        let fun = FunSig::new(name, args, typ);
+        fun::register_sig(fun.clone())?;
+
+        let prev = self
+            .functions
+            .insert(name, (fun.sig.clone(), fun.typ.clone()));
+        if prev.is_some() {
+            bail!(self.error(
+                pos,
+                format!("attempting to redefine function {}", conf.bad(&name)),
+            ))
+        }
+        debug_assert! { prev.is_none() }
+
+        funs.push((fun, pos, arg_map));
+
+        self.ws_cmt();
+
+        self.parse_rec_fun_defs(instance, funs)?;
+
+        Ok(true)
     }
 
     /// Parses some recursive function declarations.
@@ -1083,7 +1190,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             return Ok(false);
         }
 
-        use fun::FunSig;
+        use crate::fun::FunSig;
 
         self.functions.clear();
 
@@ -1176,7 +1283,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         .error(
                             pos,
                             format!("found two functions named `{}`", conf.bad(name)),
-                        ).into();
+                        )
+                        .into();
                     bail!(e.chain_err(|| self.error(*other_pos, "first appearance")))
                 }
             }
@@ -1199,8 +1307,25 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             .chain_err(|| "opening the list of function definitions")?;
         self.ws_cmt();
 
+        self.parse_rec_fun_defs(instance, funs)?;
+
+        self.ws_cmt();
+        self.tag(")")
+            .chain_err(|| "closing the list of function definitions")?;
+
+        Ok(true)
+    }
+
+    /// Parses some definitions for some (recursive) functions.
+    ///
+    /// Registers the functions when successful.
+    fn parse_rec_fun_defs(
+        &mut self,
+        instance: &Instance,
+        funs: Vec<(fun::FunSig, Pos, BTreeMap<&'s str, VarIdx>)>,
+    ) -> Res<()> {
         // Parse all definitions.
-        for (mut fun, pos, var_map) in funs {
+        for (fun, pos, var_map) in funs {
             let def = if let Some(term) = self
                 .term_opt(&fun.sig, &var_map, instance)
                 .chain_err(|| {
@@ -1208,7 +1333,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         "while parsing definition (term) for function `{}`",
                         conf.emph(&fun.name)
                     )
-                }).chain_err(|| self.error(pos, "declared here"))?
+                })
+                .chain_err(|| self.error(pos, "declared here"))?
             {
                 self.ws_cmt();
                 // Success.
@@ -1219,18 +1345,15 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     .error_here(format!(
                         "expected definition (term) for function `{}`",
                         conf.emph(fun.name)
-                    )).into();
+                    ))
+                    .into();
                 bail!(e.chain_err(|| self.error(pos, "declared here")))
             };
 
             fun::new(def).chain_err(|| self.error(pos, "while registering this function"))?;
         }
 
-        self.ws_cmt();
-        self.tag(")")
-            .chain_err(|| "closing the list of function definitions")?;
-
-        Ok(true)
+        Ok(())
     }
 
     /// Parses a datatype constructor.
@@ -1430,7 +1553,8 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                         "while parsing the declaration for datatype `{}`",
                         conf.emph(&dtyp.name)
                     )
-                }).chain_err(|| self.error(dtyps_pos[index], "declared here"))?;
+                })
+                .chain_err(|| self.error(dtyps_pos[index], "declared here"))?;
             self.ws_cmt();
             final_dtyps.push(dtyp)
         }
@@ -1473,7 +1597,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             bail!(self.error_here("expected Bool sort"))
         }
 
-        let pred_index = instance.push_pred(ident.into(), VarMap::of(sorts));
+        let pred_index = instance.push_pred(ident, VarMap::of(sorts));
         let prev = self.cxt.pred_name_map.insert(ident.into(), pred_index);
         if let Some(prev) = prev {
             bail!(self.error(
@@ -1830,26 +1954,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 expected,
                 obtained,
                 index,
-            }) => if let Some(exp) = expected {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected an expression of sort {}, found {}", exp, obtained
-                    )
-                  )
-                  => self.error(op_pos, "in this operator application")
+            }) => {
+                if let Some(exp) = expected {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected an expression of sort {}, found {}", exp, obtained
+                        )
+                      )
+                      => self.error(op_pos, "in this operator application")
+                    }
+                } else {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected the expression starting here has sort {} \
+                          which is illegal", obtained
+                        )
+                      )
+                      => self.error(op_pos, "in this operator application")
+                    }
                 }
-            } else {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected the expression starting here has sort {} \
-                      which is illegal", obtained
-                    )
-                  )
-                  => self.error(op_pos, "in this operator application")
-                }
-            },
+            }
             Err(TypError::Msg(blah)) => bail!(self.error(op_pos, blah)),
         }
     }
@@ -2050,8 +2176,6 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         args_pos: &[Pos],
         args: Vec<Term>,
     ) -> Res<(Term, Pos)> {
-        use errors::TypError;
-
         match term::try_fun(name, args) {
             Ok(term) => Ok((term, name_pos)),
 
@@ -2059,26 +2183,28 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 expected,
                 obtained,
                 index,
-            }) => if let Some(exp) = expected {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected an expression of sort {}, found {}", exp, obtained
-                    )
-                  )
-                  => self.error(name_pos, "in this function application")
+            }) => {
+                if let Some(exp) = expected {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected an expression of sort {}, found {}", exp, obtained
+                        )
+                      )
+                      => self.error(name_pos, "in this function application")
+                    }
+                } else {
+                    err_chain! {
+                      self.error(
+                        args_pos[index], format!(
+                          "expected the expression starting here has sort {} \
+                          which is illegal", obtained
+                        )
+                      )
+                      => self.error(name_pos, "in this function application")
+                    }
                 }
-            } else {
-                err_chain! {
-                  self.error(
-                    args_pos[index], format!(
-                      "expected the expression starting here has sort {} \
-                      which is illegal", obtained
-                    )
-                  )
-                  => self.error(name_pos, "in this function application")
-                }
-            },
+            }
 
             Err(TypError::Msg(blah)) => {
                 let e: Error = blah.into();
@@ -2102,76 +2228,100 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     fn op_opt(&mut self) -> Res<Option<Op>> {
         let start_pos = self.pos();
         let res = match self.next() {
-            Some("a") => if self.word_opt("nd") {
-                Some(Op::And)
-            } else {
-                None
-            },
-            Some("o") => if self.word_opt("r") {
-                Some(Op::Or)
-            } else {
-                None
-            },
-            Some("n") => if self.word_opt("ot") {
-                Some(Op::Not)
-            } else {
-                None
-            },
-            Some("i") => if self.word_opt("te") {
-                Some(Op::Ite)
-            } else {
-                None
-            },
-            Some("m") => if self.word_opt("od") {
-                Some(Op::Mod)
-            } else if self.word_opt("atch") {
-                bail!("unsupported `{}` operator", conf.bad("match"))
-            } else {
-                None
-            },
-            Some("r") => if self.word_opt("em") {
-                Some(Op::Rem)
-            } else {
-                None
-            },
-            Some("d") => if self.word_opt("iv") {
-                Some(Op::IDiv)
-            } else if self.word_opt("istinct") {
-                Some(Op::Distinct)
-            } else {
-                None
-            },
-            Some("t") => if self.word_opt("o_int") {
-                Some(Op::ToInt)
-            } else if self.word_opt("o_real") {
-                Some(Op::ToReal)
-            } else {
-                None
-            },
+            Some("a") => {
+                if self.word_opt("nd") {
+                    Some(Op::And)
+                } else {
+                    None
+                }
+            }
+            Some("o") => {
+                if self.word_opt("r") {
+                    Some(Op::Or)
+                } else {
+                    None
+                }
+            }
+            Some("n") => {
+                if self.word_opt("ot") {
+                    Some(Op::Not)
+                } else {
+                    None
+                }
+            }
+            Some("i") => {
+                if self.word_opt("te") {
+                    Some(Op::Ite)
+                } else {
+                    None
+                }
+            }
+            Some("m") => {
+                if self.word_opt("od") {
+                    Some(Op::Mod)
+                } else if self.word_opt("atch") {
+                    bail!("unsupported `{}` operator", conf.bad("match"))
+                } else {
+                    None
+                }
+            }
+            Some("r") => {
+                if self.word_opt("em") {
+                    Some(Op::Rem)
+                } else {
+                    None
+                }
+            }
+            Some("d") => {
+                if self.word_opt("iv") {
+                    Some(Op::IDiv)
+                } else if self.word_opt("istinct") {
+                    Some(Op::Distinct)
+                } else {
+                    None
+                }
+            }
+            Some("t") => {
+                if self.word_opt("o_int") {
+                    Some(Op::ToInt)
+                } else if self.word_opt("o_real") {
+                    Some(Op::ToReal)
+                } else {
+                    None
+                }
+            }
 
-            Some("s") => if self.word_opt("tore") {
-                Some(Op::Store)
-            } else if self.word_opt("elect") {
-                Some(Op::Select)
-            } else {
-                None
-            },
+            Some("s") => {
+                if self.word_opt("tore") {
+                    Some(Op::Store)
+                } else if self.word_opt("elect") {
+                    Some(Op::Select)
+                } else {
+                    None
+                }
+            }
 
-            Some("=") => if self.tag_opt(">") {
-                Some(Op::Impl)
-            } else {
-                Some(Op::Eql)
-            },
-            Some(">") => if self.tag_opt("=") {
-                Some(Op::Ge)
-            } else {
-                Some(Op::Gt)
-            },
-            Some("<") => if self.tag_opt("=") {
-                Some(Op::Le)
-            } else {
-                Some(Op::Lt)
-            },
+            Some("=") => {
+                if self.tag_opt(">") {
+                    Some(Op::Impl)
+                } else {
+                    Some(Op::Eql)
+                }
+            }
+            Some(">") => {
+                if self.tag_opt("=") {
+                    Some(Op::Ge)
+                } else {
+                    Some(Op::Gt)
+                }
+            }
+            Some("<") => {
+                if self.tag_opt("=") {
+                    Some(Op::Le)
+                } else {
+                    Some(Op::Lt)
+                }
+            }
             Some("+") => Some(Op::Add),
             Some("-") => Some(Op::Sub),
             Some("*") => Some(Op::Mul),
@@ -2543,8 +2693,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 self.error(
                     name_pos,
                     format!("in this `define-fun` for {}", conf.emph(name)),
-                ).into(),
-            ).chain_err(|| self.error(body_pos, "body is ill typed"))
+                )
+                .into(),
+            )
+            .chain_err(|| self.error(body_pos, "body is ill typed"))
             .chain_err(|| {
                 self.error(
                     sort_pos,
@@ -2558,7 +2710,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
 
         if let Some(term) = body.to_term()? {
-            use fun::FunSig;
+            use crate::fun::FunSig;
             let fun = FunSig::new(name, var_info, out_sort).into_fun(term);
             let _ = fun::new(fun)
                 .chain_err(|| self.error(name_pos, "while registering this function"))?;
@@ -3323,6 +3475,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             } else if self.set_logic()?
                 || self.pred_dec(instance)?
                 || self.define_fun(instance)?
+                || self.define_fun_rec(instance)?
                 || self.define_funs_rec(instance)?
                 || self.assert(instance)?
                 || self.dtyp_dec_item()?
@@ -3455,4 +3608,42 @@ pub fn fun_dtyp(s: &str) {
         cxt.parser(s, 0, &Profiler::new()).parse(&mut dummy),
         "while parsing function / datatypes"
     );
+}
+
+/// Parses a test instance corresponding to McCarthy's 91 function.
+pub fn mc_91() -> Instance {
+    let mut instance = Instance::new();
+    let mut cxt = ParserCxt::new();
+    let input = "
+(set-logic HORN)
+(declare-fun mc91 ( Int Int ) Bool)
+(assert (forall ((n Int)) (=> (> n 100) (mc91 n (- n 10)))))
+(assert (forall ((n Int) (t Int) (r Int))
+    (=>
+        (and
+            (<= n 100)
+            (mc91 (+ n 11) t)
+            (mc91 t r)
+        )
+        (mc91 n r)
+    )
+))
+(assert (forall ((n Int) (r Int))
+    (=>
+        (and
+            (<= n 101)
+            (not (= r 91))
+            (mc91 n r)
+        )
+        false
+    )
+))
+    ";
+
+    print_err!(
+        cxt.parser(input, 0, &Profiler::new()).parse(&mut instance),
+        "while parsing mc_91 instance"
+    );
+
+    instance
 }

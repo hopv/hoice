@@ -7,17 +7,17 @@
   ) )
 ) )
 
-(define-funs-rec
-  (
-    (len ( (l (Lst Int)) ) Int)
-  )
-  (
+(define-fun-rec
+  ;(
+    len ( (l (Lst Int)) ) Int
+  ;)
+  ;(
     (ite
       (= l nil)
       0
       (+ 1 (len (tail l)))
     )
-  )
+  ;)
 )
 
 (assert (forall

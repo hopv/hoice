@@ -6,7 +6,7 @@
 
 use std::{fmt, slice::Iter};
 
-use common::*;
+use crate::common::*;
 
 /// The direction of the next step.
 ///
@@ -133,9 +133,9 @@ pub struct ZipFrame<'a, Acc> {
 /// The goal is to let the zipper know how to construct an empty accumulator.
 pub trait Accumulator<Elem> {
     /// Creates an empty accumulator.
-    fn new_empty(usize) -> Self;
+    fn new_empty(capa: usize) -> Self;
     /// Pushes a new element in the accumulator.
-    fn push(&mut self, Elem);
+    fn push(&mut self, elem: Elem);
 }
 impl<T> Accumulator<T> for Vec<T> {
     fn new_empty(hint: usize) -> Self {
@@ -143,6 +143,14 @@ impl<T> Accumulator<T> for Vec<T> {
     }
     fn push(&mut self, elem: T) {
         self.push(elem)
+    }
+}
+impl<T: Ord> Accumulator<T> for BTreeSet<T> {
+    fn new_empty(_: usize) -> Self {
+        BTreeSet::new()
+    }
+    fn push(&mut self, elem: T) {
+        self.insert(elem);
     }
 }
 impl Accumulator<()> for () {
@@ -229,15 +237,17 @@ where
             ZipDoTotal::Upp { yielded }
         } else {
             match *term.get() {
-                RTerm::Var(ref typ, var_idx) => if let Some(subst) = subst.as_ref() {
-                    ZipDoTotal::Upp {
-                        yielded: subst[var_idx].clone(),
+                RTerm::Var(ref typ, var_idx) => {
+                    if let Some(subst) = subst.as_ref() {
+                        ZipDoTotal::Upp {
+                            yielded: subst[var_idx].clone(),
+                        }
+                    } else {
+                        ZipDoTotal::Upp {
+                            yielded: nul_do(info, ZipNullary::Var(typ, var_idx))?,
+                        }
                     }
-                } else {
-                    ZipDoTotal::Upp {
-                        yielded: nul_do(info, ZipNullary::Var(typ, var_idx))?,
-                    }
-                },
+                }
 
                 RTerm::Cst(ref cst) => ZipDoTotal::Upp {
                     yielded: nul_do(info, ZipNullary::Cst(cst))?,
@@ -318,7 +328,7 @@ where
                     term: ref nu_term,
                     ..
                 } => {
-                    let mut rgt_args = empty.iter();
+                    let rgt_args = empty.iter();
                     let op = ZipOp::Slc(name);
                     let lft_args = Acc::new_empty(1);
 
@@ -340,7 +350,7 @@ where
                     term: ref nu_term,
                     ..
                 } => {
-                    let mut rgt_args = empty.iter();
+                    let rgt_args = empty.iter();
                     let op = ZipOp::Tst(name);
                     let lft_args = Acc::new_empty(1);
 

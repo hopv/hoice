@@ -12,8 +12,7 @@
 //! [`Instance`]: ../common/struct.Instance.html (Instance struct)
 //! [`PreInstance`]: struct.PreInstance.html (PreInstance struct)
 
-use common::*;
-use instance::*;
+use crate::{common::*, instance::*, preproc::utils::ExtractRes};
 
 pub mod utils;
 
@@ -30,7 +29,7 @@ pub use self::{
     arg_red::ArgRed, bias_unroll::BiasedUnroll, cfg_red::CfgRed, fun_preds::FunPreds,
     one_lhs::OneLhs, one_rhs::OneRhs, strict_neg_clauses::StrictNeg, unroll::RUnroll,
 };
-pub use instance::PreInstance;
+pub use crate::instance::PreInstance;
 
 /// Extension for a predicate.
 ///
@@ -79,22 +78,22 @@ fn run(instance: PreInstance, profiler: &Profiler, simplify_first: bool) -> Res<
 /// Finalizes pre-processing
 fn finalize(res: Res<()>, instance: &mut Instance, _profiler: &Profiler) -> Res<()> {
     profile!(
-    |_profiler| wrap {
-      instance.finalize()
-    } "finalizing"
-  )?;
+        |_profiler| wrap {
+            instance.finalize()
+        } "finalizing"
+    )?;
 
     profile! {
-      |_profiler|
-      "clauses |        positive" => add instance.pos_clauses().len()
+        |_profiler|
+        "clauses |        positive" => add instance.pos_clauses().len()
     }
     profile! {
-      |_profiler|
-      "clauses |        negative" => add instance.neg_clauses().len()
+        |_profiler|
+        "clauses |        negative" => add instance.neg_clauses().len()
     }
     profile! {
-      |_profiler|
-      "clauses | strict-negative" => add instance.strict_neg_clauses().len()
+        |_profiler|
+        "clauses | strict-negative" => add instance.strict_neg_clauses().len()
     }
 
     match res {
@@ -136,7 +135,8 @@ pub fn work_on_split(
             } else {
                 Some(*c)
             }
-        }).collect();
+        })
+        .collect();
 
     let mut strict_neg_clauses = Vec::with_capacity(instance.neg_clauses().len());
 
@@ -202,8 +202,6 @@ pub fn work_on_split(
                   "Strengthening using {}",
                   clause.to_string_info( instance.preds() ) ?
                 }
-
-                use preproc::utils::ExtractRes;
 
                 match profile! {
                     |profiler| wrap {
@@ -379,11 +377,14 @@ impl<'a> Reductor<'a> {
             ($preproc:ident) => ( run!($preproc bool) ) ;
             ($preproc:ident $($tail:tt)*) => (
                 if let Some(preproc) = self.$preproc.as_mut() {
+                    // println!("clauses count: {}", self.instance.clauses().len());
                     if let Some(red_info) = utils::run_preproc(
                         & mut self.instance, _profiler, preproc, & mut count
                     ) ? {
                         run! { @ $($tail)* Some(red_info) }
                     } else {
+                        // println!("clauses count: {}", self.instance.clauses().len());
+                        // println!("bail");
                         return Ok(())
                     }
                 } else {
@@ -488,11 +489,11 @@ pub trait RedStrat {
     fn name(&self) -> &'static str;
 
     /// Constructor.
-    fn new(&Instance) -> Self;
+    fn new(instance: &Instance) -> Self;
 
     /// Applies the reduction strategy. Returns the number of predicates reduced
     /// and the number of clauses forgotten.
-    fn apply(&mut self, &mut PreInstance) -> Res<RedInfo>;
+    fn apply(&mut self, instance: &mut PreInstance) -> Res<RedInfo>;
 }
 
 /// Calls `PredInstance::simplify_all`.

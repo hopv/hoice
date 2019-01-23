@@ -11,8 +11,10 @@
 //! [hoice]: https://github.com/hopv/hoice (hoice github repository)
 //! [smt]: http://smtlib.cs.uiowa.edu/ (SMT-LIB website)
 
-use common::{conf, ColorExt, HashMap, Read, Solver};
-use errors::*;
+use crate::{
+    common::{conf, ColorExt, HashMap, Instance, Read, Solver},
+    errors::*,
+};
 
 pub mod parse;
 
@@ -93,7 +95,7 @@ impl Input {
     pub fn of_file<P: AsRef<::std::path::Path>>(file: P) -> Res<Self> {
         use std::fs::OpenOptions;
         let file = file.as_ref();
-        log_info!{
+        log_info! {
           "loading horn clause file {}...", conf.emph(file.to_string_lossy())
         }
         let mut buff = String::new();
@@ -120,7 +122,7 @@ impl Output {
     /// Loads some input data from a file.
     pub fn of_file(file: &str) -> Res<Self> {
         use std::fs::OpenOptions;
-        log_info!{ "loading hoice output file {}...", conf.emph(file) }
+        log_info! { "loading hoice output file {}...", conf.emph(file) }
         let mut buff = String::new();
         OpenOptions::new()
             .read(true)
@@ -138,7 +140,7 @@ impl Output {
     /// Checks the signature of the predicates match the declarations of an input
     /// `smt2` file. Also checks that all predicates are defined *once*.
     pub fn check_consistency(&mut self, input: &Input) -> Res<()> {
-        log_info!{ "checking predicate signature consistency..." }
+        log_info! { "checking predicate signature consistency..." }
         let mut map = HashMap::with_capacity(self.pred_defs.len());
         log! { @4 "checking for duplicate definitions" }
         for &PredDef {
@@ -147,7 +149,7 @@ impl Output {
         {
             let prev = map.insert(pred.clone(), args.clone());
             if prev.is_some() {
-                bail!(
+                error_chain::bail!(
                     "predicate {} is defined twice in hoice's output",
                     conf.emph(pred)
                 )
@@ -157,7 +159,7 @@ impl Output {
         for &PredDec { ref pred, ref sig } in &input.pred_decs {
             if let Some(args) = map.get(pred) {
                 if sig.len() != args.len() {
-                    bail!(
+                    error_chain::bail!(
                         "arguments of predicate {}'s definition \
                          does not match its signature",
                         conf.emph(pred)
@@ -167,7 +169,7 @@ impl Output {
                 let iter = sig.iter().zip(args.iter()).enumerate();
                 for (count, (ty_1, &(ref arg, ref ty_2))) in iter {
                     if ty_1 != ty_2 {
-                        bail!(
+                        error_chain::bail!(
                             "type of argument {} ({}) in predicate {}'s definition ({}) \
                              match that of the input file ({})",
                             count,
@@ -329,9 +331,9 @@ impl Data {
         }
 
         if !okay {
-            bail!("predicates do not verify all the clauses of the input file")
+            error_chain::bail!("predicates do not verify all the clauses of the input file")
         } else if err {
-            bail!("at least one error while checking the clauses")
+            error_chain::bail!("at least one error while checking the clauses")
         } else {
             Ok(())
         }
@@ -344,9 +346,7 @@ pub fn do_it(input_file: &str, output_file: &str) -> Res<()> {
 
     log! { @4 "spawning solver" }
 
-    let mut solver = conf
-        .solver
-        .spawn("check", Parser, &::instance::Instance::new())?;
+    let mut solver = conf.solver.spawn("check", Parser, &Instance::new())?;
 
     let res = data.check(&mut solver);
     if res.is_ok() {
@@ -369,9 +369,7 @@ pub fn do_it_from_str<P: AsRef<::std::path::Path>>(input_file: P, model: &str) -
         Output::of_str(model).chain_err(|| "while loading model")?,
     )?;
 
-    let mut solver = conf
-        .solver
-        .spawn("check", Parser, &::instance::Instance::new())?;
+    let mut solver = conf.solver.spawn("check", Parser, &Instance::new())?;
     let res = data.check(&mut solver);
     let end_res = solver.kill().chain_err(|| "While killing solver");
     res.and_then(|_| end_res)
@@ -381,7 +379,7 @@ mod smt {
     use rsmt2::parse::{ExprParser, IdentParser, ValueParser};
     use rsmt2::SmtRes;
 
-    use check::{Ident, Term, Value};
+    use crate::check::{Ident, Term, Value};
 
     /// Parser for the output of the SMT solver.
     ///

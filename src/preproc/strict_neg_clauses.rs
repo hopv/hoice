@@ -1,11 +1,24 @@
 //! Works on strict negative clause.
 
-use common::*;
-use preproc::{utils::ExtractRes, PreInstance, RedStrat};
+use crate::{
+    common::*,
+    preproc::{utils::ExtractRes, PreInstance, RedStrat},
+};
 
 /// Works on strict negative clause.
 ///
-/// Extracts strengthening terms from strict negative clauses.
+/// Extracts strengthening terms from strict negative clauses. Note that in some cases, this
+/// preprocessor can completely solve the instance. See examples below.
+///
+/// This preprocessor goes through the strict negative clauses (negative clauses with only one
+/// predicate application) for each predicate `p` and extracts a term where `p v_0 ... v_n` needs
+/// to be false according to the clause. Such a term `t` is called *strengthening* since, during
+/// the learning process, any candidate `c` created by the learner will be strengthened to `(and t
+/// c)`.
+///
+/// Then, if we have strengthening terms for all predicates, this preprocessor will check whether
+/// these terms taken as definitions verify all the clauses. If they do then the instance is solved
+/// (see second example below).
 ///
 /// # Examples
 ///
@@ -24,17 +37,40 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 ///       )
 ///     )
 ///   )
+///   (assert
+///     (forall ( (x0 Int) (x1 Int) (x2 Int) (x3 Int) )
+///       (=>
+///         (and
+///             true
+///         )
+///         (pred x0 x1 x2 x3)
+///       )
+///     )
+///   )
+///   (assert
+///     (forall ( (x2 Int) (x3 Int) )
+///       (=>
+///         (and
+///             (pred 0 0 x2 x3)
+///             (>= (+ x2 x3) 0)
+///         )
+///         (pred 7 7 7 x3)
+///       )
+///     )
+///   )
 /// ");
 ///
 /// let mut strict_neg = StrictNeg::new(& instance);
 /// let mut instance = PreInstance::new(& mut instance).unwrap();
 /// let info = strict_neg.apply(& mut instance).unwrap();
-/// assert! { ! info.non_zero() }
+/// assert! { info.non_zero() }
 ///
 /// let pred: PrdIdx = 0.into();
 /// assert_eq! { "pred", & instance[pred].name }
 ///
+/// println!("is solved: {}", instance.is_solved());
 /// let strengthening = instance[pred].strength().unwrap();
+/// println!("aaa");
 /// let expected = "(or \
 ///     (>= (* (- 1) v_0) 0) \
 ///     (not (= v_1 0)) \
@@ -50,9 +86,56 @@ use preproc::{utils::ExtractRes, PreInstance, RedStrat};
 /// let expected = &::hoice::parse::term(expected, &info, &instance);
 /// assert_eq! { expected, strengthening }
 /// ```
+///
+/// Example where the strengthening term is enough to conclude:
+///
+/// ```
+/// # use hoice::{ parse, preproc::{ PreInstance, RedStrat, StrictNeg } };
+/// let mut instance = parse::instance("
+///   (declare-fun pred ( Int Int Int Int ) Bool)
+///   (assert
+///     (forall ( (x2 Int) (x3 Int) )
+///       (=>
+///         (and
+///           (>= x2 1) (>= (+ x2 (* (- 1) x3)) 1)
+///           (pred x2 0 (- 1) x3)
+///         )
+///         false
+///       )
+///     )
+///   )
+///   (assert
+///     (forall ( (x3 Int) )
+///       (=>
+///         (and
+///             (>= x3 0)
+///         )
+///         (pred 7 7 7 x3)
+///       )
+///     )
+///   )
+///   (assert
+///     (forall ( (x2 Int) (x3 Int) )
+///       (=>
+///         (and
+///             (pred 0 0 x2 x3)
+///             (>= (+ x2 x3) 0)
+///         )
+///         (pred 7 7 7 x3)
+///       )
+///     )
+///   )
+/// ");
+///
+/// let mut strict_neg = StrictNeg::new(& instance);
+/// let mut instance = PreInstance::new(& mut instance).unwrap();
+/// let info = strict_neg.apply(& mut instance).unwrap();
+/// assert! { info.non_zero() }
+/// assert! { instance.is_solved() }
+/// ```
 pub struct StrictNeg {
     /// Stores partial definitions for the predicates.
-    partial_defs: PrdHMap<Option<Vec<Term>>>,
+    partial_defs: PrdHMap<Option<Vec<(Quantfed, Term)>>>,
     /// Clauses to remove.
     clauses_to_rm: Vec<ClsIdx>,
 }
@@ -70,14 +153,14 @@ impl StrictNeg {
                 ()
             }};
 
-            ($pred:expr => add $term:expr) => {{
+            ($pred:expr => add $quant:expr, $term:expr) => {{
                 if let Some(vec) = self
                     .partial_defs
                     .entry($pred)
                     .or_insert_with(|| Some(Vec::new()))
                     .as_mut()
                 {
-                    vec.push($term)
+                    vec.push(($quant, $term))
                 }
             }};
         }
@@ -117,7 +200,7 @@ impl StrictNeg {
             };
 
             match extractor.terms_of_lhs_app(
-                false,
+                true,
                 instance,
                 clause.vars(),
                 (clause.lhs_terms(), clause.lhs_preds()),
@@ -128,7 +211,7 @@ impl StrictNeg {
 
                 ExtractRes::SuccessFalse => pdef!(pred => set false),
 
-                ExtractRes::Success((qvars, pred_app, tterms)) => if qvars.is_empty() {
+                ExtractRes::Success((qvars, pred_app, tterms)) => {
                     if pred_app.is_some() || !tterms.preds().is_empty() {
                         bail!("inconsistent instance state")
                     }
@@ -140,15 +223,126 @@ impl StrictNeg {
                     } else {
                         let term =
                             term::or(terms.iter().map(|term| term::not(term.clone())).collect());
-                        pdef!(pred => add term)
+                        pdef!(pred => add qvars, term)
                     }
-                },
+                }
 
                 ExtractRes::Failed => (),
             }
         }
 
         Ok(())
+    }
+
+    /// Checks whether the partial definitions are legal definitions for the predicates.
+    ///
+    /// If successful, meaning the instance is solved, forces all the predicates and returns
+    /// `true`. Returns `false` otherwise.
+    fn check_defs(&mut self, instance: &mut PreInstance) -> Res<(bool, RedInfo)> {
+        let mut info = RedInfo::new();
+
+        if instance
+            .preds()
+            .iter()
+            .any(|pred| !pred.is_defined() && !self.partial_defs.get(&pred.idx).is_some())
+        {
+            return Ok((false, info));
+        }
+
+        // println!("clause count: {}", instance.clauses().len());
+
+        log! { @3 "partial definitions cover all predicates" }
+        info.preds += self.partial_defs.len();
+
+        // let mut all_clauses: Vec<_> = instance
+        //     .clauses()
+        //     .index_iter()
+        //     .map(|(idx, _)| idx)
+        //     .collect();
+
+        // instance.forget_clauses(&mut all_clauses)?;
+
+        // println!(
+        //     "clause count: {}, def count: {}",
+        //     instance.clauses().len(),
+        //     self.partial_defs.len()
+        // );
+
+        let solved = instance
+            .check_pred_partial_defs(
+                self.partial_defs
+                    .iter()
+                    .map(|(pred, opt)| (*pred, opt.as_ref().unwrap())),
+            )
+            .chain_err(|| "while checking partial definitions")?;
+
+        if !solved {
+            return Ok((false, info));
+        }
+
+        // Building the actual definitions.
+        let mut defs = Vec::with_capacity(self.partial_defs.len());
+
+        for (pred, def) in self.partial_defs.drain() {
+            let mut fresh: VarIdx = instance[pred].sig().len().into();
+            let def = def.unwrap();
+            let mut qvars = VarHMap::new();
+            let mut term = term::tru();
+
+            // macro_rules! display {
+            //     () => {{
+            //         print!("  (forall (");
+            //         for (var, typ) in &qvars {
+            //             print!(" ({} {})", var.default_str(), typ)
+            //         }
+            //         println!(" )");
+            //         println!("    {}", term);
+            //         println!("  )")
+            //     }};
+            // }
+
+            // println!("definition for {}", instance[pred]);
+            for (q, t) in def {
+                let mut map = VarHMap::new();
+                // print!("  (forall (");
+                for (var, typ) in q {
+                    // print!(" ({} {})", var.default_str(), typ);
+                    map.insert(var, term::var(fresh, typ.clone()));
+                    let var = fresh;
+                    fresh.inc();
+                    // print!("->{}", var.default_str());
+                    let prev = qvars.insert(var, typ);
+                    debug_assert_eq! { prev, None }
+                }
+                // println!(" )");
+                // println!("    {}", t);
+                // println!("  )");
+
+                let t = if !map.is_empty() { t.subst(&map).0 } else { t };
+                term = term::and(vec![term, t]);
+
+                // display!()
+            }
+
+            let mut tterms = TTermSet::new();
+            let is_new = tterms.insert_term(term);
+            debug_assert! { is_new }
+            defs.push((pred, vec![(qvars, tterms)]));
+            // instance.force_pred_right(pred, qvars, None, tterms)?;
+
+            // println!("rewritten as");
+            // display!()
+        }
+
+        if solved {
+            let (okay, nu_info) = instance
+                .force_all_preds(defs, true)
+                .chain_err(|| "while forcing all predicates")?;
+            info += nu_info;
+            debug_assert! { okay }
+        }
+
+        Ok((solved, info))
     }
 }
 
@@ -174,18 +368,48 @@ impl RedStrat for StrictNeg {
             instance.forget_clauses(&mut self.clauses_to_rm)?
         }
 
+        let mut false_preds = None;
+        self.partial_defs.retain(|pred, opt| {
+            if opt.is_none() {
+                false_preds.get_or_insert_with(|| vec![]).push(*pred);
+                false
+            } else {
+                true
+            }
+        });
+
+        if let Some(false_preds) = false_preds {
+            for pred in false_preds {
+                info.preds += 1;
+                info += instance.force_false(pred)?
+            }
+        }
+
+        // Do we have partial definitions for all the predicates?
+        let (solved, nu_info) = self.check_defs(instance)?;
+        info += nu_info;
+        if solved {
+            return Ok(info);
+        }
+
         for (pred, terms_opt) in self.partial_defs.drain() {
             if let Some(mut terms) = terms_opt {
                 log! { @3 "success ({} term(s))", terms.len() }
                 if_log! { @4
-                    for term in & terms {
-                        log! { @4 |=> "{}", term }
+                    for (quant, term) in & terms {
+                        log! { @4 |=> "{} ({} quantified variable(s))", term, quant.len() }
                     }
                 }
                 if let Some(term) = instance.unset_strength(pred) {
-                    terms.push(term.clone())
+                    terms.push((Quantfed::new(), term.clone()))
                 }
-                let conj = term::and(terms);
+                let mut conj = Vec::with_capacity(terms.len());
+                for (q, t) in terms {
+                    if q.is_empty() {
+                        conj.push(t)
+                    }
+                }
+                let conj = term::and(conj);
                 match conj.bool() {
                     Some(true) => (),
                     Some(false) => {

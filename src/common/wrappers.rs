@@ -3,12 +3,15 @@
 use std::fmt;
 use std::io::Write;
 
+use mylib::wrap_usize;
 use rsmt2::print::*;
 
-use common::{var_to, SmtRes, VarIndexed, VarTerms};
-use term::Term;
+use crate::{
+    common::{var_to, SmtRes, VarIndexed, VarTerms},
+    term::Term,
+};
 
-wrap_usize!{
+wrap_usize! {
     #[doc = "Predicate indices."]
     PrdIdx
     #[doc = "Range over predicates."]
@@ -21,7 +24,7 @@ wrap_usize!{
     map: PrdMap with iter: PrdMapIter
 }
 
-wrap_usize!{
+wrap_usize! {
     #[doc = "Variable indices."]
     VarIdx
     #[doc = "Range over variables."]
@@ -57,7 +60,7 @@ impl VarIdx {
     }
 }
 
-impl Into<VarTerms> for VarMap<::term::Term> {
+impl Into<VarTerms> for VarMap<Term> {
     fn into(self) -> VarTerms {
         var_to::terms::new(self)
     }
@@ -119,7 +122,7 @@ impl VarMap<Term> {
 
 impl<T: fmt::Display> fmt::Display for VarMap<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        for_first!{
+        mylib::for_first! {
           self.iter() => {
             |fst| write!(fmt, "{}", fst) ?,
             then |nxt| write!(fmt, " {}", nxt) ?
@@ -148,68 +151,68 @@ impl<T: Copy> Expr2Smt<T> for VarIdx {
     }
 }
 
-wrap_usize!{
-  #[doc = "Arity."]
-  Arity
-  #[doc = "Range over arity."]
-  range: ArityRange
-  #[doc = "Total map from Arity to something."]
-  map: ArityMap with iter: ArityMapIter
-}
-
-wrap_usize!{
-  #[doc = "Clause indices."]
-  ClsIdx
-  #[doc = "Range over clauses."]
-  range: ClsRange
-  #[doc = "Set of clauses."]
-  set: ClsSet
-  #[doc = "Hash map from clauses to something."]
-  hash map: ClsHMap
-  #[doc = "Total map from clauses to something."]
-  map: ClsMap with iter: ClsMapIter
+wrap_usize! {
+    #[doc = "Arity."]
+    Arity
+    #[doc = "Range over arity."]
+    range: ArityRange
+    #[doc = "Total map from Arity to something."]
+    map: ArityMap with iter: ArityMapIter
 }
 
 wrap_usize! {
-  #[doc = "Clause cluster indices."]
-  CtrIdx
-  #[doc = "Ranger over clusters."]
-  range: CtrRange
-  #[doc = "Set of clusters."]
-  set: CtrSet
-  #[doc = "Hash map from clusters to something."]
-  hash map: CtrHMap
-  #[doc = "Total map from clusters to something."]
-  map: CtrMap with iter: CtrMapIter
+    #[doc = "Clause indices."]
+    ClsIdx
+    #[doc = "Range over clauses."]
+    range: ClsRange
+    #[doc = "Set of clauses."]
+    set: ClsSet
+    #[doc = "Hash map from clauses to something."]
+    hash map: ClsHMap
+    #[doc = "Total map from clauses to something."]
+    map: ClsMap with iter: ClsMapIter
 }
 
-wrap_usize!{
-  #[doc = "Constraint index."]
-  CstrIdx
-  #[doc = "Range over constraint indices."]
-  range: CstrRange
-  #[doc = "Constraint set."]
-  set: CstrSet
-  #[doc = "Constraint total map."]
-  map: CstrMap with iter: CstrMapIter
+wrap_usize! {
+    #[doc = "Clause cluster indices."]
+    CtrIdx
+    #[doc = "Ranger over clusters."]
+    range: CtrRange
+    #[doc = "Set of clusters."]
+    set: CtrSet
+    #[doc = "Hash map from clusters to something."]
+    hash map: CtrHMap
+    #[doc = "Total map from clusters to something."]
+    map: CtrMap with iter: CtrMapIter
 }
 
-wrap_usize!{
-  #[doc = "Learner index."]
-  LrnIdx
-  #[doc = "Map of learners"]
-  hash map: LrnHMap
-  #[doc = "Total map from learners to something."]
-  map: LrnMap with iter: LrnMapIter
+wrap_usize! {
+    #[doc = "Constraint index."]
+    CstrIdx
+    #[doc = "Range over constraint indices."]
+    range: CstrRange
+    #[doc = "Constraint set."]
+    set: CstrSet
+    #[doc = "Constraint total map."]
+    map: CstrMap with iter: CstrMapIter
+}
+
+wrap_usize! {
+    #[doc = "Learner index."]
+    LrnIdx
+    #[doc = "Map of learners"]
+    hash map: LrnHMap
+    #[doc = "Total map from learners to something."]
+    map: LrnMap with iter: LrnMapIter
 }
 unsafe impl Send for LrnIdx {}
 
-wrap_usize!{
-  #[doc = "Teacher Assistant index."]
-  TAsIdx
-  #[doc = "Map of TAs."]
-  hash map: TAsHMap
-  #[doc = "Total map from TAs to something."]
-  map: TAsMap with iter: TAsMapIter
+wrap_usize! {
+    #[doc = "Teacher Assistant index."]
+    TAsIdx
+    #[doc = "Map of TAs."]
+    hash map: TAsHMap
+    #[doc = "Total map from TAs to something."]
+    map: TAsMap with iter: TAsMapIter
 }
 unsafe impl Send for TAsIdx {}

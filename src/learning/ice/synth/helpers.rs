@@ -1,7 +1,7 @@
 //! Macros factoring code for the synthesis process.
 
 use super::TermVals;
-use common::*;
+use crate::common::*;
 
 /// Applies `$f` to `$term`.
 ///
@@ -420,7 +420,8 @@ fn sum_diff() {
         assert_eq! { & format!("{}", term), & expected[cnt] };
         cnt += 1;
         Ok(false)
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 /// Arith sum/diff synth.

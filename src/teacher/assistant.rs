@@ -1,8 +1,10 @@
 //! Handles example propagation.
 
-use common::*;
-use data::{Data, Sample};
-use var_to::vals::RVarVals;
+use crate::{
+    common::*,
+    data::{AssData as Data, Sample},
+    var_to::vals::RVarVals,
+};
 
 /// Result of trying to force a sample positive/negative.
 pub enum ForceRes {
@@ -139,6 +141,8 @@ pub struct Assistant {
     instance: Arc<Instance>,
     /// Profiler.
     _profiler: Profiler,
+    /// Data profiler.
+    _data_profiler: Profiler,
     /// True if we're using ADTs.
     using_adts: bool,
     /// Maps predicates to their positive / strict negative clause data.
@@ -153,6 +157,7 @@ impl Assistant {
     pub fn new(instance: Arc<Instance>) -> Res<Self> {
         let solver = conf.solver.spawn("assistant", (), &instance)?;
         let _profiler = Profiler::new();
+        let _data_profiler = Profiler::new();
 
         let using_adts = dtyp::get_all().iter().next().is_some();
 
@@ -170,6 +175,7 @@ impl Assistant {
             solver,
             instance,
             _profiler,
+            _data_profiler,
             using_adts,
             clauses,
             using_rec_funs,
@@ -234,7 +240,12 @@ impl Assistant {
 
     /// Destroys the assistant.
     pub fn finalize(mut self) -> Res<Profiler> {
-        self.solver.kill().chain_err(|| "While killing solver")?;
+        profile!(
+            self wrap {
+                self.solver.kill().chain_err(|| "While killing solver")
+            } "finalization"
+        )?;
+        self._profiler.add_sub("data", self._data_profiler);
         Ok(self._profiler)
     }
 
@@ -245,10 +256,13 @@ impl Assistant {
         }
 
         let (mut pos, mut neg) = (Vec::new(), Vec::new());
-        // msg! { debug self.core => "breaking implications..." }
         profile! { self "constraints received" => add data.constraints.len() }
 
         'all_constraints: for cstr in CstrRange::zero_to(data.constraints.len()) {
+            log! { @3
+                "trying to break\n{}",
+                data.constraints[cstr].to_string_info(self.instance.preds()).unwrap()
+            }
             // Can happen because of simplifications when propagating.
             if cstr > data.constraints.len() {
                 break;
@@ -256,12 +270,6 @@ impl Assistant {
             if data.constraints[cstr].is_tautology() {
                 continue;
             }
-
-            // debug! {
-            //   "  {}", data.constraints[cstr].string_do(
-            //     self.instance.preds(), |s| s.to_string()
-            //   ).unwrap()
-            // }
 
             let mut trivial = false;
             let mut rhs_false = false;
@@ -280,8 +288,20 @@ impl Assistant {
                     // Discard the constraint, regardless of what will happen.
                     profile! { self tick "data" }
                     data.tautologize(cstr)?;
+                    if pos.len() > 0 {
+                        log! { @4 "discovered {} positive samples", pos.len() }
+                        for _sample in &pos {
+                            log! { @4 "  {} {}", self.instance[_sample.0], &_sample.1 }
+                        }
+                    }
                     for (pred, args, clause) in pos.drain(0..) {
                         data.add_data(clause, vec![], Some((pred, args)))?;
+                    }
+                    if neg.len() > 0 {
+                        log! { @4 "discovered {} negative samples", neg.len() }
+                        for _sample in &neg {
+                            log! { @4 "  {} {}", self.instance[_sample.0], &_sample.1 }
+                        }
                     }
                     for (pred, args, clause) in neg.drain(0..) {
                         data.add_data(clause, vec![(pred, args)], None)?;
@@ -293,6 +313,7 @@ impl Assistant {
             }
 
             if let Some(&Sample { pred, ref args }) = data.constraints[cstr].rhs() {
+                profile! { self tick "try force" }
                 match self.try_force(data, pred, args)? {
                     ForceRes::None => (),
                     ForceRes::Pos {
@@ -313,11 +334,13 @@ impl Assistant {
                         neg.push((pred, sample, clause))
                     }
                 }
+                profile! { self mark "try force" }
             }
 
             // move_on!(if trivial) ;
 
             if let Some(lhs) = data.constraints[cstr].lhs() {
+                profile! { self tick "try force" }
                 for (pred, samples) in lhs {
                     let mut lhs_trivial = true;
                     for sample in samples {
@@ -345,6 +368,7 @@ impl Assistant {
                     }
                     trivial = trivial || lhs_trivial
                 }
+                profile! { self mark "try force" }
             } else {
                 bail!("Illegal constraint")
             }
@@ -360,6 +384,8 @@ impl Assistant {
             profile! { self "negative examples generated" => add _neg_count }
         }
 
+        self._data_profiler.merge(data.profiler().clone());
+
         Ok(())
     }
 
@@ -371,7 +397,7 @@ impl Assistant {
     ///   input sample to be classified positive.
     /// - `ForceRes::Neg` of a sample which, when forced negative, will force the
     ///   input sample to be classified negative.
-    pub fn try_force(&mut self, _data: &Data, pred: PrdIdx, vals: &VarVals) -> Res<ForceRes> {
+    fn try_force(&mut self, _data: &Data, pred: PrdIdx, vals: &VarVals) -> Res<ForceRes> {
         let clause_data = if let Some(data) = self.clauses.get(&pred) {
             data
         } else {
@@ -430,7 +456,7 @@ impl Assistant {
                             |e| e.into()
                         )
                     }
-                } "smt"
+                } "try force", "smt"
             }?;
 
             solver!(pop);

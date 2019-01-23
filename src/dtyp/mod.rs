@@ -31,8 +31,8 @@
 //! term creation.
 //!
 //! ```rust
-//! use hoice::{ dtyp, dtyp::{ RDTyp, PartialTyp } };
-//! let dummy_pos = ::hoice::parse::Pos::default();
+//! use hoice::{ dtyp, dtyp::{ RDTyp, PartialTyp }, parse::Pos };
+//! let dummy_pos = Pos::default();
 //! let (tree_name, tree_list_name) = ("DTypTestTree", "DTypTestTreeList");
 //! let (mut tree, mut tree_list) = (RDTyp::new(tree_name), RDTyp::new(tree_list_name));
 //!
@@ -99,20 +99,20 @@
 //! [`RDTyp`]: struct.RDTyp.html (RDTyp struct)
 //! [`DTyp`]: type.DTyp.html (DTyp type)
 
-use common::*;
+use crate::{common::*, parse::Pos};
 
-wrap_usize! {
-  #[doc = "Type parameter indices."]
-  TPrmIdx
-  #[doc = "Total map from type parameters to something."]
-  map: TPrmMap with iter: TPrmMapIter
+mylib::wrap_usize! {
+    #[doc = "Type parameter indices."]
+    TPrmIdx
+    #[doc = "Total map from type parameters to something."]
+    map: TPrmMap with iter: TPrmMapIter
 }
 
-wrap_usize! {
-  #[doc = "Constructor argument indices."]
-  CArgIdx
-  #[doc = "Total map from constructor arguments to something."]
-  map: CArgMap with iter: CArgMapIter
+mylib::wrap_usize! {
+    #[doc = "Constructor argument indices."]
+    CArgIdx
+    #[doc = "Total map from constructor arguments to something."]
+    map: CArgMap with iter: CArgMapIter
 }
 
 /// A concrete type, a polymorphic type, a datatype or a type parameter.
@@ -125,7 +125,7 @@ pub enum PartialTyp {
     /// Array.
     Array(Box<PartialTyp>, Box<PartialTyp>),
     /// Datatype.
-    DTyp(String, ::parse::Pos, TPrmMap<PartialTyp>),
+    DTyp(String, Pos, TPrmMap<PartialTyp>),
     /// Concrete type.
     Typ(Typ),
     /// Type parameter.
@@ -144,10 +144,9 @@ impl PartialTyp {
     /// # Examples
     ///
     /// ```rust
-    /// # use hoice::dtyp::*;
-    /// # use hoice::common::*;
+    /// # use hoice::{dtyp::*, common::*, parse::Pos};
     /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-    /// let dummy_pos = ::hoice::parse::Pos::default();
+    /// let dummy_pos = Pos::default();
     /// let ptyp = PartialTyp::DTyp(
     ///     "MyADT".into(), dummy_pos, vec![
     ///         list.into(), PartialTyp::DTyp( "SubADT".into(), dummy_pos, vec![].into() )
@@ -176,9 +175,11 @@ impl PartialTyp {
 
                     PartialTyp::DTyp(name, _, _) if name == dtyp_name => return true,
 
-                    PartialTyp::DTyp(_, _, prms) => for typ in prms {
-                        to_do.push(typ)
-                    },
+                    PartialTyp::DTyp(_, _, prms) => {
+                        for typ in prms {
+                            to_do.push(typ)
+                        }
+                    }
 
                     PartialTyp::Typ(typ) => typ_to_do.push(typ),
 
@@ -187,7 +188,7 @@ impl PartialTyp {
             }
 
             while let Some(current) = typ_to_do.pop() {
-                use typ::RTyp;
+                use crate::typ::RTyp;
 
                 match current.get() {
                     RTyp::Unk | RTyp::Int | RTyp::Real | RTyp::Bool => (),
@@ -196,9 +197,11 @@ impl PartialTyp {
                         typ_to_do.push(tgt)
                     }
                     RTyp::DTyp { dtyp, .. } if dtyp.name == dtyp_name => return true,
-                    RTyp::DTyp { prms, .. } => for typ in prms {
-                        typ_to_do.push(typ)
-                    },
+                    RTyp::DTyp { prms, .. } => {
+                        for typ in prms {
+                            typ_to_do.push(typ)
+                        }
+                    }
                 }
             }
         }
@@ -209,10 +212,9 @@ impl PartialTyp {
     /// # Examples
     ///
     /// ```rust
-    /// # use hoice::dtyp::*;
-    /// # use hoice::common::*;
+    /// # use hoice::{dtyp::*, common::*, parse::Pos};
     /// ::hoice::fun::test::create_length_fun();
-    /// let dummy_pos = ::hoice::parse::Pos::default();
+    /// let dummy_pos = Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -226,10 +228,9 @@ impl PartialTyp {
     /// ```
     ///
     /// ```rust
-    /// # use hoice::dtyp::*;
-    /// # use hoice::common::*;
+    /// # use hoice::{dtyp::*, common::*, parse::Pos};
     /// ::hoice::fun::test::create_length_fun();
-    /// let dummy_pos = ::hoice::parse::Pos::default();
+    /// let dummy_pos = Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -246,7 +247,7 @@ impl PartialTyp {
         let mut stack = vec![(self, typ)];
 
         while let Some((ptyp, typ)) = stack.pop() {
-            use typ::RTyp;
+            use crate::typ::RTyp;
 
             match (ptyp, typ.get()) {
                 (PartialTyp::Array(p_src, p_tgt), RTyp::Array { src, tgt }) => {
@@ -254,15 +255,19 @@ impl PartialTyp {
                     stack.push((p_tgt, tgt))
                 }
 
-                (PartialTyp::Typ(p_typ), _) => if !p_typ.is_compatible(typ) {
-                    bail!("cannot unify type {} and {}", ptyp, typ)
-                },
+                (PartialTyp::Typ(p_typ), _) => {
+                    if !p_typ.is_compatible(typ) {
+                        bail!("cannot unify type {} and {}", ptyp, typ)
+                    }
+                }
 
-                (PartialTyp::Param(idx), _) => if let Some(merged) = typ.merge(&map[*idx]) {
-                    map[*idx] = merged
-                } else {
-                    bail!("cannot unify type {} and {}", ptyp, typ)
-                },
+                (PartialTyp::Param(idx), _) => {
+                    if let Some(merged) = typ.merge(&map[*idx]) {
+                        map[*idx] = merged
+                    } else {
+                        bail!("cannot unify type {} and {}", ptyp, typ)
+                    }
+                }
 
                 (PartialTyp::DTyp(name, _, p_prms), RTyp::DTyp { dtyp, prms })
                     if name == &dtyp.name && p_prms.len() == prms.len() =>
@@ -319,10 +324,9 @@ impl PartialTyp {
     /// This checks that all datatypes mentioned in the partial type exist.
     ///
     /// ```rust
-    /// # use hoice::common::*;
-    /// # use hoice::dtyp::*;
+    /// # use hoice::{common::*, dtyp::*, parse::Pos};
     /// let _ = dtyp::get("List");
-    /// let dummy_pos = ::hoice::parse::Pos::default();
+    /// let dummy_pos = Pos::default();
     /// let unknown = PartialTyp::DTyp("Unknown".into(), dummy_pos, vec![].into());
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ unknown ].into()
@@ -330,7 +334,7 @@ impl PartialTyp {
     /// let err = ptyp.check().unwrap_err().1;
     /// assert_eq! { &err, "unknown sort `Unknown`" }
     /// ```
-    pub fn check(&self) -> Result<(), (::parse::Pos, String)> {
+    pub fn check(&self) -> Result<(), (Pos, String)> {
         let mut stack = vec![self];
 
         while let Some(ptyp) = stack.pop() {
@@ -352,9 +356,8 @@ impl PartialTyp {
     /// # Examples
     ///
     /// ```rust
-    /// # use hoice::dtyp::*;
-    /// # use hoice::common::*;
-    /// let dummy_pos = ::hoice::parse::Pos::default();
+    /// # use hoice::{dtyp::*, common::*, parse::Pos};
+    /// let dummy_pos = Pos::default();
     /// let param_0: TPrmIdx = 0.into();
     /// let ptyp = PartialTyp::DTyp(
     ///     "List".into(), dummy_pos, vec![ PartialTyp::Param(param_0) ].into()
@@ -368,10 +371,7 @@ impl PartialTyp {
     /// let typ = ptyp.to_type(Some(&params)).unwrap();
     /// assert_eq! { int_list, typ }
     /// ```
-    pub fn to_type(
-        &self,
-        prms: Option<&TPrmMap<Typ>>,
-    ) -> Result<Typ, (Option<::parse::Pos>, String)> {
+    pub fn to_type(&self, prms: Option<&TPrmMap<Typ>>) -> Result<Typ, (Option<Pos>, String)> {
         enum Frame<'a> {
             ArrayLft(&'a PartialTyp),
             ArrayRgt(Typ),
@@ -391,7 +391,7 @@ impl PartialTyp {
                 }
 
                 PartialTyp::DTyp(name, pos, prms) => {
-                    let mut nu_prms = TPrmMap::with_capacity(prms.len());
+                    let nu_prms = TPrmMap::with_capacity(prms.len());
                     let mut prms = prms.iter();
 
                     let dtyp = if let Ok(dtyp) = get(name) {
@@ -454,7 +454,7 @@ impl PartialTyp {
     }
 }
 
-impl_fmt! {
+mylib::impl_fmt! {
   PartialTyp(self, fmt) {
     let mut stack = vec![ (self, "".to_string()) ] ;
 
@@ -586,7 +586,7 @@ pub fn check_reserved(_name: &str) -> Res<()> {
 pub fn new<E, F>(dtyp: RDTyp, err: F) -> Res<DTyp>
 where
     E: Into<Error>,
-    F: Fn(::parse::Pos, String) -> E,
+    F: Fn(Pos, String) -> E,
 {
     check_reserved(&dtyp.name)?;
     new_raw(dtyp).and_then(|dtyp| {
@@ -618,7 +618,7 @@ where
 pub fn new_recs<E, F, RDTyps>(dtyp: RDTyps, err: F) -> Result<Vec<DTyp>, (usize, Error)>
 where
     E: Into<Error>,
-    F: Fn(::parse::Pos, String) -> E,
+    F: Fn(Pos, String) -> E,
     RDTyps: IntoIterator<Item = RDTyp>,
 {
     let mut res = vec![];
@@ -791,7 +791,7 @@ pub fn is_selector(selector: &str) -> bool {
 ///
 /// ```rust
 /// # use hoice::common::*;
-/// ::hoice::parse::fun_dtyp(
+/// hoice::parse::fun_dtyp(
 ///     "(declare-datatypes ( (Enum 0) ) \
 ///         ( ( A B C D E F G H ) )
 ///     )"
@@ -1006,9 +1006,9 @@ pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
 /// # Examples
 ///
 /// ```rust
-/// # use hoice::common::*;
+/// # use hoice::{common::*, parse::Pos};
 /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-/// let dummy_pos = ::hoice::parse::Pos::default();
+/// let dummy_pos = Pos::default();
 /// let typ = dtyp::type_selector(
 ///     "head", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
@@ -1020,8 +1020,8 @@ pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
 /// ```
 ///
 /// ```rust
-/// # use hoice::common::*;
-/// let dummy_pos = ::hoice::parse::Pos::default();
+/// # use hoice::{common::*, parse::Pos};
+/// let dummy_pos = Pos::default();
 /// let (_, blah) = dtyp::type_selector("unknown", dummy_pos, &term::int(7)).unwrap_err();
 /// assert_eq! {
 ///     &blah, "`unknown` is not a legal selector for sort Int"
@@ -1029,9 +1029,9 @@ pub fn type_constructor(constructor: &str, args: &[Term]) -> Res<Option<Typ>> {
 /// ```
 pub fn type_selector(
     selector: &str,
-    slc_pos: ::parse::Pos,
+    slc_pos: Pos,
     term: &Term,
-) -> Result<Typ, (Option<::parse::Pos>, String)> {
+) -> Result<Typ, (Option<Pos>, String)> {
     if let Some((dtyp, prms)) = term.typ().dtyp_inspect() {
         for args in dtyp.news.values() {
             for (slc, partial_typ) in args {
@@ -1062,9 +1062,9 @@ pub fn type_selector(
 /// # Examples
 ///
 /// ```rust
-/// # use hoice::common::*;
+/// # use hoice::{common::*, parse::Pos};
 /// let int_list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
-/// let dummy_pos = ::hoice::parse::Pos::default();
+/// let dummy_pos = Pos::default();
 /// dtyp::type_tester(
 ///     "nil", dummy_pos, & term::dtyp_new(int_list.clone(), "nil", vec![])
 /// ).unwrap();
@@ -1074,18 +1074,14 @@ pub fn type_selector(
 /// ```
 ///
 /// ```rust
-/// # use hoice::common::*;
-/// let dummy_pos = ::hoice::parse::Pos::default();
+/// # use hoice::{common::*, parse::Pos};
+/// let dummy_pos = Pos::default();
 /// let (_, blah) = dtyp::type_tester("unknown", dummy_pos, &term::int(7)).unwrap_err();
 /// assert_eq! {
 ///     &blah, "`unknown` is not a legal tester for sort Int"
 /// }
 /// ```
-pub fn type_tester(
-    tester: &str,
-    tst_pos: ::parse::Pos,
-    term: &Term,
-) -> Result<(), (::parse::Pos, String)> {
+pub fn type_tester(tester: &str, tst_pos: Pos, term: &Term) -> Result<(), (Pos, String)> {
     if let Some((dtyp, _)) = term.typ().dtyp_inspect() {
         if dtyp.news.contains_key(tester) {
             return Ok(());
@@ -1131,8 +1127,6 @@ impl RDTyp {
 
     /// Generates the definition for the `List` datatype.
     fn list() -> Self {
-        use parse::Pos;
-
         let mut news = BTreeMap::new();
 
         let mut prms = TPrmMap::new();
@@ -1267,7 +1261,7 @@ impl RDTyp {
     /// [module-level documentation]: index.html (dtyp module documentation)
     /// [`new`]: fn.new.html (datatype construction function)
     /// [`new_recs`]: fn.new_recs.html (datatypes construction function)
-    pub fn check(&self) -> Result<(), (::parse::Pos, String)> {
+    pub fn check(&self) -> Result<(), (Pos, String)> {
         for (constructor, cargs) in &self.news {
             for (selector, ptyp) in cargs {
                 if let Err((pos, err)) = ptyp.check() {
@@ -1366,8 +1360,8 @@ impl RDTyp {
         }
     }
 }
-impl_fmt! {
-  RDTyp(self, fmt) { write!(fmt, "{}", self.name) }
+mylib::impl_fmt! {
+    RDTyp(self, fmt) { write!(fmt, "{}", self.name) }
 }
 
 #[test]

@@ -1,8 +1,6 @@
 //! Tests for the term structure.
 
-use common::*;
-use term::int;
-use term::Op;
+use crate::{common::*, term::int, term::Op};
 
 #[test]
 fn cst_add() {
@@ -11,8 +9,8 @@ fn cst_add() {
     let sum = term::app(Op::Add, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    int model => sum, 10
-  )
+        int model => sum, 10
+    )
 }
 
 #[test]
@@ -22,8 +20,8 @@ fn cst_sub_1() {
     let sub = term::app(Op::Sub, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    int model => sub, 4
-  )
+        int model => sub, 4
+    )
 }
 
 #[test]
@@ -32,8 +30,8 @@ fn cst_sub_2() {
     let sub = term::app(Op::Sub, vec![c_1]);
     let model = model!();
     assert_eval!(
-    int model => sub, (-7)
-  )
+        int model => sub, (-7)
+    )
 }
 
 #[test]
@@ -43,8 +41,8 @@ fn cst_mul() {
     let mul = term::app(Op::Mul, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    int model => mul, 21
-  )
+        int model => mul, 21
+    )
 }
 
 #[test]
@@ -54,8 +52,8 @@ fn cst_div() {
     let div = term::app(Op::IDiv, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    int model => div, 2
-  )
+        int model => div, 2
+    )
 }
 
 #[test]
@@ -65,8 +63,8 @@ fn cst_mod() {
     let m0d = term::app(Op::Mod, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    int model => m0d, 1
-  )
+        int model => m0d, 1
+    )
 }
 
 #[test]
@@ -76,8 +74,8 @@ fn cst_gt_1() {
     let gt = term::app(Op::Gt, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => gt
-  )
+        bool model => gt
+    )
 }
 
 #[test]
@@ -87,8 +85,8 @@ fn cst_gt_2() {
     let gt = term::app(Op::Gt, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => gt
-  )
+        bool not model => gt
+    )
 }
 
 #[test]
@@ -98,8 +96,8 @@ fn cst_ge_1() {
     let ge = term::app(Op::Ge, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => ge
-  )
+        bool model => ge
+    )
 }
 
 #[test]
@@ -109,8 +107,8 @@ fn cst_ge_2() {
     let ge = term::app(Op::Ge, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => ge
-  )
+        bool model => ge
+    )
 }
 
 #[test]
@@ -120,8 +118,8 @@ fn cst_le_1() {
     let le = term::app(Op::Le, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => le
-  )
+        bool not model => le
+    )
 }
 
 #[test]
@@ -131,8 +129,8 @@ fn cst_le_2() {
     let le = term::app(Op::Le, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => le
-  )
+        bool model => le
+    )
 }
 
 #[test]
@@ -142,8 +140,8 @@ fn cst_lt_1() {
     let lt = term::app(Op::Lt, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => lt
-  )
+        bool not model => lt
+    )
 }
 
 #[test]
@@ -153,8 +151,8 @@ fn cst_lt_2() {
     let lt = term::app(Op::Lt, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => lt
-  )
+        bool not model => lt
+    )
 }
 
 #[test]
@@ -164,8 +162,8 @@ fn cst_eq_1() {
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => eq
-  )
+        bool model => eq
+    )
 }
 
 #[test]
@@ -175,8 +173,8 @@ fn cst_eq_2() {
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => eq
-  )
+        bool not model => eq
+    )
 }
 
 #[test]
@@ -186,8 +184,8 @@ fn cst_eq_3() {
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => eq
-  )
+        bool model => eq
+    )
 }
 
 #[test]
@@ -197,8 +195,8 @@ fn cst_eq_4() {
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => eq
-  )
+        bool not model => eq
+    )
 }
 
 #[test]
@@ -208,8 +206,8 @@ fn cst_impl_1() {
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => imp
-  )
+        bool model => imp
+    )
 }
 
 #[test]
@@ -219,8 +217,8 @@ fn cst_impl_2() {
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool not model => imp
-  )
+        bool not model => imp
+    )
 }
 
 #[test]
@@ -230,8 +228,8 @@ fn cst_impl_3() {
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => imp
-  )
+        bool model => imp
+    )
 }
 
 #[test]
@@ -241,8 +239,8 @@ fn cst_impl_4() {
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
     let model = model!();
     assert_eval!(
-    bool model => imp
-  )
+        bool model => imp
+    )
 }
 
 #[test]
@@ -251,8 +249,8 @@ fn cst_not_1() {
     let not = term::app(Op::Not, vec![c_1]);
     let model = model!();
     assert_eval!(
-    bool model => not
-  )
+        bool model => not
+    )
 }
 
 #[test]
@@ -261,8 +259,8 @@ fn cst_not_2() {
     let not = term::app(Op::Not, vec![c_1]);
     let model = model!();
     assert_eval!(
-    bool not model => not
-  )
+        bool not model => not
+    )
 }
 
 #[test]
@@ -274,8 +272,8 @@ fn cst_and_1() {
     let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool model => and
-  )
+        bool model => and
+    )
 }
 
 #[test]
@@ -287,8 +285,8 @@ fn cst_and_2() {
     let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool not model => and
-  )
+        bool not model => and
+    )
 }
 
 #[test]
@@ -300,8 +298,8 @@ fn cst_and_3() {
     let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool not model => and
-  )
+        bool not model => and
+    )
 }
 
 #[test]
@@ -313,8 +311,8 @@ fn cst_and_4() {
     let and = term::app(Op::And, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool not model => and
-  )
+        bool not model => and
+    )
 }
 
 #[test]
@@ -326,8 +324,8 @@ fn cst_or_1() {
     let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool model => or
-  )
+        bool model => or
+    )
 }
 
 #[test]
@@ -339,8 +337,8 @@ fn cst_or_2() {
     let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool model => or
-  )
+        bool model => or
+    )
 }
 
 #[test]
@@ -352,8 +350,8 @@ fn cst_or_3() {
     let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool model => or
-  )
+        bool model => or
+    )
 }
 
 #[test]
@@ -365,8 +363,8 @@ fn cst_or_4() {
     let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool model => or
-  )
+        bool model => or
+    )
 }
 
 #[test]
@@ -378,8 +376,8 @@ fn cst_or_5() {
     let or = term::app(Op::Or, vec![c_1, c_2, c_3, c_4]);
     let model = model!();
     assert_eval!(
-    bool not model => or
-  )
+        bool not model => or
+    )
 }
 
 #[test]

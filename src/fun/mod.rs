@@ -108,7 +108,7 @@
 
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
-use common::*;
+use crate::common::*;
 
 /// A hashconsed function.
 pub type Fun = Arc<RFun>;
@@ -179,11 +179,10 @@ pub fn retrieve_sig(fun: &str) -> Res<FunSig> {
 /// Accesses the signature of a function, if any.
 ///
 /// Used to type-check function calls.
-pub fn sig_do<F, T>(fun: &str, mut f: F) -> Result<T, ::errors::TypError>
+pub fn sig_do<F, T>(fun: &str, mut f: F) -> Result<T, TypError>
 where
-    F: for<'a> FnMut(&'a FunSig) -> Result<T, ::errors::TypError>,
+    F: for<'a> FnMut(&'a FunSig) -> Result<T, TypError>,
 {
-    use errors::TypError;
     if let Ok(defs) = factory.read() {
         if let Some(def) = defs.get(fun) {
             return f(&def.info);
@@ -361,9 +360,58 @@ where
     Ok(())
 }
 
+/// Defines all the functions needed for a model to make sense.
+pub fn write_for_model<W: Write>(w: &mut W, pref: &str, model: ConjModelRef) -> Res<()> {
+    {
+        // Do nothing if there are no functions at all.
+        let f = factory!(read);
+        if f.is_empty() {
+            return Ok(());
+        }
+    }
+
+    let mut set = BTreeSet::new();
+    for defs in model {
+        for (_, ttermss) in defs {
+            for tterms in ttermss {
+                tterms.collect_funs(&mut set)
+            }
+        }
+    }
+
+    let mut ordered = ordered()?;
+
+    let mut cnt = 0;
+    while cnt < ordered.len() {
+        if ordered[cnt].iter().any(|def| set.contains(&def.info.name)) {
+            for fun in &ordered[cnt] {
+                set.remove(&fun.info.name);
+                for name in &fun.deps {
+                    set.remove(name);
+                }
+            }
+            cnt += 1
+        } else {
+            ordered.swap_remove(cnt);
+        }
+    }
+
+    write_groups(w, pref, false, ordered)
+}
+
 /// Defines all the functions in SMT-LIB.
 pub fn write_all<W: Write>(w: &mut W, pref: &str, invariants: bool) -> Res<()> {
-    for mut group in ordered()? {
+    write_groups(w, pref, invariants, ordered()?)
+}
+
+/// Defines a bunch of functions in SMT-LIB.
+fn write_groups<W: Write>(
+    w: &mut W,
+    pref: &str,
+    invariants: bool,
+    groups: Vec<Vec<Fun>>,
+) -> Res<()> {
+    for group in groups {
         if group.len() == 1 {
             let fun = &group[0];
 
@@ -766,7 +814,7 @@ pub mod test {
             return ();
         }
 
-        ::parse::fun_dtyp(&format!(
+        crate::parse::fun_dtyp(&format!(
             "\
             (define-funs-rec
               (

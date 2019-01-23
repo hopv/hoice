@@ -1,6 +1,8 @@
 //! Parsers used by the checker.
 
-use check::*;
+use std::iter::Extend;
+
+use crate::check::*;
 
 /// Parser.
 #[derive(Clone)]
@@ -69,7 +71,6 @@ impl<'a> InParser<'a> {
 
     /// Backtracks some characters.
     fn backtrack(&mut self, mut mem: Vec<char>) {
-        use std::iter::Extend;
         mem.reverse();
         self.buf.extend(mem)
     }
@@ -77,7 +78,7 @@ impl<'a> InParser<'a> {
     /// Parses a tag or fails.
     fn tag(&mut self, tag: &str) -> Res<()> {
         if !self.tag_opt(tag) {
-            bail!("expected tag `{}`", conf.emph(tag))
+            error_chain::bail!("expected tag `{}`", conf.emph(tag))
         } else {
             Ok(())
         }
@@ -103,7 +104,7 @@ impl<'a> InParser<'a> {
     /// Parses a character or fails.
     fn char(&mut self, c: char) -> Res<()> {
         if !self.char_opt(c) {
-            bail!(
+            error_chain::bail!(
                 "expected character `{}`, got `{}`",
                 conf.emph(&c.to_string()),
                 conf.sad(if let Some(c) = self.next() {
@@ -167,7 +168,7 @@ impl<'a> InParser<'a> {
             }
         }
         if cnt != 0 {
-            bail!("found eof while parsing sexpr")
+            error_chain::bail!("found eof while parsing sexpr")
         }
         Ok(s)
     }
@@ -208,7 +209,7 @@ impl<'a> InParser<'a> {
         if let Some(id) = self.ident_opt()? {
             Ok(id)
         } else {
-            bail!("expected identifier")
+            error_chain::bail!("expected identifier")
         }
     }
     /// Identifier.
@@ -356,10 +357,9 @@ impl<'a> InParser<'a> {
 
         let (args, body) = if self.tag_opt("forall") {
             if negated {
-                bail!("negated forall in assertion")
+                error_chain::bail!("negated forall in assertion")
             }
             self.ws_cmt();
-            use std::iter::Extend;
             let mut args = vec![];
             loop {
                 let these_args = self.args().chain_err(|| "while parsing arguments")?;
@@ -388,7 +388,7 @@ impl<'a> InParser<'a> {
             let body = self.sexpr().chain_err(|| "while parsing body")?;
             (args, body)
         } else {
-            bail!("expected forall or exists")
+            error_chain::bail!("expected forall or exists")
         };
         self.ws_cmt();
 
@@ -432,7 +432,7 @@ impl<'a> InParser<'a> {
             }
         }
 
-        bail!("expected closing paren, found <eof>")
+        error_chain::bail!("expected closing paren, found <eof>")
     }
 
     /// Parses an `smt2` file.
@@ -464,7 +464,7 @@ impl<'a> InParser<'a> {
                 //   }
                 // }
                 // println!("`") ;
-                // bail!("expected item")
+                // error_chain::bail!("expected item")
             }
 
             self.ws_cmt();
@@ -482,7 +482,7 @@ impl<'a> InParser<'a> {
                 }
             }
             println!("`");
-            bail!("could not parse the whole input file")
+            error_chain::bail!("could not parse the whole input file")
         }
 
         Ok(Input {
@@ -499,17 +499,30 @@ impl<'a> InParser<'a> {
             return Ok(false);
         }
         self.ws_cmt();
-        let pred = self
+        let name = self
             .ident()
             .chain_err(|| "while parsing predicate identifier")?;
         self.ws_cmt();
         let args = self.args().chain_err(|| "while parsing arguments")?;
         self.ws_cmt();
-        self.tag("Bool")?;
+        let typ = self.sexpr()?;
         self.ws_cmt();
-        let body = Some(self.sexpr().chain_err(|| "while parsing body")?);
+        let body = self.sexpr().chain_err(|| "while parsing body")?;
         self.ws_cmt();
-        self.pred_defs.push(PredDef { pred, args, body });
+        if typ == "|Bool|" {
+            self.pred_defs.push(PredDef {
+                pred: name,
+                args,
+                body: Some(body),
+            })
+        } else {
+            self.fun_defs.push(FunDef {
+                name,
+                args,
+                typ,
+                body,
+            })
+        }
 
         Ok(true)
     }
@@ -552,7 +565,7 @@ impl<'a> InParser<'a> {
                     }
                 }
                 println!("`");
-                bail!("expected define-fun")
+                error_chain::bail!("expected define-fun")
             }
 
             self.ws_cmt();
@@ -574,7 +587,7 @@ impl<'a> InParser<'a> {
                 }
             }
             println!("`");
-            bail!("could not parse the whole output file")
+            error_chain::bail!("could not parse the whole output file")
         }
 
         Ok(Output {

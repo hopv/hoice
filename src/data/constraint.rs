@@ -1,5 +1,4 @@
-use common::*;
-use var_to::vals::VarValsSet;
+use crate::{common::*, var_to::vals::VarValsSet};
 
 use super::Sample;
 
@@ -129,7 +128,8 @@ impl Constraint {
                     debug_assert! { prev.is_some() }
                 }
                 rmed
-            }).unwrap_or(0)
+            })
+            .unwrap_or(0)
     }
 
     /// Transforms a constraint in a tautology.
@@ -193,11 +193,13 @@ impl Constraint {
         } else {
             let (reversed, c_1, c_2) = match self.lhs_len().cmp(&other.lhs_len()) {
                 Ordering::Less => (false, self, other),
-                Ordering::Equal => if self == other {
-                    return Ok(Some(Ordering::Equal));
-                } else {
-                    return Ok(None);
-                },
+                Ordering::Equal => {
+                    if self == other {
+                        return Ok(Some(Ordering::Equal));
+                    } else {
+                        return Ok(None);
+                    }
+                }
                 Ordering::Greater => (true, other, self),
             };
 
@@ -386,27 +388,28 @@ impl<'a> PebcakFmt<'a> for Constraint {
         }
     }
 }
-impl_fmt!{
-  Constraint(self, fmt) {
-    if let Some(ref lhs) = self.lhs {
-      if lhs.is_empty() {
-        write!(fmt, "true ") ?
-      }
-      for (pred, samples) in lhs {
-        for sample in samples {
-          write!(fmt, "(p_{} {}) ", pred, sample) ?
+
+mylib::impl_fmt! {
+    Constraint(self, fmt) {
+        if let Some(ref lhs) = self.lhs {
+            if lhs.is_empty() {
+                write!(fmt, "true ") ?
+            }
+            for (pred, samples) in lhs {
+                for sample in samples {
+                    write!(fmt, "(p_{} {}) ", pred, sample) ?
+                }
+            }
+        } else {
+            write!(fmt, "false ") ?
         }
-      }
-    } else {
-      write!(fmt, "false ") ?
+        write!(fmt, "=> ") ? ;
+        if let Some(ref rhs) = self.rhs {
+            write!(fmt, "{}", rhs)
+        } else {
+            write!(fmt, "false")
+        }
     }
-    write!(fmt, "=> ") ? ;
-    if let Some(ref rhs) = self.rhs {
-      write!(fmt, "{}", rhs)
-    } else {
-      write!(fmt, "false")
-    }
-  }
 }
 
 impl Eq for Constraint {}
