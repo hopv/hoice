@@ -314,8 +314,7 @@ impl Constraint {
     ///   needs to be true)
     /// - `Left(sample, false)` if the constraint is `sample => false` (`sample`
     ///   needs to be false)
-    /// - `Right(true)` if the constraint is trivial (`false => _` or `_ =>
-    ///   true`)
+    /// - `Right(true)` if the constraint is a contradiction `true => false`
     /// - `Right(false)` otherwise.
     ///
     /// If the result isn't `Right(_)`, the sample returned has been removed and

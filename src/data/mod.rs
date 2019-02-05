@@ -326,9 +326,12 @@ impl LrnData {
                             ) ? ;
                             modded_constraints.insert(constraint) ;
                         },
-                        Either::Right(true) => unsat!(
-                            "by `true => false` in constraint (data, force_pred)"
-                        ),
+                        Either::Right(true) => {
+                            data.cstr_info.forget(constraint) ;
+                            unsat!(
+                                "by `true => false` in constraint (data, force_pred)"
+                            )
+                        },
                     }
                 }
             }
@@ -976,9 +979,9 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    fn add_raw_neg(&mut self, clause: ClsIdx, pred: PrdIdx, args: RVarVals) -> bool {
+    fn add_raw_neg(&mut self, pred: PrdIdx, args: RVarVals) -> bool {
         let args = var_to::vals::new(args);
-        self.add_neg(clause, pred, args.clone())
+        self.add_neg(pred, args.clone())
     }
 
     /// Adds a positive example.
@@ -1007,7 +1010,7 @@ impl Data {
     /// The `clause` input is necessary for unsat core extraction.
     ///
     /// Does not propagate.
-    fn add_neg(&mut self, _clause: ClsIdx, pred: PrdIdx, args: VarVals) -> bool {
+    fn add_neg(&mut self, pred: PrdIdx, args: VarVals) -> bool {
         self.add_neg_untracked(pred, args)
     }
     /// Adds a negative example.
@@ -1138,11 +1141,11 @@ impl Data {
     ///         0.into(), vec![(p_0, r_var_vals!((val::none(typ::int())) (int 0)))], None
     ///     ).expect("while adding positive data");
     ///     data.propagate().expect("during propagation");
-    ///     assert! { data.check_unsat() }
+    ///     assert! { data.check_unsat().unwrap() }
     /// }
     /// ```
-    pub fn check_unsat(&mut self) -> bool {
-        self.get_unsat_proof().is_ok()
+    pub fn check_unsat(&mut self) -> Res<bool> {
+        self.get_unsat_proof().map(|_| true)
     }
 
     /// Retrieves a proof of unsat.
@@ -1180,6 +1183,7 @@ impl Data {
     /// ```
     pub fn get_unsat_proof(&mut self) -> Res<crate::unsat_core::UnsatRes> {
         self.propagate()?;
+        log_verb! { "learning data on unsat:\n{}", self.string_do(& (), |s| s.to_string()).unwrap() }
         for (pred, samples) in self.pos.index_iter() {
             for sample in samples {
                 for neg in &self.neg[pred] {
@@ -1364,6 +1368,10 @@ impl Data {
                                     modded_constraints.insert(constraint_idx);
                                 }
                                 Either::Right(true) => {
+                                    self.cstr_info.forget(constraint_idx);
+                                    debug_assert! { pos }
+                                    let is_new = self.add_neg(pred, args);
+                                    debug_assert! { is_new }
                                     unsat!("by `true => false` in constraint (data, propagate)")
                                 }
                             }
@@ -1524,7 +1532,7 @@ impl Data {
                     false
                 };
                 if add_as_neg {
-                    self.add_raw_neg(clause, pred, sample.clone());
+                    self.add_raw_neg(pred, sample.clone());
                 }
                 if lhs.is_empty() {
                     // Positive sample.
@@ -1541,7 +1549,7 @@ impl Data {
                     // Negative sample.
                     let (pred, sample) = lhs.pop().expect("failed pop on vector of length 1");
                     debug_assert_eq! { lhs.len(), 0 }
-                    let new = self.add_raw_neg(clause, pred, sample);
+                    let new = self.add_raw_neg(pred, sample);
                     return Ok(new);
                 } else {
                     // Constraint.
@@ -1614,7 +1622,7 @@ impl Data {
                     // Is this the last (positive) sample in a `... => false` constraint?
                     if nu_rhs.is_none() && lhs.is_empty() && nu_lhs.is_empty() {
                         // Then register as negative to record the conflict.
-                        self.add_neg(clause, pred, args);
+                        self.add_neg(pred, args);
                         unsat!("by `true => false` in constraint (data, prune_cstr)")
                     }
                     // Positive, skip.

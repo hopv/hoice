@@ -653,7 +653,11 @@ impl<'a> Teacher<'a> {
                     }
 
                     // Are we unsat?
-                    if self.data.check_unsat() {
+                    if self
+                        .data
+                        .check_unsat()
+                        .chain_err(|| "while checking unsat result in teacher")?
+                    {
                         return Ok(Either::Right(self.unsat_core()?));
                     }
                 }
@@ -688,7 +692,9 @@ impl<'a> Teacher<'a> {
 
     /// Retrieves the unsat core, if any.
     pub fn unsat_core(&mut self) -> Res<UnsatRes> {
-        self.data.get_unsat_proof()
+        self.data
+            .get_unsat_proof()
+            .chain_err(|| "while getting unsat proof in teacher")
     }
 
     /// Initial check, where all candidates are `true`.
