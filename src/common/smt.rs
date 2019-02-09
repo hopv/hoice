@@ -42,8 +42,8 @@ pub fn preproc_init<P>(solver: &mut Solver<P>) -> Res<()> {
 
 /// Resets a smt solver.
 ///
-/// Use this and not `solver.reset()`. This declares all the
-/// datatypes/functions used in the instance.
+/// Use this and not `solver.reset()`. This declares all the datatypes/functions used in the
+/// instance.
 pub fn reset<P, I>(solver: &mut Solver<P>, instance: I) -> Res<()>
 where
     I: AsRef<Instance>,

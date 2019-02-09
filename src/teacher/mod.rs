@@ -832,6 +832,8 @@ impl<'a> Teacher<'a> {
                     Err(e) => {
                         if e.is_unknown() {
                             smt::reset(&mut self.solver, &self.instance)?;
+                            self.solver.push(1)?;
+                            self.define_preds(cands)?;
                             got_unknown = true;
                             Ok(())
                         } else {
@@ -1002,6 +1004,7 @@ impl<'a> Teacher<'a> {
             }
         } else {
             log! { @debug | "  checksat" }
+            self.solver.comment("ping")?;
             let sat = profile! {
                 self wrap {
 
