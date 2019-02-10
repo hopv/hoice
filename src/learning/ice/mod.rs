@@ -268,7 +268,7 @@ impl<'core> IceLearner<'core> {
     /// Finalizes the learning process and exits.
     #[cfg(not(feature = "bench"))]
     pub fn finalize(mut self) -> Res<()> {
-        self.solver.kill()?;
+        let _ = self.solver.kill();
         profile! {
           self "quals once done" => add self.qualifiers.real_qual_count()
         }
@@ -276,7 +276,7 @@ impl<'core> IceLearner<'core> {
     }
     #[cfg(feature = "bench")]
     pub fn finalize(mut self) -> Res<()> {
-        self.solver.kill()?;
+        let _ = self.solver.kill();
         Ok(())
     }
 

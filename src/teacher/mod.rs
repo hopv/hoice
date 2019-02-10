@@ -663,6 +663,7 @@ impl<'a> Teacher<'a> {
                 }
 
                 MsgKind::Err(e) => {
+                    conf.check_timeout()?;
                     let id = match id {
                         Id::Learner(idx) => conf.emph(&self.learners[idx].1),
                         Id::Assistant => conf.emph("assistant"),
@@ -1004,7 +1005,6 @@ impl<'a> Teacher<'a> {
             }
         } else {
             log! { @debug | "  checksat" }
-            self.solver.comment("ping")?;
             let sat = profile! {
                 self wrap {
 
