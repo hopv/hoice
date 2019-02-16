@@ -4,7 +4,7 @@ use hashconsing::{HConsed, HashConsign};
 
 use crate::{common::*, dtyp::TPrmMap};
 
-hashconsing::new_consign! {
+hashconsing::consign! {
   /// Type factory.
   let factory = consign(conf.instance.term_capa) for RTyp ;
 }
