@@ -4,7 +4,7 @@ use hashconsing::HConsed;
 
 use crate::common::*;
 
-hashconsing::new_consign! {
+hashconsing::consign! {
     /// Value factory.
     let factory = consign(conf.instance.term_capa) for RVal ;
 }

@@ -7,7 +7,7 @@ use crate::{
     term::{Op, RTerm, Term},
 };
 
-hashconsing::new_consign! {
+hashconsing::consign! {
     /// Term factory.
     let factory = consign(conf.instance.term_capa) for RTerm ;
 }

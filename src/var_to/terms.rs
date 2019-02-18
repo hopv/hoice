@@ -5,7 +5,7 @@ use hashconsing::{HConsed, HashConsign};
 
 use crate::common::*;
 
-hashconsing::new_consign! {
+hashconsing::consign! {
     /// Term factory.
     let factory = consign(conf.instance.term_capa / 10) for VarMap<Term> ;
 }
