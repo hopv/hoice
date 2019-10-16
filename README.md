@@ -57,8 +57,8 @@ Note that this disables some features such as verbose output, profiling...
 - [x] `Int`
 - [x] `Real`
 - [x] `Array` (naive)
-- [ ] `List`
-- [ ] (mutually recursive) ADTs
+- [x] `List`
+- [x] (mutually recursive) ADTs
 
 Future features:
 
