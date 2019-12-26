@@ -410,7 +410,6 @@ impl RVal {
     /// Attempts to cast a value.
     pub fn cast(&self, typ: &Typ) -> Res<Val> {
         use crate::term::typ::RTyp;
-        use num::One;
 
         if &self.typ() == typ {
             return Ok(new(self.clone()));
@@ -511,7 +510,6 @@ impl RVal {
 
     /// Extracts an integer value.
     pub fn to_int(&self) -> Res<Option<Int>> {
-        use num::One;
         match self {
             RVal::I(ref i) => Ok(Some(i.clone())),
             RVal::R(ref r) => {
@@ -532,7 +530,6 @@ impl RVal {
     }
     /// Extracts a real value.
     pub fn to_real(&self) -> Res<Option<Rat>> {
-        use num::One;
         match self {
             RVal::R(ref r) => Ok(Some(r.clone())),
             RVal::I(ref i) => Ok(Some(Rat::new(i.clone(), Int::one()))),
@@ -634,7 +631,6 @@ impl RVal {
 impl RVal {
     /// Checks if the value is zero (integer or rational).
     pub fn is_zero(&self) -> bool {
-        use num::Zero;
         match self {
             RVal::I(ref i) => i.is_zero(),
             RVal::R(ref r) => r.is_zero(),
@@ -644,7 +640,6 @@ impl RVal {
 
     /// Checks if the value is one (integer or rational).
     pub fn is_one(&self) -> bool {
-        use num::One;
         match self {
             RVal::I(ref i) => i == &Int::one(),
             RVal::R(ref r) => r == &Rat::one(),
@@ -654,7 +649,6 @@ impl RVal {
 
     /// Checks if the value is minus one (integer or rational).
     pub fn is_minus_one(&self) -> bool {
-        use num::One;
         match self {
             RVal::I(ref i) => i == &-Int::one(),
             RVal::R(ref r) => r == &-Rat::one(),
@@ -738,7 +732,6 @@ impl RVal {
     /// assert!{ res.is_err() }
     /// ```
     pub fn mul(&self, other: &Val) -> Res<Val> {
-        use num::Zero;
         match self {
             RVal::N(ref typ) if typ.is_int() => match other.get() {
                 RVal::I(ref i) if i.is_zero() => Ok(int(0)),
@@ -822,7 +815,6 @@ impl RVal {
             bail!("division by zero, aborting...")
         }
         let mut res = &num / &den;
-        use num::Signed;
         if num.is_negative() ^ den.is_negative() && den.clone() * &res != num {
             res -= 1
         }
@@ -854,7 +846,7 @@ impl RVal {
 
     /// Modulo.
     pub fn modulo(&self, other: &Val) -> Res<Val> {
-        use num::{Integer, Signed};
+        use num::Integer;
         let b = try_val!(int other);
         let res = if b.is_one() {
             val::int(0)

@@ -342,7 +342,6 @@ impl Instance {
     ///
     /// The model is sorted in topological order.
     pub fn extend_model(&self, candidates: ConjCandidates) -> Res<ConjModel> {
-        use std::iter::Extend;
         let mut model = ConjModel::with_capacity(self.preds.len());
         let mut known_preds = PrdSet::new();
         let mut tmp: Vec<_> = candidates
@@ -1433,7 +1432,6 @@ impl Instance {
             // Consider the rhs of the clause negative, and all lhs applications
             // positive except this one.
             Bias::NuRgt(pred, args) => {
-                use crate::var_to::terms::VarTermsSet;
                 debug_assert! { clause.lhs_preds().get(& pred).is_some() }
                 debug_assert! {
                   clause.lhs_preds().get(& pred).unwrap().contains(& args)

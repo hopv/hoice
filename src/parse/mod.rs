@@ -563,7 +563,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         while !done {
             // Eat spaces.
             let rest = &self.string[self.cursor..];
-            let trimmed = rest.trim_left();
+            let trimmed = rest.trim_start();
             let diff = rest.len() - trimmed.len();
             done = diff == 0;
             self.cursor += diff;

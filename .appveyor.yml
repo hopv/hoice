@@ -1,7 +1,6 @@
 environment:
   matrix:
   - TARGET: x86_64-pc-windows-msvc
-  - TARGET: x86_64-pc-windows-gnu
   RUST_BACKTRACE: full
 
 branches:
@@ -23,6 +22,6 @@ build: false
 test_script:
   - cargo build
   - cargo build --release
-  # - cargo build --release --features bench
+  - cargo build --release --features bench
   - cargo test --lib
   - cargo test --doc

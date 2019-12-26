@@ -2,8 +2,34 @@
 
 use crate::{common::*, term::int, term::Op};
 
+fn init() {
+    let terms = [
+        term::int(0),
+        term::int(1),
+        term::int(2),
+        term::int(3),
+        term::u_minus(term::int(0)),
+        term::u_minus(term::int(1)),
+        term::u_minus(term::int(2)),
+        term::u_minus(term::int(3)),
+        term::var(40, typ::int()),
+        term::var(41, typ::int()),
+        term::var(42, typ::int()),
+        term::var(43, typ::int()),
+        term::u_minus(term::var(40, typ::int())),
+        term::u_minus(term::var(41, typ::int())),
+        term::u_minus(term::var(42, typ::int())),
+        term::u_minus(term::var(43, typ::int())),
+    ];
+
+    for _ in terms.into_iter() {
+        assert!(true)
+    }
+}
+
 #[test]
 fn cst_add() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let sum = term::app(Op::Add, vec![c_1, c_2]);
@@ -15,6 +41,7 @@ fn cst_add() {
 
 #[test]
 fn cst_sub_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let sub = term::app(Op::Sub, vec![c_1, c_2]);
@@ -26,6 +53,7 @@ fn cst_sub_1() {
 
 #[test]
 fn cst_sub_2() {
+    init();
     let c_1 = int(7);
     let sub = term::app(Op::Sub, vec![c_1]);
     let model = model!();
@@ -36,6 +64,7 @@ fn cst_sub_2() {
 
 #[test]
 fn cst_mul() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let mul = term::app(Op::Mul, vec![c_1, c_2]);
@@ -47,6 +76,7 @@ fn cst_mul() {
 
 #[test]
 fn cst_div() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let div = term::app(Op::IDiv, vec![c_1, c_2]);
@@ -58,6 +88,7 @@ fn cst_div() {
 
 #[test]
 fn cst_mod() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let m0d = term::app(Op::Mod, vec![c_1, c_2]);
@@ -69,6 +100,7 @@ fn cst_mod() {
 
 #[test]
 fn cst_gt_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let gt = term::app(Op::Gt, vec![c_1, c_2]);
@@ -80,6 +112,7 @@ fn cst_gt_1() {
 
 #[test]
 fn cst_gt_2() {
+    init();
     let c_1 = int(7);
     let c_2 = int(7);
     let gt = term::app(Op::Gt, vec![c_1, c_2]);
@@ -91,6 +124,7 @@ fn cst_gt_2() {
 
 #[test]
 fn cst_ge_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let ge = term::app(Op::Ge, vec![c_1, c_2]);
@@ -102,6 +136,7 @@ fn cst_ge_1() {
 
 #[test]
 fn cst_ge_2() {
+    init();
     let c_1 = int(7);
     let c_2 = int(7);
     let ge = term::app(Op::Ge, vec![c_1, c_2]);
@@ -113,6 +148,7 @@ fn cst_ge_2() {
 
 #[test]
 fn cst_le_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let le = term::app(Op::Le, vec![c_1, c_2]);
@@ -124,6 +160,7 @@ fn cst_le_1() {
 
 #[test]
 fn cst_le_2() {
+    init();
     let c_1 = int(7);
     let c_2 = int(7);
     let le = term::app(Op::Le, vec![c_1, c_2]);
@@ -135,6 +172,7 @@ fn cst_le_2() {
 
 #[test]
 fn cst_lt_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let lt = term::app(Op::Lt, vec![c_1, c_2]);
@@ -146,6 +184,7 @@ fn cst_lt_1() {
 
 #[test]
 fn cst_lt_2() {
+    init();
     let c_1 = int(7);
     let c_2 = int(7);
     let lt = term::app(Op::Lt, vec![c_1, c_2]);
@@ -157,6 +196,7 @@ fn cst_lt_2() {
 
 #[test]
 fn cst_eq_1() {
+    init();
     let c_1 = int(7);
     let c_2 = int(7);
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
@@ -168,6 +208,7 @@ fn cst_eq_1() {
 
 #[test]
 fn cst_eq_2() {
+    init();
     let c_1 = int(7);
     let c_2 = int(3);
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
@@ -179,6 +220,7 @@ fn cst_eq_2() {
 
 #[test]
 fn cst_eq_3() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
@@ -190,6 +232,7 @@ fn cst_eq_3() {
 
 #[test]
 fn cst_eq_4() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::tru();
     let eq = term::app(Op::Eql, vec![c_1, c_2]);
@@ -201,6 +244,7 @@ fn cst_eq_4() {
 
 #[test]
 fn cst_impl_1() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::fls();
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
@@ -212,6 +256,7 @@ fn cst_impl_1() {
 
 #[test]
 fn cst_impl_2() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::fls();
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
@@ -223,6 +268,7 @@ fn cst_impl_2() {
 
 #[test]
 fn cst_impl_3() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::tru();
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
@@ -234,6 +280,7 @@ fn cst_impl_3() {
 
 #[test]
 fn cst_impl_4() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let imp = term::app(Op::Impl, vec![c_1, c_2]);
@@ -245,6 +292,7 @@ fn cst_impl_4() {
 
 #[test]
 fn cst_not_1() {
+    init();
     let c_1 = term::fls();
     let not = term::app(Op::Not, vec![c_1]);
     let model = model!();
@@ -255,6 +303,7 @@ fn cst_not_1() {
 
 #[test]
 fn cst_not_2() {
+    init();
     let c_1 = term::tru();
     let not = term::app(Op::Not, vec![c_1]);
     let model = model!();
@@ -265,6 +314,7 @@ fn cst_not_2() {
 
 #[test]
 fn cst_and_1() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let c_3 = term::tru();
@@ -278,6 +328,7 @@ fn cst_and_1() {
 
 #[test]
 fn cst_and_2() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let c_3 = term::fls();
@@ -291,6 +342,7 @@ fn cst_and_2() {
 
 #[test]
 fn cst_and_3() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::tru();
     let c_3 = term::tru();
@@ -304,6 +356,7 @@ fn cst_and_3() {
 
 #[test]
 fn cst_and_4() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::fls();
     let c_3 = term::fls();
@@ -317,6 +370,7 @@ fn cst_and_4() {
 
 #[test]
 fn cst_or_1() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let c_3 = term::tru();
@@ -330,6 +384,7 @@ fn cst_or_1() {
 
 #[test]
 fn cst_or_2() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::tru();
     let c_3 = term::fls();
@@ -343,6 +398,7 @@ fn cst_or_2() {
 
 #[test]
 fn cst_or_3() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::tru();
     let c_3 = term::tru();
@@ -356,6 +412,7 @@ fn cst_or_3() {
 
 #[test]
 fn cst_or_4() {
+    init();
     let c_1 = term::tru();
     let c_2 = term::fls();
     let c_3 = term::fls();
@@ -369,6 +426,7 @@ fn cst_or_4() {
 
 #[test]
 fn cst_or_5() {
+    init();
     let c_1 = term::fls();
     let c_2 = term::fls();
     let c_3 = term::fls();
@@ -382,6 +440,7 @@ fn cst_or_5() {
 
 #[test]
 fn add_real_1() {
+    init();
     let v_1 = term::var(0, typ::real());
     let add = term::add(vec![term::real_of(-2.0), v_1.clone()]);
     let model = model!(val::real(rat_of_float(1.0)));
@@ -390,6 +449,7 @@ fn add_real_1() {
 
 #[test]
 fn ite_1() {
+    init();
     let v_1 = term::var(0, typ::real());
     let ite = term::ite(
         term::eq(
@@ -419,6 +479,7 @@ fn ite_1() {
 
 #[test]
 fn lazy_1() {
+    init();
     let v_0 = term::real_var(0);
     let t_1 = term::ge(v_0, term::real(rat_of_float(7.0)));
     let v_1 = term::real_var(1000);
@@ -437,6 +498,7 @@ fn lazy_1() {
 
 #[test]
 fn lazy_2() {
+    init();
     let v_0 = term::real_var(0);
     let t_1 = term::ge(v_0, term::real(rat_of_float(0.0)));
     let v_1 = term::real_var(1001);
@@ -455,6 +517,7 @@ fn lazy_2() {
 
 #[test]
 fn lazy_3() {
+    init();
     let v_0 = term::real_var(0);
     let t_1 = term::ge(v_0.clone(), term::real(rat_of_float(7.0)));
     let v_1 = term::real_var(1002);
@@ -467,6 +530,7 @@ fn lazy_3() {
 
 #[test]
 fn lazy_4() {
+    init();
     let v_0 = term::real_var(0);
     let t_1 = term::u_minus(v_0.clone());
     let v_1 = term::real_var(1003);

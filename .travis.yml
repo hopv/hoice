@@ -50,7 +50,7 @@ before_script:
 script:
   - cargo build
   - cargo build --release
-  # - cargo build --release --features bench
+  - cargo build --release --features bench
   - cargo test --lib
   - cargo test --doc
 

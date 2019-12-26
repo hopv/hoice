@@ -833,7 +833,7 @@ impl Data {
     ///     ).expect("while adding positive data");
     ///
     ///     data.merge_samples(cloned).expect("while merging samples");
-    ///     ; println!("{}", data.to_string_info(&()).unwrap());
+    ///     println!("{}", data.to_string_info(&()).unwrap());
     ///     assert_eq! { data.pos_neg_count(), (4, 0) }
     ///     assert! { data.constraints.is_empty() }
     /// }
