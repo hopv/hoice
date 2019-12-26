@@ -179,7 +179,6 @@ impl EntryPoints {
             .remove(&sample)
             .unwrap_or_else(SampleSet::new);
 
-        use crate::var_to::vals::SubsumeExt;
         let mut real_dep = None;
         for s in &self.real_pos_samples {
             if s.pred == dep.pred && s.args.subsumes(&dep.args) {

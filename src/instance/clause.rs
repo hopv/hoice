@@ -754,7 +754,6 @@ impl Clause {
     /// Checks a clause is well-formed.
     #[cfg(debug_assertions)]
     pub fn check(&self, blah: &'static str) -> Res<()> {
-        use std::iter::Extend;
         let mut vars = VarSet::with_capacity(self.vars.len());
         for term in &self.lhs_terms {
             vars.extend(term::vars(term))

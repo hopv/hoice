@@ -14,8 +14,6 @@
 //! [`ErrorKind::Unknown`]: enum.ErrorKind.html#variant.Unknown (Unknown variant of ErrorKind)
 //! [`chain`]: struct.Error.html#method.chain (chain function over Error)
 
-use error_chain::*;
-
 use crate::common::*;
 
 /// A term type-checking error.

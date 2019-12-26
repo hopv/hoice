@@ -260,7 +260,6 @@ impl Profiler {
     /// Constructor.
     #[cfg(not(feature = "bench"))]
     pub fn new() -> Self {
-        use std::cell::RefCell;
         Profiler {
             map: RefCell::new(InstantMap::new()),
             start: Instant::now(),

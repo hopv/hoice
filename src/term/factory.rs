@@ -201,7 +201,7 @@ pub fn var<V: Into<VarIdx>>(v: V, typ: Typ) -> Term {
 /// ```
 #[inline]
 pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
-    factory.mk(RTerm::Var(typ::int(), v.into()))
+    var(v, typ::int())
 }
 
 /// Creates a real variable.
@@ -217,7 +217,7 @@ pub fn int_var<V: Into<VarIdx>>(v: V) -> Term {
 /// ```
 #[inline]
 pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
-    factory.mk(RTerm::Var(typ::real(), v.into()))
+    var(v, typ::real())
 }
 
 /// Creates a boolean variable.
@@ -233,7 +233,7 @@ pub fn real_var<V: Into<VarIdx>>(v: V) -> Term {
 /// ```
 #[inline]
 pub fn bool_var<V: Into<VarIdx>>(v: V) -> Term {
-    factory.mk(RTerm::Var(typ::bool(), v.into()))
+    var(v, typ::bool())
 }
 
 /// Creates a constant.
@@ -274,8 +274,7 @@ pub fn cst<V: Into<Val>>(val: V) -> Term {
 /// ```
 #[inline]
 pub fn int<I: Into<Int>>(i: I) -> Term {
-    let i = i.into();
-    factory.mk(RTerm::Cst(val::int(i)))
+    cst(val::int(i))
 }
 /// Creates a real constant.
 ///
@@ -291,8 +290,7 @@ pub fn int<I: Into<Int>>(i: I) -> Term {
 /// ```
 #[inline]
 pub fn real<R: Into<Rat>>(r: R) -> Term {
-    let r = r.into();
-    factory.mk(RTerm::Cst(val::real(r)))
+    cst(val::real(r))
 }
 /// Creates a real constant from a float.
 ///
@@ -377,7 +375,7 @@ pub fn real_one() -> Term {
 /// ```
 #[inline]
 pub fn bool(b: bool) -> Term {
-    factory.mk(RTerm::Cst(val::bool(b)))
+    cst(val::bool(b))
 }
 /// Creates the constant `true`.
 ///

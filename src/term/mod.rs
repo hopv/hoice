@@ -376,7 +376,6 @@ impl RTerm {
     /// assert! { ! sum.is_one() }
     /// ```
     pub fn is_one(&self) -> bool {
-        use num::One;
         match (self.int(), self.real()) {
             (Some(i), _) => i == Int::one(),
             (_, Some(r)) => r == Rat::one(),

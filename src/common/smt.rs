@@ -724,7 +724,7 @@ impl FullParser {
         self,
         mut model: Vec<(FPVar, FPSig, Typ, FPVal)>,
     ) -> Res<Vec<(VarIdx, Typ, Val)>> {
-        let mut fun_defs: HashMap<String, (Sig, Term)> = HashMap::new();
+        let mut fun_defs: BTreeMap<String, (Sig, Term)> = BTreeMap::new();
         let mut res = Vec::with_capacity(model.len());
         let mut postponed = Vec::new();
 

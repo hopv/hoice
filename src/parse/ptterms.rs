@@ -89,7 +89,6 @@ impl PTTerms {
     }
 
     pub fn and(mut tterms: Vec<PTTerms>) -> Self {
-        use std::iter::Extend;
         debug_assert!(!tterms.is_empty());
         let mut cnt = 0;
         while cnt < tterms.len() {
@@ -117,7 +116,6 @@ impl PTTerms {
     }
 
     pub fn or(mut tterms: Vec<PTTerms>) -> Self {
-        use std::iter::Extend;
         debug_assert!(!tterms.is_empty());
         let mut cnt = 0;
 
