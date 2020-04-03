@@ -460,27 +460,29 @@ impl<'a> PreInstance<'a> {
             }};
         }
 
-        log! { @debug
-          "simplifying clause #{} (terms_changed: {})",
-          clause, self.instance[clause].terms_changed()
-        }
+        if !self.no_simplify_clauses() {
+            log! { @debug
+              "simplifying clause #{} (terms_changed: {})",
+              clause, self.instance[clause].terms_changed()
+            }
 
-        if self.instance[clause].is_pred_trivial() {
-            rm_return!("trivial implication")
-        }
+            if self.instance[clause].is_pred_trivial() {
+                rm_return!("trivial implication")
+            }
 
-        if self.instance[clause].is_unsat() {
-            unsat!("by preprocessing, clause simplification")
-        }
+            if self.instance[clause].is_unsat() {
+                unsat!("by preprocessing, clause simplification")
+            }
 
-        if self.simplify_clause_term(clause)? {
-            rm_return!("term simplification")
-        }
+            if self.simplify_clause_term(clause)? {
+                rm_return!("term simplification")
+            }
 
-        log! { @3 "redundancy check..." }
+            log! { @3 "redundancy check..." }
 
-        if self.is_redundant(clause) {
-            rm_return!("clause redundant")
+            if self.is_redundant(clause) {
+                rm_return!("clause redundant")
+            }
         }
 
         log! { @3 "split disj..." }
