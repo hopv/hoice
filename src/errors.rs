@@ -182,7 +182,7 @@ impl Error {
     /// (ErrorKind's Unsat variant)
     pub fn is_unsat(&self) -> bool {
         for err in self.iter() {
-            if err.description() == consts::err::unsat_desc {
+            if err.to_string() == consts::err::unsat_desc {
                 return true;
             }
         }
@@ -195,8 +195,8 @@ impl Error {
     /// (ErrorKind's Unknown variant)
     pub fn is_unknown(&self) -> bool {
         for err in self.iter() {
-            if err.description() == consts::err::unknown_desc
-                || err.description() == ::rsmt2::errors::ErrorKind::Unknown.description()
+            if err.to_string() == consts::err::unknown_desc
+                || err.to_string() == ::rsmt2::errors::ErrorKind::Unknown.description()
             {
                 return true;
             }
@@ -221,7 +221,7 @@ impl Error {
             return smt_err.is_timeout();
         }
         for err in self.iter() {
-            if err.description() == consts::err::timeout_desc {
+            if err.to_string() == consts::err::timeout_desc {
                 return true;
             }
         }
@@ -233,7 +233,7 @@ impl Error {
     /// [exit]: enum.ErrorKind.html#variant.Exit (ErrorKind's Exit variant)
     pub fn is_exit(&self) -> bool {
         for err in self.iter() {
-            if err.description() == consts::err::exit_desc {
+            if err.to_string() == consts::err::exit_desc {
                 return true;
             }
         }
