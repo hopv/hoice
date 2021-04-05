@@ -719,7 +719,7 @@ impl<'a> PreInstance<'a> {
                 "unsat because of {}",
                 self.instance[clause_idx].to_string_info(self.instance.preds()).unwrap()
             }
-            bail!(ErrorKind::UnsatFrom(clause_idx))
+            bail!(ErrorKind::Unsat)
         }
     }
 

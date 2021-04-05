@@ -87,12 +87,7 @@ impl RVarVals {
 
     /// True if at least one value is `Val::N`.
     pub fn is_partial(&self) -> bool {
-        for v in self.iter() {
-            if !v.is_known() {
-                return true;
-            }
-        }
-        false
+        self.iter().any(|v| !v.is_known())
     }
 
     /// True if the two args are semantically the same.
