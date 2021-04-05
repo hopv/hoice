@@ -162,9 +162,7 @@ make_conf! {
             val_nb 1,
         } {
             |mtch| {
-                let z3_cmd = mtch.to_string();
-                let mut conf = SolverConf::z3();
-                conf.cmd(z3_cmd);
+                let mut conf = SolverConf::z3(mtch);
                 conf.models();
                 conf
             }

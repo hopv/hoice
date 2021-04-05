@@ -289,7 +289,7 @@ impl SubsumeExt for VarVals {
         } else if !self.is_partial() {
             for elem in set.iter() {
                 if elem.subsumes(self) {
-                    return { (true, 0) };
+                    return (true, 0);
                 }
             }
             (false, 0)

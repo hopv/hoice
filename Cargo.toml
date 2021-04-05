@@ -38,7 +38,7 @@ clap = "*"
 hashconsing = "*"
 error-chain = "*"
 ansi_term = "*"
-rsmt2 = "^0.10.0"
+rsmt2 = "^0.12"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 either = "*"
