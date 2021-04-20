@@ -44,4 +44,4 @@ jobs:
     - name: Build release
       run: cargo build --release --verbose
     - name: Release Tests
-      run: cargo test --release --verbose
+      run: cargo test --release --tests --verbose
