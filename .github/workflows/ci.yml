@@ -33,7 +33,8 @@ jobs:
         rm z3.zip;
         mv z3-* z3;
         echo "`pwd`/z3/bin/z3" >> $GITHUB_PATH;
-        z3 -h;
+    - name: Check Z3
+      run: z3 -h
     - name: Build
       run: cargo build --verbose
     - name: Debug Tests
