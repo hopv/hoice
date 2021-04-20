@@ -1,0 +1,47 @@
+name: ci
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [
+          # windows-latest,
+          ubuntu-latest,
+          macos-latest
+        ]
+        include:
+        - os: macos-latest
+          Z3_DOWNLOAD: "https://github.com/Z3Prover/z3/releases/download/z3-4.8.7/z3-4.8.7-x64-osx-10.14.6.zip"
+        # - os: windows-latest
+        #   Z3_DOWNLOAD: "https://github.com/Z3Prover/z3/releases/download/z3-4.8.10/ z3-4.8.10-x64-win.zip"
+        - os: ubuntu-latest
+          Z3_DOWNLOAD: "https://github.com/Z3Prover/z3/releases/download/z3-4.8.7/z3-4.8.7-x64-ubuntu-16.04.zip"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Z3 Setup
+      run: |
+        wget ${{matrix.Z3_DOWNLOAD}} -O z3.zip;
+        unzip z3.zip;
+        rm z3.zip;
+        mv z3-* z3;
+        mkdir -p "${HOME}/.local/bin";
+        mv z3/bin/z3 "${HOME}/.local/bin/.";
+        echo "${HOME}/.local/bin" >> $GITHUB_PATH;
+    - name: Check Z3
+      run: z3 -h
+    - name: Build
+      run: cargo build --verbose
+    - name: Debug Tests
+      run: cargo test --verbose
+    - name: Build release
+      run: cargo build --release --verbose
+    - name: Release Tests
+      run: cargo test --release --tests --verbose
