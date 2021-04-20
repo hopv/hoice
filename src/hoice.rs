@@ -254,7 +254,6 @@ pub fn read_and_work<R: ::std::io::Read>(
                             None
                         }
                         Err(e) => {
-                            // println!("bail, {}", e.description());
                             bail!(e)
                         }
                     }
