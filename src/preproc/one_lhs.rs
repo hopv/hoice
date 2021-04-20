@@ -85,50 +85,51 @@ impl OneLhs {
         _tterms: &TTermSet,
     ) {
         if_log! { @4
-          let mut s = "(".to_string() ;
+            let mut s = "(".to_string() ;
 
-          if ! _quantfed.is_empty() {
-            s.push_str("exists (") ;
-            for (var, sort) in _quantfed {
-              s.push_str(
-                & format!(" ({} {})", var.default_str(), sort)
-              )
+            if ! _quantfed.is_empty() {
+                s.push_str("exists (") ;
+                for (var, sort) in _quantfed {
+                    s.push_str(
+                        & format!(" ({} {})", var.default_str(), sort)
+                    )
+                }
+                s.push_str(" )\n(")
             }
-            s.push_str(" )\n(")
-          }
 
-          s.push_str("or\n") ;
+            s.push_str("or\n") ;
 
-          if let Some((pred, args)) = _pred_app {
-            s.push_str("(") ;
-            s.push_str(& _instance[* pred].name) ;
-            for arg in args.iter() {
-              s.push_str( & format!(" {}", arg) )
+            if let Some((pred, args)) = _pred_app {
+                s.push_str("(") ;
+                s.push_str(& _instance[* pred].name) ;
+                for arg in args.iter() {
+                    s.push_str( & format!(" {}", arg) )
+                }
+                s.push_str(")")
             }
-            s.push_str(")")
-          }
 
-          s.push_str("\n  (not\n    (and") ;
+            s.push_str("\n  (not\n    (and") ;
 
-          for (pred, argss) in _tterms.preds() {
-            for args in argss {
-              s.push_str(
-                & format!("      ({} {})\n", _instance[* pred], args)
-              )
+            for (pred, argss) in _tterms.preds() {
+                for args in argss {
+                    s.push_str(
+                        & format!("\n      ({} {})", _instance[* pred], args)
+                    )
+                }
             }
-          }
-          for term in _tterms.terms() {
-            s.push_str(
-              & format!("      {}\n", term)
-            )
-          }
+            for term in _tterms.terms() {
+                s.push_str(
+                    & format!("\n      {}", term)
+                )
+            }
 
-          if ! _quantfed.is_empty() {
-            s.push_str(") ")
-          }
-          s.push_str(")") ;
+            s.push_str("\n    )\n  )") ;
 
-          log!{ @4 "{}", s }
+            if ! _quantfed.is_empty() {
+                s.push_str("\n)")
+            }
+
+            log!{ @4 "{}", s }
         }
     }
 
@@ -173,6 +174,7 @@ impl OneLhs {
                     (clause.lhs_terms(), clause.lhs_preds()),
                     clause.rhs(),
                     (pred, args),
+                    true,
                 )?,
             }
         };
@@ -206,7 +208,6 @@ impl OneLhs {
                     instance.force_pred_right(pred, qualfed, pred_app, tterms)?
                 }
             }
-            // Failed is caught before this match.
             Failed => return Ok(None),
         };
 

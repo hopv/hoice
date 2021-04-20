@@ -1279,7 +1279,7 @@ impl RedStrat for CfgRed {
 
             self.graph.check(&instance)?;
             if_log! { @verb
-                log! { @verb | "inlining {} predicates", pred_defs.len() }
+                log! { @verb | "inlining {} predicate(s)", pred_defs.len() }
                 for (pred, _) in & pred_defs {
                     log! { @verb | "  {}", instance[* pred] }
                 }
