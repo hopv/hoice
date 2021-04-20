@@ -22,7 +22,7 @@ fn init() {
         term::u_minus(term::var(43, typ::int())),
     ];
 
-    for _ in terms.into_iter() {
+    for _ in &terms {
         assert!(true)
     }
 }
