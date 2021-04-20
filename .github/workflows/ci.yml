@@ -28,7 +28,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Z3 Setup
       run: |
-        wget ${{matrix.Z3_DOWNLOAD}} -o z3.zip;
+        wget ${{matrix.Z3_DOWNLOAD}} -O z3.zip;
         unzip z3.zip;
         realpath z3/bin/z3 >> $GITHUB_PATH;
     - name: Build
