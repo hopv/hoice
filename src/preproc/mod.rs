@@ -208,7 +208,7 @@ pub fn work_on_split(
                         pre_instance.extraction().0.terms_of_lhs_app(
                             true, & instance, & clause.vars,
                             ( clause.lhs_terms(), clause.lhs_preds() ),
-                            None, (pred, args)
+                            None, (pred, args), false
                         )
                     } "strengthening", "extraction"
                 }? {

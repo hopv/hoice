@@ -206,6 +206,7 @@ impl StrictNeg {
                 (clause.lhs_terms(), clause.lhs_preds()),
                 clause.rhs(),
                 (pred, args),
+                false,
             )? {
                 ExtractRes::Trivial | ExtractRes::SuccessTrue => self.clauses_to_rm.push(idx),
 

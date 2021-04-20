@@ -157,11 +157,10 @@ impl ExtractionCxt {
         Ok(TExtractRes::Success(res))
     }
 
-    /// Applies a map to some terms, generating quantifiers if necessary and
-    /// `quantifiers` is true.
+    /// Applies a map to some terms, generating quantifiers if necessary and `quantifiers` is true.
     ///
-    /// Argument `even_if_disjoint` forces to add terms even if its variables
-    /// are disjoint from `app_vars`.
+    /// Argument `even_if_disjoint` forces to add terms even if its variables are disjoint from
+    /// `app_vars`.
     ///
     /// Returns `true` if one of the `src` terms is false (think `is_trivial`).
     fn terms_of_terms<'a, TermIter, Terms, F>(
@@ -175,7 +174,7 @@ impl ExtractionCxt {
     ) -> Res<TExtractRes<bool>>
     where
         TermIter: Iterator<Item = &'a Term> + ExactSizeIterator,
-        Terms: IntoIterator<IntoIter = TermIter, Item = &'a Term>,
+        Terms: IntoIterator<IntoIter = TermIter, Item = &'a Term> + std::fmt::Debug,
         F: Fn(Term) -> Term,
     {
         log! { @5 | "terms_of_terms" }
@@ -332,12 +331,15 @@ impl ExtractionCxt {
         ::std::mem::replace(&mut self.qvars, VarHMap::with_capacity(11))
     }
 
+    /// Argument `even_if_disjoint` forces to add terms even if its variables are disjoint from
+    /// `app_vars`.
     fn terms_of_lhs_part<'a>(
         &mut self,
         instance: &Instance,
         var_info: &VarInfos,
         (lhs_terms, lhs_preds): (&TermSet, &'a PredApps),
         (pred, args): (PrdIdx, &VarTerms),
+        even_if_disjoint: bool,
     ) -> Res<ExtractRes<(TTermSet, VarSet, Option<&'a VarTermsSet>)>> {
         log! { @5 "terms of lhs part" }
 
@@ -383,7 +385,7 @@ impl ExtractionCxt {
             lhs_terms,
             tterms.terms_mut(),
             &mut app_vars,
-            false,
+            even_if_disjoint,
             identity,
         )? {
             if trivial {
@@ -412,6 +414,7 @@ impl ExtractionCxt {
         (lhs_terms, lhs_preds): (&TermSet, &PredApps),
         rhs: Option<(PrdIdx, &VarTerms)>,
         (pred, args): (PrdIdx, &VarTerms),
+        even_if_disjoint: bool,
     ) -> Res<ExtractRes<(Quantfed, Option<PredApp>, TTermSet)>> {
         log! { @4
           "terms_of_lhs_app on {} {} ({})", instance[pred], args, quantifiers
@@ -429,6 +432,7 @@ impl ExtractionCxt {
             var_info,
             (lhs_terms, lhs_preds),
             (pred, args),
+            even_if_disjoint,
         )? {
             ExtractRes::Success((tterms, app_vars, pred_argss)) => {
                 match pred_argss.map(|argss| argss.len()).unwrap_or(0) {
@@ -480,13 +484,11 @@ impl ExtractionCxt {
         }
     }
 
-    /// Returns the weakest predicate `p` such that `lhs_terms /\ lhs_preds => (p
-    /// args)`.
+    /// Returns the weakest predicate `p` such that `lhs_terms /\ lhs_preds => (p args)`.
     ///
     /// Quantified variables are understood as existentially quantified.
     ///
-    /// The result is `(pred_apps, terms)` which semantics is `pred_app /\
-    /// tterms`.
+    /// The result is `(pred_apps, terms)` which semantics is `pred_app /\ tterms`.
     pub fn terms_of_rhs_app(
         &mut self,
         quantifiers: bool,
@@ -512,6 +514,7 @@ impl ExtractionCxt {
             var_info,
             (lhs_terms, lhs_preds),
             (pred, args),
+            false,
         )? {
             ExtractRes::Success((tterms, _, pred_argss)) => {
                 if pred_argss.map(|argss| argss.is_empty()).unwrap_or(true) {

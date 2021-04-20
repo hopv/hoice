@@ -166,6 +166,7 @@ impl RUnroll {
             (clause.lhs_terms(), &PredApps::with_capacity(0)),
             None,
             (pred, args),
+            false,
         )? {
             ExtractRes::Success((q, apps, ts)) => {
                 debug_assert! { apps.is_none() }
