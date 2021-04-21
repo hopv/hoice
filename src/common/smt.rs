@@ -832,7 +832,15 @@ impl FullParser {
             stuck = model_len == postponed.len();
 
             if stuck {
-                bail!("failed to parse model from solver")
+                let mut s = String::new();
+                for (fp_var, _, _, _) in &postponed {
+                    if s.is_empty() {
+                        s = format!("{:?}", fp_var)
+                    } else {
+                        s.extend(format!(", {:?}", fp_var).chars())
+                    }
+                }
+                bail!("failed to parse model from solver for symbol(s) {}", s)
             }
 
             model.extend(postponed.drain(0..))

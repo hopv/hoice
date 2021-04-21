@@ -386,6 +386,7 @@ impl BiasedUnroll {
             (clause.lhs_terms(), clause.lhs_preds()),
             None,
             (pred, args),
+            false,
         )? {
             ExtractRes::Failed => bail!("term extraction failed for {}", instance[pred]),
             ExtractRes::Trivial | ExtractRes::SuccessTrue | ExtractRes::SuccessFalse => bail!(

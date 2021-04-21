@@ -1,12 +1,10 @@
-`hoice` is a Horn Clause ICE engine.
+![CI](https://github.com/hopv/hoice/workflows/ci/badge.svg)
 
-It infers predicates verifying a set of horn clauses.
+`hoice` is an ICE-based Constrained Horn Clause (CHC) solver.
 
-| linux / macos | windows |     |
-|:-------------:|:-------:|:---:|
-| [![Build Status](https://travis-ci.org/hopv/hoice.svg?branch=master)](https://travis-ci.org/hopv/hoice) | [![Build status](https://ci.appveyor.com/api/projects/status/db247pe2jp9uo9cs?svg=true)](https://ci.appveyor.com/project/hopv/rsmt2) | [![codecov](https://codecov.io/gh/hopv/hoice/branch/master/graph/badge.svg)](https://codecov.io/gh/hopv/hoice) |
-
-`hoice` supports the `Bool`, `Int` and `Real` sorts.
+Given some CHCs mentioning some undefined predicates, hoice infers definitions for these predicate
+that respect all CHCs or prove none exist. Hoice supports the `Bool`, `Int` and `Real` sorts. It
+also supports user-defined ADTs, although it is still in an experimental stage.
 
 # Install
 
