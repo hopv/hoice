@@ -584,7 +584,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
     }
 
-    /// Parses a word (a tag followed by an illegal ident character).
+    /// Parses a word (a tag not followed by a legal ident character).
     pub fn word(&mut self, word: &str) -> Res<()> {
         if self.word_opt(word) {
             Ok(())
@@ -592,7 +592,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             bail!(self.error_here(format!("expected `{}`", conf.emph(word))))
         }
     }
-    /// Parses a word (a tag followed by an illegal ident character).
+    /// Parses a word (a tag not followed by a legal identifier character).
     pub fn word_opt(&mut self, word: &str) -> bool {
         let pos = self.pos();
         if self.tag_opt(word) {
@@ -967,24 +967,12 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 } else {
                     None
                 }
-            } else if self.tag_opt("Int") {
-                if !self.legal_id_char() {
-                    Some(typ::int().into())
-                } else {
-                    None
-                }
-            } else if self.tag_opt("Real") {
-                if !self.legal_id_char() {
-                    Some(typ::real().into())
-                } else {
-                    None
-                }
-            } else if self.tag_opt("Bool") {
-                if !self.legal_id_char() {
-                    Some(typ::bool().into())
-                } else {
-                    None
-                }
+            } else if self.word_opt("Int") {
+                Some(typ::int().into())
+            } else if self.word_opt("Real") {
+                Some(typ::real().into())
+            } else if self.word_opt("Bool") {
+                Some(typ::bool().into())
             } else {
                 None
             };
@@ -2433,9 +2421,9 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                 self.ws_cmt();
 
                 // Try to parse a constant array.
-                if self.tag_opt(keywords::op::as_) {
+                if self.word_opt(keywords::op::as_) {
                     self.ws_cmt();
-                    self.tag(keywords::op::const_)?;
+                    self.word(keywords::op::const_)?;
                     self.ws_cmt();
                     let sort_pos = self.pos();
                     let typ = self.sort()?;
@@ -2450,7 +2438,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
                     )));
                 } else if self.tag_opt(keywords::op::lambda_) {
                     self.ws_cmt();
-                    self.tag(keywords::op::is_)?;
+                    self.word(keywords::op::is_)?;
                     self.ws_cmt();
 
                     let (op_pos, ident) = if let Some(res) = self.ident_opt()? {
@@ -2886,7 +2874,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         } else if self.tag_opt("(") {
             self.ws_cmt();
 
-            if self.tag_opt(keywords::forall) || self.tag_opt(keywords::exists) {
+            if self.word_opt(keywords::forall) || self.word_opt(keywords::exists) {
                 bail!(self.error(
                     start_pos,
                     "unable to work on clauses that are not ground".to_string()
@@ -3168,7 +3156,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt();
             parse_args = if let Some(pos) = self.tag_opt_pos("(") {
                 self.ws_cmt();
-                if self.tag_opt(keywords::forall) {
+                if self.word_opt(keywords::forall) {
                     closing_parens += 1;
                     true
                 } else {
@@ -3228,7 +3216,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             self.ws_cmt();
             parse_args = if let Some(pos) = self.tag_opt_pos("(") {
                 self.ws_cmt();
-                if self.tag_opt(keywords::exists) {
+                if self.word_opt(keywords::exists) {
                     closing_parens += 1;
                     true
                 } else {
