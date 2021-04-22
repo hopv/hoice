@@ -105,10 +105,11 @@ macro_rules! if_log {
 | Log level | active when...     | prefix (`_` are spaces)             |
 |-----------|--------------------|:------------------------------------|
 | `@0`      | `true`             | `";_"`                              |
-| `@info`   | `conf.verb >= 1`   | `";_"`                              |
-| `@verb`   | `conf.verb >= 2`   | `";___"`                            |
-| `@debug`  | `conf.verb >= 3`   | `";_____"`                          |
-| `@<i>`    | `conf.verb >= <i>` | `";_"` followed by `<i> * 2` spaces |
+| `@warn`   | `true`             | `";_Warning_|_"`                    |
+| `@info`   | `conf.verb ≥ 1`    | `";_"`                              |
+| `@verb`   | `conf.verb ≥ 2`    | `";___"`                            |
+| `@debug`  | `conf.verb ≥ 3`    | `";_____"`                          |
+| `@<i>`    | `conf.verb ≥ <i>`  | `";_"` followed by `<i> * 2` spaces |
 
 */
 #[macro_export]
@@ -118,6 +119,7 @@ macro_rules! log {
   (|pref_of| debug) => ( log!(|pref_of| 2) ) ;
   (|pref_of| verb)  => ( log!(|pref_of| 1) ) ;
   (|pref_of| info)  => ( log!(|pref_of| 0) ) ;
+  (|pref_of| warn)  => ( format!("{}Warning | ", log!(|pref_of| 0)) ) ;
   (|pref_of| 0) => ( format!("; ") ) ;
   (|pref_of| $int:expr) => (
     format!("; {:width$}", "", width = ($int - 1) * 2)
@@ -126,6 +128,7 @@ macro_rules! log {
   (|cond_of| debug) => ( log!(|cond_of| 3) ) ;
   (|cond_of| verb)  => ( log!(|cond_of| 2) ) ;
   (|cond_of| info)  => ( log!(|cond_of| 1) ) ;
+  (|cond_of| warn) => ( true ) ;
   (|cond_of| 0) => (true) ;
   (|cond_of| $int:expr) => (conf.verb >= $int) ;
 

@@ -224,9 +224,9 @@ impl Instance {
             print_success: false,
             unsat_cores: false,
             proofs: false,
-            no_inlining: false,
-            no_inlining_preds: HashSet::with_capacity(0),
-            no_simplify_clauses: false,
+            no_inlining: self.no_inlining,
+            no_inlining_preds: self.no_inlining_preds.clone(),
+            no_simplify_clauses: self.no_simplify_clauses(),
         }
     }
 
@@ -1389,8 +1389,8 @@ impl Instance {
     }
 
     /// Sets not inlined predicates
-    pub fn set_no_inlining_preds(&mut self, b: HashSet<String>) {
-        self.no_inlining_preds = b
+    pub fn set_no_inlining_preds(&mut self, preds: HashSet<String>) {
+        self.no_inlining_preds = preds
     }
     /// Not inlined predicates
     pub fn no_inlining_preds(&self) -> &HashSet<String> {
@@ -1399,6 +1399,9 @@ impl Instance {
 
     /// Sets no-simplify-clause flag
     pub fn set_no_simplify_clauses(&mut self, b: bool) {
+        if b {
+            log! { @warn "option `no-simplify-clauses` is experimental\nit is mostly untested" }
+        }
         self.no_simplify_clauses = b
     }
     /// No-simplify-clause flag
