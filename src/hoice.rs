@@ -199,7 +199,7 @@ pub fn read_and_work<R: ::std::io::Read>(
                 }
                 print_stats("top preproc", preproc_profiler);
 
-                model = if !instance.no_simplify_clauses() {
+                model = if instance.simplify_clauses() {
                     if let Some(maybe_model) = instance.is_trivial_conj()? {
                         // Pre-processing already decided satisfiability.
                         log! { @info "solved by pre-processing" }

@@ -460,7 +460,7 @@ impl<'a> PreInstance<'a> {
             }};
         }
 
-        if !self.no_simplify_clauses() {
+        if self.instance.simplify_clauses() {
             log! { @debug
               "simplifying clause #{} (terms_changed: {})",
               clause, self.instance[clause].terms_changed()

@@ -147,10 +147,10 @@ pub struct Instance {
     /// Can only be set by `(set-option :no-inlining-preds "P1 P2 ... Pn ")`.
     /// FIXME The trailing space after `Pn` is required due to a bug(?) of parser now.
     no_inlining_preds: HashSet<String>,
-    /// Disable simplifying clauses.
+    /// Clause simplification flag.
     ///
-    /// Can only be set by `(set-option :no-simplify-clause true)`.
-    no_simplify_clauses: bool,
+    /// Can only be set by `(set-option :simplify-clause <bool>)`.
+    simplify_clauses: bool,
 }
 
 impl Default for Instance {
@@ -188,7 +188,7 @@ impl Instance {
             proofs: false,
             no_inlining: false,
             no_inlining_preds: HashSet::with_capacity(0),
-            no_simplify_clauses: false,
+            simplify_clauses: true,
         }
     }
 
@@ -226,7 +226,7 @@ impl Instance {
             proofs: false,
             no_inlining: self.no_inlining,
             no_inlining_preds: self.no_inlining_preds.clone(),
-            no_simplify_clauses: self.no_simplify_clauses(),
+            simplify_clauses: self.simplify_clauses,
         }
     }
 
@@ -1379,34 +1379,34 @@ impl Instance {
         self.proofs
     }
 
-    /// Sets no-inlining flag
+    /// Sets the no-inlining flag.
     pub fn set_no_inlining(&mut self, b: bool) {
         self.no_inlining = b
     }
-    /// No-inlining flag
+    /// No-inlining flag accessor.
     pub fn no_inlining(&self) -> bool {
         self.no_inlining
     }
 
-    /// Sets not inlined predicates
+    /// Sets the no-inlining predicates.
     pub fn set_no_inlining_preds(&mut self, preds: HashSet<String>) {
         self.no_inlining_preds = preds
     }
-    /// Not inlined predicates
+    /// No-inlining predicates accessor.
     pub fn no_inlining_preds(&self) -> &HashSet<String> {
         &self.no_inlining_preds
     }
 
-    /// Sets no-simplify-clause flag
-    pub fn set_no_simplify_clauses(&mut self, b: bool) {
-        if b {
-            log! { @warn "option `no-simplify-clauses` is experimental\nit is mostly untested" }
+    /// Sets the simplify-clauses flag.
+    pub fn set_simplify_clauses(&mut self, b: bool) {
+        if !b {
+            log! { @warn "option `simplify-clauses` is experimental\nit is mostly untested" }
         }
-        self.no_simplify_clauses = b
+        self.simplify_clauses = b
     }
-    /// No-simplify-clause flag
-    pub fn no_simplify_clauses(&self) -> bool {
-        self.no_simplify_clauses
+    /// Simplify-clauses flag accessor.
+    pub fn simplify_clauses(&self) -> bool {
+        self.simplify_clauses
     }
 
     /// True if the teacher needs to maintain a sample graph (unsat
@@ -1449,9 +1449,9 @@ impl Instance {
                 let no_inlining_preds = val.split_whitespace().map(|s| s.to_owned()).collect();
                 self.set_no_inlining_preds(no_inlining_preds);
             }
-            "no-simplify-clauses" => {
+            "simplify-clauses" => {
                 let simplify = Self::bool_of_str(&val).chain_err(flag_err)?;
-                self.set_no_simplify_clauses(simplify)
+                self.set_simplify_clauses(simplify)
             }
             _ => warn!(
                 "ignoring (set-option :{} {}): unknown flag {}",
