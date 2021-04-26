@@ -1264,6 +1264,14 @@ impl RedStrat for CfgRed {
             // let breaking_duration = Instant::now() - start ;
             // println!("breaking time: {}", breaking_duration.to_str()) ;
 
+            let no_inlining = instance.no_inlining();
+            let no_inlining_preds = instance.no_inlining_preds();
+            for p in instance.preds() {
+                if no_inlining || no_inlining_preds.contains(&p.name) {
+                    to_keep.insert(p.idx);
+                }
+            }
+
             self.graph
                 .to_dot(&instance, format!("{}_pred_dep_b4", self.cnt), &to_keep)?;
 

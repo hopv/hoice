@@ -138,6 +138,19 @@ pub struct Instance {
     ///
     /// Can only be set by `(set-option :produce-proofs true)`.
     proofs: bool,
+    /// Disable inlining for all predicate variables.
+    ///
+    /// Can only be set by `(set-option :no-inlining true)`.
+    no_inlining: bool,
+    /// Disable inlining for specified predicate variables.
+    ///
+    /// Can only be set by `(set-option :no-inlining-preds "P1 P2 ... Pn ")`.
+    /// FIXME The trailing space after `Pn` is required due to a bug(?) of parser now.
+    no_inlining_preds: HashSet<String>,
+    /// Clause simplification flag.
+    ///
+    /// Can only be set by `(set-option :simplify-clause <bool>)`.
+    simplify_clauses: bool,
 }
 
 impl Default for Instance {
@@ -173,6 +186,9 @@ impl Instance {
             print_success: false,
             unsat_cores: false,
             proofs: false,
+            no_inlining: false,
+            no_inlining_preds: HashSet::with_capacity(0),
+            simplify_clauses: true,
         }
     }
 
@@ -208,6 +224,9 @@ impl Instance {
             print_success: false,
             unsat_cores: false,
             proofs: false,
+            no_inlining: self.no_inlining,
+            no_inlining_preds: self.no_inlining_preds.clone(),
+            simplify_clauses: self.simplify_clauses,
         }
     }
 
@@ -1360,6 +1379,36 @@ impl Instance {
         self.proofs
     }
 
+    /// Sets the no-inlining flag.
+    pub fn set_no_inlining(&mut self, b: bool) {
+        self.no_inlining = b
+    }
+    /// No-inlining flag accessor.
+    pub fn no_inlining(&self) -> bool {
+        self.no_inlining
+    }
+
+    /// Sets the no-inlining predicates.
+    pub fn set_no_inlining_preds(&mut self, preds: HashSet<String>) {
+        self.no_inlining_preds = preds
+    }
+    /// No-inlining predicates accessor.
+    pub fn no_inlining_preds(&self) -> &HashSet<String> {
+        &self.no_inlining_preds
+    }
+
+    /// Sets the simplify-clauses flag.
+    pub fn set_simplify_clauses(&mut self, b: bool) {
+        if !b {
+            log! { @warn "option `simplify-clauses` is experimental\nit is mostly untested" }
+        }
+        self.simplify_clauses = b
+    }
+    /// Simplify-clauses flag accessor.
+    pub fn simplify_clauses(&self) -> bool {
+        self.simplify_clauses
+    }
+
     /// True if the teacher needs to maintain a sample graph (unsat
     /// cores/proofs).
     pub fn track_samples(&self) -> bool {
@@ -1391,6 +1440,18 @@ impl Instance {
             "produce-proofs" => {
                 let proofs = Self::bool_of_str(&val).chain_err(flag_err)?;
                 self.set_proofs(proofs)
+            }
+            "no-inlining" => {
+                let no_inlining = Self::bool_of_str(&val).chain_err(flag_err)?;
+                self.set_no_inlining(no_inlining);
+            }
+            "no-inlining-preds" => {
+                let no_inlining_preds = val.split_whitespace().map(|s| s.to_owned()).collect();
+                self.set_no_inlining_preds(no_inlining_preds);
+            }
+            "simplify-clauses" => {
+                let simplify = Self::bool_of_str(&val).chain_err(flag_err)?;
+                self.set_simplify_clauses(simplify)
             }
             _ => warn!(
                 "ignoring (set-option :{} {}): unknown flag {}",

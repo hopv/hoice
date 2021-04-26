@@ -199,64 +199,68 @@ pub fn read_and_work<R: ::std::io::Read>(
                 }
                 print_stats("top preproc", preproc_profiler);
 
-                model = if let Some(maybe_model) = instance.is_trivial_conj()? {
-                    // Pre-processing already decided satisfiability.
-                    log! { @info "solved by pre-processing" }
-                    if !maybe_model.is_unsat() {
-                        println!("sat")
-                    } else {
-                        use crate::unsat_core::UnsatRes;
-                        println!("unsat");
-                        unsat = Some(if instance.proofs() {
-                            UnsatRes::empty_entry()
+                model = if instance.simplify_clauses() {
+                    if let Some(maybe_model) = instance.is_trivial_conj()? {
+                        // Pre-processing already decided satisfiability.
+                        log! { @info "solved by pre-processing" }
+                        if !maybe_model.is_unsat() {
+                            println!("sat")
                         } else {
-                            UnsatRes::None
-                        })
-                    }
-                    maybe_model.into_option()
-                } else {
-                    let arc_instance = Arc::new(instance);
-                    let solve_res = split::work(&arc_instance, &profiler);
-
-                    instance = unwrap_arc(arc_instance)
-                        .chain_err(|| "while trying to recover instance")?;
-
-                    match solve_res {
-                        Ok(Some(Either::Left(res))) => {
-                            println!("sat");
-                            Some(instance.extend_model(res)?)
-                        }
-                        Ok(None) => {
-                            println!("unknown");
-                            None
-                        }
-                        Ok(Some(Either::Right(res))) => {
-                            unsat = Some(res);
+                            use crate::unsat_core::UnsatRes;
                             println!("unsat");
-                            None
+                            unsat = Some(if instance.proofs() {
+                                UnsatRes::empty_entry()
+                            } else {
+                                UnsatRes::None
+                            })
                         }
-                        Err(ref e) if e.is_unsat() => {
-                            unsat = Some(unsat_core::UnsatRes::None);
-                            warn!(
-                                "unsat was obtained by a legacy mechanism, \
+                        maybe_model.into_option()
+                    } else {
+                        let arc_instance = Arc::new(instance);
+                        let solve_res = split::work(&arc_instance, &profiler);
+
+                        instance = unwrap_arc(arc_instance)
+                            .chain_err(|| "while trying to recover instance")?;
+
+                        match solve_res {
+                            Ok(Some(Either::Left(res))) => {
+                                println!("sat");
+                                Some(instance.extend_model(res)?)
+                            }
+                            Ok(None) => {
+                                println!("unknown");
+                                None
+                            }
+                            Ok(Some(Either::Right(res))) => {
+                                unsat = Some(res);
+                                println!("unsat");
+                                None
+                            }
+                            Err(ref e) if e.is_unsat() => {
+                                unsat = Some(unsat_core::UnsatRes::None);
+                                warn!(
+                                    "unsat was obtained by a legacy mechanism, \
                                  core/proof will not be available"
-                            );
-                            println!("unsat");
-                            None
-                        }
-                        Err(ref e) if e.is_timeout() => {
-                            println!("timeout");
-                            print_stats("top", profiler);
-                            ::std::process::exit(0)
-                        }
-                        Err(ref e) if e.is_unknown() => {
-                            println!("unknown");
-                            None
-                        }
-                        Err(e) => {
-                            bail!(e)
+                                );
+                                println!("unsat");
+                                None
+                            }
+                            Err(ref e) if e.is_timeout() => {
+                                println!("timeout");
+                                print_stats("top", profiler);
+                                ::std::process::exit(0)
+                            }
+                            Err(ref e) if e.is_unknown() => {
+                                println!("unknown");
+                                None
+                            }
+                            Err(e) => {
+                                bail!(e)
+                            }
                         }
                     }
+                } else {
+                    None
                 };
 
                 if stop_on_check {
