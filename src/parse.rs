@@ -3142,29 +3142,50 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ///   (*e.g.* redundant) ;
     /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
     fn forall(&mut self, instance: &mut Instance) -> Res<Option<ClauseRes>> {
-        if !self.word_opt(keywords::forall) {
-            return Ok(None);
-        }
+        let start_pos = self.pos();
 
-        let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) =
-            (VarMap::with_capacity(11), BTreeMap::new(), true, 0);
-
-        while parse_args {
-            self.ws_cmt();
-            self.args(&mut var_map, &mut hash_map)?;
+        let quant_is_there = if self.tag_opt("(") {
+            if self.word_opt(keywords::op::not_) {
+                self.backtrack_to(start_pos);
+                return Ok(None);
+            }
 
             self.ws_cmt();
-            parse_args = if let Some(pos) = self.tag_opt_pos("(") {
+            if self.word_opt(keywords::forall) {
+                true
+            } else {
+                self.backtrack_to(start_pos);
+                false
+            }
+        } else {
+            false
+        };
+
+        let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) = (
+            VarMap::with_capacity(11),
+            BTreeMap::new(),
+            true,
+            if quant_is_there { 1 } else { 0 },
+        );
+
+        if quant_is_there {
+            while parse_args {
                 self.ws_cmt();
-                if self.word_opt(keywords::forall) {
-                    closing_parens += 1;
-                    true
+                self.args(&mut var_map, &mut hash_map)?;
+
+                self.ws_cmt();
+                parse_args = if let Some(pos) = self.tag_opt_pos("(") {
+                    self.ws_cmt();
+                    if self.word_opt(keywords::forall) {
+                        closing_parens += 1;
+                        true
+                    } else {
+                        self.backtrack_to(pos);
+                        false
+                    }
                 } else {
-                    self.backtrack_to(pos);
                     false
                 }
-            } else {
-                false
             }
         }
 
@@ -3194,45 +3215,66 @@ impl<'cxt, 's> Parser<'cxt, 's> {
     ///   (*e.g.* redundant) ;
     /// - `Some(idx)` if a clause was parsed and added, and it has index `idx`.
     fn nexists(&mut self, instance: &mut Instance) -> Res<Option<ClauseRes>> {
-        if !self.word_opt(keywords::op::not_) {
-            return Ok(None);
-        }
-        self.ws_cmt();
-        let outter_bind_count = self.let_bindings(&VarMap::new(), &BTreeMap::new(), instance)?;
-
-        self.ws_cmt();
-        self.tag("(")?;
-
-        self.ws_cmt();
-        self.word(keywords::exists)?;
-
-        let (mut var_map, mut hash_map, mut parse_args, mut closing_parens) =
-            (VarMap::with_capacity(11), BTreeMap::new(), true, 0);
-
-        while parse_args {
-            self.ws_cmt();
-            self.args(&mut var_map, &mut hash_map)?;
+        let mut closing_parens = 0;
+        let (quant_is_there, outter_bind_count) = if self.tag_opt("(") {
+            if !self.word_opt(keywords::op::not_) {
+                return Ok(None);
+            }
+            closing_parens += 1;
 
             self.ws_cmt();
-            parse_args = if let Some(pos) = self.tag_opt_pos("(") {
-                self.ws_cmt();
-                if self.word_opt(keywords::exists) {
-                    closing_parens += 1;
-                    true
+            let outter_bind_count =
+                self.let_bindings(&VarMap::new(), &BTreeMap::new(), instance)?;
+
+            self.ws_cmt();
+            let quant_is_there = {
+                // Try to parse a quantifier.
+                let pos = self.pos();
+                if self.tag_opt("(") {
+                    self.ws_cmt();
+                    if self.word_opt(keywords::exists) {
+                        closing_parens += 1;
+                        true
+                    } else {
+                        self.backtrack_to(pos);
+                        false
+                    }
                 } else {
                     self.backtrack_to(pos);
                     false
                 }
-            } else {
-                false
+            };
+            (quant_is_there, outter_bind_count)
+        } else {
+            (false, 0.into())
+        };
+
+        let (mut var_map, mut hash_map, mut parse_args) =
+            (VarMap::with_capacity(11), BTreeMap::new(), true);
+
+        if quant_is_there {
+            while parse_args {
+                self.ws_cmt();
+                self.args(&mut var_map, &mut hash_map)?;
+
+                self.ws_cmt();
+                parse_args = if let Some(pos) = self.tag_opt_pos("(") {
+                    self.ws_cmt();
+                    if self.word_opt(keywords::exists) {
+                        closing_parens += 1;
+                        true
+                    } else {
+                        self.backtrack_to(pos);
+                        false
+                    }
+                } else {
+                    false
+                }
             }
         }
 
         self.ws_cmt();
         let idx = self.parse_clause(var_map, &hash_map, instance, true)?;
-
-        self.ws_cmt();
-        self.tag(")")?;
 
         self.ws_cmt();
         self.close_let_bindings(outter_bind_count)?;
@@ -3361,7 +3403,11 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         let bind_count = self.let_bindings(&VarMap::new(), &BTreeMap::new(), instance)?;
 
-        let idx = if self.tag_opt("(") {
+        let idx = if self.tag_opt("true") {
+            ClauseRes::Skipped
+        } else if self.tag_opt("false") {
+            ClauseRes::Skipped
+        } else {
             self.ws_cmt();
 
             let idx = if let Some(idx) = self.forall(instance)? {
@@ -3371,17 +3417,7 @@ impl<'cxt, 's> Parser<'cxt, 's> {
             } else {
                 bail!(self.error_here("expected forall or negated exists"))
             };
-
-            self.ws_cmt();
-            self.tag(")")?;
             idx
-        } else if self.tag_opt("true") {
-            ClauseRes::Skipped
-        } else if self.tag_opt("false") {
-            instance.set_unsat();
-            ClauseRes::Skipped
-        } else {
-            bail!(self.error_here("expected negation, qualifier, `true` or `false`"))
         };
 
         self.ws_cmt();

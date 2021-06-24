@@ -70,9 +70,13 @@ impl<'a> InParser<'a> {
     }
 
     /// Backtracks some characters.
-    fn backtrack(&mut self, mut mem: Vec<char>) {
-        mem.reverse();
-        self.buf.extend(mem)
+    fn backtrack<I>(&mut self, mem: impl IntoIterator<IntoIter = I>)
+    where
+        I: Iterator<Item = char> + DoubleEndedIterator,
+    {
+        for c in mem.into_iter().rev() {
+            self.buf.push(c)
+        }
     }
 
     /// Parses a tag or fails.
@@ -343,17 +347,23 @@ impl<'a> InParser<'a> {
             return Ok(false);
         }
         self.ws_cmt();
-        self.char('(')?;
 
-        let negated = if self.tag_opt("not") {
-            self.ws_cmt();
-            self.char('(')?;
-            true
+        let mut cnt = 0;
+
+        let negated = if self.char_opt('(') {
+            if self.tag_opt("not") {
+                self.ws_cmt();
+                if self.char_opt('(') {
+                    cnt += 1;
+                }
+                true
+            } else {
+                cnt += 1;
+                false
+            }
         } else {
             false
         };
-
-        let mut cnt = 1;
 
         let (args, body) = if self.tag_opt("forall") {
             if negated {
@@ -388,7 +398,12 @@ impl<'a> InParser<'a> {
             let body = self.sexpr().chain_err(|| "while parsing body")?;
             (args, body)
         } else {
-            error_chain::bail!("expected forall or exists")
+            if cnt > 0 {
+                self.backtrack(Some('('));
+                cnt -= 1;
+            }
+            let body = self.sexpr().chain_err(|| "while parsing body")?;
+            (Vec::new(), body)
         };
         self.ws_cmt();
 
