@@ -399,7 +399,7 @@ impl<'a> InParser<'a> {
             (args, body)
         } else {
             if cnt > 0 {
-                self.backtrack(['(']);
+                self.backtrack(Some('('));
                 cnt -= 1;
             }
             let body = self.sexpr().chain_err(|| "while parsing body")?;
