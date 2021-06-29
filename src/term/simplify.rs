@@ -1481,7 +1481,7 @@ simpl_fun! {
 simpl_fun! {
   // Greater than, greater than or equal to.
   fn gt_ge(op, args) {
-    arity!( format!("{}", op) => args, 2 ) ;
+    arity!( format!("{}", op) => args, 2 );
 
     if args[0] == args[1] {
       return Some(
@@ -1582,10 +1582,12 @@ simpl_fun! {
 
   // Less than, less than or equal.
   fn lt_le(op, args) {
-    if * op == Op::Le {
-      * op = Op::Ge
+    if *op == Op::Le {
+      *op = Op::Ge
+    } else if *op == Op::Lt {
+      *op = Op::Gt
     } else {
-      * op = Op::Gt
+        panic!("unexpected operator `{}` in call to `simplify::lt_le`", op)
     }
 
     Some(
@@ -1940,13 +1942,13 @@ simpl_fun! {
       return Some( NormRes::Term(cst) )
     }
 
-    if let Some((op, args)) = term.app_inspect() {
+    if let Some((op, term_args)) = term.app_inspect() {
 
       match op {
 
-        Op::Add | Op::Mul | Op::Sub => return Some(
+        Op::Add | Op::Sub => return Some(
           NormRes::App(
-            typ.clone(), op, args.iter().map(
+            typ.clone(), op, term_args.iter().map(
               |arg| {
                 NormRes::App(
                   typ.clone(), Op::CMul, vec![
@@ -1959,13 +1961,20 @@ simpl_fun! {
           )
         ),
 
-        Op::CMul => if args.len() != 2 {
-          panic!("illegal c_mul application to {} != 2 terms", args.len())
+        Op::Mul => {
+            // Backtrack.
+            args.push(cst);
+            args.push(term);
+            return None;
+        },
+
+        Op::CMul => if term_args.len() != 2 {
+          panic!("illegal c_mul application to {} != 2 terms", term_args.len())
         } else {
-          let cst_2 = args[0].val().expect(
+          let cst_2 = term_args[0].val().expect(
             "illegal `cmul` application"
           ) ;
-          let term = args[1].clone() ;
+          let term = term_args[1].clone() ;
 
           let cst = cst_val.mul(& cst_2).expect(
             "illegal `cmul` application"
@@ -1978,13 +1987,13 @@ simpl_fun! {
           )
         },
 
-        Op::Ite => if args.len() != 3 {
+        Op::Ite => if term_args.len() != 3 {
           panic!("illegal ite application: {}", term)
-        } else if args[0].dtyp_tst_inspect().is_none() {
+        } else if term_args[0].dtyp_tst_inspect().is_none() {
           let (c, t, e) = (
-            args[0].clone(),
-            args[1].clone(),
-            args[2].clone(),
+            term_args[0].clone(),
+            term_args[1].clone(),
+            term_args[2].clone(),
           ) ;
           return Some(
             NormRes::App(
