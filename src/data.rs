@@ -245,11 +245,11 @@ impl LrnData {
     ///   (mc91 3 0)
     /// ) neg (
     /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    ///   0 | (mc91 1 101) (mc91 2 102) => (mc91 7 3)
+    ///   1 | (mc91 1 101) (mc91 2 102) => (dummy 7 3)
     /// ) constraint map(
-    ///   (mc91 7 3) -> 0
     ///   (mc91 2 102) -> 0 1
+    ///   (mc91 7 3) -> 0
     ///   (mc91 1 101) -> 0 1
     ///   (dummy 7 3) -> 1
     /// ) positive examples staged (
@@ -394,11 +394,11 @@ impl LrnData {
     ///   (mc91 3 0)
     /// ) neg (
     /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    ///   0 | (mc91 1 101) (mc91 2 102) => (mc91 7 3)
+    ///   1 | (mc91 1 101) (mc91 2 102) => (dummy 7 3)
     /// ) constraint map(
-    ///   (mc91 7 3) -> 0
     ///   (mc91 2 102) -> 0 1
+    ///   (mc91 7 3) -> 0
     ///   (mc91 1 101) -> 0 1
     ///   (dummy 7 3) -> 1
     /// ) positive examples staged (
@@ -518,11 +518,11 @@ impl LrnData {
     ///   (mc91 3 0)
     /// ) neg (
     /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
-    ///   1 | (mc91 2 102) (mc91 1 101) => (dummy 7 3)
+    ///   0 | (mc91 1 101) (mc91 2 102) => (mc91 7 3)
+    ///   1 | (mc91 1 101) (mc91 2 102) => (dummy 7 3)
     /// ) constraint map(
-    ///   (mc91 7 3) -> 0
     ///   (mc91 2 102) -> 0 1
+    ///   (mc91 7 3) -> 0
     ///   (mc91 1 101) -> 0 1
     ///   (dummy 7 3) -> 1
     /// ) positive examples staged (
@@ -1495,10 +1495,10 @@ impl Data {
     ///   (mc91 3 0)
     /// ) neg (
     /// ) constraints (
-    ///   0 | (mc91 2 102) (mc91 1 101) => (mc91 7 3)
+    ///   0 | (mc91 1 101) (mc91 2 102) => (mc91 7 3)
     /// ) constraint map(
-    ///   (mc91 7 3) -> 0
     ///   (mc91 2 102) -> 0
+    ///   (mc91 7 3) -> 0
     ///   (mc91 1 101) -> 0
     /// ) positive examples staged (
     ///   mc91 | (1 101)

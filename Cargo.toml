@@ -34,8 +34,8 @@ bench = [ ]
 [dependencies]
 libc = "*"
 lazy_static = "*"
-clap = "*"
-hashconsing = "*"
+clap = { version = "*", features = ["cargo"] }
+hashconsing = { path = "../hashconsing" }
 error-chain = "*"
 ansi_term = "*"
 rsmt2 = "^0.12"
