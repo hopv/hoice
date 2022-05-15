@@ -38,7 +38,7 @@ clap = { version = "*", features = ["cargo"] }
 hashconsing = { path = "../hashconsing" }
 error-chain = "*"
 ansi_term = "*"
-rsmt2 = "^0.12"
+rsmt2 = "^0.16"
 num = "*"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
 either = "*"

@@ -358,9 +358,9 @@ dependencies = [
 
 [[package]]
 name = "rsmt2"
-version = "0.12.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b616b1ac7f0393f4441a0d6301b35b1bccd209c61dd65c8852cb8397d68cdc89"
+checksum = "c45b1d4532681fdeedf72363ce5b4580a03b1eab4febe5a89f4aebf521319b16"
 dependencies = [
  "error-chain",
 ]
