@@ -35,7 +35,7 @@ bench = [ ]
 libc = "*"
 lazy_static = "*"
 clap = { version = "*", features = ["cargo"] }
-hashconsing = "*"
+hashconsing = "^1"
 error-chain = "*"
 ansi_term = "*"
 rsmt2 = "^0.16"
