@@ -1513,6 +1513,7 @@ fn normalize(op: Op, args: Vec<Term>, typ: Typ) -> Term {
 }
 
 /// Normalization result.
+#[derive(Debug, Clone)]
 pub enum NormRes {
     /// Just a term.
     Term(Term),
