@@ -745,10 +745,10 @@ impl FullParser {
                             if let Some((sig, def)) = fun_defs.get(&fun) {
                                 debug_assert_eq! { sig.len(), 1 }
                                 let idx_type = sig.iter().next().unwrap();
-                                let array =
-                                    val::array_of_fun(idx_type.clone(), def).chain_err(|| {
-                                        "while recovering array from function definition"
-                                    })?;
+                                let array = rsmt2::prelude::ResExt::chain_err(
+                                    val::array_of_fun(idx_type.clone(), def),
+                                    || "while recovering array from function definition",
+                                )?;
                                 res.push((var, typ, array))
                             } else {
                                 postponed.push((FPVar::Var(var), sig, typ, FPVal::FunToArray(fun)))

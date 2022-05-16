@@ -36,13 +36,13 @@ impl Id {
         }
     }
 }
-impl_fmt! {
-  Id(self, fmt) {
-    match * self {
-      Id::Learner(idx) => write!(fmt, "learner#{}", idx),
-      Id::Assistant => write!(fmt, "assistant"),
+impl fmt::Display for Id {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Id::Learner(idx) => write!(fmt, "learner#{}", idx),
+            Id::Assistant => write!(fmt, "assistant"),
+        }
     }
-  }
 }
 
 /// Kind of messages the teacher can receive.

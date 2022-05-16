@@ -356,10 +356,10 @@ macro_rules! msg {
     }
   ) ;
   ( force $slf:expr => $e:tt ) => (
-    $slf.msg($e) ? ;
+    $slf.msg($e) ?
   ) ;
   ( force $slf:expr => $($tt:tt)* ) => (
-    $slf.msg( format!( $($tt)* ) ) ? ;
+    $slf.msg( format!( $($tt)* ) ) ?
   ) ;
   ( $core:expr => $e:expr ) => (
     if_debug!( $core.msg($e) ? )

@@ -1,10 +1,11 @@
 //! Base types and functions.
 
 use clap::crate_version;
-use mylib::impl_fmt;
 
 pub use std::{
     collections::{BTreeMap, BTreeSet},
+    collections::{HashMap, HashSet},
+    fmt,
     io::stdout,
     io::{
         Result as IoRes, {Read, Write},
@@ -17,9 +18,8 @@ pub use std::{
 
 pub use either::Either;
 pub use error_chain::bail;
-pub use hashconsing::{coll::*, HashConsed, HashConsign};
+pub use hashconsing::{hash_coll::*, HashConsed, HashConsign};
 pub use lazy_static::lazy_static;
-pub use mylib::common::hash::*;
 pub use num::{One, Signed, Zero};
 pub use rand_xorshift::XorShiftRng as Rng;
 pub use rsmt2::{actlit::Actlit, print::Expr2Smt, SmtRes, Solver};
@@ -331,15 +331,15 @@ impl Bias {
         }
     }
 }
-impl_fmt! {
-  Bias(self, fmt) {
-    match * self {
-      Bias::Lft => write!(fmt, "left"),
-      Bias::Rgt => write!(fmt, "right"),
-      Bias::NuRgt(pred, ref args) => write!(fmt, "right({} {})", pred, args),
-      Bias::Non => write!(fmt, "none"),
+impl fmt::Display for Bias {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Bias::Lft => write!(fmt, "left"),
+            Bias::Rgt => write!(fmt, "right"),
+            Bias::NuRgt(pred, ref args) => write!(fmt, "right({} {})", pred, args),
+            Bias::Non => write!(fmt, "none"),
+        }
     }
-  }
 }
 
 /// Alias type for a counterexample for a clause.
@@ -543,14 +543,16 @@ impl std::ops::AddAssign for RedInfo {
         self.args_rmed += args_rmed
     }
 }
-impl_fmt! {
-  RedInfo(self, fmt) {
-    write!(
-      fmt, "\
+impl fmt::Display for RedInfo {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            fmt,
+            "\
         prd: {}, cls rm: {}, cls add: {}, args rm: {}\
-      ", self.preds, self.clauses_rmed, self.clauses_added, self.args_rmed
-    )
-  }
+      ",
+            self.preds, self.clauses_rmed, self.clauses_added, self.args_rmed
+        )
+    }
 }
 
 // |===| Helper traits.

@@ -896,7 +896,6 @@ impl RVal {
     /// assert!{ res.is_err() }
     /// ```
     pub fn g_t(&self, other: &Val) -> Res<Val> {
-        #[allow(unused_parens)]
         arith_bin_rel! { * self, gt, * other.get() }
     }
 
