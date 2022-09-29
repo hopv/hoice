@@ -9,7 +9,7 @@ readme = "README.md"
 categories = ["science"]
 keywords = ["machine learning", "verification", "proof"]
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [[bin]]
 name = "hoice"
@@ -32,16 +32,16 @@ panic = 'unwind'
 bench = [ ]
 
 [dependencies]
-libc = "*"
-lazy_static = "*"
-clap = { version = "*", features = ["cargo"] }
-hashconsing = "^1"
-error-chain = "*"
-ansi_term = "*"
+libc = "^0.2"
+lazy_static = "^1.4"
+clap = { version = "^3.1", features = ["cargo"] }
+hashconsing = "^1.5"
+error-chain = "^0.12"
+ansi_term = "^0.12"
 rsmt2 = "^0.16"
-num = "*"
+num = "^0.4"
 mylib = { git = "https://github.com/AdrienChampion/mylib" }
-either = "*"
-rand = "*"
-rand_xorshift = "*"
-atty = "*"
+either = "^1.8"
+rand = "^0.8"
+rand_xorshift = "^0.3"
+atty = "^0.2"
