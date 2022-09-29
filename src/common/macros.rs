@@ -3,7 +3,7 @@
 /// If the input is an error, prints it SMT-LIB-style and panics.
 #[macro_export]
 macro_rules! expect {
-  ($e:expr => |$err:pat| $($action:tt)*) => (
+  ($e:expr => |$err:ident| $($action:tt)*) => (
     match $e {
       Ok(res) => res,
       Err($err) => {
@@ -376,33 +376,7 @@ macro_rules! msg {
     };
 }
 
-/// Yields the value if the type (int or bool) matches, otherwise
-/// `return`s `Ok(Val::N)`.
-///
-/// ```rust
-/// use hoice::term::Val ;
-/// use hoice::errors ;
-///
-/// fn int(val: Val) -> Res<Val> {
-///   Ok( try_val!{ int val } )
-/// }
-/// fn bool(val: Val) -> Res<Val> {
-///   Ok( try_val!{ bool val } )
-/// }
-///
-/// let none = Val::N ;
-///
-/// let val: Val = 7.into() ;
-/// assert_eq!{ int( val.clone() ), val }
-/// assert_eq!{ bool( val.clone() ), none }
-///
-/// let val: Val = false.into() ;
-/// assert_eq!{ int( val.clone() ), none }
-/// assert_eq!{ bool( val.clone() ), val }
-///
-/// assert_eq!{ int( none.clone() ), none }
-/// assert_eq!{ bool( none.clone() ), none }
-/// ```
+/// Yields the value if the type (int or bool) matches, otherwise `return`s `Ok(Val::N)`.
 macro_rules! try_val {
     (int $e:expr) => {
         if let Some(i) = $e.to_int()? {

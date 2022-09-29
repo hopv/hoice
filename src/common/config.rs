@@ -12,7 +12,7 @@ use rsmt2::SmtConf as SolverConf;
 
 use crate::{common::mk_dir, errors::*, instance::Instance};
 
-/// Creates a function adding arguments to a `::clap::App`.
+/// Creates a function adding arguments to a `clap::App`.
 macro_rules! app_fun {
     // Internal rules.
     (@app $app:expr, $order:expr =>) => ($app);
@@ -90,7 +90,7 @@ macro_rules! make_conf {
             long_help $long_help:expr,
             $($tail:tt)*
         } {
-            |$mtch:pat| $field_do:expr
+            |$mtch:ident| $field_do:expr
         }
     )*}
 
@@ -137,9 +137,9 @@ macro_rules! make_conf {
 }
 
 /// Clap `App` with static lifetimes.
-pub type App = ::clap::Command<'static>;
+pub type App = clap::Command<'static>;
 /// Clap `ArgMatches` with static lifetime.
-pub type Matches = ::clap::ArgMatches;
+pub type Matches = clap::ArgMatches;
 
 /// Functions all sub-configurations must have.
 pub trait SubConf {

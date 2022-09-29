@@ -9,7 +9,7 @@
 //! is no real notion of term here.
 //!
 //! [hoice]: https://github.com/hopv/hoice (hoice github repository)
-//! [smt]: http://smtlib.cs.uiowa.edu/ (SMT-LIB website)
+//! [smt2]: http://smtlib.cs.uiowa.edu/ (SMT-LIB website)
 
 use crate::{
     common::{conf, ColorExt, HashMap, Instance, Read, Solver},
