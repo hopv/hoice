@@ -70,12 +70,7 @@ mod tterms;
 pub mod typ;
 mod zip;
 
-pub use self::bindings::Bindings;
-pub use self::factory::*;
-pub use self::leaf_iter::LeafIter;
-pub use self::op::*;
-pub use self::tterms::*;
-pub use self::typ::Typ;
+pub use self::{bindings::Bindings, factory::*, leaf_iter::LeafIter, op::*, tterms::*, typ::Typ};
 
 #[cfg(test)]
 mod test;
