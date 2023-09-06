@@ -262,7 +262,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use hoice::{ common::*, fun, info::VarInfo };
+/// use hoice::{ common::*, info::VarInfo };
 /// let sig: VarInfos = vec![ VarInfo::new("v_0", typ::int(), 0.into()) ].into();
 /// let fun_name = "fun_new_test_identity";
 /// let sig = fun::FunSig::new(fun_name, sig, typ::int());

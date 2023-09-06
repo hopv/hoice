@@ -2161,13 +2161,9 @@ simpl_fun! {
       (
         Some(array), Some(index), Some(value)
       ) => {
-        let result = array.store(index, value).to_term().unwrap_or_else(
-          || panic!(
-            "illegal store application (store {} {} {})",
-            args[0], args[1], args[0]
-          )
-        ) ;
-        Some( NormRes::Term(result) )
+        let val = array.store(index, value);
+        let term = term::factory::val(val);
+        Some(NormRes::Term(term))
       },
       _ => None,
     }
@@ -2181,12 +2177,9 @@ simpl_fun! {
       args[0].val(), args[1].val()
     ) {
       ( Some(array), Some(index) ) => {
-        let result = array.select(index).to_term().unwrap_or_else(
-          || panic!(
-            "illegal select application (select {} {})", args[0], args[1]
-          )
-        ) ;
-        Some( NormRes::Term(result) )
+        let val = array.select(index);
+        let term = term::factory::val(val);
+        Some(NormRes::Term(term))
       },
       _ => None,
     }
