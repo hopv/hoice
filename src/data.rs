@@ -1145,7 +1145,7 @@ impl Data {
     /// }
     /// ```
     pub fn check_unsat(&mut self) -> Res<bool> {
-        self.get_unsat_proof().map(|_| true)
+        self.try_get_unsat_proof().map(|opt| opt.is_some())
     }
 
     /// Retrieves a proof of unsat.
@@ -1182,8 +1182,19 @@ impl Data {
     /// }
     /// ```
     pub fn get_unsat_proof(&mut self) -> Res<crate::unsat_core::UnsatRes> {
+        if let Some(res) = self.try_get_unsat_proof()? {
+            Ok(res)
+        } else {
+            bail!("asked for unsat proof while learning data is not unsat")
+        }
+    }
+
+    pub fn try_get_unsat_proof(&mut self) -> Res<Option<crate::unsat_core::UnsatRes>> {
         self.propagate()?;
-        log_verb! { "learning data on unsat:\n{}", self.string_do(& (), |s| s.to_string()).unwrap() }
+        log_verb!(
+            "learning data on unsat:\n{}",
+            self.string_do(&(), |s| s.to_string()).unwrap(),
+        );
         for (pred, samples) in self.pos.index_iter() {
             for sample in samples {
                 for neg in &self.neg[pred] {
@@ -1198,12 +1209,12 @@ impl Data {
                         } else {
                             None
                         };
-                        return Ok(crate::unsat_core::UnsatRes::new(entry_points));
+                        return Ok(Some(crate::unsat_core::UnsatRes::new(entry_points)));
                     }
                 }
             }
         }
-        bail!("asked for unsat proof while learning data is not unsat")
+        Ok(None)
     }
 
     /// Propagates all staged samples.
