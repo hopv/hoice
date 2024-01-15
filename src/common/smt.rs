@@ -336,7 +336,7 @@ where
         }
 
         solver.assert_with(self, false)?;
-        let sat = tmo_multi_check_sat(
+        let sat = tmo_multi_try_check_sat_legacy(
             solver,
             conf.until_timeout()
                 .map(|time| time / 100)
@@ -345,6 +345,7 @@ where
                 solver.assert_with(self, true)?;
                 Ok(())
             },
+            !conf.has_timeout(),
         )?;
         Ok(!sat)
     }
