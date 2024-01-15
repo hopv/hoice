@@ -1097,7 +1097,10 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
                 if lhs.is_empty() {
                     Ok(Some(false))
                 } else {
-                    conj.try_is_unsat(self)
+                    match conj.try_is_unsat(self) {
+                        Ok(Some(true)) => Ok(Some(true)),
+                        _ => Ok(Some(false)),
+                    }
                 }
             }
         };
