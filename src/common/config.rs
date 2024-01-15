@@ -16,7 +16,7 @@ use crate::{common::mk_dir, errors::*, instance::Instance};
 macro_rules! app_fun {
     // Internal rules.
     (@app $app:expr, $order:expr =>) => ($app);
-    (@app $app:expr, $o7rder:expr =>
+    (@app $app:expr, $order:expr =>
         , $($tail:tt)*
     ) => (
         app_fun!(@app $app, $order => $($tail)*)
@@ -1177,6 +1177,12 @@ impl Config {
     #[inline]
     pub fn check_file(&self) -> Option<&String> {
         self.check.as_ref()
+    }
+
+    /// True if a timeout was specified.
+    #[inline]
+    pub fn has_timeout(&self) -> bool {
+        self.timeout.is_some()
     }
 
     /// Checks if we're out of time.

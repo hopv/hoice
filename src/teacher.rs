@@ -1013,7 +1013,7 @@ impl<'a> Teacher<'a> {
                         let tru_preds = & self.tru_preds;
                         let fls_preds = & self.fls_preds;
                         let instance = & self.instance;
-                        smt::tmo_multi_try_check_sat(
+                        smt::tmo_multi_try_check_sat_legacy(
                             solver,
                             conf.until_timeout().map(
                                 |time| time / 20

@@ -62,7 +62,7 @@ pub fn preproc_reset<P>(solver: &mut Solver<P>) -> Res<()> {
 }
 
 /// Performs a check-sat.
-pub fn tmo_multi_try_check_sat<P, F>(
+pub fn tmo_multi_try_check_sat_legacy<P, F>(
     solver: &mut Solver<P>,
     tmo: ::std::time::Duration,
     do_stuff: F,
@@ -85,6 +85,44 @@ where
         solver.set_option(":timeout", "1000000000")?;
         multi_try_check_sat(solver)
     }
+}
+
+/// Performs a check-sat.
+pub fn tmo_multi_check_sat<P, F>(
+    solver: &mut Solver<P>,
+    tmo: ::std::time::Duration,
+    do_stuff: F,
+) -> Res<bool>
+where
+    F: FnOnce(&mut Solver<P>) -> Res<()>,
+{
+    solver.set_option(":timeout", &format!("{}000", tmo.as_secs()))?;
+    if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+        return Ok(res);
+    }
+    do_stuff(solver)?;
+    if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+        Ok(res)
+    } else {
+        bail!(crate::errors::ErrorKind::Unknown)
+    }
+}
+
+/// Performs a check-sat.
+pub fn tmo_multi_try_check_sat<P, F>(
+    solver: &mut Solver<P>,
+    tmo: ::std::time::Duration,
+    do_stuff: F,
+) -> Res<Option<bool>>
+where
+    F: FnOnce(&mut Solver<P>) -> Res<()>,
+{
+    solver.set_option(":timeout", &format!("{}000", tmo.as_secs()))?;
+    if let Some(res) = multi_try_check_sat_or_unk(solver)? {
+        return Ok(Some(res));
+    }
+    do_stuff(solver)?;
+    multi_try_check_sat_or_unk(solver)
 }
 
 /// Performs a check-sat.
@@ -298,18 +336,44 @@ where
         }
 
         solver.assert_with(self, false)?;
-        let sat = tmo_multi_try_check_sat(
+        let sat = tmo_multi_try_check_sat_legacy(
             solver,
             conf.until_timeout()
-                .map(|time| time / 20)
+                .map(|time| time / 100)
                 .unwrap_or_else(|| ::std::time::Duration::new(1, 0)),
             |solver| {
                 solver.assert_with(self, true)?;
                 Ok(())
             },
-            true,
+            !conf.has_timeout(),
         )?;
         Ok(!sat)
+    }
+
+    /// Checks if this conjunction is unsatisfiable.
+    fn try_is_unsat<Parser: Copy>(&self, solver: &mut Solver<Parser>) -> Res<Option<bool>> {
+        if self.terms.len() == 0 {
+            return Ok(Some(false));
+        }
+        for var in self.infos {
+            if var.active {
+                solver.declare_const(&var.idx, var.typ.get())?
+            }
+        }
+
+        solver.assert_with(self, false)?;
+        let is_unsat = tmo_multi_try_check_sat(
+            solver,
+            conf.until_timeout()
+                .map(|time| time / 100)
+                .unwrap_or_else(|| ::std::time::Duration::new(1, 0)),
+            |solver| {
+                solver.assert_with(self, true)?;
+                Ok(())
+            },
+        )?
+        .map(|b| !b);
+        Ok(is_unsat)
     }
 }
 
@@ -1033,7 +1097,10 @@ impl<Parser: Copy> ClauseTrivialExt for Solver<Parser> {
                 if lhs.is_empty() {
                     Ok(Some(false))
                 } else {
-                    conj.is_unsat(self).map(Some)
+                    match conj.try_is_unsat(self) {
+                        Ok(Some(true)) => Ok(Some(true)),
+                        _ => Ok(Some(false)),
+                    }
                 }
             }
         };
