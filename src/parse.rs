@@ -3190,6 +3190,20 @@ impl<'cxt, 's> Parser<'cxt, 's> {
         }
 
         self.ws_cmt();
+        let start_pos = self.pos();
+        let tagged = if self.tag_opt("(") {
+            self.ws_cmt();
+            if self.tag_opt("!") {
+                self.ws_cmt();
+                true
+            } else {
+                self.backtrack_to(start_pos);
+                false
+            }
+        } else {
+            false
+        };
+
         let outter_bind_count = self.let_bindings(&var_map, &hash_map, instance)?;
 
         self.ws_cmt();
@@ -3197,6 +3211,10 @@ impl<'cxt, 's> Parser<'cxt, 's> {
 
         self.ws_cmt();
         self.close_let_bindings(outter_bind_count)?;
+
+        if tagged && !self.eat_until(')', true) {
+            bail!(self.error_here("unexpected use of `!`"))
+        }
 
         for _ in 0..closing_parens {
             self.ws_cmt();
