@@ -138,7 +138,69 @@ impl From<Typ> for PartialTyp {
     }
 }
 
+pub struct DTypeNameIterator<'a> {
+    to_do: Vec<&'a PartialTyp>,
+    typ_to_do: Vec<&'a Typ>,
+}
+
+impl<'a> std::iter::Iterator for DTypeNameIterator<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let to_do = &mut self.to_do;
+        let typ_to_do = &mut self.typ_to_do;
+
+        if to_do.is_empty() && typ_to_do.is_empty() {
+            return None;
+        }
+
+        while let Some(current) = to_do.pop() {
+            match current {
+                PartialTyp::Array(src, tgt) => {
+                    to_do.push(&**src);
+                    to_do.push(&**tgt)
+                }
+
+                PartialTyp::DTyp(name, _, prms) => {
+                    for typ in prms {
+                        to_do.push(typ)
+                    }
+                    return Some(name);
+                }
+
+                PartialTyp::Typ(typ) => typ_to_do.push(typ),
+
+                PartialTyp::Param(_) => (),
+            }
+        }
+
+        while let Some(current) = typ_to_do.pop() {
+            use crate::typ::RTyp;
+
+            match current.get() {
+                RTyp::Unk | RTyp::Int | RTyp::Real | RTyp::Bool => (),
+                RTyp::Array { src, tgt } => {
+                    typ_to_do.push(src);
+                    typ_to_do.push(tgt)
+                }
+                RTyp::DTyp { dtyp, prms, .. } => {
+                    for typ in prms {
+                        typ_to_do.push(typ)
+                    }
+                    return Some(&dtyp.name);
+                }
+            }
+        }
+        return None;
+    }
+}
+
 impl PartialTyp {
+    pub fn iter_free_dtype_names<'a>(&'a self) -> DTypeNameIterator<'a> {
+        let to_do = vec![self];
+        let typ_to_do = vec![];
+        DTypeNameIterator { to_do, typ_to_do }
+    }
     /// True if the type mentions the datatype provided.
     ///
     /// # Examples
@@ -158,53 +220,12 @@ impl PartialTyp {
     /// assert! { !ptyp.mentions_dtyp("NotThere") }
     /// ```
     pub fn mentions_dtyp(&self, dtyp_name: &str) -> bool {
-        let mut to_do = vec![self];
-        let mut typ_to_do = vec![];
-
-        loop {
-            if to_do.is_empty() && typ_to_do.is_empty() {
-                return false;
-            }
-
-            while let Some(current) = to_do.pop() {
-                match current {
-                    PartialTyp::Array(src, tgt) => {
-                        to_do.push(&**src);
-                        to_do.push(&**tgt)
-                    }
-
-                    PartialTyp::DTyp(name, _, _) if name == dtyp_name => return true,
-
-                    PartialTyp::DTyp(_, _, prms) => {
-                        for typ in prms {
-                            to_do.push(typ)
-                        }
-                    }
-
-                    PartialTyp::Typ(typ) => typ_to_do.push(typ),
-
-                    PartialTyp::Param(_) => (),
-                }
-            }
-
-            while let Some(current) = typ_to_do.pop() {
-                use crate::typ::RTyp;
-
-                match current.get() {
-                    RTyp::Unk | RTyp::Int | RTyp::Real | RTyp::Bool => (),
-                    RTyp::Array { src, tgt } => {
-                        typ_to_do.push(src);
-                        typ_to_do.push(tgt)
-                    }
-                    RTyp::DTyp { dtyp, .. } if dtyp.name == dtyp_name => return true,
-                    RTyp::DTyp { prms, .. } => {
-                        for typ in prms {
-                            typ_to_do.push(typ)
-                        }
-                    }
-                }
+        for name in self.iter_free_dtype_names() {
+            if name == dtyp_name {
+                return true;
             }
         }
+        false
     }
 
     /// Resolves a partial type against a type.
@@ -900,6 +921,10 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
         let mut all = vec![dtyp.clone()];
 
         for dtyp in &dtyp.deps {
+            if known.contains(dtyp) {
+                continue;
+            }
+
             let is_new = known.insert(dtyp);
             assert! { is_new }
 
@@ -921,11 +946,6 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
 
         for dtyp in all {
             dtyp.write_dec(w, dtyp_pref)?
-        }
-
-        for dtyp in &dtyp.deps {
-            let is_new = known.insert(dtyp);
-            assert!(is_new)
         }
 
         writeln!(w, "{}) )", pref)?
@@ -1104,7 +1124,7 @@ pub struct RDTyp {
     /// Name of the datatype.
     pub name: String,
     /// Other datatypes attached to this one.
-    pub deps: Vec<String>,
+    pub deps: BTreeSet<String>,
     /// Type parameters.
     pub prms: TPrmMap<String>,
     /// Constructors.
@@ -1118,7 +1138,7 @@ impl RDTyp {
         let name = name.into();
         RDTyp {
             name,
-            deps: vec![],
+            deps: BTreeSet::new(),
             prms: TPrmMap::new(),
             news: BTreeMap::new(),
             default: "".into(),
@@ -1153,7 +1173,7 @@ impl RDTyp {
 
         RDTyp {
             name: "List".into(),
-            deps: vec![],
+            deps: BTreeSet::new(),
             prms,
             news,
             default,
@@ -1245,7 +1265,7 @@ impl RDTyp {
     where
         S: Into<String>,
     {
-        self.deps.push(dep.into())
+        self.deps.insert(dep.into());
     }
 
     /// Checks a datatype is legal.
@@ -1294,6 +1314,11 @@ impl RDTyp {
                         bail!("attempting to redeclare selector `{}`", arg)
                     }
                 }
+            }
+        }
+        for (_, t) in &args {
+            for name in t.iter_free_dtype_names() {
+                self.add_dep(name.clone())
             }
         }
 
