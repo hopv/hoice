@@ -525,6 +525,20 @@ where
 /// # println!("   {}", lhs) ;
 /// # println!("=> {}\n\n", rhs) ;
 /// assert_eq! { bin_simpl(& lhs, & rhs, true), None }
+///
+/// let lhs = term::and(
+///   vec![
+///     term::bool_var(0), term::bool_var(1)
+///   ]
+/// ) ;
+/// let rhs = term::and(
+///   vec![
+///     term::bool_var(0), term::bool_var(1), term::bool_var(2)
+///   ]
+/// ) ;
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, false), Cmp(Greater) }
 /// ```
 pub fn bin_simpl<T1, T2>(lhs: &T1, rhs: &T2, conj: bool) -> SimplRes
 where
@@ -584,7 +598,7 @@ where
     if yields.len() == conj.len() {
         SimplRes::Yields(term::and(yields))
     } else if greater_count == conj.len() {
-        SimplRes::lt()
+        SimplRes::gt()
     } else {
         SimplRes::None
     }
