@@ -1429,14 +1429,13 @@ impl Config {
             .arg(
                 Arg::new("check_simpl")
                     .long("--check_simpl")
-                    .help("if true, check all simplifications")
+                    .help("if true, check all simplifications. Used for debugging.")
                     .validator(bool_validator)
                     .value_name(bool_format)
                     .default_value("no")
                     .takes_value(true)
                     .number_of_values(1)
-                    .display_order(order())
-                    .hide(true),
+                    .display_order(order()),
             )
     }
 
