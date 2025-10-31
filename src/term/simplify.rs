@@ -405,6 +405,127 @@ where
 /// Simplifies two boolean terms.
 ///
 /// Treats the pair of terms as a conjunction if `conj` is true, as a disjunction otherwise.
+///
+///
+/// If `conj` is true, it returns
+///
+/// - `None` if no conclusion was reached,
+/// - `Cmp(Greater)` if `lhs => rhs`,
+/// - `Cmp(Less)` if `lhs <= rhs`,
+/// - `Cmp(Equal)` if `lhs` and `rhs` are equivalent.
+/// - `Yields(term)` if `lhs and rhs` is equivalent to `term`.
+///
+/// So *greater* really means *stronger*.
+/// **If `conj` is false, the order is reversed.**
+/// For example, `Cmp(Greater)` means `lhs <= rhs`.
+///
+/// # Examples
+///
+/// ```rust
+/// use std::cmp::Ordering::* ;
+/// use hoice::term::simplify::SimplRes::* ;
+/// use hoice::term::simplify::bin_simpl ;
+/// use hoice::term ;
+///
+/// let lhs = term::not(
+///   term::lt(
+///     term::int(0),
+///     term::sub( vec![ term::int(3), term::int_var(0) ] )
+///   )
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// let rhs = term::ge( term::int_var(0), term::int(3) ) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), Cmp(Equal) }
+/// assert_eq! { bin_simpl(& lhs, & rhs, false), Cmp(Equal) }
+///
+/// # println!("   {}", lhs) ;
+/// let rhs = term::ge( term::int_var(0), term::int(7) ) ;
+/// # println!("<= {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), Cmp(Less) }
+/// assert_eq! { bin_simpl(& lhs, & rhs, false), Cmp(Greater) }
+///
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// assert_eq! { bin_simpl(& rhs, & lhs, true), Cmp(Greater) }
+///
+/// let lhs = term::gt( term::int_var(0), term::int(7) ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), Cmp(Greater) }
+///
+/// let lhs = term::le( term::int_var(0), term::int(7) ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// let expected = term::eq( term::int_var(0), term::int(7) ) ;
+/// debug_assert_eq! { bin_simpl(& lhs, & rhs, true), Yields(expected) }
+/// debug_assert_eq! { bin_simpl(& lhs, & rhs, false), Yields(term::tru()) }
+///
+/// let lhs = term::le( term::int_var(1), term::int(7) ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), None }
+///
+/// let lhs = term::le( term::int_var(1), term::int(7) ) ;
+/// let rhs = term::or(
+///   vec![ lhs.clone(), term::eq( term::int_var(3), term::int(7) ) ]
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), Cmp(Greater) }
+///
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// assert_eq! { bin_simpl(& rhs, & lhs, true), Cmp(Less) }
+///
+/// let lhs = term::gt( term::real_var(1), term::real_zero() ) ;
+/// let rhs = term::ge(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), Cmp(Greater) }
+///
+/// # println!("   {}", rhs) ;
+/// # println!("=> {}\n\n", lhs) ;
+/// assert_eq! { bin_simpl(& rhs, & lhs, true), Cmp(Less) }
+///
+/// let lhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let rhs = term::ge(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), None }
+///
+/// let lhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let rhs = term::eq(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), None }
+///
+/// let rhs = term::or(
+///   vec![
+///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
+///   ]
+/// ) ;
+/// let lhs = term::eq(
+///   term::real_var(1), term::real_zero()
+/// ) ;
+/// # println!("   {}", lhs) ;
+/// # println!("=> {}\n\n", rhs) ;
+/// assert_eq! { bin_simpl(& lhs, & rhs, true), None }
+/// ```
 pub fn bin_simpl<T1, T2>(lhs: &T1, rhs: &T2, conj: bool) -> SimplRes
 where
     T1: Deref<Target = RTerm>,
@@ -434,121 +555,7 @@ where
 }
 
 /// Checks the conjunction of two terms for simplification.
-///
-/// Returns
-///
-/// - `None` if no conclusion was reached,
-/// - `Cmp(Greater)` if `lhs => rhs`,
-/// - `Cmp(Less)` if `lhs <= rhs`,
-/// - `Cmp(Equal)` if `lhs` and `rhs` are equivalent.
-/// - `Yields(term)` if `lhs and rhs` is equivalent to `term`.
-///
-/// So *greater* really means *stronger*.
-///
-/// # Examples
-///
-/// ```rust
-/// use std::cmp::Ordering::* ;
-/// use hoice::term::simplify::SimplRes::* ;
-/// use hoice::term::simplify::conj_simpl ;
-/// use hoice::term ;
-///
-/// let lhs = term::not(
-///   term::lt(
-///     term::int(0),
-///     term::sub( vec![ term::int(3), term::int_var(0) ] )
-///   )
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// let rhs = term::ge( term::int_var(0), term::int(3) ) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Equal) }
-///
-/// # println!("   {}", lhs) ;
-/// let rhs = term::ge( term::int_var(0), term::int(7) ) ;
-/// # println!("<= {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Less) }
-///
-/// # println!("   {}", rhs) ;
-/// # println!("=> {}\n\n", lhs) ;
-/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Greater) }
-///
-/// let lhs = term::gt( term::int_var(0), term::int(7) ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
-///
-/// let lhs = term::le( term::int_var(0), term::int(7) ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// let expected = term::eq( term::int_var(0), term::int(7) ) ;
-/// debug_assert_eq! { conj_simpl(& lhs, & rhs), Yields(expected) }
-///
-/// let lhs = term::le( term::int_var(1), term::int(7) ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), None }
-///
-/// let lhs = term::le( term::int_var(1), term::int(7) ) ;
-/// let rhs = term::or(
-///   vec![ lhs.clone(), term::eq( term::int_var(3), term::int(7) ) ]
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
-///
-/// # println!("   {}", rhs) ;
-/// # println!("=> {}\n\n", lhs) ;
-/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
-///
-/// let lhs = term::gt( term::real_var(1), term::real_zero() ) ;
-/// let rhs = term::ge(
-///   term::real_var(1), term::real_zero()
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), Cmp(Greater) }
-///
-/// # println!("   {}", rhs) ;
-/// # println!("=> {}\n\n", lhs) ;
-/// assert_eq! { conj_simpl(& rhs, & lhs), Cmp(Less) }
-///
-/// let lhs = term::or(
-///   vec![
-///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
-///   ]
-/// ) ;
-/// let rhs = term::ge(
-///   term::real_var(1), term::real_zero()
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), None }
-///
-/// let lhs = term::or(
-///   vec![
-///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
-///   ]
-/// ) ;
-/// let rhs = term::eq(
-///   term::real_var(1), term::real_zero()
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), None }
-///
-/// let rhs = term::or(
-///   vec![
-///     term::bool_var(0), term::gt( term::real_var(1), term::real_zero() )
-///   ]
-/// ) ;
-/// let lhs = term::eq(
-///   term::real_var(1), term::real_zero()
-/// ) ;
-/// # println!("   {}", lhs) ;
-/// # println!("=> {}\n\n", rhs) ;
-/// assert_eq! { conj_simpl(& lhs, & rhs), None }
-/// ```
+/// See [`bin_simpl`] for the usage.
 pub fn conj_simpl<T1, T2>(lhs: &T1, rhs: &T2) -> SimplRes
 where
     T1: Deref<Target = RTerm>,
