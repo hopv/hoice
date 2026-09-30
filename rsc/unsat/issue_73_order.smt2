@@ -1,0 +1,10 @@
+; Issue #73: `Heap73u` mentions `Nat73u`, which it precedes alphabetically.
+(set-logic HORN)
+(declare-datatypes ((Nat73u 0)) (((Z73u) (S73u (p73u Nat73u)))))
+(declare-datatypes ((Heap73u 0)) (((Leaf73u) (Node73u (l73u Heap73u) (v73u Nat73u) (r73u Heap73u)))))
+(declare-fun P73u (Heap73u) Bool)
+(assert (forall ((h Heap73u)) (=> (= h Leaf73u) (P73u h))))
+(assert (forall ((h Heap73u) (n Nat73u)) (=> (P73u h) (P73u (Node73u h n Leaf73u)))))
+(assert (forall ((h Heap73u))
+  (=> (and (P73u h) (= h (Node73u (Node73u Leaf73u Z73u Leaf73u) (S73u Z73u) Leaf73u))) false)))
+(check-sat)
