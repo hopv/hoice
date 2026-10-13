@@ -833,8 +833,13 @@ impl<'a> Teacher<'a> {
                     Err(e) => {
                         if e.is_unknown() {
                             smt::reset(&mut self.solver, &self.instance)?;
-                            self.solver.push(1)?;
-                            self.define_preds(cands)?;
+                            // When restarting on each clause, `get_cexs_of_clause` defines the
+                            // candidates itself: defining them here too would make the solver
+                            // fail on the redefinition.
+                            if !self.restart_on_cex {
+                                self.solver.push(1)?;
+                                self.define_preds(cands)?;
+                            }
                             got_unknown = true;
                             Ok(())
                         } else {
