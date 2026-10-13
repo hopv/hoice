@@ -207,6 +207,64 @@ impl PartialTyp {
         }
     }
 
+    /// Inserts the names of all the datatypes this type mentions in `names`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use hoice::{dtyp::*, common::*, parse::Pos};
+    /// let list = typ::dtyp(dtyp::get("List").unwrap(), vec![typ::int()].into());
+    /// let dummy_pos = Pos::default();
+    /// let ptyp = PartialTyp::DTyp(
+    ///     "MyADT".into(), dummy_pos, vec![
+    ///         list.into(), PartialTyp::DTyp( "SubADT".into(), dummy_pos, vec![].into() )
+    ///     ].into()
+    /// );
+    /// let mut names = BTreeSet::new();
+    /// ptyp.dtyp_names(&mut names);
+    /// let names: Vec<_> = names.into_iter().collect();
+    /// assert_eq! { names, vec!["List", "MyADT", "SubADT"] }
+    /// ```
+    pub fn dtyp_names(&self, names: &mut BTreeSet<String>) {
+        let mut to_do = vec![self];
+        let mut typ_to_do = vec![];
+
+        while let Some(current) = to_do.pop() {
+            match current {
+                PartialTyp::Array(src, tgt) => {
+                    to_do.push(&**src);
+                    to_do.push(&**tgt)
+                }
+                PartialTyp::DTyp(name, _, prms) => {
+                    names.insert(name.clone());
+                    for typ in prms {
+                        to_do.push(typ)
+                    }
+                }
+                PartialTyp::Typ(typ) => typ_to_do.push(typ),
+                PartialTyp::Param(_) => (),
+            }
+        }
+
+        while let Some(current) = typ_to_do.pop() {
+            use crate::typ::RTyp;
+
+            match current.get() {
+                RTyp::Unk | RTyp::Int | RTyp::Real | RTyp::Bool => (),
+                RTyp::Array { src, tgt } => {
+                    typ_to_do.push(src);
+                    typ_to_do.push(tgt)
+                }
+                RTyp::DTyp { dtyp, prms } => {
+                    names.insert(dtyp.name.clone());
+                    for typ in prms {
+                        typ_to_do.push(typ)
+                    }
+                }
+            }
+        }
+    }
+
     /// Resolves a partial type against a type.
     ///
     /// # Examples
@@ -885,47 +943,20 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
         return Ok(());
     }
 
-    let mut known = HashSet::new();
     let dtyp_pref = &format!("{}  ", pref);
 
-    for (name, dtyp) in decs.iter() {
-        if reserved_dtyps.contains(name.as_str()) {
-            continue;
-        }
-        let is_new = known.insert(name);
-        if !is_new {
-            continue;
-        }
-
-        let mut all = vec![dtyp.clone()];
-
-        for dtyp in &dtyp.deps {
-            let is_new = known.insert(dtyp);
-            assert! { is_new }
-
-            if let Ok(dtyp) = get(dtyp) {
-                all.push(dtyp)
-            } else {
-                panic!("inconsistent datatype factory/maps state")
-            }
-        }
-
+    for group in dec_groups(&decs) {
         writeln!(w, "{}({} (", pref, keywords::cmd::dec_dtyps)?;
         write!(w, "{} ", pref)?;
 
-        for dtyp in all.clone() {
+        for dtyp in &group {
             write!(w, " ({} {})", dtyp.name, dtyp.prms.len())?
         }
 
         writeln!(w, "\n{}) (", pref)?;
 
-        for dtyp in all {
+        for dtyp in &group {
             dtyp.write_dec(w, dtyp_pref)?
-        }
-
-        for dtyp in &dtyp.deps {
-            let is_new = known.insert(dtyp);
-            assert!(is_new)
         }
 
         writeln!(w, "{}) )", pref)?
@@ -934,6 +965,111 @@ pub fn write_all<W: Write>(w: &mut W, pref: &str) -> ::std::io::Result<()> {
     writeln!(w)?;
 
     Ok(())
+}
+
+/// Splits the non-reserved datatypes into the groups they must be declared in.
+///
+/// A datatype depends on the datatypes its constructors mention. Each group is a strongly
+/// connected component of this relation, so mutually recursive datatypes are declared together,
+/// and every group comes after the groups it depends on, so that no declaration mentions a sort
+/// that is not declared yet. Groups and datatypes inside a group are ordered by name otherwise.
+fn dec_groups(decs: &BTreeMap<String, DTyp>) -> Vec<Vec<DTyp>> {
+    let dtyps: Vec<&DTyp> = decs
+        .iter()
+        .filter(|(name, _)| !reserved_dtyps.contains(name.as_str()))
+        .map(|(_, dtyp)| dtyp)
+        .collect();
+    let index: BTreeMap<&str, usize> = dtyps
+        .iter()
+        .enumerate()
+        .map(|(idx, dtyp)| (dtyp.name.as_str(), idx))
+        .collect();
+
+    let succs: Vec<Vec<usize>> = dtyps
+        .iter()
+        .map(|dtyp| {
+            let mut names = BTreeSet::new();
+            for args in dtyp.news.values() {
+                for (_, typ) in args {
+                    typ.dtyp_names(&mut names)
+                }
+            }
+            names.extend(dtyp.deps.iter().cloned());
+            names
+                .iter()
+                .filter_map(|name| index.get(name.as_str()).cloned())
+                .collect()
+        })
+        .collect();
+
+    // Tarjan's algorithm, which yields each component after all the components reachable from it.
+    struct Tarjan<'a> {
+        succs: &'a [Vec<usize>],
+        next: usize,
+        order: Vec<Option<usize>>,
+        low: Vec<usize>,
+        stack: Vec<usize>,
+        on_stack: Vec<bool>,
+        groups: Vec<Vec<usize>>,
+    }
+    impl<'a> Tarjan<'a> {
+        fn visit(&mut self, node: usize) {
+            self.order[node] = Some(self.next);
+            self.low[node] = self.next;
+            self.next += 1;
+            self.stack.push(node);
+            self.on_stack[node] = true;
+
+            for &succ in &self.succs[node] {
+                match self.order[succ] {
+                    None => {
+                        self.visit(succ);
+                        self.low[node] = ::std::cmp::min(self.low[node], self.low[succ])
+                    }
+                    Some(order) if self.on_stack[succ] => {
+                        self.low[node] = ::std::cmp::min(self.low[node], order)
+                    }
+                    Some(_) => (),
+                }
+            }
+
+            if Some(self.low[node]) == self.order[node] {
+                let mut group = vec![];
+                loop {
+                    let member = self.stack.pop().expect("inconsistent Tarjan stack");
+                    self.on_stack[member] = false;
+                    group.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                group.sort();
+                self.groups.push(group)
+            }
+        }
+    }
+
+    let len = dtyps.len();
+    let mut tarjan = Tarjan {
+        succs: &succs,
+        next: 0,
+        order: vec![None; len],
+        low: vec![0; len],
+        stack: vec![],
+        on_stack: vec![false; len],
+        groups: vec![],
+    };
+    for node in 0..len {
+        if tarjan.order[node].is_none() {
+            tarjan.visit(node)
+        }
+    }
+
+    tarjan
+        .groups
+        .into_iter()
+        .map(|group| group.into_iter().map(|idx| dtyps[idx].clone()).collect())
+        .collect()
 }
 
 /// Types a constructor application.
