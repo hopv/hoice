@@ -1114,9 +1114,12 @@ impl<'a> Teacher<'a> {
                 log! { @5 | "{}", term }
                 self.solver.assert(&smt::SmtTerm::new(term))?;
             }
-            let res = smt::multi_try_check_sat(&mut self.solver);
-            if let Ok(false) = res {
-                return Ok(vec![]);
+            match smt::multi_try_check_sat(&mut self.solver) {
+                Ok(false) => return Ok(vec![]),
+                // An inconclusive check only means the lhs may be satisfiable. Any other error
+                // must not be dropped: the solver's replies would no longer match the requests.
+                Err(e) if !e.is_unknown() && !e.is_timeout() => return Err(e),
+                _ => (),
             }
 
             log! { @4 | "assert/check-sat lhs preds" }
@@ -1132,9 +1135,10 @@ impl<'a> Teacher<'a> {
                         (self.instance.preds(), true),
                     )?;
 
-                    let res = smt::multi_try_check_sat(&mut self.solver);
-                    if let Ok(false) = res {
-                        return Ok(vec![]);
+                    match smt::multi_try_check_sat(&mut self.solver) {
+                        Ok(false) => return Ok(vec![]),
+                        Err(e) if !e.is_unknown() && !e.is_timeout() => return Err(e),
+                        _ => (),
                     }
                 }
             }
